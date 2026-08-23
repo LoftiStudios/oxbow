@@ -47,12 +47,34 @@ public struct StatusLineParser: Sendable {
     return Self.classify(text)
   }
 
+  /// The CLI's six output preambles, verified against version 1.56.5.
   static func classify(_ text: String) -> ParsedLine {
-    // Placeholder until Task 2. Keeps Task 1's tests honest and compiling.
+    if let rest = text.strippingPrefix("[STATUS] - ") {
+      return .status(parseProgress(rest))
+    }
+    if let rest = text.strippingPrefix("[VERBOSE] - ") {
+      return .log(level: .verbose, message: rest)
+    }
     if let rest = text.strippingPrefix("[INFO] - ") {
       return .log(level: .info, message: rest)
     }
+    if let rest = text.strippingPrefix("[WARNING] - ") {
+      return .log(level: .warning, message: rest)
+    }
+    if let rest = text.strippingPrefix("[ERROR] - ") {
+      return .log(level: .error, message: rest)
+    }
+    // Note: no ` - ` separator on this one.
+    if let rest = text.strippingPrefix("<FFMPEG> ") {
+      return .ffmpeg(rest)
+    }
+    // Never drop unrecognised output; it is frequently the useful part.
     return .log(level: .info, message: text)
+  }
+
+  /// Filled in by Task 3.
+  static func parseProgress(_ text: String) -> StepProgress {
+    StepProgress(phase: text)
   }
 }
 

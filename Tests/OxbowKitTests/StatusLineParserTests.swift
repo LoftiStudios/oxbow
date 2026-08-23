@@ -40,3 +40,34 @@ struct StatusLineParserSplittingTests {
     #expect(parser.consume(Array("f\n".utf8)) == [.log(level: .info, message: "half")])
   }
 }
+
+@Suite("StatusLineParser preambles")
+struct StatusLineParserPreambleTests {
+
+  @Test(arguments: [
+    ("[VERBOSE] - v", LogLevel.verbose, "v"),
+    ("[INFO] - i", LogLevel.info, "i"),
+    ("[WARNING] - w", LogLevel.warning, "w"),
+    ("[ERROR] - e", LogLevel.error, "e"),
+  ])
+  func classifiesLogPreambles(input: String, level: LogLevel, message: String) {
+    #expect(StatusLineParser.classify(input) == .log(level: level, message: message))
+  }
+
+  /// `<FFMPEG> ` is the one preamble with no ` - ` separator.
+  @Test func classifiesFfmpegPreambleWhichHasNoSeparator() {
+    #expect(StatusLineParser.classify("<FFMPEG> frame= 60") == .ffmpeg("frame= 60"))
+  }
+
+  @Test func classifiesStatusPreamble() {
+    guard case .status = StatusLineParser.classify("[STATUS] - Downloading 50%") else {
+      Issue.record("expected .status")
+      return
+    }
+  }
+
+  /// Unrecognised output must never be dropped — it is often the useful part.
+  @Test func treatsUnrecognisedTextAsInfo() {
+    #expect(StatusLineParser.classify("bare text") == .log(level: .info, message: "bare text"))
+  }
+}
