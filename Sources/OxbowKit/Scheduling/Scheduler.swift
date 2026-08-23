@@ -45,6 +45,99 @@ public enum Scheduler {
     return admitted
   }
 
+  /// Folds a finished step's outcome back in.
+  ///
+  /// Anything other than success blocks the step's dependents, transitively.
+  public static func complete(_ id: StepID, with outcome: StepOutcome, in jobs: inout [Job]) {
+    guard let location = locate(id, in: jobs) else { return }
+
+    switch outcome {
+    case .succeeded(let artifact):
+      jobs[location.job].steps[location.step].status = .done
+      jobs[location.job].steps[location.step].artifact = artifact
+      return
+
+    case .failed(let failure):
+      jobs[location.job].steps[location.step].status = .failed(failure)
+
+    case .cancelled:
+      jobs[location.job].steps[location.step].status = .cancelled
+    }
+
+    blockDependents(of: id, inJobAt: location.job, in: &jobs)
+  }
+
+  /// Requeues a failed step and releases whatever it was blocking.
+  /// Successful siblings are untouched — that is the point of retry in place.
+  public static func retry(_ id: StepID, in jobs: inout [Job]) {
+    guard let location = locate(id, in: jobs) else { return }
+    jobs[location.job].steps[location.step].status = .queued
+    jobs[location.job].steps[location.step].artifact = nil
+    unblockDependents(of: id, inJobAt: location.job, in: &jobs)
+  }
+
+  public static func cancel(_ id: StepID, in jobs: inout [Job]) {
+    complete(id, with: .cancelled, in: &jobs)
+  }
+
+  /// Cancels every unfinished step. Finished steps keep their artifacts.
+  public static func cancel(job id: JobID, in jobs: inout [Job]) {
+    guard let index = jobs.firstIndex(where: { $0.id == id }) else { return }
+    for stepIndex in jobs[index].steps.indices {
+      switch jobs[index].steps[stepIndex].status {
+      case .queued, .blocked, .running:
+        jobs[index].steps[stepIndex].status = .cancelled
+      case .done, .failed, .cancelled:
+        continue
+      }
+    }
+  }
+
+  // MARK: - Private
+
+  private static func locate(_ id: StepID, in jobs: [Job]) -> (job: Int, step: Int)? {
+    for (jobIndex, job) in jobs.enumerated() {
+      if let stepIndex = job.steps.firstIndex(where: { $0.id == id }) {
+        return (jobIndex, stepIndex)
+      }
+    }
+    return nil
+  }
+
+  /// Walks forward to a fixed point. Steps have at most one parent, so a single
+  /// pass per newly-blocked step terminates.
+  private static func blockDependents(of id: StepID, inJobAt jobIndex: Int, in jobs: inout [Job]) {
+    var frontier: Set<StepID> = [id]
+
+    while !frontier.isEmpty {
+      var next: Set<StepID> = []
+      for stepIndex in jobs[jobIndex].steps.indices {
+        let step = jobs[jobIndex].steps[stepIndex]
+        guard let parent = step.dependsOn, frontier.contains(parent) else { continue }
+        guard step.status == .queued || step.status == .running else { continue }
+        jobs[jobIndex].steps[stepIndex].status = .blocked
+        next.insert(step.id)
+      }
+      frontier = next
+    }
+  }
+
+  private static func unblockDependents(of id: StepID, inJobAt jobIndex: Int, in jobs: inout [Job]) {
+    var frontier: Set<StepID> = [id]
+
+    while !frontier.isEmpty {
+      var next: Set<StepID> = []
+      for stepIndex in jobs[jobIndex].steps.indices {
+        let step = jobs[jobIndex].steps[stepIndex]
+        guard let parent = step.dependsOn, frontier.contains(parent) else { continue }
+        guard step.status == .blocked else { continue }
+        jobs[jobIndex].steps[stepIndex].status = .queued
+        next.insert(step.id)
+      }
+      frontier = next
+    }
+  }
+
   /// Deterministic ordering. Falling back to the id keeps the result stable
   /// when two jobs share a creation timestamp.
   private static func isOlder(_ a: Job, _ b: Job) -> Bool {
