@@ -72,9 +72,51 @@ public struct StatusLineParser: Sendable {
     return .log(level: .info, message: text)
   }
 
-  /// Filled in by Task 3.
+  /// Parses the four status shapes the CLI emits. See the design spec, §1.2.
+  ///
+  /// Parsed right-to-left: the trailing counter or times group is stripped
+  /// first, then the percentage, and the remainder is the phase. Doing it in
+  /// this order is what stops a digit inside a phase name being read as a
+  /// percentage.
   static func parseProgress(_ text: String) -> StepProgress {
-    StepProgress(phase: text)
+    var remainder = Substring(text)
+    var progress = StepProgress()
+
+    if let match = remainder.firstMatch(of: /\s*\[(\d+)\/(\d+)\]$/) {
+      progress.index = Int(match.1)
+      progress.total = Int(match.2)
+      remainder = remainder[..<match.range.lowerBound]
+    }
+
+    let times = /\s*\((\d+)h(\d+)m(\d+)s Elapsed \| (\d+)h(\d+)m(\d+)s Remaining\)$/
+    if let match = remainder.firstMatch(of: times) {
+      progress.elapsed = Self.duration(match.1, match.2, match.3)
+      progress.remaining = Self.duration(match.4, match.5, match.6)
+      remainder = remainder[..<match.range.lowerBound]
+    }
+
+    if let match = remainder.firstMatch(of: /\s+(\d+)%$/) {
+      if let percent = Int(match.1) {
+        progress.fraction = Double(percent) / 100
+      }
+      remainder = remainder[..<match.range.lowerBound]
+    }
+
+    let phase = remainder.trimmingCharacters(in: .whitespaces)
+    progress.phase = phase.isEmpty ? nil : phase
+    return progress
+  }
+
+  private static func duration(
+    _ hours: Substring,
+    _ minutes: Substring,
+    _ seconds: Substring)
+    -> Duration
+  {
+    let h = Int(hours) ?? 0
+    let m = Int(minutes) ?? 0
+    let s = Int(seconds) ?? 0
+    return .seconds(h * 3600 + m * 60 + s)
   }
 }
 
