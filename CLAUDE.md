@@ -180,6 +180,13 @@ xcrun stapler validate build/Oxbow.dmg
 - Always invoke the CLI with `--banner=false`. It is a **per-verb** option, not a
   global one, so it goes after the verb: `TwitchDownloaderCLI videodownload
   --banner=false ...`. Passing it before the verb is a parse error.
+- **Always pass `--collision Overwrite`.** The default is `Prompt`, which on an
+  output name collision blocks reading a stdin that never arrives — as a
+  subprocess that means hanging forever with no output and no error. We always
+  write into our own workspace first, so overwriting there is safe.
+- **Any option whose value starts with `-` must use `--opt=value`.** The
+  space-separated form makes CommandLineParser read the value as more options:
+  `--output-args '-c:v …'` fails with `Option 'c' is unknown`.
 
 ---
 
