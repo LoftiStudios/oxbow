@@ -16,7 +16,12 @@ struct StatusLineParserFixtureTests {
       return nil
     }
 
-    #expect(statuses.count > 300, "expected hundreds of updates, got \(statuses.count)")
+    // 403 is the recorded count for this fixture (401 `\r` + 4 `\n` delimiters,
+    // minus one `\r\n` pair that flushes only once, minus one non-status
+    // completion line). Pinned exactly rather than thresholded, because the
+    // fixture is never regenerated: a regression that silently dropped
+    // updates would still satisfy `> 300` but must fail here.
+    #expect(statuses.count == 403, "expected exactly 403 updates for this fixture, got \(statuses.count)")
     #expect(statuses.last?.fraction == 1.0)
     #expect(statuses.contains { $0.phase == "Rendering Video" })
   }
@@ -28,7 +33,8 @@ struct StatusLineParserFixtureTests {
     let bytes = try Fixture.bytes("chatrender-success.stdout")
 
     var whole = StatusLineParser()
-    let expected = whole.consume(bytes)
+    var expected = whole.consume(bytes)
+    if let tail = whole.finish() { expected.append(tail) }
 
     var chunked = StatusLineParser()
     var actual: [ParsedLine] = []
@@ -39,6 +45,44 @@ struct StatusLineParserFixtureTests {
     if let tail = chunked.finish() { actual.append(tail) }
 
     #expect(actual == expected)
+  }
+
+  /// A killed process can leave its final line unterminated. Derive that
+  /// case from the real fixture (drop its trailing `\n`) rather than
+  /// inventing a hand-written string, so it still stands in for real bytes.
+  @Test func recoversTrailingPartialLineOnFinish() throws {
+    var bytes = try Fixture.bytes("chatrender-success.stdout")
+    #expect(bytes.last == UInt8(ascii: "\n"), "fixture is expected to end in a newline before truncation")
+    bytes.removeLast()
+
+    var withoutFinish = StatusLineParser()
+    let linesBeforeFinish = withoutFinish.consume(bytes)
+    let tail = withoutFinish.finish()
+
+    // (a) finish() on the truncated bytes recovers exactly one more line
+    // than consume() alone did — the unterminated final line.
+    #expect(tail != nil, "finish() should recover the unterminated final line")
+    var linesAfterFinish = linesBeforeFinish
+    if let tail { linesAfterFinish.append(tail) }
+    #expect(linesAfterFinish.count == linesBeforeFinish.count + 1)
+
+    // (b) chunked and whole-buffer parsing of the truncated bytes still agree.
+    var whole = StatusLineParser()
+    var expected = whole.consume(bytes)
+    if let wholeTail = whole.finish() { expected.append(wholeTail) }
+    #expect(expected == linesAfterFinish)
+
+    for chunkSize in [1, 7, 64, 4096] {
+      var chunked = StatusLineParser()
+      var actual: [ParsedLine] = []
+      for start in stride(from: 0, to: bytes.count, by: chunkSize) {
+        let end = min(start + chunkSize, bytes.count)
+        actual += chunked.consume(bytes[start..<end])
+      }
+      if let chunkedTail = chunked.finish() { actual.append(chunkedTail) }
+
+      #expect(actual == expected, "chunk size \(chunkSize) diverged on the truncated fixture")
+    }
   }
 
   @Test func recoversVideoDownloadPhases() throws {
