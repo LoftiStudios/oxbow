@@ -92,6 +92,23 @@ machines. They are not style preferences.
 **Upstream**
 - `vendor/TwitchDownloader` is read-only. Changes go upstream as separate PRs, not
   as local edits. If something there needs to change, say so rather than patching.
+- **The submodule pin is a deliberate choice, never an accident.** A gitlink is
+  one exact SHA — there are no version ranges — so the only question is which
+  commit and why.
+  - **Release builds must pin to an upstream release tag.** A mid-stream commit
+    is only reachable while it stays on a branch; if upstream rebases or
+    force-pushes, an unreferenced SHA can be garbage collected and the submodule
+    points at something nobody can fetch. Tags don't evaporate.
+  - A non-tag pin is allowed during development **only with a recorded reason**
+    (see below). Bumping the pin is its own commit whose message says what
+    changed upstream and why we want it.
+  - **Current pin: `d4122d8` (`1.56.5-12-g d4122d8`), deliberately ahead of the
+    `1.56.5` tag** for "Migrate to 7TV emote-set API endpoint" (#1632) and
+    "New m3u8 API + support vertical VODs" (#1631). Reverting to `1.56.5` would
+    likely break 7TV emote resolution. Re-pin to the next release tag that
+    contains both before shipping.
+- The built helper self-identifies as `1.56.5+<full-sha>`, so a shipped DMG is
+  traceable to an exact upstream commit. Surface that string in the About box.
 
 **Secrets**
 - Never commit `.p12`, `.p8`, provisioning profiles, or Team IDs. CI reads them
