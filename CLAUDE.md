@@ -5,19 +5,25 @@ SwiftUI app that drives a bundled `TwitchDownloaderCLI` helper as a subprocess.
 
 **Read `docs/handoff.md` first.** It holds the architecture decisions and their
 rationale. This file holds the rules and commands.
-`docs/ffmpeg.md` holds the resolved FFmpeg sourcing/licensing plan.
+`docs/ffmpeg.md` and `docs/signing.md` hold the two resolved spikes.
 
-**Current state:** no application code yet.
+**Current state:** no application code yet, but the risky infrastructure is done.
 
-- FFmpeg sourcing is **resolved** — `./scripts/build-ffmpeg.sh` produces a verified
+- **FFmpeg sourcing: resolved.** `./scripts/build-ffmpeg.sh` produces a verified
   LGPL 2.1+ arm64 binary. See `docs/ffmpeg.md`.
-- Next task is the **signing spike** (`docs/handoff.md` §9), widened to cover the
-  real bundle: `TwitchDownloaderCLI` (which drags in SkiaSharp) plus our FFmpeg.
-  Do not start building UI before that loop goes green.
-- Two prerequisites are **not yet met** on this machine: the .NET SDK is not
-  installed, and there is no **Developer ID Application** certificate in the
-  keychain (only Apple Development, plus an Apple Distribution cert belonging to a
-  different organisation). Both block the signing spike.
+- **Signing + notarization: resolved and verified end to end.** A bundle with the
+  real helper and FFmpeg was signed, notarized (Accepted first try), stapled,
+  packaged as a DMG, and launched from quarantine spawning both children. See
+  `docs/signing.md`. Xcode build-phase integration is the one part still untested.
+- **Deployment target: macOS 15.** Set deliberately — `@Observable` and the modern
+  SwiftUI surface need 14+, and 15 keeps us on current APIs. `MIN_MACOS` in
+  `scripts/build-ffmpeg.sh` must stay in lockstep with it.
+- Next task is the **task queue** — the core abstraction (see Conventions below),
+  then the CLI wrapper, then forms.
+
+Local prerequisites, all now in place: .NET 10 SDK (`brew install --cask
+dotnet-sdk`), a `Developer ID Application` certificate for team `M9WJGEJKBF`, and
+notary credentials in the keychain as profile `oxbow-notary`.
 
 ---
 
@@ -40,11 +46,22 @@ oxbow/
 Violating these produces builds that fail notarization or silently break on user
 machines. They are not style preferences.
 
-**Signing**
+**Signing** — use `./scripts/sign.sh <bundle>`; it enforces all of this.
 - Helper executables live in `Contents/MacOS/`. Never `Contents/Resources/` —
   executable code in a resource location fails notarization.
-- Sign inside-out: every nested Mach-O first, app bundle last.
-- Never use `codesign --deep`. Sign each file explicitly.
+- **Every file under `Contents/MacOS` must be signed, whatever its type** — not
+  just Mach-O binaries but managed `.dll` assemblies, `.json` runtime configs,
+  even `.txt`. That directory is the bundle's code location, so codesign treats
+  everything in it as a code object. For our bundle that's 205 files, not 19.
+  Signing only the Mach-Os is the intuitive approach and it fails verification.
+- Sign inside-out: every nested file first, app bundle last.
+- Never use `codesign --deep` for signing — it applies one set of entitlements to
+  every nested binary, which is backwards when the helper needs its own. Fine for
+  verifying.
+- The helper needs `com.apple.security.cs.allow-jit` and nothing more. This was
+  tested, not assumed: without it CoreCLR fails with `HRESULT: 0x80070008`; with
+  it alone, everything works. **Never add `disable-library-validation`** — needing
+  it means something is signed wrong.
 - "Code Sign On Copy" must stay OFF for the embedded helper. Xcode's automatic
   signing will otherwise re-sign it during Copy Files and clobber its entitlements.
   The helper is signed in a Run Script phase that runs *after* embedding.
@@ -104,11 +121,12 @@ Build the bundled FFmpeg (LGPL, arm64, verified):
 ./scripts/build-ffmpeg.sh
 ```
 
-Build the helper (upstream targets **.NET 10**; the SDK is not yet installed here):
+Build the helper (upstream targets **.NET 10**). Never use
+`-p:PublishProfile=MacOSArm64` — upstream's own profile sets `PublishSingleFile`
+and `PublishTrimmed`, both of which we forbid. Override explicitly:
 
 ```bash
-dotnet publish vendor/TwitchDownloader/TwitchDownloaderCLI \
-  -c Release -r osx-arm64 --self-contained true
+dotnet publish vendor/TwitchDownloader/TwitchDownloaderCLI -c Release -r osx-arm64 --self-contained true -p:PublishSingleFile=false -p:PublishTrimmed=false -p:PublishReadyToRun=false -p:DebugType=none -o build/helper
 ```
 
 Build, sign, notarize:
@@ -142,7 +160,9 @@ xcrun stapler validate build/Oxbow.dmg
 - CLI progress currently arrives as text on stdout:
   `[STATUS] - Downloading 100% [2/5]`. Parsing is deliberately isolated in one
   file so it can be swapped for structured output later.
-- Always invoke the CLI with `--banner=false`.
+- Always invoke the CLI with `--banner=false`. It is a **per-verb** option, not a
+  global one, so it goes after the verb: `TwitchDownloaderCLI videodownload
+  --banner=false ...`. Passing it before the verb is a parse error.
 
 ---
 

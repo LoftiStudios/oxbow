@@ -16,9 +16,9 @@ FFMPEG_VERSION="8.1.2"
 FFMPEG_SHA256="464beb5e7bf0c311e68b45ae2f04e9cc2af88851abb4082231742a74d97b524c"
 FFMPEG_URL="https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.xz"
 
-# MUST match the app's MACOSX_DEPLOYMENT_TARGET. A helper built for a newer
-# minimum than the app will fail to launch on the app's oldest supported OS.
-MIN_MACOS="${MIN_MACOS:-13.0}"
+# MUST match the app's MACOSX_DEPLOYMENT_TARGET (macOS 15). A helper built for
+# a newer minimum than the app fails to launch on the app's oldest supported OS.
+MIN_MACOS="${MIN_MACOS:-15.0}"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WORK_DIR="${REPO_ROOT}/build/ffmpeg-src"

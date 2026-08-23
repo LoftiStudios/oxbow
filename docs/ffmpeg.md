@@ -131,9 +131,14 @@ Both must be included in the DMG and referenced from the About box.
 
 ## 7. Open items this spike did not close
 
-- **`MIN_MACOS` is a placeholder.** The script pins `13.0`; the app's deployment
-  target is still unset (`docs/handoff.md` §10). These two values must match — a
-  helper built for a newer minimum than the app fails to launch on the app's oldest
-  supported OS. Set both together when the deployment target is decided.
 - **FFmpeg 9.0.1 exists.** We pinned 8.1.2 as the conservative choice. Revisit
   before 1.0.
+
+## 8. Resolved since
+
+- **`MIN_MACOS` is now `15.0`**, matching the app's deployment target. These two
+  must stay in lockstep — a helper built for a newer minimum than the app fails
+  to launch on the app's oldest supported OS.
+- **Signing confirmed.** FFmpeg contributes one Mach-O, signs with the hardened
+  runtime and **no entitlements**, and notarized on the first submission. See
+  `docs/signing.md`.
