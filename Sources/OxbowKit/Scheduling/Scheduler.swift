@@ -67,17 +67,31 @@ public enum Scheduler {
     blockDependents(of: id, inJobAt: location.job, in: &jobs)
   }
 
-  /// Requeues a failed step and releases whatever it was blocking.
+  /// Requeues a failed or cancelled step and releases whatever it was blocking.
   /// Successful siblings are untouched — that is the point of retry in place.
+  /// Only acts on `.failed` or `.cancelled` steps; other statuses are no-ops.
   public static func retry(_ id: StepID, in jobs: inout [Job]) {
     guard let location = locate(id, in: jobs) else { return }
-    jobs[location.job].steps[location.step].status = .queued
-    jobs[location.job].steps[location.step].artifact = nil
-    unblockDependents(of: id, inJobAt: location.job, in: &jobs)
+    switch jobs[location.job].steps[location.step].status {
+    case .failed, .cancelled:
+      jobs[location.job].steps[location.step].status = .queued
+      jobs[location.job].steps[location.step].artifact = nil
+      unblockDependents(of: id, inJobAt: location.job, in: &jobs)
+    case .queued, .blocked, .running, .done:
+      return
+    }
   }
 
+  /// Cancels a single step. Only acts on `.queued`, `.blocked`, or `.running` steps;
+  /// finished steps (`.done`, `.failed`, `.cancelled`) are no-ops.
   public static func cancel(_ id: StepID, in jobs: inout [Job]) {
-    complete(id, with: .cancelled, in: &jobs)
+    guard let location = locate(id, in: jobs) else { return }
+    switch jobs[location.job].steps[location.step].status {
+    case .queued, .blocked, .running:
+      complete(id, with: .cancelled, in: &jobs)
+    case .done, .failed, .cancelled:
+      return
+    }
   }
 
   /// Cancels every unfinished step. Finished steps keep their artifacts.

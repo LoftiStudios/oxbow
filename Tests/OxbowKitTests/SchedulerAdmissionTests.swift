@@ -63,4 +63,17 @@ struct SchedulerAdmissionTests {
 
     #expect(Scheduler.admissible(jobs: jobs, running: []) == [Build.stepID(1)])
   }
+
+  /// When two jobs have identical creation timestamps, the tie-break is on job ID.
+  /// This test asserts the specific expected step is admitted, not just "something".
+  @Test func tieBreakOnJobIDWhenTimestampsAreIdentical() {
+    let timestamp: TimeInterval = 100
+    let jobs = [
+      Build.job(1, createdAt: timestamp, Build.network(1)),
+      Build.job(2, createdAt: timestamp, Build.network(2)),
+    ]
+    // Job 1 has jobID ending in 0001, Job 2 has jobID ending in 0002
+    // So Job 1's ID should sort first in string comparison
+    #expect(Scheduler.admissible(jobs: jobs, running: []) == [Build.stepID(1)])
+  }
 }

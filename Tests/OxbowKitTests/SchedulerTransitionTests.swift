@@ -94,4 +94,61 @@ struct SchedulerTransitionTests {
 
     #expect(Scheduler.admissible(jobs: jobs, running: []) == [Build.stepID(3)])
   }
+
+  /// Retrying a `.done` step is a no-op: the artifact stays and status doesn't change.
+  @Test func retryingADoneStepLeavesItDoneWithItsArtifact() {
+    var step = Build.network(1, .done)
+    let artifact = URL(filePath: "/tmp/chat.json")
+    step.artifact = artifact
+    var jobs = [Build.job(1, step)]
+
+    Scheduler.retry(Build.stepID(1), in: &jobs)
+
+    #expect(status(jobs, 1) == .done)
+    #expect(jobs[0].steps[0].artifact == artifact)
+  }
+
+  /// Retrying a `.running` step is a no-op.
+  @Test func retryingARunningStepLeavesItRunning() {
+    var jobs = [Build.job(1, Build.network(1, .running))]
+    Scheduler.retry(Build.stepID(1), in: &jobs)
+    #expect(status(jobs, 1) == .running)
+  }
+
+  /// Retrying a `.cancelled` step requeues it and unblocks its dependents.
+  @Test func retryingACancelledStepRequeuesIt() {
+    var jobs = [Build.job(1,
+      Build.network(1, .cancelled),
+      Build.compute(2, .blocked, dependsOn: Build.stepID(1)))]
+
+    Scheduler.retry(Build.stepID(1), in: &jobs)
+
+    #expect(status(jobs, 1) == .queued)
+    #expect(status(jobs, 2) == .queued)
+  }
+
+  /// Cancelling a `.running` step cancels it and blocks its dependents.
+  @Test func cancellingARunningStepCancelsIt() {
+    var jobs = [Build.job(1,
+      Build.network(1, .running),
+      Build.compute(2, .queued, dependsOn: Build.stepID(1)))]
+
+    Scheduler.cancel(Build.stepID(1), in: &jobs)
+
+    #expect(status(jobs, 1) == .cancelled)
+    #expect(status(jobs, 2) == .blocked)
+  }
+
+  /// Cancelling a `.done` step is a no-op: status and artifact are preserved.
+  @Test func cancellingADoneStepLeavesItDone() {
+    var step = Build.network(1, .done)
+    let artifact = URL(filePath: "/tmp/chat.json")
+    step.artifact = artifact
+    var jobs = [Build.job(1, step)]
+
+    Scheduler.cancel(Build.stepID(1), in: &jobs)
+
+    #expect(status(jobs, 1) == .done)
+    #expect(jobs[0].steps[0].artifact == artifact)
+  }
 }
