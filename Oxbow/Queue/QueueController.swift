@@ -27,7 +27,12 @@ final class QueueController {
   }
 
   func start() async {
-    // Observe before starting, so no snapshot from `start()` is missed.
+    // Ordering here doesn't matter for correctness: `makeSnapshots()`
+    // registers the observer's continuation and yields the current `jobs`
+    // in the same actor turn (see QueueEngine.makeSnapshots), so whichever
+    // of these two calls reaches the engine first, the observer's first
+    // element is always a complete, up-to-date snapshot - never a partial
+    // or stale one it would need to have raced `start()` to avoid.
     observation = Task { [engine] in
       for await snapshot in await engine.makeSnapshots() {
         jobs = snapshot
@@ -40,6 +45,10 @@ final class QueueController {
       startFailure = "The saved queue could not be loaded: \(error.localizedDescription)"
     }
   }
+
+  /// Forwards to `QueueEngine.flush()`. Call on app termination so a pending
+  /// debounced save is not lost.
+  func flush() async { await engine.flush() }
 
   func enqueueVideo(urlText: String, destination: URL) throws {
     guard let videoID = TwitchVideoURL.videoID(from: urlText) else {
