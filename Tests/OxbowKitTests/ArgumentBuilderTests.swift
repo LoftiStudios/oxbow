@@ -190,4 +190,135 @@ struct ArgumentBuilderTests {
     #expect(args(video).contains("-q"))
     #expect(args(video).contains("160p30"))
   }
+
+  // MARK: - Appearance options (task 5)
+
+  @Test func renderPassesFont() {
+    let a = args(.renderChat(RenderRequest(
+      font: "Comic Sans MS", destination: URL(filePath: "/tmp/c.mp4"))))
+    let i = try! #require(a.firstIndex(of: "-f"))
+    #expect(a[i + 1] == "Comic Sans MS")
+  }
+
+  @Test func renderPassesBackgroundColor() {
+    let a = args(.renderChat(RenderRequest(
+      backgroundColor: "#202020", destination: URL(filePath: "/tmp/c.mp4"))))
+    let i = try! #require(a.firstIndex(of: "--background-color"))
+    #expect(a[i + 1] == "#202020")
+  }
+
+  @Test func renderPassesAlternateBackgroundColor() {
+    let a = args(.renderChat(RenderRequest(
+      alternateBackgroundColor: "#2a2a2a", destination: URL(filePath: "/tmp/c.mp4"))))
+    let i = try! #require(a.firstIndex(of: "--alt-background-color"))
+    #expect(a[i + 1] == "#2a2a2a")
+  }
+
+  @Test func renderPassesMessageColor() {
+    let a = args(.renderChat(RenderRequest(
+      messageColor: "#C8FF00", destination: URL(filePath: "/tmp/c.mp4"))))
+    let i = try! #require(a.firstIndex(of: "--message-color"))
+    #expect(a[i + 1] == "#C8FF00")
+  }
+
+  @Test func renderPassesOutlineSize() {
+    let a = args(.renderChat(RenderRequest(
+      outlineSize: 9, destination: URL(filePath: "/tmp/c.mp4"))))
+    let i = try! #require(a.firstIndex(of: "--outline-size"))
+    #expect(a[i + 1] == "9")
+  }
+
+  /// One render request per boolean field, with every other boolean field
+  /// deliberately flipped to its non-default value. If the builder ever wired
+  /// a flag to the wrong field, this would produce two flags disagreeing with
+  /// their expected value instead of one silently matching by coincidence.
+  private func renderRequestWithAllBooleansFlipped() -> RenderRequest {
+    RenderRequest(
+      hasBadges: false,
+      hasTimestamps: true,
+      hasSubMessages: false,
+      hasOutline: true,
+      isBTTVEnabled: false,
+      isFFZEnabled: false,
+      isSTVEnabled: false,
+      allowsUnlistedEmotes: false,
+      destination: URL(filePath: "/tmp/c.mp4"))
+  }
+
+  /// The CLI's boolean options are single-token `--flag=true|false`, the same
+  /// shape as the already-proven `--banner=false`. Two separate tokens would
+  /// also parse, but mixing forms invites the space-separated mistake the
+  /// `--opt=value` rule exists to avoid, so every boolean option here follows
+  /// the one shape throughout. Each flag is checked against its flipped
+  /// (non-default) value, so a builder that just echoed the default back
+  /// would not pass.
+  @Test func badgesFlagMatchesTheFlippedValue() {
+    #expect(args(.renderChat(renderRequestWithAllBooleansFlipped())).contains("--badges=false"))
+  }
+
+  @Test func timestampFlagMatchesTheFlippedValue() {
+    #expect(args(.renderChat(renderRequestWithAllBooleansFlipped())).contains("--timestamp=true"))
+  }
+
+  @Test func subMessagesFlagMatchesTheFlippedValue() {
+    #expect(args(.renderChat(renderRequestWithAllBooleansFlipped())).contains("--sub-messages=false"))
+  }
+
+  @Test func outlineFlagMatchesTheFlippedValue() {
+    #expect(args(.renderChat(renderRequestWithAllBooleansFlipped())).contains("--outline=true"))
+  }
+
+  @Test func bttvFlagMatchesTheFlippedValue() {
+    #expect(args(.renderChat(renderRequestWithAllBooleansFlipped())).contains("--bttv=false"))
+  }
+
+  @Test func ffzFlagMatchesTheFlippedValue() {
+    #expect(args(.renderChat(renderRequestWithAllBooleansFlipped())).contains("--ffz=false"))
+  }
+
+  @Test func stvFlagMatchesTheFlippedValue() {
+    #expect(args(.renderChat(renderRequestWithAllBooleansFlipped())).contains("--stv=false"))
+  }
+
+  @Test func allowUnlistedEmotesFlagMatchesTheFlippedValue() {
+    let a = args(.renderChat(renderRequestWithAllBooleansFlipped()))
+    #expect(a.contains("--allow-unlisted-emotes=false"))
+  }
+
+  /// 7TV resolution is why the submodule is pinned past 1.56.5 (CLAUDE.md); the
+  /// switch defaulting on and staying visible in argv is the point of surfacing
+  /// it at all, not just a side effect of a generic default table.
+  @Test func stvEmotesDefaultOnAndAreVisibleInArgv() {
+    #expect(args(render).contains("--stv=true"))
+  }
+
+  /// The two GPL-avoidance rules must keep holding once appearance options are
+  /// interleaved into the same argv: a wrong implementation that emits the new
+  /// flags but regresses --output-args or lets --sharpening slip back in would
+  /// still pass every single-field test above.
+  @Test func gplRulesStillHoldAlongsideTheNewAppearanceOptions() {
+    let a = args(.renderChat(RenderRequest(
+      font: "Comic Sans MS",
+      backgroundColor: "#000000",
+      alternateBackgroundColor: "#101010",
+      messageColor: "#eeeeee",
+      hasBadges: false,
+      hasTimestamps: true,
+      hasSubMessages: false,
+      hasOutline: true,
+      outlineSize: 2,
+      isBTTVEnabled: false,
+      isFFZEnabled: false,
+      isSTVEnabled: false,
+      allowsUnlistedEmotes: false,
+      isSharpened: true,
+      destination: URL(filePath: "/tmp/c.mp4"))))
+
+    let outputArgs = try! #require(a.first { $0.hasPrefix("--output-args=") })
+    #expect(outputArgs.contains("h264_videotoolbox"))
+    #expect(!a.contains { $0.contains("libx264") })
+    #expect(!a.contains("--sharpening"))
+    #expect(!a.contains { $0.contains("smartblur") })
+    #expect(a.contains { $0.hasPrefix("--input-args=") && $0.contains("unsharp") })
+  }
 }

@@ -59,6 +59,24 @@ public enum ArgumentBuilder {
       args += ["-h", String(request.height)]
       args += ["--framerate", String(request.framerate)]
       args += ["--font-size", String(request.fontSize)]
+      args += ["-f", request.font]
+      args += ["--background-color", request.backgroundColor]
+      args += ["--alt-background-color", request.alternateBackgroundColor]
+      args += ["--message-color", request.messageColor]
+      args += ["--outline-size", String(request.outlineSize)]
+
+      // Booleans follow the same single-token `--flag=value` shape already
+      // proven by `--banner=false` above, rather than a second, untested form.
+      args += ["--badges=\(request.hasBadges)"]
+      args += ["--timestamp=\(request.hasTimestamps)"]
+      args += ["--sub-messages=\(request.hasSubMessages)"]
+      args += ["--outline=\(request.hasOutline)"]
+      // The emote switches are surfaced deliberately: 7TV resolution is why
+      // the submodule is pinned past 1.56.5 (CLAUDE.md), not left invisible.
+      args += ["--bttv=\(request.isBTTVEnabled)"]
+      args += ["--ffz=\(request.isFFZEnabled)"]
+      args += ["--stv=\(request.isSTVEnabled)"]
+      args += ["--allow-unlisted-emotes=\(request.allowsUnlistedEmotes)"]
 
       // The CLI's default is `-c:v libx264`, which is GPL and absent from our
       // LGPL FFmpeg. VideoToolbox is bitrate-targeted; there is no CRF.
