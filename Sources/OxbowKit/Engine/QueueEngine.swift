@@ -10,6 +10,10 @@ public actor QueueEngine {
     public var helperExecutable: URL
     public var ffmpegPath: URL
     public var workspace: Workspace
+    /// - Important: `store.fileURL` must **not** live under `workspace.root`.
+    ///   `start()` unconditionally deletes the entire workspace root before
+    ///   loading the store, so a queue file nested inside it would be wiped
+    ///   out immediately before the read that is supposed to recover it.
     public var store: QueueStore
     public var makeProcess: @Sendable () -> HelperProcessing
 
@@ -33,11 +37,28 @@ public actor QueueEngine {
     let task: Task<Void, Never>
   }
 
+  /// Where a step's finished output ends up on success.
+  private enum MoveOutcome {
+    /// The step has no destination outside the workspace — its output stays
+    /// where it is, as an intermediate for a later step to consume.
+    case notApplicable
+    case moved(URL)
+    /// The destination write itself failed (full disk, unwritable volume,
+    /// permissions, …). This must never be treated the same as
+    /// `.notApplicable` — that would report a file that was never actually
+    /// saved as a successfully completed step.
+    case failed(String)
+  }
+
   private let configuration: Configuration
   private var jobs: [Job] = []
   private var running: [StepID: RunningStep] = [:]
   private var observers: [UUID: AsyncStream<[Job]>.Continuation] = [:]
   private var saveTask: Task<Void, Never>?
+  /// Jobs whose workspace a `cancel(job:)` wants removed, but that still had
+  /// a step running when the kill signals were sent. `finish` clears one out
+  /// once the last such step actually stops. See `removeJobWorkspaceIfSettled`.
+  private var jobsAwaitingWorkspaceRemoval: Set<JobID> = []
 
   public init(configuration: Configuration) {
     self.configuration = configuration
@@ -98,24 +119,52 @@ public actor QueueEngine {
   }
 
   public func cancel(step id: StepID) async {
-    await running[id]?.process.cancel()
+    // Record the terminal status — and stop admitting or blocking on it —
+    // before awaiting the kill, not after. A real helper can take up to ~2s
+    // to actually die; `finish` may run for this step at any point during
+    // that window, and by the time it does, the status here must already be
+    // `.cancelled` so `finish` bails instead of overwriting it with
+    // `.failed(signalled(...))`.
     Scheduler.cancel(id, in: &jobs)
     tick()
+
+    await running[id]?.process.cancel()
   }
 
   public func cancel(job id: JobID) async {
     guard let job = jobs.first(where: { $0.id == id }) else { return }
-    for step in job.steps {
-      await running[step.id]?.process.cancel()
-    }
+
+    // Same reasoning as `cancel(step:)`: record every unfinished step as
+    // cancelled before awaiting any kill, so `finish` never races the status
+    // write for any of them.
     Scheduler.cancel(job: id, in: &jobs)
-    configuration.workspace.removeJob(id)
     tick()
+
+    let processes = job.steps.compactMap { running[$0.id]?.process }
+
+    // Concurrently, not one at a time: each `HelperProcess.cancel()` carries
+    // its own ~2s grace period, so cancelling a three-step job serially could
+    // take up to 6s instead of 2s.
+    await withTaskGroup(of: Void.self) { group in
+      for process in processes {
+        group.addTask { await process.cancel() }
+      }
+    }
+
+    // A helper that ignored SIGTERM can still be alive (and writing) here —
+    // `removeJobWorkspaceIfSettled` only deletes once nothing is running.
+    removeJobWorkspaceIfSettled(id)
   }
 
   /// Writes any pending state immediately. Call on app termination.
   public func flush() async {
+    // Cancel to skip the debounce delay if the task is still sleeping, then
+    // await it so we know it is fully finished — whether that means it saw
+    // the cancellation and did nothing, or was already mid-write. Without
+    // the await, that in-flight write (an older snapshot than `jobs` here)
+    // could still land on disk after our own save below, silently winning.
     saveTask?.cancel()
+    await saveTask?.value
     saveTask = nil
     try? configuration.store.save(jobs)
   }
@@ -137,14 +186,20 @@ public actor QueueEngine {
     let job = jobs[location.job]
     let step = job.steps[location.step]
 
+    // `tick()` iterates a snapshot from `Scheduler.admissible`. A synchronous
+    // failure below (`makeContext` throwing) re-enters `tick()` via
+    // `completeStep`, which can already have launched a later step from that
+    // same snapshot. This guard stops the outer loop from launching that
+    // step a second time when it gets there.
+    guard step.status == .queued else { return }
+
     let context: StepContext
     do {
       context = try makeContext(job: job, step: step)
     } catch {
-      Scheduler.complete(id, with: .failed(StepFailure(
+      completeStep(id, outcome: .failed(StepFailure(
         kind: .launchFailed("\(error)"),
-        summary: "Could not create a working directory.")), in: &jobs)
-      tick()
+        summary: "Could not create a working directory.")))
       return
     }
 
@@ -173,17 +228,23 @@ public actor QueueEngine {
     context: StepContext)
     async
   {
-    var result: RunResult
     do {
-      result = try await process.run(launch) { [weak self] line in
+      let result = try await process.run(launch) { [weak self] line in
         guard case .status(let progress) = line else { return }
         await self?.updateProgress(id, progress)
       }
+      finish(id, result: result, context: context)
     } catch {
-      result = RunResult(status: .exited(-1), standardError: "\(error)")
+      // The process never produced a `RunResult` at all — there is no exit
+      // status to interpret, so this reports the honest reason directly
+      // instead of routing a fabricated `.exited(-1)` through
+      // `FailureInterpreter`, which would surface as a meaningless
+      // "exited with code -1" to the user.
+      completeStep(id, outcome: .failed(StepFailure(
+        kind: .launchFailed("\(error)"),
+        summary: "The download tool failed to start.",
+        detail: "\(error)")))
     }
-
-    finish(id, result: result, context: context)
   }
 
   private func updateProgress(_ id: StepID, _ progress: StepProgress) {
@@ -193,33 +254,81 @@ public actor QueueEngine {
   }
 
   private func finish(_ id: StepID, result: RunResult, context: StepContext) {
-    running[id] = nil
-
-    guard let location = locate(id) else { return }
+    guard let location = locate(id) else {
+      running[id] = nil
+      return
+    }
     let job = jobs[location.job]
     let step = job.steps[location.step]
+
+    guard step.status == .running else {
+      // Cancelled (or otherwise finalized) while this was in flight: the
+      // cancellation path already recorded the terminal status and blocked
+      // dependents. Overwriting it here — or moving a file that finished
+      // writing only after the user cancelled it — would both be wrong.
+      running[id] = nil
+      configuration.workspace.removeStep(job: job.id, step: id)
+      if jobsAwaitingWorkspaceRemoval.contains(job.id) {
+        removeJobWorkspaceIfSettled(job.id)
+      }
+      tick()
+      return
+    }
 
     // Success is the artifact, not the exit code: the CLI's `Main` returns
     // void, so nothing sets a meaningful exit status on its own.
     let produced = FileManager.default.fileExists(atPath: context.outputFile.path)
 
+    let outcome: StepOutcome
     if let failure = FailureInterpreter.interpret(
       exitStatus: result.status,
       standardError: result.standardError,
       artifactExists: produced)
     {
-      Scheduler.complete(id, with: .failed(failure), in: &jobs)
+      outcome = .failed(failure)
     } else {
       // The Swift parent moves the finished file out; the helper only ever
       // writes inside our workspace.
-      let final = move(context.outputFile, toDestinationFor: step.kind) ?? context.outputFile
-      Scheduler.complete(id, with: .succeeded(artifact: final), in: &jobs)
+      switch move(context.outputFile, toDestinationFor: step.kind) {
+      case .notApplicable:
+        outcome = .succeeded(artifact: context.outputFile)
+      case .moved(let destination):
+        outcome = .succeeded(artifact: destination)
+      case .failed(let message):
+        // The step did its job — the artifact existed — but we failed to get
+        // it out to the user, so this must not read as success: nothing else
+        // would ever surface the problem, and `finish`'s own cleanup would
+        // otherwise delete the only copy of the file.
+        outcome = .failed(StepFailure(
+          kind: .moveFailed(message),
+          summary: "Could not save the finished file.",
+          detail: message))
+      }
     }
+
+    completeStep(id, outcome: outcome)
+  }
+
+  /// The shared tail of every step completion: fold the outcome into `jobs`,
+  /// tear down the step's workspace, finish a job-level cancel that was
+  /// waiting on this step, and drive the queue forward.
+  ///
+  /// `running[id]` is always cleared here, on every path that reaches it —
+  /// including `finish`'s own early-return above — so `isIdle` can never
+  /// wedge on a step that finished, however it finished.
+  private func completeStep(_ id: StepID, outcome: StepOutcome) {
+    running[id] = nil
+    guard let location = locate(id) else { return }
+    let job = jobs[location.job]
+
+    Scheduler.complete(id, with: outcome, in: &jobs)
 
     configuration.workspace.removeStep(job: job.id, step: id)
 
     if jobs[location.job].status == .done {
       configuration.workspace.removeJob(job.id)
+    } else if jobsAwaitingWorkspaceRemoval.contains(job.id) {
+      removeJobWorkspaceIfSettled(job.id)
     }
 
     tick()
@@ -255,6 +364,22 @@ public actor QueueEngine {
     return nil
   }
 
+  /// Removes a job's workspace once nothing belonging to it is still
+  /// `running`. A helper can outlive its kill signal by up to ~2s, so at the
+  /// moment `cancel(job:)`'s kills return there may still be a process
+  /// mid-write into this directory. If so, this defers by recording the job
+  /// in `jobsAwaitingWorkspaceRemoval`; `completeStep`/`finish` call back in
+  /// here the moment that last step actually clears `running`.
+  private func removeJobWorkspaceIfSettled(_ id: JobID) {
+    guard let job = jobs.first(where: { $0.id == id }) else { return }
+    guard !job.steps.contains(where: { running[$0.id] != nil }) else {
+      jobsAwaitingWorkspaceRemoval.insert(id)
+      return
+    }
+    configuration.workspace.removeJob(id)
+    jobsAwaitingWorkspaceRemoval.remove(id)
+  }
+
   private func makeContext(job: Job, step: Step) throws -> StepContext {
     let stepDirectory = try configuration.workspace.prepareStep(job: job.id, step: step.id)
     let artifacts = try configuration.workspace.prepareArtifacts(job: job.id)
@@ -283,16 +408,21 @@ public actor QueueEngine {
       inputArtifact: input)
   }
 
-  /// Returns the final location, or nil when the step has no destination and
-  /// its output stays in the workspace as an intermediate.
-  private func move(_ file: URL, toDestinationFor kind: StepKind) -> URL? {
+  /// Moves a finished step's output to its final destination.
+  ///
+  /// Distinguishes "this kind has no destination, keep it as an intermediate"
+  /// from "the move itself failed" — collapsing those (e.g. via `?? file`)
+  /// would report a move failure as success. `ChatRequest.destination` is the
+  /// only optional one of the four; every other kind's destination is
+  /// required, so `.failed` is the only way `nil` can mean anything there.
+  private func move(_ file: URL, toDestinationFor kind: StepKind) -> MoveOutcome {
     let destination: URL? = switch kind {
     case .downloadVideo(let request): request.destination
     case .downloadClip(let request): request.destination
     case .downloadChat(let request): request.destination
     case .renderChat(let request): request.destination
     }
-    guard let destination else { return nil }
+    guard let destination else { return .notApplicable }
 
     do {
       try FileManager.default.createDirectory(
@@ -303,9 +433,9 @@ public actor QueueEngine {
       } else {
         try FileManager.default.moveItem(at: file, to: destination)
       }
-      return destination
+      return .moved(destination)
     } catch {
-      return nil
+      return .failed("\(error)")
     }
   }
 }
