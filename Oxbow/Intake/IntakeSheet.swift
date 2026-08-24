@@ -7,7 +7,7 @@ struct IntakeSheet: View {
   @Environment(\.dismiss) private var dismiss
   @State private var urlText = ""
   @State private var destination: URL?
-  @State private var error: String?
+  @State private var hostWindow: NSWindow?
 
   /// Live validation, so the destination's suggested name can use the id
   /// before anything is enqueued.
@@ -37,10 +37,6 @@ struct IntakeSheet: View {
           .disabled(videoID == nil)
       }
 
-      if let error {
-        Text(error).font(.caption).foregroundStyle(.red)
-      }
-
       HStack {
         Spacer()
         Button("Cancel") { dismiss() }
@@ -52,6 +48,7 @@ struct IntakeSheet: View {
     }
     .padding(20)
     .frame(width: 440)
+    .background(HostWindowReader(window: $hostWindow))
   }
 
   private func chooseDestination() {
@@ -61,16 +58,50 @@ struct IntakeSheet: View {
     panel.directoryURL = try? FileManager.default.url(
       for: .downloadsDirectory, in: .userDomainMask, appropriateFor: nil, create: false)
     panel.canCreateDirectories = true
-    if panel.runModal() == .OK { destination = panel.url }
+
+    // A sheet on the sheet. `runModal()` here would stack an app-modal panel
+    // on top of a sheet — it appears detached from the window it belongs to,
+    // and it spins a nested runloop underneath SwiftUI.
+    guard let hostWindow else {
+      // Only if the window has not been read back yet, which cannot happen
+      // once the sheet is on screen and the user has clicked a button in it.
+      if panel.runModal() == .OK { destination = panel.url }
+      return
+    }
+    panel.beginSheetModal(for: hostWindow) { response in
+      if response == .OK { destination = panel.url }
+    }
   }
 
+  /// `videoID` is non-nil here — Add is disabled otherwise — so the parse
+  /// inside `enqueueVideo` cannot fail, and the message the discarded `catch`
+  /// used to set was a word-for-word copy of the inline one under the field.
+  /// One validation path, shown live as the user types.
   private func add() {
-    guard let destination else { return }
-    do {
-      try controller.enqueueVideo(urlText: urlText, destination: destination)
-      dismiss()
-    } catch {
-      self.error = "That does not look like a Twitch VOD address."
-    }
+    guard videoID != nil, let destination else { return }
+    try? controller.enqueueVideo(urlText: urlText, destination: destination)
+    dismiss()
+  }
+}
+
+/// Hands back the AppKit window hosting this SwiftUI view.
+///
+/// `NSSavePanel.beginSheetModal(for:)` needs the sheet's own `NSWindow`, and
+/// SwiftUI does not expose it. Zero-sized and in the background, so it
+/// affects nothing it is placed behind; the state write is deferred a turn
+/// because `makeNSView` runs during a view update, and `view.window` is nil
+/// until the view is in a window anyway.
+private struct HostWindowReader: NSViewRepresentable {
+  @Binding var window: NSWindow?
+
+  func makeNSView(context: Context) -> NSView {
+    let view = NSView(frame: .zero)
+    DispatchQueue.main.async { window = view.window }
+    return view
+  }
+
+  func updateNSView(_ view: NSView, context: Context) {
+    guard window !== view.window else { return }
+    DispatchQueue.main.async { window = view.window }
   }
 }
