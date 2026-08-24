@@ -214,6 +214,15 @@ struct ArgumentBuilderTests {
     #expect(a[i + 1] == "#2a2a2a")
   }
 
+  /// `--alt-background-color` is documented by the CLI as inert without this
+  /// separate toggle also on. Isolated flip (everything else default) so a
+  /// swap with a neighbouring same-default boolean would be caught too.
+  @Test func renderPassesAlternateBackgroundsToggle() {
+    let a = args(.renderChat(RenderRequest(
+      hasAlternateBackgrounds: true, destination: URL(filePath: "/tmp/c.mp4"))))
+    #expect(a.contains("--alternate-backgrounds=true"))
+  }
+
   @Test func renderPassesMessageColor() {
     let a = args(.renderChat(RenderRequest(
       messageColor: "#C8FF00", destination: URL(filePath: "/tmp/c.mp4"))))
@@ -228,60 +237,69 @@ struct ArgumentBuilderTests {
     #expect(a[i + 1] == "9")
   }
 
-  /// One render request per boolean field, with every other boolean field
-  /// deliberately flipped to its non-default value. If the builder ever wired
-  /// a flag to the wrong field, this would produce two flags disagreeing with
-  /// their expected value instead of one silently matching by coincidence.
-  private func renderRequestWithAllBooleansFlipped() -> RenderRequest {
-    RenderRequest(
-      hasBadges: false,
-      hasTimestamps: true,
-      hasSubMessages: false,
-      hasOutline: true,
-      isBTTVEnabled: false,
-      isFFZEnabled: false,
-      isSTVEnabled: false,
-      allowsUnlistedEmotes: false,
-      destination: URL(filePath: "/tmp/c.mp4"))
-  }
-
+  /// Each boolean test isolates exactly one field away from its default,
+  /// leaving every other field — including the rest of its own family
+  /// (`hasBadges`/`hasSubMessages`, and the four emote switches, all of which
+  /// share a `true` default) — untouched at `RenderRequest()`'s default.
+  ///
+  /// This is deliberate, not just tidier than one shared "everything flipped"
+  /// fixture. A prior version of this suite flipped every boolean field to
+  /// its opposite in one shared request; within a same-default family that
+  /// drives every member to the *same* flipped value (all four emote fields
+  /// became `false` together), so a builder that swapped which field fed
+  /// which flag — `--bttv`↔`--ffz`, `--ffz`↔`--stv`, `--stv`↔
+  /// `--allow-unlisted-emotes`, or `--badges`↔`--sub-messages` — would emit
+  /// an identical set of `flag=value` strings and every test would still
+  /// pass. Isolating the field under test means a same-default sibling swap
+  /// now surfaces as `flag=<the sibling's untouched default>`, which
+  /// disagrees with the flipped value this test asserts — caught instead of
+  /// silently matching. Confirmed empirically below (see the swap
+  /// demonstration in the report), not just reasoned about.
+  ///
   /// The CLI's boolean options are single-token `--flag=true|false`, the same
-  /// shape as the already-proven `--banner=false`. Two separate tokens would
-  /// also parse, but mixing forms invites the space-separated mistake the
-  /// `--opt=value` rule exists to avoid, so every boolean option here follows
-  /// the one shape throughout. Each flag is checked against its flipped
-  /// (non-default) value, so a builder that just echoed the default back
-  /// would not pass.
-  @Test func badgesFlagMatchesTheFlippedValue() {
-    #expect(args(.renderChat(renderRequestWithAllBooleansFlipped())).contains("--badges=false"))
+  /// shape as the already-proven `--banner=false`; checking the fused string
+  /// (rather than checking the flag and the value as two separate
+  /// `#expect`s) is what makes "flag and value adjacent" actually load-
+  /// bearing here — there is no way for `contains` to match a flag whose
+  /// value came from a different field.
+  @Test func badgesFlagMatchesItsOwnFlippedValueNotASiblings() {
+    let a = args(.renderChat(RenderRequest(hasBadges: false, destination: URL(filePath: "/tmp/c.mp4"))))
+    #expect(a.contains("--badges=false"))
   }
 
-  @Test func timestampFlagMatchesTheFlippedValue() {
-    #expect(args(.renderChat(renderRequestWithAllBooleansFlipped())).contains("--timestamp=true"))
+  @Test func timestampFlagMatchesItsOwnFlippedValueNotASiblings() {
+    let a = args(.renderChat(RenderRequest(hasTimestamps: true, destination: URL(filePath: "/tmp/c.mp4"))))
+    #expect(a.contains("--timestamp=true"))
   }
 
-  @Test func subMessagesFlagMatchesTheFlippedValue() {
-    #expect(args(.renderChat(renderRequestWithAllBooleansFlipped())).contains("--sub-messages=false"))
+  @Test func subMessagesFlagMatchesItsOwnFlippedValueNotASiblings() {
+    let a = args(.renderChat(RenderRequest(hasSubMessages: false, destination: URL(filePath: "/tmp/c.mp4"))))
+    #expect(a.contains("--sub-messages=false"))
   }
 
-  @Test func outlineFlagMatchesTheFlippedValue() {
-    #expect(args(.renderChat(renderRequestWithAllBooleansFlipped())).contains("--outline=true"))
+  @Test func outlineFlagMatchesItsOwnFlippedValueNotASiblings() {
+    let a = args(.renderChat(RenderRequest(hasOutline: true, destination: URL(filePath: "/tmp/c.mp4"))))
+    #expect(a.contains("--outline=true"))
   }
 
-  @Test func bttvFlagMatchesTheFlippedValue() {
-    #expect(args(.renderChat(renderRequestWithAllBooleansFlipped())).contains("--bttv=false"))
+  @Test func bttvFlagMatchesItsOwnFlippedValueNotASiblings() {
+    let a = args(.renderChat(RenderRequest(isBTTVEnabled: false, destination: URL(filePath: "/tmp/c.mp4"))))
+    #expect(a.contains("--bttv=false"))
   }
 
-  @Test func ffzFlagMatchesTheFlippedValue() {
-    #expect(args(.renderChat(renderRequestWithAllBooleansFlipped())).contains("--ffz=false"))
+  @Test func ffzFlagMatchesItsOwnFlippedValueNotASiblings() {
+    let a = args(.renderChat(RenderRequest(isFFZEnabled: false, destination: URL(filePath: "/tmp/c.mp4"))))
+    #expect(a.contains("--ffz=false"))
   }
 
-  @Test func stvFlagMatchesTheFlippedValue() {
-    #expect(args(.renderChat(renderRequestWithAllBooleansFlipped())).contains("--stv=false"))
+  @Test func stvFlagMatchesItsOwnFlippedValueNotASiblings() {
+    let a = args(.renderChat(RenderRequest(isSTVEnabled: false, destination: URL(filePath: "/tmp/c.mp4"))))
+    #expect(a.contains("--stv=false"))
   }
 
-  @Test func allowUnlistedEmotesFlagMatchesTheFlippedValue() {
-    let a = args(.renderChat(renderRequestWithAllBooleansFlipped()))
+  @Test func allowUnlistedEmotesFlagMatchesItsOwnFlippedValueNotASiblings() {
+    let a = args(.renderChat(RenderRequest(
+      allowsUnlistedEmotes: false, destination: URL(filePath: "/tmp/c.mp4"))))
     #expect(a.contains("--allow-unlisted-emotes=false"))
   }
 
@@ -301,6 +319,7 @@ struct ArgumentBuilderTests {
       font: "Comic Sans MS",
       backgroundColor: "#000000",
       alternateBackgroundColor: "#101010",
+      hasAlternateBackgrounds: true,
       messageColor: "#eeeeee",
       hasBadges: false,
       hasTimestamps: true,

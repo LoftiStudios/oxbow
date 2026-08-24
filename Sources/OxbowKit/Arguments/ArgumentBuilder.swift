@@ -62,6 +62,9 @@ public enum ArgumentBuilder {
       args += ["-f", request.font]
       args += ["--background-color", request.backgroundColor]
       args += ["--alt-background-color", request.alternateBackgroundColor]
+      // Without this, --alt-background-color is documented by the CLI as
+      // inert.
+      args += ["--alternate-backgrounds=\(request.hasAlternateBackgrounds)"]
       args += ["--message-color", request.messageColor]
       args += ["--outline-size", String(request.outlineSize)]
 

@@ -77,7 +77,12 @@ public struct RenderRequest: Codable, Sendable, Equatable {
   public var fontSize: Double
   public var font: String
   public var backgroundColor: String
+  /// Inert on its own — the CLI documents `--alt-background-color` as
+  /// requiring `--alternate-backgrounds` to have any visible effect. Keep
+  /// `hasAlternateBackgrounds` wired to this whenever the form exposes either
+  /// (Task 9), or the user gets a colour well that silently does nothing.
   public var alternateBackgroundColor: String
+  public var hasAlternateBackgrounds: Bool
   public var messageColor: String
   public var hasBadges: Bool
   public var hasTimestamps: Bool
@@ -105,6 +110,7 @@ public struct RenderRequest: Codable, Sendable, Equatable {
     font: String = "Inter Embedded",
     backgroundColor: String = "#111111",
     alternateBackgroundColor: String = "#191919",
+    hasAlternateBackgrounds: Bool = false,
     messageColor: String = "#ffffff",
     hasBadges: Bool = true,
     hasTimestamps: Bool = false,
@@ -126,6 +132,7 @@ public struct RenderRequest: Codable, Sendable, Equatable {
     self.font = font
     self.backgroundColor = backgroundColor
     self.alternateBackgroundColor = alternateBackgroundColor
+    self.hasAlternateBackgrounds = hasAlternateBackgrounds
     self.messageColor = messageColor
     self.hasBadges = hasBadges
     self.hasTimestamps = hasTimestamps
