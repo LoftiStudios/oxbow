@@ -49,6 +49,15 @@ struct ProgressDisplayTests {
     #expect(display.remaining == nil)
   }
 
+  @Test func aSubSecondRemainingTimeIsNotShown() {
+    // A positive duration that truncates to zero whole seconds (e.g. half a
+    // second) must be suppressed the same way an exact zero is — otherwise
+    // it renders the same misleading "0s remaining".
+    let display = ProgressDisplay(progress: StepProgress(phase: "Rendering Video", fraction: 0.0, remaining: .milliseconds(500)))
+
+    #expect(display.remaining == nil)
+  }
+
   @Test func anEmptyProgressIsIndeterminateAndBlank() {
     let display = ProgressDisplay(progress: StepProgress())
 

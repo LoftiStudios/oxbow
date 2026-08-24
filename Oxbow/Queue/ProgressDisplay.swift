@@ -28,13 +28,17 @@ nonisolated struct ProgressDisplay {
     remaining = Self.format(progress.remaining)
   }
 
-  /// Nil for absent or zero durations. The CLI emits `0h0m0s Remaining`
-  /// before it has an estimate, and "0s remaining" would claim a step is
-  /// about to finish when it has barely started.
+  /// Nil for absent durations and any duration that would render as "0s".
+  /// The CLI emits `0h0m0s Remaining` before it has an estimate, and
+  /// "0s remaining" would claim a step is about to finish when it has
+  /// barely started — true whether the duration is exactly zero or just
+  /// truncates to zero whole seconds.
   private static func format(_ duration: Duration?) -> String? {
-    guard let duration, duration > .zero else { return nil }
+    guard let duration else { return nil }
 
     let total = Int(duration.components.seconds)
+    guard total > 0 else { return nil }
+
     let hours = total / 3600
     let minutes = (total % 3600) / 60
     let seconds = total % 60
