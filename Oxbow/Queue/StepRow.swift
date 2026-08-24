@@ -11,22 +11,49 @@ struct StepRow: View {
         Text(JobPresentation.label(for: step.kind))
           .font(.subheadline)
         Spacer()
-        if case .failed = step.status {
-          Button("Retry", action: onRetry)
-            .buttonStyle(.link)
-        }
+        RetryButton(step: step, action: onRetry)
       }
 
-      if case .failed(let failure) = step.status {
-        Text(failure.summary)
-          .font(.caption)
-          .foregroundStyle(.red)
-          .textSelection(.enabled)
-      } else if step.status == .running {
-        ProgressLine(progress: step.progress)
-      }
+      StepDetail(step: step)
     }
     .padding(.vertical, 2)
+  }
+}
+
+/// Retry, for a failed step, and nothing at all otherwise.
+///
+/// One definition, shared by the collapsed job row and the expanded step row.
+/// Retry has to be reachable from the job row — a `.video` template expands
+/// to exactly one step, and single-step jobs get no disclosure control
+/// (design §4), so a step row is somewhere the user can never get to for the
+/// only job kind this slice can create. Two hand-written buttons could
+/// disagree about when a step is retryable; one type cannot.
+struct RetryButton: View {
+  let step: Step
+  let action: () -> Void
+
+  var body: some View {
+    if case .failed = step.status {
+      Button("Retry", action: action)
+        .buttonStyle(.link)
+    }
+  }
+}
+
+/// A step's failure message or its progress line, whichever applies —
+/// the same derivation wherever a step is drawn.
+struct StepDetail: View {
+  let step: Step
+
+  var body: some View {
+    if case .failed(let failure) = step.status {
+      Text(failure.summary)
+        .font(.caption)
+        .foregroundStyle(.red)
+        .textSelection(.enabled)
+    } else if step.status == .running {
+      ProgressLine(progress: step.progress)
+    }
   }
 }
 
