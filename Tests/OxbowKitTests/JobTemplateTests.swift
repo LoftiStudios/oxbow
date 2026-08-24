@@ -180,6 +180,36 @@ struct JobTemplateTests {
     #expect(chatRequest.trimEnd == trimmedVideo.trimEnd)
   }
 
+  /// Trim inheritance is for the *implied* chat only. When the caller
+  /// supplies its own chat request, `chat ?? impliedChatRequest(for:)` must
+  /// never overwrite the caller's trim with the media's — the two ranges
+  /// are deliberately different here so an implementation that wrongly
+  /// preferred the video's trim would fail this, rather than passing by
+  /// coincidence.
+  @Test func mediaChatAndRenderKeepTheExplicitChatsOwnTrimNotTheMedias() {
+    let trimmedVideo = VideoRequest(
+      videoID: "2844548319",
+      quality: "160p30",
+      trimStart: .seconds(30),
+      trimEnd: .seconds(90),
+      destination: URL(filePath: "/tmp/v.mp4"))
+    let trimmedChat = ChatRequest(
+      videoID: "2844548319",
+      trimStart: .seconds(0),
+      trimEnd: .seconds(10),
+      format: .html)
+
+    let job = makeJob(JobTemplate(media: .video(trimmedVideo), chat: trimmedChat, render: render))
+    guard case .downloadChat(let chatRequest) = job.steps[1].kind else {
+      Issue.record("expected the chat download second")
+      return
+    }
+    #expect(chatRequest.trimStart == trimmedChat.trimStart)
+    #expect(chatRequest.trimEnd == trimmedChat.trimEnd)
+    #expect(chatRequest.trimStart != trimmedVideo.trimStart)
+    #expect(chatRequest.trimEnd != trimmedVideo.trimEnd)
+  }
+
   /// Clips are a media type the enum could not add without doubling its case
   /// count (`clipAndChat`, `clipChatAndRender`). This is the render half: the
   /// implied chat download has no video to borrow a VOD ID from, so it must
