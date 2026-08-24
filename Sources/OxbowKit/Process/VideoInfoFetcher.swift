@@ -6,8 +6,13 @@ public enum VideoInfoFetchError: Error, Equatable {
   /// every other CLI failure, the useful sentence is usually in there.
   case helperFailed(status: ProcessExitStatus, standardError: String)
   /// The helper exited cleanly but its stdout did not contain a line
-  /// `VideoInfo.parse` could make sense of.
-  case unparseableOutput
+  /// `VideoInfo.parse` could make sense of. Carries a bounded snippet of the
+  /// joined output — `Raw`'s shape is not a stable upstream contract (see
+  /// `VideoInfo`'s doc comment), and a bare case name gives whoever debugs a
+  /// format drift nothing to go on. This is the same lesson `StepLog` exists
+  /// for: capturing helper output and then discarding it is how a diagnosable
+  /// failure turns into one that needs a process sample instead.
+  case unparseableOutput(snippet: String)
 }
 
 /// Fetches one video's metadata by running the CLI's `info` verb directly.
@@ -22,6 +27,15 @@ public enum VideoInfoFetchError: Error, Equatable {
 /// CLI's `info --id` accepts a VOD id and a clip slug identically, so the
 /// caller resolves which it holds and passes the string.
 public enum VideoInfoFetcher {
+
+  /// How much of the unparseable output `.unparseableOutput` keeps, in
+  /// `Character`s. Enough to show what upstream actually sent; bounded so a
+  /// runaway payload (a very chatty helper, or a genuinely wrong invocation)
+  /// can never balloon an error string to megabytes.
+  ///
+  /// Not `private`: `VideoInfoFetcherTests` pins this bound so a future edit
+  /// can't accidentally make it unbounded again.
+  static let snippetLimit = 280
 
   /// Accumulates the helper's narrative output.
   ///
@@ -72,10 +86,19 @@ public enum VideoInfoFetcher {
         standardError: result.standardError)
     }
 
-    guard let info = VideoInfo.parse(await collector.joined) else {
-      throw VideoInfoFetchError.unparseableOutput
+    let joined = await collector.joined
+    guard let info = VideoInfo.parse(joined) else {
+      throw VideoInfoFetchError.unparseableOutput(snippet: Self.snippet(of: joined))
     }
 
     return info
+  }
+
+  /// Truncates `output` to `snippetLimit`, leaving a visible marker so the
+  /// snippet is never mistaken for the whole thing.
+  private static func snippet(of output: String) -> String {
+    guard output.count > snippetLimit else { return output }
+    let truncated = output.prefix(snippetLimit)
+    return "\(truncated)… [truncated, \(output.count) characters total]"
   }
 }

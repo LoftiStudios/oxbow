@@ -92,7 +92,41 @@ struct VideoInfoFetcherTests {
     await #expect {
       _ = try await VideoInfoFetcher.fetch(id: "123", helper: helperPath, process: fake)
     } throws: { error in
-      (error as? VideoInfoFetchError) == .unparseableOutput
+      guard case .unparseableOutput = error as? VideoInfoFetchError else { return false }
+      return true
+    }
+  }
+
+  /// The snippet must contain something specific to *this* failure, not just
+  /// be non-empty — a wrong implementation that attached a fixed placeholder
+  /// string (e.g. `"unparseable"`) would satisfy an empty-string check but
+  /// give a debugger nothing to work from.
+  @Test func unparseableOutputErrorCarriesARecognizableSnippet() async throws {
+    let fake = FakeInfoHelper(
+      .succeeds(stdout: "[STATUS] - Fetching Video Info [1/1]\ndefinitely-not-json-2946\n"))
+
+    await #expect {
+      _ = try await VideoInfoFetcher.fetch(id: "123", helper: helperPath, process: fake)
+    } throws: { error in
+      guard case .unparseableOutput(let snippet) = error as? VideoInfoFetchError else { return false }
+      return snippet.contains("definitely-not-json-2946")
+    }
+  }
+
+  /// Pins the snippet's bound. Feeds output far larger than the limit and
+  /// asserts the payload stays within it — so a future edit that drops the
+  /// truncation can't silently let an unbounded payload back into the error.
+  @Test func unparseableOutputSnippetStaysWithinItsBound() async throws {
+    let huge = String(repeating: "z", count: VideoInfoFetcher.snippetLimit * 20)
+    let fake = FakeInfoHelper(.succeeds(stdout: huge))
+
+    await #expect {
+      _ = try await VideoInfoFetcher.fetch(id: "123", helper: helperPath, process: fake)
+    } throws: { error in
+      guard case .unparseableOutput(let snippet) = error as? VideoInfoFetchError else { return false }
+      // Some room over the raw limit for the truncation marker itself, but
+      // nowhere close to `huge`'s size — the point being tested.
+      return snippet.count <= VideoInfoFetcher.snippetLimit + 64 && snippet.count < huge.count
     }
   }
 
