@@ -16,10 +16,14 @@ nonisolated enum TwitchLink {
     let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmed.isEmpty else { return nil }
 
-    // A bare token: all digits is a VOD id, anything else a clip slug.
-    // Clip slugs are Twitch-generated words, so there is no format to check
-    // beyond "not empty and not a URL".
+    // A bare token: all digits is a VOD id, anything else a clip slug — but
+    // only if it has no dot. Clip slugs are Twitch-generated alphanumeric
+    // words with no punctuation; a dotted bare token (e.g. "evil-twitch.tv")
+    // is a host someone typed without a scheme, not a slug, and letting it
+    // through here would silently hand the CLI a nonsense id instead of
+    // giving the user an honest rejection.
     if !trimmed.contains("/") && !trimmed.contains(":") {
+      guard !trimmed.contains(".") else { return nil }
       return isNumeric(trimmed) ? .video(trimmed) : .clip(trimmed)
     }
 

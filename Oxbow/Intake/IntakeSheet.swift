@@ -10,8 +10,18 @@ struct IntakeSheet: View {
   @State private var hostWindow: NSWindow?
 
   /// Live validation, so the destination's suggested name can use the id
-  /// or slug before anything is enqueued.
-  private var target: TwitchLink.Target? { TwitchLink.parse(urlText) }
+  /// before anything is enqueued.
+  ///
+  /// Only `.video` is surfaced here — `TwitchLink.parse` also recognizes
+  /// clips, but `QueueController.enqueueVideo` only accepts `.video`, and
+  /// this sheet is rewritten wholesale in Task 8 to wire clips up properly.
+  /// Until then, treating a parsed clip as "not a target" keeps Add honestly
+  /// disabled instead of enqueueing nothing and closing as if it worked.
+  private var target: TwitchLink.Target? {
+    let parsed = TwitchLink.parse(urlText)
+    guard case .video = parsed else { return nil }
+    return parsed
+  }
 
   var body: some View {
     VStack(alignment: .leading, spacing: 16) {
@@ -52,14 +62,11 @@ struct IntakeSheet: View {
   }
 
   private func chooseDestination() {
-    guard let target else { return }
-    let id: String
-    switch target {
-    case .video(let videoID): id = videoID
-    case .clip(let slug): id = slug
-    }
+    // `target` is only ever `.video` — see its doc comment — so this always
+    // matches.
+    guard case .video(let videoID) = target else { return }
     let panel = NSSavePanel()
-    panel.nameFieldStringValue = "twitch-\(id).mp4"
+    panel.nameFieldStringValue = "twitch-\(videoID).mp4"
     panel.directoryURL = try? FileManager.default.url(
       for: .downloadsDirectory, in: .userDomainMask, appropriateFor: nil, create: false)
     panel.canCreateDirectories = true
