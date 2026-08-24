@@ -165,4 +165,29 @@ struct ArgumentBuilderTests {
   @Test func unsharpenedRenderDoesNotOverrideInputArgs() {
     #expect(!args(render).contains { $0.hasPrefix("--input-args=") })
   }
+
+  @Test func emptyVideoQualityOmitsTheQualityFlag() {
+    let kind = StepKind.downloadVideo(VideoRequest(
+      videoID: "2844548319",
+      quality: "",
+      destination: URL(filePath: "/Users/me/Movies/v.mp4")))
+
+    #expect(!args(kind).contains("-q"))
+    #expect(!args(kind).contains(""))
+  }
+
+  @Test func emptyClipQualityOmitsTheQualityFlag() {
+    let kind = StepKind.downloadClip(ClipRequest(
+      clipSlug: "SomeClipSlug",
+      quality: "",
+      destination: URL(filePath: "/Users/me/Movies/c.mp4")))
+
+    #expect(!args(kind).contains("-q"))
+    #expect(!args(kind).contains(""))
+  }
+
+  @Test func nonEmptyQualityStillPassesTheFlag() {
+    #expect(args(video).contains("-q"))
+    #expect(args(video).contains("160p30"))
+  }
 }

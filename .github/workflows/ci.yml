@@ -44,14 +44,19 @@ jobs:
         run: swift test
 
   app-build:
-    name: App build (unsigned)
+    name: App build and tests (unsigned)
     runs-on: macos-26
     steps:
       - uses: actions/checkout@v5
       - name: Toolchain versions
         run: xcodebuild -version
-      - name: Build Oxbow.app
+      # `test` rather than `build`: it compiles the app target AND runs the
+      # app-target unit tests, which `build` alone would silently skip.
+      # OxbowUITests is excluded deliberately — this slice writes no UI tests,
+      # and launching a GUI app on a runner buys nothing here.
+      - name: Build and test Oxbow.app
         run: >
-          xcodebuild -project Oxbow.xcodeproj -scheme Oxbow
-          -configuration Debug build
+          xcodebuild test -project Oxbow.xcodeproj -scheme Oxbow
+          -configuration Debug
+          -only-testing:OxbowTests
           CODE_SIGNING_ALLOWED=NO

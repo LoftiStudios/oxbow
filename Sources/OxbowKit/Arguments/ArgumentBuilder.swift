@@ -11,13 +11,19 @@ public enum ArgumentBuilder {
   /// output. We write into our own workspace, so overwriting is always safe.
   private static let collision = ["--collision", "Overwrite"]
 
+  /// An empty quality means "best available": the CLI picks when `-q` is
+  /// absent, and passing `-q ""` is not the same thing.
+  private static func quality(_ value: String) -> [String] {
+    value.isEmpty ? [] : ["-q", value]
+  }
+
   public static func arguments(for kind: StepKind, context: StepContext) -> [String] {
     switch kind {
     case .downloadVideo(let request):
       // `--banner=false` is a per-verb option and must follow the verb.
       var args = ["videodownload", "--banner=false"] + collision
       args += ["--id", request.videoID]
-      args += ["-q", request.quality]
+      args += quality(request.quality)
       args += ["-o", context.outputFile.path]
       args += ["--temp-path", context.stepTempDirectory.path]
       args += ["--ffmpeg-path", context.ffmpegPath.path]
@@ -27,7 +33,7 @@ public enum ArgumentBuilder {
     case .downloadClip(let request):
       var args = ["clipdownload", "--banner=false"] + collision
       args += ["--id", request.clipSlug]
-      args += ["-q", request.quality]
+      args += quality(request.quality)
       args += ["-o", context.outputFile.path]
       args += ["--temp-path", context.stepTempDirectory.path]
       args += ["--ffmpeg-path", context.ffmpegPath.path]
