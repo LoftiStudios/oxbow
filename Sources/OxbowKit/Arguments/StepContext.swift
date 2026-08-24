@@ -12,16 +12,22 @@ public struct StepContext: Sendable {
   public var ffmpegPath: URL
   /// The artifact of `dependsOn`, if this step consumes one.
   public var inputArtifact: URL?
+  /// Where the helper's narrative output is kept. Optional because the
+  /// argument builder — this type's other consumer — has no use for it and
+  /// its tests construct contexts without one.
+  public var log: StepLog?
 
   public init(
     stepTempDirectory: URL,
     outputFile: URL,
     ffmpegPath: URL,
-    inputArtifact: URL? = nil)
+    inputArtifact: URL? = nil,
+    log: StepLog? = nil)
   {
     self.stepTempDirectory = stepTempDirectory
     self.outputFile = outputFile
     self.ffmpegPath = ffmpegPath
     self.inputArtifact = inputArtifact
+    self.log = log
   }
 }

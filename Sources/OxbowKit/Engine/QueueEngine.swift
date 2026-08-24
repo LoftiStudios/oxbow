@@ -112,6 +112,20 @@ public actor QueueEngine {
     tick()
   }
 
+  /// The tail of a step's captured helper output, or nil if it has none.
+  ///
+  /// Read through the engine rather than handing the UI a file path: the
+  /// workspace layout is the engine's business, and a step's log is deleted
+  /// with its job's workspace, so a URL handed out earlier could point at
+  /// nothing by the time a view got round to reading it.
+  public func log(for step: StepID, lines: Int = 200) async -> String? {
+    guard let location = locate(step) else { return nil }
+    let url = configuration.workspace.logFile(job: jobs[location.job].id, step: step)
+    guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+    let contents = await StepLog(fileURL: url).tail(lines: lines)
+    return contents.isEmpty ? nil : contents
+  }
+
   public func enqueue(_ template: JobTemplate, title: String) {
     let job = template.makeJob(
       id: JobID(rawValue: UUID()),
@@ -292,10 +306,21 @@ public actor QueueEngine {
     async
   {
     do {
+      let log = context.log
       let result = try await process.run(launch) { [weak self] line in
-        guard case .status(let progress) = line else { return }
-        await self?.updateProgress(id, progress)
+        switch line {
+        case .status(let progress):
+          // Status lines drive the progress bar and arrive by the hundreds.
+          // Writing them to the log too would bury the handful of lines that
+          // actually say what a step was doing when it stopped.
+          await self?.updateProgress(id, progress)
+        case .log(let level, let message):
+          await log?.append("[\(level)] \(message)")
+        case .ffmpeg(let message):
+          await log?.append("<FFMPEG> \(message)")
+        }
       }
+      await log?.close()
       finish(id, result: result, context: context)
     } catch {
       // `process.run` never produced a `RunResult` at all — there is no exit
@@ -587,7 +612,8 @@ public actor QueueEngine {
       stepTempDirectory: stepDirectory,
       outputFile: artifacts.appending(path: name),
       ffmpegPath: configuration.ffmpegPath,
-      inputArtifact: input)
+      inputArtifact: input,
+      log: StepLog(fileURL: configuration.workspace.logFile(job: job.id, step: step.id)))
   }
 
   /// Moves a finished step's output to its final destination.

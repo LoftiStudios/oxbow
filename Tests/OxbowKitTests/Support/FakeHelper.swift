@@ -35,6 +35,9 @@ actor FakeHelper: HelperProcessing {
     async throws -> RunResult
   {
     await onOutput(.status(StepProgress(phase: "Working", fraction: 0.5)))
+    // The narrative output a real helper interleaves with its status lines.
+    await onOutput(.log(level: .info, message: "Fetching video info"))
+    await onOutput(.ffmpeg("frame= 42 fps=24"))
 
     switch behaviour {
     case .succeeds:

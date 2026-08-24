@@ -3,6 +3,7 @@ import OxbowKit
 
 struct JobRow: View {
   let job: Job
+  let controller: QueueController
   let onCancel: () -> Void
   let onRetry: (StepID) -> Void
 
@@ -64,12 +65,12 @@ struct JobRow: View {
       }
 
       if summarisesRepresentativeStep, let representative {
-        StepDetail(step: representative)
+        StepDetail(step: representative, controller: controller)
       }
 
       if isExpanded {
         ForEach(job.steps) { step in
-          StepRow(step: step) { onRetry(step.id) }
+          StepRow(step: step, controller: controller) { onRetry(step.id) }
             .padding(.leading, 20)
         }
       }
