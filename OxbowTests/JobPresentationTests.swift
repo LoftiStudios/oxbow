@@ -28,6 +28,17 @@ struct JobPresentationTests {
     #expect(JobPresentation.representativeStep(of: subject)?.status == .failed(failure))
   }
 
+  @Test func prefersTheRunningStepOverAFailedStep() {
+    let failure = StepFailure(kind: .noArtifact, summary: "no artifact")
+    let subject = job([.running, .failed(failure)])
+    #expect(JobPresentation.representativeStep(of: subject)?.status == .running)
+  }
+
+  @Test func fallsBackToTheCancelledStepBeforeAQueuedStep() {
+    let subject = job([.cancelled, .queued])
+    #expect(JobPresentation.representativeStep(of: subject)?.status == .cancelled)
+  }
+
   @Test func fallsBackToTheFirstPendingStep() {
     let subject = job([.done, .queued, .queued])
     #expect(JobPresentation.representativeStep(of: subject)?.status == .queued)

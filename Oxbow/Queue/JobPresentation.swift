@@ -9,14 +9,18 @@ nonisolated enum JobPresentation {
 
   /// The step a collapsed row describes.
   ///
-  /// Precedence mirrors `Job.status` so a row's icon and its progress line
-  /// can never describe different steps.
+  /// A strict mirror of `Job.status`'s own precedence tiers, in the same
+  /// order — running, then failed/blocked, then cancelled, then queued,
+  /// then the last step — so a row's icon (read from `job.status`) and its
+  /// progress line (derived from this function) always describe the same
+  /// step and can never disagree.
   static func representativeStep(of job: Job) -> Step? {
     if let running = job.steps.first(where: { $0.status == .running }) { return running }
     if let failed = job.steps.first(where: {
       if case .failed = $0.status { return true }
       return $0.status == .blocked
     }) { return failed }
+    if let cancelled = job.steps.first(where: { $0.status == .cancelled }) { return cancelled }
     if let pending = job.steps.first(where: { $0.status == .queued }) { return pending }
     return job.steps.last
   }
