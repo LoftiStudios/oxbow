@@ -308,8 +308,11 @@ to each other:
     artifacts/         ← intermediates handed between steps
 ```
 
-Step subdirectories are deleted when the step ends; the job workspace when the
-job reaches a terminal state.
+Step subdirectories are deleted when the step ends. The job workspace is
+deleted when the job reaches `.done` — clearing the artifact claim of any
+`.done` step that pointed inside it in the same operation — and is otherwise
+kept for as long as a `.done` step in a `.failed` or `.cancelled` job still
+claims an artifact there, so a later retry has its input intact.
 
 **Queue file:** the whole `[Job]` array as JSON at
 `Application Support/Oxbow/queue.json`, debounced ~500 ms, written via temp file
@@ -328,6 +331,17 @@ plus `replaceItemAt` so a crash mid-write cannot truncate the queue.
    deliberately narrow — a `.failed` or `.cancelled` job is still retryable,
    and a retry must re-fetch a vanished intermediate rather than run against a
    path pointing at nothing.
+
+   **Known defect, deliberately deferred:** narrowing the exemption to `.done`
+   has a cost this design does not yet close. A `.failed` or `.cancelled` job
+   whose intermediate was swept still has that step requeued at launch.
+   Because `Scheduler.admissible` reads only step status and dependencies —
+   never job status — the trailing `tick()` in `start()` then launches it
+   unprompted. So a cancelled chat+render job re-downloads its chat on every
+   launch, visibly resuming work the user explicitly stopped, and there is no
+   job-removal API to escape it. The fix is to make `Scheduler.admissible`
+   skip steps belonging to a job that is not runnable; it is deferred, not
+   accepted, because nothing consumes this package yet.
 3. Reconcile each remaining step:
    - `.running` → `.failed(.interrupted)`
    - `.done` → stays `.done` **iff `artifact` still exists and is non-empty**
