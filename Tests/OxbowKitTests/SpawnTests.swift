@@ -45,13 +45,28 @@ struct SpawnTests {
       """)
     let spawned = try ProcessSpawner.spawn(executable: url, arguments: [], workingDirectory: directory)
 
-    // First line of stdout is the grandchild's pid.
+    // First line of stdout is the grandchild's pid. availableData returns
+    // immediately (possibly empty) rather than blocking, so an un-bounded
+    // loop here would busy-spin forever if the fixture died before printing
+    // anything — wedging CI instead of failing the test. Cap it with a
+    // deadline and fail explicitly on expiry.
     var buffer = Data()
+    let deadline = Date().addingTimeInterval(5)
     while !buffer.contains(UInt8(ascii: "\n")) {
-      buffer.append(spawned.stdout.availableData)
+      guard Date() < deadline else {
+        Issue.record("Timed out waiting for the grandchild pid on stdout")
+        return
+      }
+      let chunk = spawned.stdout.availableData
+      if chunk.isEmpty {
+        usleep(5_000)
+      } else {
+        buffer.append(chunk)
+      }
     }
-    let grandchild = pid_t(String(decoding: buffer, as: UTF8.self)
-      .trimmingCharacters(in: .whitespacesAndNewlines))!
+    let grandchildString = String(decoding: buffer, as: UTF8.self)
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+    let grandchild = try #require(pid_t(grandchildString))
 
     #expect(isAlive(spawned.pid))
     #expect(isAlive(grandchild))
@@ -72,5 +87,45 @@ struct SpawnTests {
         arguments: [],
         workingDirectory: URL(filePath: NSTemporaryDirectory()))
     }
+  }
+
+  /// Finding 2: pid 0 means "my own process group" to `kill`, which for the
+  /// host app would mean signalling Oxbow itself and everything launched
+  /// alongside it. This must be refused rather than forwarded.
+  @Test func signalOnPidZeroIsANoOp() throws {
+    let (url, directory) = try script("sleep 300")
+    let spawned = try ProcessSpawner.spawn(executable: url, arguments: [], workingDirectory: directory)
+    defer {
+      ProcessSpawner.signal(SIGKILL, toGroupOf: spawned.pid)
+      _ = ProcessSpawner.wait(spawned.pid)
+    }
+
+    let result = ProcessSpawner.signal(SIGKILL, toGroupOf: 0)
+
+    #expect(result == -1)
+    #expect(isAlive(spawned.pid), "signal(toGroupOf: 0) must not touch any real process group")
+  }
+
+  /// Finding 3 regression test. macOS pipe buffers are 16 KB (growing to
+  /// 64 KB); a child that writes more than that to a stream nobody is
+  /// draining blocks in write(2) and never exits. This locks in that
+  /// draining stdout and stderr concurrently avoids the deadlock — the
+  /// pattern Task 11 already uses via two detached tasks.
+  @Test func drainingStdoutAndStderrConcurrentlyAvoidsDeadlock() async throws {
+    let (url, directory) = try script("""
+      yes x | head -c 100000 1>&2
+      echo done
+      """)
+    let spawned = try ProcessSpawner.spawn(executable: url, arguments: [], workingDirectory: directory)
+
+    async let stdoutData = Task.detached { spawned.stdout.readDataToEndOfFile() }.value
+    async let stderrData = Task.detached { spawned.stderr.readDataToEndOfFile() }.value
+
+    let (out, err) = await (stdoutData, stderrData)
+    let status = ProcessSpawner.wait(spawned.pid)
+
+    #expect(String(decoding: out, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines) == "done")
+    #expect(err.count == 100_000)
+    #expect(status == .exited(0))
   }
 }
