@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: TwitchDownloader (upstream CLI)
+    url: https://github.com/lay295/TwitchDownloader/issues
+    about: Oxbow is a front end. If the same failure happens running TwitchDownloaderCLI directly, report it upstream.
+  - name: Security vulnerability
+    url: https://github.com/barclay/oxbow/security/advisories/new
+    about: Please report security issues privately, not as a public issue.

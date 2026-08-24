@@ -1,0 +1,103 @@
+name: Bug Report
+description: Something in Oxbow does not work
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Oxbow is a front end for TwitchDownloaderCLI. If the same failure happens
+        when you run the CLI directly, it belongs
+        [upstream](https://github.com/lay295/TwitchDownloader/issues) instead.
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Checklist
+      options:
+        - label: I have searched [existing issues](https://github.com/barclay/oxbow/issues?q=is%3Aissue) for a duplicate
+          required: true
+        - label: I am running the latest [release](https://github.com/barclay/oxbow/releases/latest)
+          required: true
+
+  - type: input
+    id: app_version
+    attributes:
+      label: Oxbow version
+      description: Oxbow → About Oxbow. Include the helper version string if it is shown.
+      placeholder: "0.1.0 (helper 1.56.5+d4122d8)"
+    validations:
+      required: true
+
+  - type: input
+    id: macos_version
+    attributes:
+      label: macOS version
+      description: Apple menu → About This Mac.
+      placeholder: "15.3.1"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: chip
+    attributes:
+      label: Mac chip
+      description: Oxbow is Apple Silicon only. Intel Macs are not supported.
+      options:
+        - Apple Silicon (M1/M2/M3/M4 or later)
+        - Intel
+    validations:
+      required: true
+
+  - type: dropdown
+    id: operation
+    attributes:
+      label: What were you doing?
+      options:
+        - Downloading a VOD
+        - Downloading a clip
+        - Downloading chat
+        - Rendering chat
+        - Something else
+    validations:
+      required: true
+
+  - type: textarea
+    id: what_happened
+    attributes:
+      label: What happened?
+      description: What you expected, and what you got instead.
+      placeholder: The download reached 100% and then the job failed with no visible error.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Paste VOD URL ...
+        2. Choose ...
+        3. Click Start
+    validations:
+      required: true
+
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics
+      description: |
+        Paste the output of the app's diagnostics, if you can get to it. This is
+        by far the most useful thing in a report — it carries the exact helper
+        command line and its output.
+      render: text
+    validations:
+      required: false
+
+  - type: input
+    id: vod_id
+    attributes:
+      label: VOD or clip ID
+      description: If the problem is specific to one video, and it is public.
+      placeholder: "1694846567"
+    validations:
+      required: false
