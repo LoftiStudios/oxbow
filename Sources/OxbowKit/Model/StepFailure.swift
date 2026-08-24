@@ -6,6 +6,9 @@ public struct StepFailure: Codable, Sendable, Equatable {
     case exited(code: Int32)
     /// Killed by a signal we did not send — i.e. it crashed.
     case signalled(Int32)
+    /// `waitpid` itself failed, so the exit status is unknown. This must never
+    /// be treated as success — a killed download must never read as done.
+    case waitFailed(errno: Int32)
     /// Exited without producing a usable artifact. This, not the exit code, is
     /// the real failure criterion. See the design spec, §1.5.
     case noArtifact
