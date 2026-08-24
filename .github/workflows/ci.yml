@@ -30,7 +30,7 @@ jobs:
     name: OxbowKit tests
     runs-on: macos-26
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Toolchain versions
         run: |
           xcodebuild -version
@@ -42,7 +42,7 @@ jobs:
     name: App build (unsigned)
     runs-on: macos-26
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Toolchain versions
         run: xcodebuild -version
       - name: Build Oxbow.app

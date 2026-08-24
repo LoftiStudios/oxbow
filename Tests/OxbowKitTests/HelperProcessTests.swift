@@ -68,6 +68,53 @@ struct HelperProcessTests {
     #expect(result.status == .signalled(SIGTERM) || result.status == .signalled(SIGKILL))
   }
 
+  /// Regression guard for cooperative-pool starvation, found via CI on
+  /// 2026-08-24: on a 3-core runner, `cancel()` — an actor job that needs a
+  /// cooperative-pool thread to even begin — could not run until the child's
+  /// `sleep 300` expired, because every pool thread was pinned by another
+  /// run's blocking `read`/`waitpid` syscalls. The blocking work must live on
+  /// dedicated threads so that no amount of concurrent runs can starve the
+  /// pool.
+  ///
+  /// Spawns more concurrent runs than the machine has cores. If any blocking
+  /// syscall runs on the cooperative pool, the pool saturates regardless of
+  /// core count and the cancellations cannot be delivered until the fixtures
+  /// exit on their own (~15s) — failing both the status and the elapsed-time
+  /// expectations. Bounded: the fixtures exit by themselves, so the broken
+  /// case fails loudly instead of wedging.
+  @Test func cancellationIsDeliveredWhileEveryCoreRunsABlockedHelper() async throws {
+    let width = ProcessInfo.processInfo.activeProcessorCount + 2
+    var launches: [Launch] = []
+    for _ in 0..<width { launches.append(try script("sleep 15")) }
+    defer { for launch in launches { remove(launch) } }
+
+    let processes = (0..<width).map { _ in HelperProcess() }
+    let clock = ContinuousClock()
+    let start = clock.now
+
+    let results = try await withThrowingTaskGroup(of: RunResult.self) { group in
+      for (process, launch) in zip(processes, launches) {
+        group.addTask { try await process.run(launch) { _ in } }
+      }
+      try await Task.sleep(for: .milliseconds(500))
+      // Concurrently: `cancel()` holds a 2s SIGTERM grace period, so awaiting
+      // them one at a time would take 2s x width and the fixtures would exit
+      // on their own before the later cancels ever arrived.
+      await withTaskGroup(of: Void.self) { cancels in
+        for process in processes { cancels.addTask { await process.cancel() } }
+      }
+      var collected: [RunResult] = []
+      for try await result in group { collected.append(result) }
+      return collected
+    }
+    let elapsed = clock.now - start
+
+    for result in results {
+      #expect(result.status == .signalled(SIGTERM) || result.status == .signalled(SIGKILL))
+    }
+    #expect(elapsed < .seconds(10), "cancellations were starved until the fixtures exited on their own")
+  }
+
   /// An instance cancelled before `run` must not spawn anything at all.
   /// Spawning and then immediately killing still starts a real CLI process,
   /// which reaches the network before it dies.
