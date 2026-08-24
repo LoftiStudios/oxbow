@@ -9,7 +9,21 @@ struct OxbowApp: App {
   @State private var unavailable: String?
 
   var body: some Scene {
-    WindowGroup {
+    // `Window`, not `WindowGroup`. The engine is built once at launch
+    // (design §2) and the app is single-window (design §4), and a
+    // `WindowGroup` enforces neither: ⌘N stays live, and each new window
+    // gets its own `@State`, so a second window builds a second
+    // `QueueController` — a second `QueueEngine` over the same queue.json
+    // and the same workspace. `QueueEngine.start()` sweeps that workspace
+    // unconditionally, so opening a window would delete the working files of
+    // a download already in flight, and `appDelegate.controller` would be
+    // clobbered so the first engine's pending save never flushed.
+    //
+    // Removing the New Window command from the group would hide the menu
+    // item while leaving the scene duplicable by anything else that opens
+    // one. `Window` makes single-instance the scene's own guarantee, and
+    // drops the menu item as a consequence rather than as the fix.
+    Window("Oxbow", id: "queue") {
       Group {
         if let controller {
           QueueView(controller: controller, unavailable: unavailable)
