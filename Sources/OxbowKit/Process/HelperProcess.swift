@@ -8,17 +8,14 @@ import Foundation
 /// path. SIGTERM first is purely for FFmpeg's benefit — it closes its output
 /// file on receipt — and SIGKILL follows regardless.
 ///
-/// - Important: Each `run` pins **three threads** of Swift's cooperative
-///   thread pool for the life of the invocation — the stdout pump, the
-///   stderr pump, and the `waitpid` call are three **blocking** syscalls
-///   inside `Task.detached`, with no suspension point for the runtime to
-///   reclaim the thread. (Three pinned threads, not three suspended tasks:
-///   counting awaits will not find them.) This is acceptable only because
-///   `Scheduler` admits at most one `.network` step and one `.compute` step
-///   concurrently, capping concurrent `HelperProcess.run` calls at 2 (6
-///   pinned threads worst case). Raising that admission cap without first
-///   revisiting this (e.g. moving to `DispatchIO` or a dedicated,
-///   non-cooperative thread pool) will starve the cooperative pool.
+/// - Important: Each `run` uses **three dedicated threads** for the life of
+///   the invocation — the stdout pump, the stderr pump, and the `waitpid`
+///   call are blocking syscalls, hosted on `BlockingThread` / their own
+///   `Thread` precisely so they can never pin the cooperative pool. The async
+///   tasks below only ever suspend. This replaced an earlier design that
+///   blocked inside `Task.detached`: on a 3-core CI runner the pool saturated
+///   and `cancel()` — itself an actor job needing a pool thread — was starved
+///   until the child exited on its own.
 ///
 /// One instance drives exactly one invocation of `run`. `cancel()` sets a
 /// one-way flag that is never reset, so `run` on an already-cancelled
@@ -60,28 +57,43 @@ public actor HelperProcess {
     let stdoutHandle = spawned.stdout
     let stderrHandle = spawned.stderr
 
+    // The reads block on a dedicated thread and feed chunks through a stream,
+    // so the parsing task — which must await `onOutput` — only ever suspends.
+    let stdoutChunks = AsyncStream<Data> { continuation in
+      let thread = Thread {
+        while true {
+          let data = stdoutHandle.availableData
+          if data.isEmpty { break }
+          continuation.yield(data)
+        }
+        continuation.finish()
+      }
+      thread.name = "oxbow.helper-stdout"
+      thread.start()
+    }
+
     let stdoutPump = Task.detached {
       var parser = StatusLineParser()
-      while true {
-        let data = stdoutHandle.availableData
-        if data.isEmpty { break }
+      for await data in stdoutChunks {
         for line in parser.consume(data) { await onOutput(line) }
       }
       if let tail = parser.finish() { await onOutput(tail) }
     }
 
-    let stderrPump = Task.detached { () -> String in
-      var accumulated = Data()
-      while true {
-        let data = stderrHandle.availableData
-        if data.isEmpty { break }
-        accumulated.append(data)
+    let stderrPump = Task.detached {
+      await BlockingThread.run("oxbow.helper-stderr") { () -> String in
+        var accumulated = Data()
+        while true {
+          let data = stderrHandle.availableData
+          if data.isEmpty { break }
+          accumulated.append(data)
+        }
+        return String(decoding: accumulated, as: UTF8.self)
       }
-      return String(decoding: accumulated, as: UTF8.self)
     }
 
     let pid = spawned.pid
-    let status = await Task.detached { ProcessSpawner.wait(pid) }.value
+    let status = await BlockingThread.run("oxbow.helper-waitpid") { ProcessSpawner.wait(pid) }
 
     await stdoutPump.value
     let standardError = await stderrPump.value

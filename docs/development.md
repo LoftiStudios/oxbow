@@ -38,15 +38,20 @@ app target yet.
   Developer ID distribution doesn't require it, and the verified signing spike
   ran unsandboxed. `DEVELOPMENT_TEAM` is never committed; it comes from the
   gitignored `Config/Local.xcconfig` (copy `Config/Local.xcconfig.template`).
-- Next tasks: **CI** (the repo went public 2026-08-24 with no workflows yet —
-  at minimum `swift test` plus an unsigned `xcodebuild build` on PRs; signed
-  release builds are a later, separate workflow needing cert secrets), then
-  the **queue UI** (the queue is the core abstraction, see Conventions), then
-  the forms.
+- **CI: running.** `.github/workflows/ci.yml` runs the OxbowKit test suite and
+  an unsigned app build on every PR and push to main. Neither job needs the
+  submodule, .NET, or FFmpeg. Signed release builds are a later, separate
+  workflow needing cert secrets (`docs/signing.md` §8).
+- Next task: the **queue UI** (the queue is the core abstraction, see
+  Conventions), then the forms.
 
 Local prerequisites, all now in place: .NET 10 SDK (`brew install --cask
 dotnet-sdk`), a `Developer ID Application` certificate for team `M9WJGEJKBF`, and
 notary credentials in the keychain as profile `oxbow-notary`.
+
+**Workflow: changes land via PRs, not direct pushes to main.** CI (tests +
+unsigned app build) must be green before merging. The repo is public; history
+on main should be presentable.
 
 ---
 
