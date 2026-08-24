@@ -303,6 +303,94 @@ struct ArgumentBuilderTests {
     #expect(a.contains("--allow-unlisted-emotes=false"))
   }
 
+  /// The per-field tests above isolate one field per request, which catches a
+  /// swap between two fields that share a default (both `true`, or both
+  /// `false`) — see the comment above them. It does **not** catch a swap
+  /// between two fields with *opposite* defaults: e.g. swap `--badges`
+  /// (default `true`) with `--timestamp` (default `false`) and, in the
+  /// isolated `hasBadges` test, the untouched `hasTimestamps` sits at its own
+  /// default `false` — which happens to equal `hasBadges`'s flipped value, so
+  /// `--badges=false` still matches by coincidence. Symmetrically for the
+  /// `hasTimestamps` test. The same blind spot applies to
+  /// `hasSubMessages`↔`hasOutline`, any emote flag↔`hasTimestamps`/
+  /// `hasOutline`, and any `true`-default flag↔`hasAlternateBackgrounds`.
+  ///
+  /// Rather than add a per-field test for every opposite-default pair — which
+  /// only shrinks the blind spot to whatever pairs were enumerated — this
+  /// pins each field to its own flag directly, closing the whole class:
+  /// starting from an all-defaults request, flipping exactly one boolean
+  /// field must change **exactly one** token in the emitted argv, and that
+  /// token must be the flag this field owns. A swap between *any* two
+  /// fields — same default or opposite — changes a *different* token (the
+  /// other field's flag) instead of, or in addition to, changing nothing, so
+  /// the symmetric-difference check below always disagrees with what a
+  /// correct implementation would produce. Table-driven so a future boolean
+  /// field is one row, not a new test.
+  @Test func flippingExactlyOneBooleanFieldChangesExactlyThatFieldsOwnFlagAndNoOther() {
+    struct Case {
+      let field: String
+      let defaultToken: String
+      let flippedToken: String
+      let flip: (inout RenderRequest) -> Void
+    }
+
+    let cases: [Case] = [
+      Case(field: "hasBadges", defaultToken: "--badges=true", flippedToken: "--badges=false") {
+        $0.hasBadges = false
+      },
+      Case(field: "hasTimestamps", defaultToken: "--timestamp=false", flippedToken: "--timestamp=true") {
+        $0.hasTimestamps = true
+      },
+      Case(field: "hasSubMessages", defaultToken: "--sub-messages=true", flippedToken: "--sub-messages=false") {
+        $0.hasSubMessages = false
+      },
+      Case(field: "hasOutline", defaultToken: "--outline=false", flippedToken: "--outline=true") {
+        $0.hasOutline = true
+      },
+      Case(
+        field: "hasAlternateBackgrounds",
+        defaultToken: "--alternate-backgrounds=false",
+        flippedToken: "--alternate-backgrounds=true")
+      {
+        $0.hasAlternateBackgrounds = true
+      },
+      Case(field: "isBTTVEnabled", defaultToken: "--bttv=true", flippedToken: "--bttv=false") {
+        $0.isBTTVEnabled = false
+      },
+      Case(field: "isFFZEnabled", defaultToken: "--ffz=true", flippedToken: "--ffz=false") {
+        $0.isFFZEnabled = false
+      },
+      Case(field: "isSTVEnabled", defaultToken: "--stv=true", flippedToken: "--stv=false") {
+        $0.isSTVEnabled = false
+      },
+      Case(
+        field: "allowsUnlistedEmotes",
+        defaultToken: "--allow-unlisted-emotes=true",
+        flippedToken: "--allow-unlisted-emotes=false")
+      {
+        $0.allowsUnlistedEmotes = false
+      },
+    ]
+
+    let baseline = args(.renderChat(RenderRequest(destination: URL(filePath: "/tmp/c.mp4"))))
+
+    for testCase in cases {
+      var request = RenderRequest(destination: URL(filePath: "/tmp/c.mp4"))
+      testCase.flip(&request)
+      let flipped = args(.renderChat(request))
+
+      let onlyInBaseline = Set(baseline).subtracting(flipped)
+      let onlyInFlipped = Set(flipped).subtracting(baseline)
+
+      #expect(
+        onlyInBaseline == [testCase.defaultToken],
+        "flipping \(testCase.field) removed \(onlyInBaseline), expected only \(testCase.defaultToken)")
+      #expect(
+        onlyInFlipped == [testCase.flippedToken],
+        "flipping \(testCase.field) added \(onlyInFlipped), expected only \(testCase.flippedToken)")
+    }
+  }
+
   /// 7TV resolution is why the submodule is pinned past 1.56.5 (CLAUDE.md); the
   /// switch defaulting on and staying visible in argv is the point of surfacing
   /// it at all, not just a side effect of a generic default table.
