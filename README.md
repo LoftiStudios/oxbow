@@ -8,8 +8,9 @@ the CLI only.
 
 Not affiliated with Twitch Interactive, Inc.
 
-> **Status: pre-alpha.** No application code yet. The build and signing
-> pipeline works end to end; the task queue is designed and not yet built.
+> **Status: pre-alpha.** The build and signing pipeline works end to end, and
+> the core library (`OxbowKit` — task queue, CLI wrapper, output parser,
+> persistence) is built and tested. There is no app UI yet.
 > See [`docs/architecture.md`](docs/architecture.md).
 
 ## Requirements

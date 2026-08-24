@@ -7,7 +7,8 @@ SwiftUI app that drives a bundled `TwitchDownloaderCLI` helper as a subprocess.
 rationale. This file holds the rules and commands.
 `docs/ffmpeg.md` and `docs/signing.md` hold the two resolved spikes.
 
-**Current state:** no application code yet, but the risky infrastructure is done.
+**Current state:** the risky infrastructure and the core library are done; no
+app target yet.
 
 - **FFmpeg sourcing: resolved.** `./scripts/build-ffmpeg.sh` produces a verified
   LGPL 2.1+ arm64 binary. See `docs/ffmpeg.md`.
@@ -18,8 +19,16 @@ rationale. This file holds the rules and commands.
 - **Deployment target: macOS 15.** Set deliberately — `@Observable` and the modern
   SwiftUI surface need 14+, and 15 keeps us on current APIs. `MIN_MACOS` in
   `scripts/build-ffmpeg.sh` must stay in lockstep with it.
-- Next task is the **task queue** — the core abstraction (see Conventions below),
-  then the CLI wrapper, then forms.
+- **OxbowKit: built and tested.** The task queue, CLI wrapper, and everything
+  under them — job/step model, scheduler, queue engine, argument builder,
+  status-line parser, atomic persistence with load-time reconciliation, and the
+  async process wrapper — live in `Sources/OxbowKit` as a SwiftPM library
+  (Swift 6 language mode). `swift test` runs the whole suite. Design and
+  rationale: `docs/design/task-queue.md`.
+- Next task is the **app itself** — an Xcode app target that links OxbowKit:
+  the queue UI first (the queue is the core abstraction, see Conventions),
+  then the forms. Creating the app target is also what finally exercises the
+  untested Xcode build-phase integration above.
 
 Local prerequisites, all now in place: .NET 10 SDK (`brew install --cask
 dotnet-sdk`), a `Developer ID Application` certificate for team `M9WJGEJKBF`, and
@@ -31,13 +40,19 @@ notary credentials in the keychain as profile `oxbow-notary`.
 
 ```
 oxbow/
-  Oxbow.xcodeproj
-  Oxbow/                     # SwiftUI app source
+  Package.swift              # SwiftPM package: the OxbowKit library
+  Sources/OxbowKit/          # queue engine, CLI wrapper, parser, persistence
+  Tests/OxbowKitTests/       # swift test; includes captured CLI-output fixtures
   vendor/TwitchDownloader/   # git submodule, upstream C# — DO NOT EDIT
-  scripts/                   # build, sign, notarize
+  scripts/                   # build-ffmpeg.sh, sign.sh, entitlements/
   docs/architecture.md       # decisions + rationale
+  docs/design/               # per-subsystem design docs (task-queue.md)
   .github/workflows/
 ```
+
+The Xcode app target does not exist yet. When it lands, the app source goes in
+its own directory alongside `Sources/`, and the app links OxbowKit as a local
+package dependency.
 
 ---
 
@@ -132,6 +147,12 @@ These were considered and rejected. Reasoning is in `docs/architecture.md`.
 
 ## Commands
 
+Run the OxbowKit test suite (needs only Xcode — no .NET or FFmpeg toolchain):
+
+```bash
+swift test
+```
+
 Build the bundled FFmpeg (LGPL, arm64, verified):
 
 ```bash
@@ -146,13 +167,16 @@ and `PublishTrimmed`, both of which we forbid. Override explicitly:
 dotnet publish vendor/TwitchDownloader/TwitchDownloaderCLI -c Release -r osx-arm64 --self-contained true -p:PublishSingleFile=false -p:PublishTrimmed=false -p:PublishReadyToRun=false -p:DebugType=none -o build/helper
 ```
 
-Build, sign, notarize:
+Sign a built bundle (inside-out; helper first, bundle last):
 
 ```bash
-./scripts/build.sh
-./scripts/sign.sh        # inside-out; helper first, bundle last
-./scripts/notarize.sh    # notarytool submit --wait, then stapler staple
+./scripts/sign.sh build/Oxbow.app
 ```
+
+`scripts/build.sh` (assemble the bundle) and `scripts/notarize.sh`
+(`notarytool submit --wait`, then `stapler staple`) do not exist yet — the
+verified pipeline in `docs/signing.md` was driven manually. They land with the
+app target, which is what defines the bundle they operate on.
 
 Verify a signed bundle before shipping:
 
