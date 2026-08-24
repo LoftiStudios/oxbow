@@ -84,4 +84,62 @@ struct QueueControllerTests {
 
     try await waitFor(controller) { $0.first?.status == .cancelled }
   }
+
+  @Test func cancellingARunningStepSettlesThatStepAsCancelled() async throws {
+    let (controller, root) = try makeController(.hangsUntilCancelled)
+    defer { try? FileManager.default.removeItem(at: root) }
+    await controller.start()
+
+    try controller.enqueueVideo(urlText: "2844548319", destination: root.appending(path: "out.mp4"))
+    try await waitFor(controller) { $0.first?.status == .running }
+
+    let step = try #require(controller.jobs.first?.steps.first?.id)
+    await controller.cancel(step: step)
+
+    try await waitFor(controller) { $0.first?.steps.first?.status == .cancelled }
+  }
+
+  /// The state a queued job's Cancel button exists for. Both steps are
+  /// downloads and the scheduler admits one step per resource class, so the
+  /// second necessarily waits for the whole of the first.
+  @Test func cancellingAQueuedJobLeavesTheRunningOneAlone() async throws {
+    let (controller, root) = try makeController(.hangsUntilCancelled)
+    defer { try? FileManager.default.removeItem(at: root) }
+    await controller.start()
+
+    try controller.enqueueVideo(urlText: "2844548319", destination: root.appending(path: "a.mp4"))
+    try controller.enqueueVideo(urlText: "2844548320", destination: root.appending(path: "b.mp4"))
+
+    // By shape, not by index: the two enqueues are separate tasks, so which
+    // job lands first is not ordered.
+    try await waitFor(controller) { jobs in
+      jobs.count == 2
+        && jobs.contains { $0.status == .running }
+        && jobs.contains { $0.status == .queued }
+    }
+
+    let queued = try #require(controller.jobs.first { $0.status == .queued })
+    await controller.cancel(job: queued.id)
+
+    try await waitFor(controller) { jobs in
+      jobs.first { $0.id == queued.id }?.status == .cancelled
+    }
+    #expect(controller.jobs.contains { $0.status == .running })
+  }
+
+  /// Reaching `.done` is the assertion: the first run wrote no artifact, so
+  /// only a second one can produce it.
+  @Test func retryingAFailedStepRunsItAgain() async throws {
+    let (controller, root) = try makeController(.failsThenSucceeds(StubHelper.Attempts()))
+    defer { try? FileManager.default.removeItem(at: root) }
+    await controller.start()
+
+    try controller.enqueueVideo(urlText: "2844548319", destination: root.appending(path: "out.mp4"))
+    try await waitFor(controller) { $0.first?.status == .failed }
+
+    let step = try #require(controller.jobs.first?.steps.first?.id)
+    await controller.retry(step: step)
+
+    try await waitFor(controller) { $0.first?.status == .done }
+  }
 }
