@@ -11,6 +11,11 @@
 # Neither job needs the vendor/TwitchDownloader submodule (it is only an
 # input to publishing the helper), so checkout skips submodules — the default.
 #
+# The consequence is that nothing here exercises the real embed-and-sign path.
+# full-build.yml does: it checks out the submodule, publishes the helper,
+# builds FFmpeg, and asserts the assembled bundle. It is slow, so it runs on
+# pushes to main, nightly, and on demand rather than per PR.
+#
 # Signed release builds are a separate, later workflow: they need the
 # Developer ID certificate and notary key as repository secrets
 # (docs/signing.md §8).
