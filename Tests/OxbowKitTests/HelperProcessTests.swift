@@ -65,6 +65,15 @@ struct HelperProcessTests {
   /// fixture elsewhere in this file writes only a few dozen bytes, so none
   /// of them would catch a regression in `run`'s own await ordering — this
   /// one is sized specifically to.
+  ///
+  /// Bounded by a 30s deadline raced against `run`. Reproducing the
+  /// sequential-draining bug during review hung this exact test
+  /// indefinitely (25s+, required a manual kill) — a wedged CI job that
+  /// never produces a red result is worse than a clean failure, so a
+  /// regression here must fail loudly instead of hanging. If the deadline
+  /// wins, `process.cancel()` also kills the fixture's `yes`/`head` pair,
+  /// which otherwise survive the hang (confirmed via `ps` during that same
+  /// reproduction).
   @Test func drainsLargeStderrConcurrentlyWithStdout() async throws {
     let launch = try script(#"""
       (yes x | head -c 100000 1>&2) &
@@ -74,9 +83,34 @@ struct HelperProcessTests {
       """#)
 
     let collected = CollectedOutput()
-    let result = try await HelperProcess().run(launch) { await collected.append($0) }
-    let lines = await collected.lines
+    let process = HelperProcess()
 
+    let result: RunResult? = try await withThrowingTaskGroup(of: RunResult?.self) { group in
+      group.addTask {
+        try await process.run(launch) { await collected.append($0) }
+      }
+      group.addTask {
+        try await Task.sleep(for: .seconds(30))
+        return nil
+      }
+
+      // `run` always yields a non-nil RunResult, so a nil result here can
+      // only be the deadline task winning the race.
+      let outcome = try await group.next() ?? nil
+      if outcome == nil {
+        Issue.record("""
+          drainsLargeStderrConcurrentlyWithStdout exceeded its 30s deadline — stdout/stderr \
+          draining may have regressed to sequential
+          """)
+        await process.cancel()
+      }
+      group.cancelAll()
+      return outcome
+    }
+
+    guard let result else { return }
+
+    let lines = await collected.lines
     #expect(result.status == .exited(0))
     #expect(result.standardError.count == 100_000)
     #expect(lines.count == 2)
