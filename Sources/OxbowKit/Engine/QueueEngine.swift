@@ -158,14 +158,18 @@ public actor QueueEngine {
 
   /// Writes any pending state immediately. Call on app termination.
   public func flush() async {
-    // Cancel to skip the debounce delay if the task is still sleeping, then
-    // await it so we know it is fully finished — whether that means it saw
-    // the cancellation and did nothing, or was already mid-write. Without
-    // the await, that in-flight write (an older snapshot than `jobs` here)
-    // could still land on disk after our own save below, silently winning.
-    saveTask?.cancel()
-    await saveTask?.value
-    saveTask = nil
+    // Loop rather than a single check-and-await: awaiting a task releases
+    // the actor, and a `tick()` landing in that window can install a fresh
+    // `saveTask` before this resumes. Clearing `saveTask` to nil *before*
+    // each await — not after — means a task installed during that window
+    // survives into the next loop iteration instead of being silently
+    // dropped uncancelled, where it would still fire ~500ms later and write
+    // an older snapshot than the "final" save below.
+    while let pending = saveTask {
+      saveTask = nil
+      pending.cancel()
+      await pending.value
+    }
     try? configuration.store.save(jobs)
   }
 
@@ -235,11 +239,21 @@ public actor QueueEngine {
       }
       finish(id, result: result, context: context)
     } catch {
-      // The process never produced a `RunResult` at all — there is no exit
+      // `process.run` never produced a `RunResult` at all — there is no exit
       // status to interpret, so this reports the honest reason directly
       // instead of routing a fabricated `.exited(-1)` through
       // `FailureInterpreter`, which would surface as a meaningless
       // "exited with code -1" to the user.
+      //
+      // The same race `finish` guards against applies here too: this is
+      // reached after an `await`, so a cancellation may already have
+      // finalized this step (e.g. `ProcessSpawner.spawn` failing while a
+      // `cancel(step:)` for it is in flight). Route through the same guard
+      // rather than completing unconditionally.
+      guard isStillRunning(id) else {
+        abandonAlreadyFinalizedStep(id)
+        return
+      }
       completeStep(id, outcome: .failed(StepFailure(
         kind: .launchFailed("\(error)"),
         summary: "The download tool failed to start.",
@@ -254,26 +268,26 @@ public actor QueueEngine {
   }
 
   private func finish(_ id: StepID, result: RunResult, context: StepContext) {
+    // Checked *before* any side-effecting work below (in particular, before
+    // `move`): cancelled (or otherwise finalized) while this was in flight,
+    // the cancellation path already recorded the terminal status and blocked
+    // dependents. Overwriting it here — or moving a file that finished
+    // writing only after the user cancelled it — would both be wrong, and
+    // checking only at the point of folding the outcome in (as `completeStep`
+    // does) would be too late: the move would already have happened.
+    guard isStillRunning(id) else {
+      abandonAlreadyFinalizedStep(id)
+      return
+    }
+
     guard let location = locate(id) else {
+      // Can't actually happen given the check above just ran on this same
+      // actor turn with no intervening suspension, but keeps this total.
       running[id] = nil
       return
     }
     let job = jobs[location.job]
     let step = job.steps[location.step]
-
-    guard step.status == .running else {
-      // Cancelled (or otherwise finalized) while this was in flight: the
-      // cancellation path already recorded the terminal status and blocked
-      // dependents. Overwriting it here — or moving a file that finished
-      // writing only after the user cancelled it — would both be wrong.
-      running[id] = nil
-      configuration.workspace.removeStep(job: job.id, step: id)
-      if jobsAwaitingWorkspaceRemoval.contains(job.id) {
-        removeJobWorkspaceIfSettled(job.id)
-      }
-      tick()
-      return
-    }
 
     // Success is the artifact, not the exit code: the CLI's `Main` returns
     // void, so nothing sets a meaningful exit status on its own.
@@ -307,6 +321,34 @@ public actor QueueEngine {
     }
 
     completeStep(id, outcome: outcome)
+  }
+
+  /// True if this step is still `.running` — i.e. nothing has already
+  /// finalized it (a cancellation, most likely) while the caller was
+  /// suspended on an `await`. Every path that is about to complete a step,
+  /// or perform a side effect gated on the step still being in progress
+  /// (moving the finished file), must check this first.
+  private func isStillRunning(_ id: StepID) -> Bool {
+    guard let location = locate(id) else { return false }
+    return jobs[location.job].steps[location.step].status == .running
+  }
+
+  /// Tears down a step that turned out to already be finalized by the time
+  /// its completion reached the actor: clears `running[id]`, removes the
+  /// step's own workspace directory, releases a job-level cancel that may
+  /// have been waiting on it, and drives the queue forward. Never calls
+  /// `Scheduler.complete` — the status is already final and must not be
+  /// overwritten.
+  private func abandonAlreadyFinalizedStep(_ id: StepID) {
+    running[id] = nil
+    if let location = locate(id) {
+      let job = jobs[location.job]
+      configuration.workspace.removeStep(job: job.id, step: id)
+      if jobsAwaitingWorkspaceRemoval.contains(job.id) {
+        removeJobWorkspaceIfSettled(job.id)
+      }
+    }
+    tick()
   }
 
   /// The shared tail of every step completion: fold the outcome into `jobs`,

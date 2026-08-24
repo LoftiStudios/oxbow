@@ -348,4 +348,53 @@ struct QueueEngineTests {
     try await settle(engine)
     await engine.flush()
   }
+
+  /// Critical 2 regression: a step that succeeds but whose finished file
+  /// cannot be moved to its destination must fail — not read as done — and
+  /// the artifact itself must survive, since `finish`'s own cleanup would
+  /// otherwise be the thing that deletes the only copy.
+  @Test func aFailedMoveFailsTheStepAndPreservesTheArtifact() async throws {
+    let (engine, root) = makeEngine(.succeeds)
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    try await engine.start()
+
+    // Force `move` to fail deterministically (no timing dependency): create
+    // a plain file where the destination's parent directory needs to be, so
+    // `FileManager.createDirectory(at:withIntermediateDirectories:)` throws
+    // instead of silently succeeding — a full disk or unwritable volume
+    // fails the same way in production.
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    let blocker = root.appending(path: "blocked")
+    FileManager.default.createFile(atPath: blocker.path, contents: Data())
+    let destination = blocker.appending(path: "output.mp4")
+
+    await engine.enqueue(
+      .video(VideoRequest(videoID: "v", quality: "best", destination: destination)),
+      title: "test")
+    try await settle(engine)
+
+    let job = try #require(await engine.currentJobs.first)
+    let step = try #require(job.steps.first)
+
+    guard case .failed(let failure) = step.status else {
+      Issue.record("expected the failed move to fail the step, got \(step.status)")
+      return
+    }
+    guard case .moveFailed = failure.kind else {
+      Issue.record("expected .moveFailed, got \(failure.kind)")
+      return
+    }
+    #expect(job.status == .failed, "a failed move must not read as a finished job")
+
+    // The one assertion that actually pins the data-loss fix: the artifact
+    // `move` failed to relocate must still be sitting in the workspace,
+    // proving `completeStep` did not treat this job as done and delete it.
+    let artifact = Workspace(root: root).artifactsDirectory(job.id).appending(path: "video.mp4")
+    #expect(
+      FileManager.default.fileExists(atPath: artifact.path),
+      "the only copy of the artifact must survive a failed move")
+
+    await engine.flush()
+  }
 }
