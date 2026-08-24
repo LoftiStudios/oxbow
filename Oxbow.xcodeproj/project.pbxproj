@@ -31,7 +31,7 @@
 		6330DAB0303CAC040027BD66 /* Oxbow.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Oxbow.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		6330DABD303CAC060027BD66 /* OxbowTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = OxbowTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		6330DAC7303CAC060027BD66 /* OxbowUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = OxbowUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
-		6330DAE3303CAC060027BD66 /* Shared.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config/Shared.xcconfig; sourceTree = "<group>"; };
+		6330DAE3303CAC060027BD66 /* Config/Shared.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config/Shared.xcconfig; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -84,7 +84,7 @@
 				6330DAB2303CAC040027BD66 /* Oxbow */,
 				6330DAC0303CAC060027BD66 /* OxbowTests */,
 				6330DACA303CAC060027BD66 /* OxbowUITests */,
-				6330DAE3303CAC060027BD66 /* Shared.xcconfig */,
+				6330DAE3303CAC060027BD66 /* Config/Shared.xcconfig */,
 				6330DAB1303CAC040027BD66 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -301,7 +301,7 @@
 /* Begin XCBuildConfiguration section */
 		6330DACF303CAC060027BD66 /* Debug */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = 6330DAE3303CAC060027BD66 /* Shared.xcconfig */;
+			baseConfigurationReference = 6330DAE3303CAC060027BD66 /* Config/Shared.xcconfig */;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
@@ -365,7 +365,7 @@
 		};
 		6330DAD0303CAC060027BD66 /* Release */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = 6330DAE3303CAC060027BD66 /* Shared.xcconfig */;
+			baseConfigurationReference = 6330DAE3303CAC060027BD66 /* Config/Shared.xcconfig */;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
@@ -422,10 +422,10 @@
 		6330DAD2303CAC060027BD66 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_APPICON_NAME = Oxbow;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
-				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_ENTITLEMENTS = scripts/entitlements/app.entitlements;
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
@@ -456,10 +456,10 @@
 		6330DAD3303CAC060027BD66 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_APPICON_NAME = Oxbow;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
-				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_ENTITLEMENTS = scripts/entitlements/app.entitlements;
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
