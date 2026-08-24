@@ -112,6 +112,20 @@ public actor QueueEngine {
     tick()
   }
 
+  /// The tail of a step's captured helper output, or nil if it has none.
+  ///
+  /// Read through the engine rather than handing the UI a file path: the
+  /// workspace layout is the engine's business, and a step's log is deleted
+  /// with its job's workspace, so a URL handed out earlier could point at
+  /// nothing by the time a view got round to reading it.
+  public func log(for step: StepID, lines: Int = 200) async -> String? {
+    guard let location = locate(step) else { return nil }
+    let url = configuration.workspace.logFile(job: jobs[location.job].id, step: step)
+    guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+    let contents = await StepLog(fileURL: url).tail(lines: lines)
+    return contents.isEmpty ? nil : contents
+  }
+
   public func enqueue(_ template: JobTemplate, title: String) {
     let job = template.makeJob(
       id: JobID(rawValue: UUID()),

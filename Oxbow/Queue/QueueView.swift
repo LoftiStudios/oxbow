@@ -61,7 +61,7 @@ struct QueueView: View {
   private var queue: some View {
     if let controller, !controller.jobs.isEmpty {
       List(controller.jobs) { job in
-        JobRow(job: job) {
+        JobRow(job: job, controller: controller) {
           Task { await controller.cancel(job: job.id) }
         } onRetry: { step in
           Task { await controller.retry(step: step) }

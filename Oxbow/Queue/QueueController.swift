@@ -62,6 +62,9 @@ final class QueueController {
     Task { await engine.enqueue(.video(request), title: "Video \(videoID)") }
   }
 
+  /// The tail of a step's captured helper output, for the detail disclosure.
+  func log(for step: StepID) async -> String? { await engine.log(for: step) }
+
   func cancel(job id: JobID) async { await engine.cancel(job: id) }
   func cancel(step id: StepID) async { await engine.cancel(step: id) }
   func retry(step id: StepID) async { await engine.retry(step: id) }
