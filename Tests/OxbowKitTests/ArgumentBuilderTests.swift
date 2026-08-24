@@ -326,44 +326,60 @@ struct ArgumentBuilderTests {
   /// the symmetric-difference check below always disagrees with what a
   /// correct implementation would produce. Table-driven so a future boolean
   /// field is one row, not a new test.
-  @Test func flippingExactlyOneBooleanFieldChangesExactlyThatFieldsOwnFlagAndNoOther() {
-    struct Case {
-      let field: String
-      let defaultToken: String
-      let flippedToken: String
-      let flip: (inout RenderRequest) -> Void
-    }
+  private struct BooleanFieldCase {
+    let field: String
+    let defaultToken: String
+    let flippedToken: String
+    let flip: (inout RenderRequest) -> Void
+  }
 
-    let cases: [Case] = [
-      Case(field: "hasBadges", defaultToken: "--badges=true", flippedToken: "--badges=false") {
+  // `isSharpened` is the tenth `Bool` on `RenderRequest` and is deliberately
+  // NOT a row here: it doesn't emit a `--flag=value` pair like the other
+  // nine. It conditionally appends an entire `--input-args=...` string (the
+  // unsharp filter), so flipping it produces one *added* token and zero
+  // *removed* tokens — a shape this table's remove-one/add-one check can't
+  // express. It already has its own dedicated coverage —
+  // `sharpeningUsesUnsharpAndNeverSmartblur` and
+  // `unsharpenedRenderDoesNotOverrideInputArgs`, below — including the GPL
+  // rule that makes it matter. `boolFieldCountMatchesTableRowsPlusDocumentedExclusions`
+  // enforces that this is the *only* exclusion: a future `Bool` field added
+  // without either a row here or a documented exclusion like this one fails
+  // that guard instead of silently widening the blind spot.
+  private var booleanFieldCases: [BooleanFieldCase] {
+    [
+      BooleanFieldCase(field: "hasBadges", defaultToken: "--badges=true", flippedToken: "--badges=false") {
         $0.hasBadges = false
       },
-      Case(field: "hasTimestamps", defaultToken: "--timestamp=false", flippedToken: "--timestamp=true") {
+      BooleanFieldCase(
+        field: "hasTimestamps", defaultToken: "--timestamp=false", flippedToken: "--timestamp=true")
+      {
         $0.hasTimestamps = true
       },
-      Case(field: "hasSubMessages", defaultToken: "--sub-messages=true", flippedToken: "--sub-messages=false") {
+      BooleanFieldCase(
+        field: "hasSubMessages", defaultToken: "--sub-messages=true", flippedToken: "--sub-messages=false")
+      {
         $0.hasSubMessages = false
       },
-      Case(field: "hasOutline", defaultToken: "--outline=false", flippedToken: "--outline=true") {
+      BooleanFieldCase(field: "hasOutline", defaultToken: "--outline=false", flippedToken: "--outline=true") {
         $0.hasOutline = true
       },
-      Case(
+      BooleanFieldCase(
         field: "hasAlternateBackgrounds",
         defaultToken: "--alternate-backgrounds=false",
         flippedToken: "--alternate-backgrounds=true")
       {
         $0.hasAlternateBackgrounds = true
       },
-      Case(field: "isBTTVEnabled", defaultToken: "--bttv=true", flippedToken: "--bttv=false") {
+      BooleanFieldCase(field: "isBTTVEnabled", defaultToken: "--bttv=true", flippedToken: "--bttv=false") {
         $0.isBTTVEnabled = false
       },
-      Case(field: "isFFZEnabled", defaultToken: "--ffz=true", flippedToken: "--ffz=false") {
+      BooleanFieldCase(field: "isFFZEnabled", defaultToken: "--ffz=true", flippedToken: "--ffz=false") {
         $0.isFFZEnabled = false
       },
-      Case(field: "isSTVEnabled", defaultToken: "--stv=true", flippedToken: "--stv=false") {
+      BooleanFieldCase(field: "isSTVEnabled", defaultToken: "--stv=true", flippedToken: "--stv=false") {
         $0.isSTVEnabled = false
       },
-      Case(
+      BooleanFieldCase(
         field: "allowsUnlistedEmotes",
         defaultToken: "--allow-unlisted-emotes=true",
         flippedToken: "--allow-unlisted-emotes=false")
@@ -371,10 +387,12 @@ struct ArgumentBuilderTests {
         $0.allowsUnlistedEmotes = false
       },
     ]
+  }
 
+  @Test func flippingExactlyOneBooleanFieldChangesExactlyThatFieldsOwnFlagAndNoOther() {
     let baseline = args(.renderChat(RenderRequest(destination: URL(filePath: "/tmp/c.mp4"))))
 
-    for testCase in cases {
+    for testCase in booleanFieldCases {
       var request = RenderRequest(destination: URL(filePath: "/tmp/c.mp4"))
       testCase.flip(&request)
       let flipped = args(.renderChat(request))
@@ -389,6 +407,25 @@ struct ArgumentBuilderTests {
         onlyInFlipped == [testCase.flippedToken],
         "flipping \(testCase.field) added \(onlyInFlipped), expected only \(testCase.flippedToken)")
     }
+  }
+
+  /// Makes the table self-enforcing: without this, a `Bool` field added to
+  /// `RenderRequest` six months from now with neither a row above nor a
+  /// documented exclusion (like `isSharpened`'s, commented above
+  /// `booleanFieldCases`) would silently widen the swap blind spot the
+  /// table exists to close, and nothing would say so. `Mirror` over a
+  /// default-constructed request counts every `Bool` stored property — the
+  /// nine rows plus the one documented, named exclusion must account for all
+  /// of them, or this fails and says exactly what changed.
+  @Test func boolFieldCountMatchesTableRowsPlusDocumentedExclusions() {
+    let documentedExclusions = 1 // isSharpened — see the comment above `booleanFieldCases`.
+    let mirror = Mirror(reflecting: RenderRequest(destination: URL(filePath: "/tmp/c.mp4")))
+    let boolFieldCount = mirror.children.filter { $0.value is Bool }.count
+
+    let message = "RenderRequest has \(boolFieldCount) Bool fields but the table only accounts for "
+      + "\(booleanFieldCases.count) rows + \(documentedExclusions) documented exclusion(s); "
+      + "a Bool field was added without a row or a documented, counted exclusion"
+    #expect(boolFieldCount == booleanFieldCases.count + documentedExclusions, "\(message)")
   }
 
   /// 7TV resolution is why the submodule is pinned past 1.56.5 (CLAUDE.md); the
