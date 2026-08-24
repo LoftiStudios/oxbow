@@ -52,6 +52,35 @@ struct JobTemplateTests {
     #expect(job.steps[2].dependsOn != job.steps[0].id)
   }
 
+  /// Upstream's `chatrender -i` parses JSON and nothing else. Accepting the
+  /// caller's `.html` here meant a full chat download followed by a parse
+  /// exception in the step that consumes it.
+  @Test func aRenderPairingAlwaysDownloadsItsChatAsJson() {
+    let html = ChatRequest(videoID: "2844548319", format: .html)
+    let jobs = [
+      makeJob(.chatAndRender(html, render)),
+      makeJob(.videoChatAndRender(video, html, render)),
+    ]
+
+    for job in jobs {
+      let formats = job.steps.compactMap { step -> ChatFormat? in
+        guard case .downloadChat(let request) = step.kind else { return nil }
+        return request.format
+      }
+      #expect(formats == [.json])
+    }
+  }
+
+  /// A standalone chat job is the user's own file, so their format stands.
+  @Test func aStandaloneChatJobKeepsTheRequestedFormat() {
+    let job = makeJob(.chat(ChatRequest(videoID: "2844548319", format: .html)))
+    guard case .downloadChat(let request) = job.steps[0].kind else {
+      Issue.record("expected a chat download step")
+      return
+    }
+    #expect(request.format == .html)
+  }
+
   @Test func everyNewStepStartsQueued() {
     let job = makeJob(.videoChatAndRender(video, chat, render))
     #expect(job.steps.allSatisfy { $0.status == .queued })
