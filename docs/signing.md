@@ -167,5 +167,14 @@ signatures stored in extended attributes, and a plain `zip` drops xattrs.
 - **`libSkiaSharp.dylib` and `libHarfBuzzSharp.dylib` ship universal** while v1
   is arm64-only. `lipo -thin arm64` would save roughly 8 MB, but it must happen
   *before* signing. Not done yet.
-- **CI.** All of the above ran locally. The GitHub Actions path needs the cert
-  as a base64 `.p12` and the notary key as a secret.
+- **CI: partly resolved (2026-08-24).** `.github/workflows/full-build.yml`
+  builds the whole bundle on pushes to main, nightly and on demand: submodule
+  checked out, helper published, FFmpeg built (cached on a hash of
+  `scripts/build-ffmpeg.sh`), and the app built with **ad-hoc** signing so
+  `embed-helpers.sh` runs its real `codesign` calls with the real entitlements.
+  It then asserts §2–§4 the way `sign.sh` does locally: helper and ffmpeg
+  present under `Contents/MacOS`, ~205 embedded files, every file individually
+  signed, `--deep --strict` clean, `allow-jit` on the helper's own signature
+  and absent from ffmpeg's. What is still missing is **distribution** signing
+  and notarization, which need the cert as a base64 `.p12` and the notary key
+  as repository secrets — a separate release workflow.

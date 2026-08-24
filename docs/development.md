@@ -40,8 +40,14 @@ app target yet.
   gitignored `Config/Local.xcconfig` (copy `Config/Local.xcconfig.template`).
 - **CI: running.** `.github/workflows/ci.yml` runs the OxbowKit test suite and
   an unsigned app build on every PR and push to main. Neither job needs the
-  submodule, .NET, or FFmpeg. Signed release builds are a later, separate
-  workflow needing cert secrets (`docs/signing.md` §8).
+  submodule, .NET, or FFmpeg. `.github/workflows/full-build.yml` covers what
+  that cannot: it checks out the submodule, publishes the helper, builds (or
+  restores from cache) FFmpeg, builds the app with **ad-hoc** signing so the
+  "Embed & Sign Helpers" phase really embeds *and* signs, and asserts the
+  bundle — 205 embedded files, all of `Contents/MacOS` signed, `--deep
+  --strict` clean, helper carrying `allow-jit`. It runs on pushes to main,
+  nightly, and on demand, never per PR. Signed release builds are a later,
+  separate workflow needing cert secrets (`docs/signing.md` §8).
 - Next task: the **queue UI** (the queue is the core abstraction, see
   Conventions), then the forms.
 

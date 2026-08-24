@@ -1,0 +1,237 @@
+# Full app bundle build: the slow path that ci.yml deliberately skips.
+#
+# ci.yml runs on every PR and is fast because it needs nothing but Xcode — no
+# submodule, no .NET, no FFmpeg. That keeps the promise CONTRIBUTING.md makes
+# about the OxbowKit fast path, but it means the "Embed & Sign Helpers" phase
+# never does any real work there: with build/helper and build/ffmpeg absent it
+# warns and continues, and CODE_SIGNING_ALLOWED=NO skips the signing half too.
+#
+# So this workflow exists to exercise what that one cannot:
+#
+#   - the pinned vendor/TwitchDownloader submodule still publishes,
+#   - scripts/build-ffmpeg.sh still produces a verified LGPL binary,
+#   - scripts/embed-helpers.sh really embeds AND signs, inside-out,
+#   - the assembled bundle satisfies the rules in docs/signing.md §2-§4.
+#
+# It is NOT a PR gate. FFmpeg compiles from source, so a cold run is tens of
+# minutes; PRs stay on ci.yml. This runs on pushes to main, nightly, and on
+# demand.
+#
+# Signing is AD-HOC (identity "-"), not Developer ID. That is the whole point:
+# CODE_SIGNING_ALLOWED=NO would embed the helpers and skip signing them, which
+# is exactly the half that has only ever been verified on the maintainer's
+# machine. Ad-hoc needs no secrets and still runs the real codesign calls,
+# entitlements and all. Developer ID signing and notarization need the cert and
+# notary key as repository secrets and belong to a later release workflow
+# (docs/signing.md §8).
+name: Full build
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    # 07:00 UTC daily. Catches upstream .NET SDK and toolchain drift on the
+    # pinned submodule without waiting for someone to push.
+    - cron: '0 7 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  # Deliberately NOT cancel-in-progress: a cold FFmpeg build is expensive, and
+  # killing a nearly-finished run to start an identical one wastes more than it
+  # saves. Runs here are rare.
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  bundle:
+    name: App bundle (ad-hoc signed)
+    runs-on: macos-26
+    timeout-minutes: 90
+
+    steps:
+      - name: Check out with submodules
+        uses: actions/checkout@v5
+        with:
+          # vendor/TwitchDownloader is pinned to one exact SHA and is an input
+          # to publishing the helper. See the submodule pin policy in
+          # docs/development.md.
+          submodules: recursive
+
+      - name: Toolchain versions
+        run: |
+          xcodebuild -version
+          swift --version
+          echo "submodule pin: $(git -C vendor/TwitchDownloader rev-parse HEAD)"
+
+      - name: Read the FFmpeg pin
+        id: ffmpeg-pin
+        run: |
+          version="$(sed -n 's/^FFMPEG_VERSION="\(.*\)"$/\1/p' scripts/build-ffmpeg.sh)"
+          [ -n "${version}" ] || { echo "::error::could not read FFMPEG_VERSION from scripts/build-ffmpeg.sh"; exit 1; }
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "FFmpeg ${version}"
+
+      - name: Restore FFmpeg
+        id: ffmpeg-cache
+        uses: actions/cache@v4
+        with:
+          # Only the output. build/ffmpeg-src holds the unpacked tarball and
+          # object files — tens of thousands of files, no reuse value.
+          path: build/ffmpeg
+          # The version is in the hash already; it is spelled out so a human
+          # reading the cache list can tell entries apart. No restore-keys:
+          # a near-miss would silently hand us an FFmpeg built from a
+          # different script, which is worse than rebuilding.
+          key: ffmpeg-${{ runner.os }}-${{ runner.arch }}-${{ steps.ffmpeg-pin.outputs.version }}-${{ hashFiles('scripts/build-ffmpeg.sh') }}
+
+      - name: Build FFmpeg
+        if: steps.ffmpeg-cache.outputs.cache-hit != 'true'
+        run: ./scripts/build-ffmpeg.sh
+
+      - name: Sanity-check the restored FFmpeg
+        if: steps.ffmpeg-cache.outputs.cache-hit == 'true'
+        run: |
+          set -euo pipefail
+          [ -x build/ffmpeg/ffmpeg ] || { echo "::error::cache hit but no executable at build/ffmpeg/ffmpeg"; exit 1; }
+          # build-ffmpeg.sh verifies all of this at build time; re-check the
+          # licence-critical part here because a cache entry is restored
+          # without ever running that script.
+          #
+          # Captured into a variable rather than piped into `grep -q`: grep -q
+          # exits on its first match and SIGPIPEs the producer, which under
+          # `set -o pipefail` fails the pipeline. Same reason everywhere below.
+          encoders="$(build/ffmpeg/ffmpeg -hide_banner -encoders 2>/dev/null || true)"
+          if grep -q 'libx264' <<<"${encoders}"; then
+            echo "::error::cached FFmpeg contains libx264 — that is a GPL build. Bust the cache."
+            exit 1
+          fi
+          version_out="$(build/ffmpeg/ffmpeg -hide_banner -version 2>/dev/null || true)"
+          head -2 <<<"${version_out}"
+
+      - name: Install .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Publish the helper
+        # Verbatim from docs/development.md. Never -p:PublishProfile=MacOSArm64
+        # (upstream's profile sets PublishSingleFile and PublishTrimmed, both
+        # forbidden), and never re-enable either of them here.
+        run: >
+          dotnet publish vendor/TwitchDownloader/TwitchDownloaderCLI
+          -c Release -r osx-arm64 --self-contained true
+          -p:PublishSingleFile=false -p:PublishTrimmed=false
+          -p:PublishReadyToRun=false -p:DebugType=none
+          -o build/helper
+
+      - name: Build Oxbow.app
+        # Ad-hoc signing, deliberately: CODE_SIGNING_ALLOWED=NO (what ci.yml
+        # uses) makes embed-helpers.sh copy the helpers and skip signing them.
+        # An identity of "-" runs the real codesign calls with the real
+        # entitlements and needs no certificate. CODE_SIGN_STYLE=Manual stops
+        # Xcode looking for the "Apple Development" identity the project asks
+        # for, which no runner has.
+        run: >
+          xcodebuild -project Oxbow.xcodeproj -scheme Oxbow
+          -configuration Debug -derivedDataPath build/DerivedData build
+          CODE_SIGNING_ALLOWED=YES CODE_SIGNING_REQUIRED=YES
+          CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM=
+
+      - name: Verify the bundle
+        # Mirrors the assertions scripts/sign.sh makes locally. Everything here
+        # is a rule from docs/signing.md that has, until now, only ever been
+        # checked on the maintainer's machine.
+        run: |
+          set -euo pipefail
+
+          APP="build/DerivedData/Build/Products/Debug/Oxbow.app"
+          MACOS="${APP}/Contents/MacOS"
+
+          # helper tree + ffmpeg. docs/signing.md §2: 205 files, not 19.
+          # A tolerance rather than an exact match because the .NET runtime's
+          # file set can shift by one or two across SDK servicing releases,
+          # and setup-dotnet floats within 10.0.x. A real regression — the
+          # embed phase warning and continuing — is off by 205, not by two.
+          EXPECTED_EMBEDDED=205
+          TOLERANCE=5
+
+          fail() { echo "::error::$*"; exit 1; }
+          ok()   { echo "  ok: $*"; }
+
+          [ -d "${MACOS}" ] || fail "no ${MACOS} — the app did not build"
+
+          echo "== embedded payload =="
+          [ -x "${MACOS}/helper/TwitchDownloaderCLI" ] \
+            || fail "no helper at Contents/MacOS/helper/TwitchDownloaderCLI. embed-helpers.sh warns and continues when build/helper is missing, so this means the dotnet publish produced nothing usable."
+          ok "helper/TwitchDownloaderCLI"
+          [ -x "${MACOS}/ffmpeg" ] \
+            || fail "no ffmpeg at Contents/MacOS/ffmpeg. Same warn-and-continue path: build/ffmpeg/ffmpeg was missing."
+          ok "ffmpeg"
+
+          embedded=$(( $(find "${MACOS}/helper" -type f | wc -l | tr -d ' ') + 1 ))
+          lo=$(( EXPECTED_EMBEDDED - TOLERANCE ))
+          hi=$(( EXPECTED_EMBEDDED + TOLERANCE ))
+          [ "${embedded}" -ge "${lo}" ] && [ "${embedded}" -le "${hi}" ] \
+            || fail "embedded file count ${embedded} is outside ${lo}..${hi}. If this is a legitimate change (submodule pin bump, .NET runtime churn), update EXPECTED_EMBEDDED here and the counts in docs/signing.md §2 and §4."
+          ok "${embedded} embedded files (helper tree + ffmpeg), expected ~${EXPECTED_EMBEDDED}"
+
+          echo "== no executable code under Contents/Resources =="
+          while IFS= read -r res; do
+            fail "executable code in Contents/Resources: ${res}. Move it under Contents/MacOS — a resource location fails notarization."
+          done < <(
+            find "${APP}/Contents/Resources" -type f -print0 2>/dev/null \
+            | xargs -0 file --mime-type 2>/dev/null \
+            | grep -E 'application/x-mach-binary$' \
+            | grep -v ' (for architecture ' \
+            | sed 's|:[[:space:]]*application/x-mach-binary$||'
+          )
+          ok "none"
+
+          echo "== every file under Contents/MacOS is signed =="
+          # Not just the Mach-Os: managed assemblies, .json runtime configs and
+          # .txt files under the bundle's code location are all code objects.
+          # The main executable is skipped — its signature is the bundle's.
+          MAIN="${MACOS}/$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "${APP}/Contents/Info.plist")"
+          unsigned=0
+          checked=0
+          while IFS= read -r f; do
+            [ "${f}" = "${MAIN}" ] && continue
+            checked=$(( checked + 1 ))
+            codesign -v "${f}" >/dev/null 2>&1 \
+              || { echo "  UNSIGNED: ${f#${APP}/}"; unsigned=$(( unsigned + 1 )); }
+          done < <(find "${MACOS}" -type f)
+          [ "${unsigned}" -eq 0 ] || fail "${unsigned} of ${checked} files under Contents/MacOS are unsigned."
+          ok "${checked} nested files, all signed"
+
+          echo "== bundle verifies =="
+          # Captured rather than piped: a pipeline would report sed's status
+          # and swallow a codesign failure. --deep is fine for verifying.
+          if ! verify_out="$(codesign --verify --deep --strict --verbose=2 "${APP}" 2>&1)"; then
+            printf '%s\n' "${verify_out}" | sed 's/^/  /'
+            fail "codesign --verify --deep --strict failed"
+          fi
+          printf '%s\n' "${verify_out}" \
+            | grep -vE '^--(prepared|validated):' | grep -v '^[[:space:]]*$' | sed 's/^/  /' || true
+
+          echo "== entitlements =="
+          # Per-process, so the helper's OWN signature must carry allow-jit —
+          # the app's entitlements do not propagate to child processes.
+          # Without it CoreCLR fails with HRESULT: 0x80070008.
+          helper_ents="$(codesign -d --entitlements :- "${MACOS}/helper/TwitchDownloaderCLI" 2>/dev/null || true)"
+          grep -q 'com.apple.security.cs.allow-jit' <<<"${helper_ents}" \
+            || fail "helper is missing com.apple.security.cs.allow-jit."
+          ok "helper: allow-jit present"
+          helper_sig="$(codesign -dv "${MACOS}/helper/TwitchDownloaderCLI" 2>&1 || true)"
+          grep -q 'runtime' <<<"${helper_sig}" \
+            || fail "helper is not signed with the hardened runtime (--options runtime)."
+          ok "helper: hardened runtime"
+          # ffmpeg does not JIT; granting it allow-jit would weaken the bundle
+          # for nothing (docs/signing.md §3).
+          ffmpeg_ents="$(codesign -d --entitlements :- "${MACOS}/ffmpeg" 2>/dev/null || true)"
+          if grep -q 'allow-jit' <<<"${ffmpeg_ents}"; then
+            fail "ffmpeg carries allow-jit. It does not JIT and must ship with no entitlements."
+          fi
+          ok "ffmpeg: no allow-jit"
