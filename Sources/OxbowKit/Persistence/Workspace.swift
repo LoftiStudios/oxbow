@@ -35,6 +35,15 @@ public struct Workspace: Sendable {
     jobDirectory(job).appending(path: "artifacts")
   }
 
+  /// Where a step's captured helper output lives.
+  ///
+  /// Under the job, not the step: `removeStep` deletes a step's directory the
+  /// moment it ends, which is exactly when someone wants to read why it
+  /// failed. Logs outlive their step for the same reason artifacts do.
+  public func logFile(job: JobID, step: StepID) -> URL {
+    jobDirectory(job).appending(path: "logs").appending(path: "\(step.rawValue).log")
+  }
+
   @discardableResult
   public func prepareStep(job: JobID, step: StepID) throws -> URL {
     let directory = stepDirectory(job: job, step: step)

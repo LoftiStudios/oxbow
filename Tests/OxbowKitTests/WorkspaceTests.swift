@@ -16,6 +16,44 @@ struct WorkspaceTests {
     try? FileManager.default.removeItem(at: workspace.root)
   }
 
+  /// A step's own directory is deleted the moment the step ends, so a log
+  /// kept there would vanish exactly when someone wants to read why the step
+  /// failed. Logs live at the job level, like the artifacts they explain.
+  @Test func aStepLogOutlivesItsStepDirectory() throws {
+    let workspace = makeWorkspace()
+    defer { tearDown(workspace) }
+    let job = Build.jobID(1)
+    let step = Build.stepID(1)
+
+    _ = try workspace.prepareStep(job: job, step: step)
+    // `StepLog` creates the containing directory on first append; stand in
+    // for that here.
+    let log = workspace.logFile(job: job, step: step)
+    try FileManager.default.createDirectory(
+      at: log.deletingLastPathComponent(), withIntermediateDirectories: true)
+    FileManager.default.createFile(atPath: log.path, contents: Data("hello".utf8))
+
+    workspace.removeStep(job: job, step: step)
+
+    #expect(FileManager.default.fileExists(atPath: log.path), "the log died with the step directory")
+    #expect(!log.path.hasPrefix(workspace.stepDirectory(job: job, step: step).path))
+    #expect(log.path.hasPrefix(workspace.jobDirectory(job).path))
+  }
+
+  @Test func removingAJobTakesItsLogsWithIt() throws {
+    let workspace = makeWorkspace()
+    defer { tearDown(workspace) }
+    let job = Build.jobID(1)
+    let log = workspace.logFile(job: job, step: Build.stepID(1))
+    try FileManager.default.createDirectory(
+      at: log.deletingLastPathComponent(), withIntermediateDirectories: true)
+    FileManager.default.createFile(atPath: log.path, contents: Data("hello".utf8))
+
+    workspace.removeJob(job)
+
+    #expect(!FileManager.default.fileExists(atPath: log.path))
+  }
+
   @Test func createsAndRemovesAStepDirectory() throws {
     let workspace = makeWorkspace()
     let job = Build.jobID(1)

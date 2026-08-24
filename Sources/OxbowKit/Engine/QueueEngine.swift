@@ -292,10 +292,21 @@ public actor QueueEngine {
     async
   {
     do {
+      let log = context.log
       let result = try await process.run(launch) { [weak self] line in
-        guard case .status(let progress) = line else { return }
-        await self?.updateProgress(id, progress)
+        switch line {
+        case .status(let progress):
+          // Status lines drive the progress bar and arrive by the hundreds.
+          // Writing them to the log too would bury the handful of lines that
+          // actually say what a step was doing when it stopped.
+          await self?.updateProgress(id, progress)
+        case .log(let level, let message):
+          await log?.append("[\(level)] \(message)")
+        case .ffmpeg(let message):
+          await log?.append("<FFMPEG> \(message)")
+        }
       }
+      await log?.close()
       finish(id, result: result, context: context)
     } catch {
       // `process.run` never produced a `RunResult` at all — there is no exit
@@ -587,7 +598,8 @@ public actor QueueEngine {
       stepTempDirectory: stepDirectory,
       outputFile: artifacts.appending(path: name),
       ffmpegPath: configuration.ffmpegPath,
-      inputArtifact: input)
+      inputArtifact: input,
+      log: StepLog(fileURL: configuration.workspace.logFile(job: job.id, step: step.id)))
   }
 
   /// Moves a finished step's output to its final destination.

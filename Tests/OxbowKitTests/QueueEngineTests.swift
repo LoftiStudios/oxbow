@@ -64,6 +64,81 @@ struct QueueEngineTests {
     return (template, destination)
   }
 
+  /// The helper's narrative output is the only record of what a step was
+  /// doing. Discarding it is why a helper that finished its work and then
+  /// hung could only be diagnosed by sampling the process.
+  ///
+  /// Asserted on a FAILING step deliberately: a job that reaches `.done` has
+  /// its whole workspace removed, log included, which is right — there is
+  /// nothing to diagnose about work that succeeded and was delivered. The
+  /// log has to survive exactly where someone would go looking for it.
+  @Test func keepsTheHelpersNarrativeOutputForAFailedStep() async throws {
+    let (engine, root) = makeEngine(.failsWithoutArtifact(stderr: "boom"))
+    defer { cleanUp(root) }
+    let workspace = Workspace(root: root)
+
+    try await engine.start()
+    await engine.enqueue(
+      .video(VideoRequest(
+        videoID: "1", quality: "",
+        destination: root.appending(path: "out.mp4"))),
+      title: "t")
+    try await settle(engine)
+
+    let job = try #require(await engine.currentJobs.first)
+    let step = try #require(job.steps.first)
+    let contents = (try? String(contentsOf: workspace.logFile(job: job.id, step: step.id), encoding: .utf8)) ?? ""
+
+    #expect(contents.contains("Fetching video info"), "log line missing; log was: \(contents)")
+    #expect(contents.contains("frame= 42"), "ffmpeg line missing; log was: \(contents)")
+  }
+
+  /// Status lines drive the progress bar and arrive by the hundreds — one per
+  /// render frame batch. Writing them to the log too would bury the handful of
+  /// lines that actually say what a step was doing when it stopped.
+  @Test func statusLinesAreNotWrittenToTheLog() async throws {
+    let (engine, root) = makeEngine(.failsWithoutArtifact(stderr: "boom"))
+    defer { cleanUp(root) }
+    let workspace = Workspace(root: root)
+
+    try await engine.start()
+    await engine.enqueue(
+      .video(VideoRequest(
+        videoID: "1", quality: "",
+        destination: root.appending(path: "out.mp4"))),
+      title: "t")
+    try await settle(engine)
+
+    let job = try #require(await engine.currentJobs.first)
+    let step = try #require(job.steps.first)
+    let contents = (try? String(contentsOf: workspace.logFile(job: job.id, step: step.id), encoding: .utf8)) ?? ""
+
+    #expect(!contents.isEmpty, "precondition: the log should have narrative lines in it")
+    #expect(!contents.contains("Working"), "a status line leaked into the log")
+  }
+
+  /// The flip side, stated so it is a decision rather than an accident: a job
+  /// that succeeded has nothing left to explain, and its log goes with the
+  /// workspace it lived in.
+  @Test func aSucceedingJobTakesItsLogWithItsWorkspace() async throws {
+    let (engine, root) = makeEngine(.succeeds)
+    defer { cleanUp(root) }
+    let workspace = Workspace(root: root)
+
+    try await engine.start()
+    await engine.enqueue(
+      .video(VideoRequest(
+        videoID: "1", quality: "",
+        destination: root.appending(path: "out.mp4"))),
+      title: "t")
+    try await settle(engine)
+
+    let job = try #require(await engine.currentJobs.first)
+    let step = try #require(job.steps.first)
+    #expect(job.status == .done)
+    #expect(!FileManager.default.fileExists(atPath: workspace.logFile(job: job.id, step: step.id).path))
+  }
+
   /// Waits for the queue to stop having runnable work, or fails the test.
   private func settle(_ engine: QueueEngine) async throws {
     for _ in 0..<200 {
