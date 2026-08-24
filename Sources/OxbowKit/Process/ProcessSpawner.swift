@@ -41,7 +41,30 @@ public enum ProcessSpawner {
     defer { posix_spawnattr_destroy(&attributes) }
     // pgroup 0 means "become your own group leader", so pgid == pid.
     posix_spawnattr_setpgroup(&attributes, 0)
-    posix_spawnattr_setflags(&attributes, Int16(POSIX_SPAWN_SETPGROUP))
+
+    // Reset the signal mask and dispositions in the child.
+    //
+    // Both are inherited across posix_spawn, and a blocked SIGCHLD is fatal
+    // to the helper in a way that looks like a hang: CoreCLR learns that a
+    // child of its own has exited only via SIGCHLD, so with it masked the
+    // helper's `Process.WaitForExit()` on the FFmpeg it spawns never returns.
+    // The FFmpeg does its work, exits, and sits as an unreaped zombie while
+    // the helper waits on it forever.
+    //
+    // Found exactly that way: a download reached "Finalizing Video 100%",
+    // produced a complete file, and then hung with a <defunct> child. Not
+    // theoretical, and not something the helper can defend itself against.
+    var emptyMask = sigset_t()
+    sigemptyset(&emptyMask)
+    posix_spawnattr_setsigmask(&attributes, &emptyMask)
+
+    var allSignals = sigset_t()
+    sigfillset(&allSignals)
+    posix_spawnattr_setsigdefault(&attributes, &allSignals)
+
+    posix_spawnattr_setflags(
+      &attributes,
+      Int16(POSIX_SPAWN_SETPGROUP | POSIX_SPAWN_SETSIGMASK | POSIX_SPAWN_SETSIGDEF))
 
     let argv: [UnsafeMutablePointer<CChar>?] =
       ([executable.path] + arguments).map { strdup($0) } + [nil]

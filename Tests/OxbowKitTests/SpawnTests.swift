@@ -23,6 +23,42 @@ struct SpawnTests {
 
   private func isAlive(_ pid: pid_t) -> Bool { kill(pid, 0) == 0 }
 
+  /// Regression guard for a hang that looked like the helper's fault and was
+  /// entirely ours.
+  ///
+  /// Signal masks are inherited across `posix_spawn`. CoreCLR learns that a
+  /// child of its own has exited only via SIGCHLD, so a helper spawned with
+  /// SIGCHLD blocked waits forever on the FFmpeg it launches: the FFmpeg runs,
+  /// finishes, exits, and sits as an unreaped zombie while the helper blocks in
+  /// `WaitForExit()`. Observed as a download that reached "Finalizing Video
+  /// 100%", wrote a complete and valid file, and then never exited — with a
+  /// `<defunct>` child underneath it.
+  ///
+  /// Blocks SIGCHLD in the parent deliberately, because inheriting a clean mask
+  /// from a clean parent proves nothing.
+  @Test func spawnedChildrenDoNotInheritABlockedSignalMask() throws {
+    var blocked = sigset_t()
+    sigemptyset(&blocked)
+    sigaddset(&blocked, SIGCHLD)
+    var previous = sigset_t()
+    pthread_sigmask(SIG_BLOCK, &blocked, &previous)
+    defer { pthread_sigmask(SIG_SETMASK, &previous, nil) }
+
+    // python3 ships with macOS, and `pthread_sigmask(SIG_BLOCK, [])` returns
+    // the current mask without changing it — the only readable view of an
+    // inherited mask available to a shell fixture.
+    let (url, directory) = try script(
+      #"exec /usr/bin/env python3 -c 'import signal; print(sorted(signal.pthread_sigmask(signal.SIG_BLOCK, [])))'"#)
+    defer { try? FileManager.default.removeItem(at: directory) }
+
+    let spawned = try ProcessSpawner.spawn(executable: url, arguments: [], workingDirectory: directory)
+    let output = String(decoding: spawned.stdout.readDataToEndOfFile(), as: UTF8.self)
+    _ = ProcessSpawner.wait(spawned.pid)
+
+    #expect(!output.contains("\(SIGCHLD)"), "child inherited a blocked SIGCHLD; output was: \(output)")
+    #expect(output.contains("[]"), "child inherited a non-empty signal mask: \(output)")
+  }
+
   @Test func capturesStdoutAndExitCode() throws {
     let (url, directory) = try script("echo hello; exit 3")
     defer { try? FileManager.default.removeItem(at: directory) }
