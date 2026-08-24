@@ -66,9 +66,15 @@ final class QueueController {
   /// `JobTemplate` — parsing the link, resolving destinations per output,
   /// and wiring the toggles — so the controller no longer parses URLs or
   /// constructs requests itself.
-  func enqueue(_ template: JobTemplate, title: String) {
-    let engine = engine
-    Task { await engine.enqueue(template, title: title) }
+  ///
+  /// `async`, awaiting the engine, rather than spawning an untracked `Task`:
+  /// intake dismisses its sheet on the strength of this call, and a
+  /// fire-and-forget enqueue cannot tell the caller whether the job landed.
+  /// The failure it invites is the worst kind — the sheet closes, nothing
+  /// appears in the queue, and nothing says why. Returning only once the
+  /// engine holds the job makes "it is queued" a fact the sheet can act on.
+  func enqueue(_ template: JobTemplate, title: String) async {
+    await engine.enqueue(template, title: title)
   }
 
   /// The tail of a step's captured helper output, for the detail disclosure.

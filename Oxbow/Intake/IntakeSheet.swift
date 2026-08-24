@@ -2,76 +2,196 @@ import AppKit
 import SwiftUI
 import OxbowKit
 
+/// Paste a link, see what it is, choose which of its outputs you want, and
+/// add the job. Every rule this sheet obeys lives in `IntakeModel`; this is
+/// the rendering of it.
 struct IntakeSheet: View {
-  let controller: QueueController
-
   @Environment(\.dismiss) private var dismiss
-  @State private var urlText = ""
-  @State private var destination: URL?
+  @State private var model: IntakeModel
   @State private var hostWindow: NSWindow?
+  @State private var isAdding = false
 
-  /// Live validation, so the destination's suggested name can use the id
-  /// before anything is enqueued.
-  ///
-  /// Only `.video` is surfaced here — `TwitchLink.parse` also recognizes
-  /// clips, but this sheet only ever builds a video `JobTemplate`, and is
-  /// rewritten wholesale in Task 8 to wire clips (and the chat/render
-  /// toggles) up properly. Until then, treating a parsed clip as "not a
-  /// target" keeps Add honestly disabled instead of enqueueing nothing and
-  /// closing as if it worked.
-  private var target: TwitchLink.Target? {
-    let parsed = TwitchLink.parse(urlText)
-    guard case .video = parsed else { return nil }
-    return parsed
+  init(controller: QueueController) {
+    _model = State(initialValue: IntakeModel(controller: controller))
   }
 
   var body: some View {
     VStack(alignment: .leading, spacing: 16) {
       Text("Add Download").font(.headline)
 
-      VStack(alignment: .leading, spacing: 4) {
-        TextField("Twitch VOD URL", text: $urlText)
-          .textFieldStyle(.roundedBorder)
-        if !urlText.isEmpty && target == nil {
-          Text("That does not look like a Twitch VOD address.")
-            .font(.caption)
-            .foregroundStyle(.red)
+      link
+      if model.hasSettledMetadata {
+        Divider()
+        naming
+        outputs
+        qualityPicker
+        if model.showsTrimOptions { trim }
+      }
+      Divider()
+      folderRow
+      if let addFailure = model.addFailure {
+        Text(addFailure).font(.caption).foregroundStyle(.red)
+      }
+      buttons
+    }
+    .padding(20)
+    .frame(width: 460)
+    .background(HostWindowReader(window: $hostWindow))
+    // Debounced here rather than in the model so the model stays synchronous
+    // to test: `.task(id:)` already cancels the previous fetch when the link
+    // changes, and the sleep keeps a half-typed URL from being fetched.
+    .task(id: model.linkText) {
+      guard model.target != nil else { return }
+      try? await Task.sleep(for: .milliseconds(400))
+      guard !Task.isCancelled else { return }
+      await model.load()
+    }
+  }
+
+  // MARK: - Sections
+
+  private var link: some View {
+    VStack(alignment: .leading, spacing: 4) {
+      TextField("Twitch VOD or clip link", text: $model.linkText)
+        .textFieldStyle(.roundedBorder)
+
+      if model.isLinkUnrecognized {
+        Text("That does not look like a Twitch VOD or clip address.")
+          .font(.caption)
+          .foregroundStyle(.red)
+      } else if model.isLoadingMetadata {
+        HStack(spacing: 6) {
+          ProgressView().controlSize(.small)
+          Text("Fetching video details…").font(.caption).foregroundStyle(.secondary)
+        }
+      } else if let failure = model.metadataFailure {
+        // A failure, not a dead end: the name below has fallen back to the id
+        // or slug and the sheet still works.
+        Text(failure).font(.caption).foregroundStyle(.orange)
+      } else if let info = model.info {
+        Text("\(info.streamer) — \(info.title)")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+          .lineLimit(2)
+      }
+    }
+  }
+
+  private var naming: some View {
+    VStack(alignment: .leading, spacing: 4) {
+      Text("Name").font(.caption).foregroundStyle(.secondary)
+      TextField("Name", text: $model.name)
+        .textFieldStyle(.roundedBorder)
+        .labelsHidden()
+      Text(exampleFilenames).font(.caption).foregroundStyle(.secondary).lineLimit(3)
+    }
+  }
+
+  private var outputs: some View {
+    VStack(alignment: .leading, spacing: 6) {
+      Toggle(isClip ? "Clip" : "Video", isOn: $model.isDownloadingMedia)
+
+      HStack {
+        Toggle("Chat", isOn: $model.isDownloadingChat)
+        if model.isDownloadingChat {
+          Picker("Format", selection: $model.chatFormat) {
+            Text("JSON").tag(ChatFormat.json)
+            Text("Text").tag(ChatFormat.text)
+            Text("HTML").tag(ChatFormat.html)
+          }
+          .labelsHidden()
+          .frame(width: 100)
         }
       }
 
-      HStack {
-        Text(destination?.lastPathComponent ?? "No destination chosen")
-          .foregroundStyle(destination == nil ? .secondary : .primary)
-          .lineLimit(1)
-          .truncationMode(.middle)
-        Spacer()
-        Button("Choose…") { chooseDestination() }
-          .disabled(target == nil)
-      }
-
-      HStack {
-        Spacer()
-        Button("Cancel") { dismiss() }
-          .keyboardShortcut(.cancelAction)
-        Button("Add") { add() }
-          .keyboardShortcut(.defaultAction)
-          .disabled(target == nil || destination == nil)
+      Toggle("Render chat", isOn: $model.isRenderingChat)
+      if model.isRenderingChat {
+        // Task 9 hangs `RenderOptionsView(options: $model.renderOptions)`
+        // here. `IntakeModel.renderOptions` is already the form's state and
+        // `composedTemplate()` already carries it into the job, so that task
+        // adds a view and nothing else.
+        Text("Rendered with the default appearance.")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+        if !model.isDownloadingChat {
+          Text("The chat file is downloaded to render and then discarded.")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
       }
     }
-    .padding(20)
-    .frame(width: 440)
-    .background(HostWindowReader(window: $hostWindow))
   }
 
-  private func chooseDestination() {
-    // `target` is only ever `.video` — see its doc comment — so this always
-    // matches.
-    guard case .video(let videoID) = target else { return }
-    let panel = NSSavePanel()
-    panel.nameFieldStringValue = "twitch-\(videoID).mp4"
+  @ViewBuilder
+  private var qualityPicker: some View {
+    if model.isDownloadingMedia {
+      Picker("Quality", selection: $model.quality) {
+        Text("Best available").tag("")
+        ForEach(model.qualities, id: \.name) { quality in
+          Text(label(for: quality)).tag(quality.name)
+        }
+      }
+    }
+  }
+
+  private var trim: some View {
+    HStack(spacing: 8) {
+      Text("Trim").frame(width: 60, alignment: .leading)
+      TextField("Start", text: $model.trimStartText).textFieldStyle(.roundedBorder)
+      Text("to")
+      TextField("End", text: $model.trimEndText).textFieldStyle(.roundedBorder)
+      if model.trimIsInvalid {
+        Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.red)
+          .help("Use h:mm:ss, m:ss, or seconds. The end must come after the start.")
+      }
+    }
+  }
+
+  private var folderRow: some View {
+    HStack {
+      Text(model.folder?.lastPathComponent ?? "No folder chosen")
+        .foregroundStyle(model.folder == nil ? .secondary : .primary)
+        .lineLimit(1)
+        .truncationMode(.middle)
+      Spacer()
+      Button("Choose…") { chooseFolder() }
+    }
+  }
+
+  private var buttons: some View {
+    HStack {
+      Spacer()
+      Button("Cancel") { dismiss() }
+        .keyboardShortcut(.cancelAction)
+      Button("Add") { add() }
+        .keyboardShortcut(.defaultAction)
+        .disabled(!model.canAdd || isAdding)
+    }
+  }
+
+  // MARK: - Actions
+
+  /// Dismisses only once the job is in the engine. `model.add()` awaits the
+  /// enqueue all the way in and reports whether it landed; a refusal leaves
+  /// the sheet open with its reason on screen.
+  private func add() {
+    isAdding = true
+    Task {
+      let didAdd = await model.add()
+      isAdding = false
+      if didAdd { dismiss() }
+    }
+  }
+
+  private func chooseFolder() {
+    let panel = NSOpenPanel()
+    panel.canChooseDirectories = true
+    panel.canChooseFiles = false
+    panel.canCreateDirectories = true
+    panel.allowsMultipleSelection = false
+    panel.prompt = "Choose"
     panel.directoryURL = try? FileManager.default.url(
       for: .downloadsDirectory, in: .userDomainMask, appropriateFor: nil, create: false)
-    panel.canCreateDirectories = true
 
     // A sheet on the sheet. `runModal()` here would stack an app-modal panel
     // on top of a sheet — it appears detached from the window it belongs to,
@@ -79,22 +199,37 @@ struct IntakeSheet: View {
     guard let hostWindow else {
       // Only if the window has not been read back yet, which cannot happen
       // once the sheet is on screen and the user has clicked a button in it.
-      if panel.runModal() == .OK { destination = panel.url }
+      if panel.runModal() == .OK { model.folder = panel.url }
       return
     }
     panel.beginSheetModal(for: hostWindow) { response in
-      if response == .OK { destination = panel.url }
+      if response == .OK { model.folder = panel.url }
     }
   }
 
-  /// `target` is only ever `.video` here — Add is disabled otherwise — so
-  /// this always matches. One validation path, shown live as the user types.
-  private func add() {
-    guard case .video(let videoID) = target, let destination else { return }
-    // An empty quality means best available - see ArgumentBuilder.
-    let request = VideoRequest(videoID: videoID, quality: "", destination: destination)
-    controller.enqueue(JobTemplate(media: .video(request)), title: "Video \(videoID)")
-    dismiss()
+  // MARK: - Text
+
+  private var isClip: Bool {
+    if case .clip = model.target { return true }
+    return false
+  }
+
+  /// What this job will actually write, so the name field is not a guess.
+  private var exampleFilenames: String {
+    var names: [String] = []
+    if model.isDownloadingMedia { names.append(model.outputBaseName + OutputSuffix.video) }
+    if model.isDownloadingChat {
+      names.append(model.outputBaseName + OutputSuffix.chat(model.chatFormat))
+    }
+    if model.isRenderingChat { names.append(model.outputBaseName + OutputSuffix.render) }
+    return names.isEmpty ? "No outputs selected." : names.joined(separator: "\n")
+  }
+
+  private func label(for quality: StreamQuality) -> String {
+    guard let bytes = model.estimatedBytes(for: quality) else { return quality.name }
+    let size = Int64(bytes).formatted(.byteCount(style: .file))
+    // "about", because it is bitrate x duration and nothing more (§6).
+    return "\(quality.name) — about \(size)"
   }
 }
 

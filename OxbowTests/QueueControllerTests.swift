@@ -50,7 +50,7 @@ struct QueueControllerTests {
       media: .video(VideoRequest(videoID: "2844548319", quality: "", destination: root.appending(path: "out.mp4"))),
       chat: ChatRequest(videoID: "2844548319", format: .html, destination: root.appending(path: "out.html")),
       render: RenderRequest(destination: root.appending(path: "out-render.mp4")))
-    controller.enqueue(template, title: "combined")
+    await controller.enqueue(template, title: "combined")
 
     try await waitFor(controller) { $0.count == 1 }
     // Video + chat + render: three steps, not merely "at least one" — a
@@ -75,7 +75,7 @@ struct QueueControllerTests {
       media: .video(VideoRequest(videoID: "2844548319", quality: "", destination: root.appending(path: "out.mp4"))),
       chat: ChatRequest(videoID: "2844548319", format: .html, destination: root.appending(path: "out.html")),
       render: RenderRequest(destination: root.appending(path: "out-render.mp4")))
-    controller.enqueue(template, title: "combined")
+    await controller.enqueue(template, title: "combined")
 
     try await waitFor(controller) { $0.count == 1 }
     let steps = try #require(controller.jobs.first?.steps)
@@ -108,7 +108,7 @@ struct QueueControllerTests {
     defer { try? FileManager.default.removeItem(at: root) }
     await controller.start()
 
-    controller.enqueue(videoTemplate(id: "2844548319", destination: root.appending(path: "out.mp4")), title: "v")
+    await controller.enqueue(videoTemplate(id: "2844548319", destination: root.appending(path: "out.mp4")), title: "v")
 
     try await waitFor(controller) { $0.first?.status == .done }
   }
@@ -118,7 +118,7 @@ struct QueueControllerTests {
     defer { try? FileManager.default.removeItem(at: root) }
     await controller.start()
 
-    controller.enqueue(videoTemplate(id: "2844548319", destination: root.appending(path: "out.mp4")), title: "v")
+    await controller.enqueue(videoTemplate(id: "2844548319", destination: root.appending(path: "out.mp4")), title: "v")
     try await waitFor(controller) { $0.first?.status == .running }
 
     let id = try #require(controller.jobs.first?.id)
@@ -132,7 +132,7 @@ struct QueueControllerTests {
     defer { try? FileManager.default.removeItem(at: root) }
     await controller.start()
 
-    controller.enqueue(videoTemplate(id: "2844548319", destination: root.appending(path: "out.mp4")), title: "v")
+    await controller.enqueue(videoTemplate(id: "2844548319", destination: root.appending(path: "out.mp4")), title: "v")
     try await waitFor(controller) { $0.first?.status == .running }
 
     let step = try #require(controller.jobs.first?.steps.first?.id)
@@ -149,11 +149,12 @@ struct QueueControllerTests {
     defer { try? FileManager.default.removeItem(at: root) }
     await controller.start()
 
-    controller.enqueue(videoTemplate(id: "2844548319", destination: root.appending(path: "a.mp4")), title: "a")
-    controller.enqueue(videoTemplate(id: "2844548320", destination: root.appending(path: "b.mp4")), title: "b")
+    await controller.enqueue(videoTemplate(id: "2844548319", destination: root.appending(path: "a.mp4")), title: "a")
+    await controller.enqueue(videoTemplate(id: "2844548320", destination: root.appending(path: "b.mp4")), title: "b")
 
-    // By shape, not by index: the two enqueues are separate tasks, so which
-    // job lands first is not ordered.
+    // By shape, not by index. The enqueues are ordered now that `enqueue` is
+    // awaited, but which job the *scheduler* admits first is still its own
+    // decision, and this test is about the queued one either way.
     try await waitFor(controller) { jobs in
       jobs.count == 2
         && jobs.contains { $0.status == .running }
@@ -176,7 +177,7 @@ struct QueueControllerTests {
     defer { try? FileManager.default.removeItem(at: root) }
     await controller.start()
 
-    controller.enqueue(videoTemplate(id: "2844548319", destination: root.appending(path: "out.mp4")), title: "v")
+    await controller.enqueue(videoTemplate(id: "2844548319", destination: root.appending(path: "out.mp4")), title: "v")
     try await waitFor(controller) { $0.first?.status == .failed }
 
     let step = try #require(controller.jobs.first?.steps.first?.id)
@@ -206,7 +207,7 @@ struct QueueControllerTests {
       makeProcess: { helper }))
     await controller.start()
 
-    controller.enqueue(videoTemplate(id: "2844548319", destination: root.appending(path: "out.mp4")), title: "v")
+    await controller.enqueue(videoTemplate(id: "2844548319", destination: root.appending(path: "out.mp4")), title: "v")
     try await waitFor(controller) { $0.first?.status == .running }
 
     await controller.shutDown()
