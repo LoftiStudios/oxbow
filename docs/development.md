@@ -15,7 +15,13 @@ app target yet.
 - **Signing + notarization: resolved and verified end to end.** A bundle with the
   real helper and FFmpeg was signed, notarized (Accepted first try), stapled,
   packaged as a DMG, and launched from quarantine spawning both children. See
-  `docs/signing.md`. Xcode build-phase integration is the one part still untested.
+  `docs/signing.md`.
+- **Xcode build-phase integration: resolved.** The "Embed & Sign Helpers" Run
+  Script phase (`scripts/embed-helpers.sh`) embeds the helper tree and FFmpeg
+  into `Contents/MacOS` and signs them inside-out; no Copy Files phase exists,
+  so the "Code Sign On Copy" trap cannot occur. The phase skips work when the
+  `build/` sources are unchanged, and building without `build/helper` or
+  `build/ffmpeg` succeeds with a warning so UI work needs no extra toolchains.
 - **Deployment target: macOS 15.** Set deliberately — `@Observable` and the modern
   SwiftUI surface need 14+, and 15 keeps us on current APIs. `MIN_MACOS` in
   `scripts/build-ffmpeg.sh` must stay in lockstep with it.
@@ -32,10 +38,11 @@ app target yet.
   Developer ID distribution doesn't require it, and the verified signing spike
   ran unsandboxed. `DEVELOPMENT_TEAM` is never committed; it comes from the
   gitignored `Config/Local.xcconfig` (copy `Config/Local.xcconfig.template`).
-- Next tasks: the **embed + sign build phases** (Copy Files for the helper and
-  FFmpeg, Run Script signing after embedding — the one untested part of the
-  signing spike), then the **queue UI** (the queue is the core abstraction, see
-  Conventions), then the forms.
+- Next tasks: **CI** (the repo went public 2026-08-24 with no workflows yet —
+  at minimum `swift test` plus an unsigned `xcodebuild build` on PRs; signed
+  release builds are a later, separate workflow needing cert secrets), then
+  the **queue UI** (the queue is the core abstraction, see Conventions), then
+  the forms.
 
 Local prerequisites, all now in place: .NET 10 SDK (`brew install --cask
 dotnet-sdk`), a `Developer ID Application` certificate for team `M9WJGEJKBF`, and
@@ -54,7 +61,7 @@ oxbow/
   Tests/OxbowKitTests/       # swift test; includes captured CLI-output fixtures
   Config/                    # Shared.xcconfig + gitignored Local.xcconfig (team)
   vendor/TwitchDownloader/   # git submodule, upstream C# — DO NOT EDIT
-  scripts/                   # build-ffmpeg.sh, sign.sh, entitlements/
+  scripts/                   # build-ffmpeg.sh, sign.sh, embed-helpers.sh, entitlements/
   docs/architecture.md       # decisions + rationale
   docs/design/               # per-subsystem design docs (task-queue.md)
   .github/workflows/
@@ -83,9 +90,11 @@ machines. They are not style preferences.
   tested, not assumed: without it CoreCLR fails with `HRESULT: 0x80070008`; with
   it alone, everything works. **Never add `disable-library-validation`** — needing
   it means something is signed wrong.
-- "Code Sign On Copy" must stay OFF for the embedded helper. Xcode's automatic
-  signing will otherwise re-sign it during Copy Files and clobber its entitlements.
-  The helper is signed in a Run Script phase that runs *after* embedding.
+- The helper is embedded AND signed by one Run Script phase
+  (`scripts/embed-helpers.sh`) — there is deliberately **no Copy Files phase**
+  for it. Copy Files is where the "Code Sign On Copy" trap lives: Xcode's
+  automatic signing re-signs embedded executables during the copy and clobbers
+  their entitlements. Don't add one.
 - Entitlements are per-process. The helper needs its own; the app's do not
   propagate to child processes.
 

@@ -154,11 +154,16 @@ signatures stored in extended attributes, and a plain `zip` drops xattrs.
 
 ## 8. Open items
 
-- **Xcode integration is untested.** This spike hand-built the bundle, which
-  proves codesign/notarytool but not Xcode's build phases. The known trap is
-  still ahead: turn "Code Sign On Copy" **off** for embedded helpers and sign in
-  a Run Script phase that runs *after* embedding, or Xcode re-signs them and
-  clobbers their entitlements.
+- **Xcode integration: resolved (2026-08-24).** `scripts/embed-helpers.sh`,
+  run from an "Embed & Sign Helpers" Run Script phase on the app target,
+  embeds `build/helper` and `build/ffmpeg/ffmpeg` into `Contents/MacOS` and
+  signs them inside-out. The "Code Sign On Copy" trap is sidestepped entirely
+  by not using a Copy Files phase at all — the script both copies and signs,
+  so sign-after-embed is guaranteed, and Xcode's own signing of the bundle
+  runs after all phases, preserving the inside-out order. Verified: 205 files
+  signed, `--deep --strict` passes, the helper carries `allow-jit` and boots
+  CoreCLR, FFmpeg executes. Dev builds sign with the Apple Development
+  identity and no timestamp; distribution still goes through `sign.sh`.
 - **`libSkiaSharp.dylib` and `libHarfBuzzSharp.dylib` ship universal** while v1
   is arm64-only. `lipo -thin arm64` would save roughly 8 MB, but it must happen
   *before* signing. Not done yet.
