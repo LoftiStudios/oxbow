@@ -69,4 +69,34 @@ struct VideoInfoTests {
     #expect(VideoInfo.parse("") == nil)
     #expect(VideoInfo.parse("[STATUS] - Fetching Video Info [1/1]\nnot json\n") == nil)
   }
+
+  /// Regression guard for the quoted-comma trap: `CODECS`'s value contains a
+  /// comma, and (deliberately, adversarially) a decoy `RESOLUTION=1x1` that a
+  /// naive `split(",")` would read as a second, later `RESOLUTION` attribute
+  /// — overwriting the real one. A quote-aware splitter never sees the decoy
+  /// as a top-level attribute at all, because it never leaves the quotes.
+  /// Hand-built rather than a second fixture: this is an adversarial case,
+  /// not captured output, and should read as one.
+  @Test func quoteAwareParsingIgnoresDecoyKeysInsideQuotedValues() throws {
+    let output = [
+      #"{"data":{"video":{"title":"t","createdAt":"2026-01-01T00:00:00Z","lengthSeconds":10,"owner":{"displayName":"s"}}}}"#,
+      "#EXTM3U",
+      #"#EXT-X-STREAM-INF:BANDWIDTH=1000000,RESOLUTION=1920x1080,CODECS="avc1.640029,RESOLUTION=1x1",STABLE-VARIANT-ID="test""#,
+      "https://example.com/index.m3u8",
+    ].joined(separator: "\n")
+
+    let info = try #require(VideoInfo.parse(output))
+    let quality = try #require(info.qualities.first)
+    #expect(quality.resolution == "1920x1080")
+  }
+
+  @Test func returnsNilWhenTheFirstBraceLineFailsToDecode() {
+    let output = "[STATUS] - Fetching Video Info [1/1]\n{this is not valid json\n"
+    #expect(VideoInfo.parse(output) == nil)
+  }
+
+  @Test func returnsNilWhenNoLineLooksLikeJSON() {
+    let output = "[STATUS] - Fetching Video Info [1/1]\nno brace-prefixed line here at all\n"
+    #expect(VideoInfo.parse(output) == nil)
+  }
 }
