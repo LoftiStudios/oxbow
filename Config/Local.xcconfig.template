@@ -1,0 +1,3 @@
+// Copy this file to Local.xcconfig (same directory) and fill in your values.
+// Local.xcconfig is gitignored — Team IDs never get committed.
+DEVELOPMENT_TEAM = YOUR_TEAM_ID

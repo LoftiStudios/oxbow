@@ -1,0 +1,601 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		6330DAE0303CAC060027BD66 /* OxbowKit in Frameworks */ = {isa = PBXBuildFile; productRef = 6330DAE1303CAC060027BD66 /* OxbowKit */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		6330DABE303CAC060027BD66 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 6330DAA8303CAC040027BD66 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 6330DAAF303CAC040027BD66;
+			remoteInfo = Oxbow;
+		};
+		6330DAC8303CAC060027BD66 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 6330DAA8303CAC040027BD66 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 6330DAAF303CAC040027BD66;
+			remoteInfo = Oxbow;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		6330DAB0303CAC040027BD66 /* Oxbow.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Oxbow.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		6330DABD303CAC060027BD66 /* OxbowTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = OxbowTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		6330DAC7303CAC060027BD66 /* OxbowUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = OxbowUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		6330DAE3303CAC060027BD66 /* Shared.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config/Shared.xcconfig; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedRootGroup section */
+		6330DAB2303CAC040027BD66 /* Oxbow */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = Oxbow;
+			sourceTree = "<group>";
+		};
+		6330DAC0303CAC060027BD66 /* OxbowTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = OxbowTests;
+			sourceTree = "<group>";
+		};
+		6330DACA303CAC060027BD66 /* OxbowUITests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = OxbowUITests;
+			sourceTree = "<group>";
+		};
+/* End PBXFileSystemSynchronizedRootGroup section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		6330DAAD303CAC040027BD66 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				6330DAE0303CAC060027BD66 /* OxbowKit in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		6330DABA303CAC060027BD66 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		6330DAC4303CAC060027BD66 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		6330DAA7303CAC040027BD66 = {
+			isa = PBXGroup;
+			children = (
+				6330DAB2303CAC040027BD66 /* Oxbow */,
+				6330DAC0303CAC060027BD66 /* OxbowTests */,
+				6330DACA303CAC060027BD66 /* OxbowUITests */,
+				6330DAE3303CAC060027BD66 /* Shared.xcconfig */,
+				6330DAB1303CAC040027BD66 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		6330DAB1303CAC040027BD66 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				6330DAB0303CAC040027BD66 /* Oxbow.app */,
+				6330DABD303CAC060027BD66 /* OxbowTests.xctest */,
+				6330DAC7303CAC060027BD66 /* OxbowUITests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		6330DAAF303CAC040027BD66 /* Oxbow */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 6330DAD1303CAC060027BD66 /* Build configuration list for PBXNativeTarget "Oxbow" */;
+			buildPhases = (
+				6330DAAC303CAC040027BD66 /* Sources */,
+				6330DAAD303CAC040027BD66 /* Frameworks */,
+				6330DAAE303CAC040027BD66 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				6330DAB2303CAC040027BD66 /* Oxbow */,
+			);
+			name = Oxbow;
+			packageProductDependencies = (
+				6330DAE1303CAC060027BD66 /* OxbowKit */,
+			);
+			productName = Oxbow;
+			productReference = 6330DAB0303CAC040027BD66 /* Oxbow.app */;
+			productType = "com.apple.product-type.application";
+		};
+		6330DABC303CAC060027BD66 /* OxbowTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 6330DAD4303CAC060027BD66 /* Build configuration list for PBXNativeTarget "OxbowTests" */;
+			buildPhases = (
+				6330DAB9303CAC060027BD66 /* Sources */,
+				6330DABA303CAC060027BD66 /* Frameworks */,
+				6330DABB303CAC060027BD66 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				6330DABF303CAC060027BD66 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				6330DAC0303CAC060027BD66 /* OxbowTests */,
+			);
+			name = OxbowTests;
+			packageProductDependencies = (
+			);
+			productName = OxbowTests;
+			productReference = 6330DABD303CAC060027BD66 /* OxbowTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		6330DAC6303CAC060027BD66 /* OxbowUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 6330DAD7303CAC060027BD66 /* Build configuration list for PBXNativeTarget "OxbowUITests" */;
+			buildPhases = (
+				6330DAC3303CAC060027BD66 /* Sources */,
+				6330DAC4303CAC060027BD66 /* Frameworks */,
+				6330DAC5303CAC060027BD66 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				6330DAC9303CAC060027BD66 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				6330DACA303CAC060027BD66 /* OxbowUITests */,
+			);
+			name = OxbowUITests;
+			packageProductDependencies = (
+			);
+			productName = OxbowUITests;
+			productReference = 6330DAC7303CAC060027BD66 /* OxbowUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		6330DAA8303CAC040027BD66 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 2660;
+				LastUpgradeCheck = 2660;
+				TargetAttributes = {
+					6330DAAF303CAC040027BD66 = {
+						CreatedOnToolsVersion = 26.6;
+					};
+					6330DABC303CAC060027BD66 = {
+						CreatedOnToolsVersion = 26.6;
+						TestTargetID = 6330DAAF303CAC040027BD66;
+					};
+					6330DAC6303CAC060027BD66 = {
+						CreatedOnToolsVersion = 26.6;
+						TestTargetID = 6330DAAF303CAC040027BD66;
+					};
+				};
+			};
+			buildConfigurationList = 6330DAAB303CAC040027BD66 /* Build configuration list for PBXProject "Oxbow" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = 6330DAA7303CAC040027BD66;
+			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				6330DAE2303CAC060027BD66 /* XCLocalSwiftPackageReference "." */,
+			);
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 6330DAB1303CAC040027BD66 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				6330DAAF303CAC040027BD66 /* Oxbow */,
+				6330DABC303CAC060027BD66 /* OxbowTests */,
+				6330DAC6303CAC060027BD66 /* OxbowUITests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		6330DAAE303CAC040027BD66 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		6330DABB303CAC060027BD66 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		6330DAC5303CAC060027BD66 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		6330DAAC303CAC040027BD66 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		6330DAB9303CAC060027BD66 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		6330DAC3303CAC060027BD66 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		6330DABF303CAC060027BD66 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 6330DAAF303CAC040027BD66 /* Oxbow */;
+			targetProxy = 6330DABE303CAC060027BD66 /* PBXContainerItemProxy */;
+		};
+		6330DAC9303CAC060027BD66 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 6330DAAF303CAC040027BD66 /* Oxbow */;
+			targetProxy = 6330DAC8303CAC060027BD66 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		6330DACF303CAC060027BD66 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 6330DAE3303CAC060027BD66 /* Shared.xcconfig */;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		6330DAD0303CAC060027BD66 /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 6330DAE3303CAC060027BD66 /* Shared.xcconfig */;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+			};
+			name = Release;
+		};
+		6330DAD2303CAC060027BD66 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
+				CODE_SIGN_ENTITLEMENTS = scripts/entitlements/app.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_APP_SANDBOX = NO;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = studio.lofti.Oxbow;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				REGISTER_APP_GROUPS = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+		6330DAD3303CAC060027BD66 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
+				CODE_SIGN_ENTITLEMENTS = scripts/entitlements/app.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_APP_SANDBOX = NO;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = studio.lofti.Oxbow;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				REGISTER_APP_GROUPS = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
+		6330DAD5303CAC060027BD66 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = studio.lofti.OxbowTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 6.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Oxbow.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Oxbow";
+			};
+			name = Debug;
+		};
+		6330DAD6303CAC060027BD66 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = studio.lofti.OxbowTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 6.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Oxbow.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Oxbow";
+			};
+			name = Release;
+		};
+		6330DAD8303CAC060027BD66 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = studio.lofti.OxbowUITests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 6.0;
+				TEST_TARGET_NAME = Oxbow;
+			};
+			name = Debug;
+		};
+		6330DAD9303CAC060027BD66 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = studio.lofti.OxbowUITests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 6.0;
+				TEST_TARGET_NAME = Oxbow;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		6330DAAB303CAC040027BD66 /* Build configuration list for PBXProject "Oxbow" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				6330DACF303CAC060027BD66 /* Debug */,
+				6330DAD0303CAC060027BD66 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		6330DAD1303CAC060027BD66 /* Build configuration list for PBXNativeTarget "Oxbow" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				6330DAD2303CAC060027BD66 /* Debug */,
+				6330DAD3303CAC060027BD66 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		6330DAD4303CAC060027BD66 /* Build configuration list for PBXNativeTarget "OxbowTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				6330DAD5303CAC060027BD66 /* Debug */,
+				6330DAD6303CAC060027BD66 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		6330DAD7303CAC060027BD66 /* Build configuration list for PBXNativeTarget "OxbowUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				6330DAD8303CAC060027BD66 /* Debug */,
+				6330DAD9303CAC060027BD66 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		6330DAE2303CAC060027BD66 /* XCLocalSwiftPackageReference "." */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = .;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		6330DAE1303CAC060027BD66 /* OxbowKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = OxbowKit;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = 6330DAA8303CAC040027BD66 /* Project object */;
+}

@@ -68,6 +68,10 @@ fastlane/Preview.html
 fastlane/screenshots/**/*.png
 fastlane/test_output
 
+# Per-developer build configuration (DEVELOPMENT_TEAM etc.) — Team IDs are
+# never committed. Copy Config/Local.xcconfig.template to create it.
+Config/Local.xcconfig
+
 # Oxbow build output (FFmpeg source + binaries, app bundle, DMG)
 build/
 

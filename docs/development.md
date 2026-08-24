@@ -25,10 +25,17 @@ app target yet.
   async process wrapper — live in `Sources/OxbowKit` as a SwiftPM library
   (Swift 6 language mode). `swift test` runs the whole suite. Design and
   rationale: `docs/design/task-queue.md`.
-- Next task is the **app itself** — an Xcode app target that links OxbowKit:
-  the queue UI first (the queue is the core abstraction, see Conventions),
-  then the forms. Creating the app target is also what finally exercises the
-  untested Xcode build-phase integration above.
+- **Xcode app target: created and wired.** `Oxbow.xcodeproj` at the repo root
+  links OxbowKit as a local package, deployment target 15.0 (lockstep with
+  `MIN_MACOS`), Swift 6 language mode, hardened runtime on. **Not sandboxed for
+  v1** — a deliberate decision recorded in `scripts/entitlements/app.entitlements`:
+  Developer ID distribution doesn't require it, and the verified signing spike
+  ran unsandboxed. `DEVELOPMENT_TEAM` is never committed; it comes from the
+  gitignored `Config/Local.xcconfig` (copy `Config/Local.xcconfig.template`).
+- Next tasks: the **embed + sign build phases** (Copy Files for the helper and
+  FFmpeg, Run Script signing after embedding — the one untested part of the
+  signing spike), then the **queue UI** (the queue is the core abstraction, see
+  Conventions), then the forms.
 
 Local prerequisites, all now in place: .NET 10 SDK (`brew install --cask
 dotnet-sdk`), a `Developer ID Application` certificate for team `M9WJGEJKBF`, and
@@ -40,19 +47,18 @@ notary credentials in the keychain as profile `oxbow-notary`.
 
 ```
 oxbow/
+  Oxbow.xcodeproj            # the app; links OxbowKit as a local package
+  Oxbow/                     # SwiftUI app source (+ OxbowTests/, OxbowUITests/)
   Package.swift              # SwiftPM package: the OxbowKit library
   Sources/OxbowKit/          # queue engine, CLI wrapper, parser, persistence
   Tests/OxbowKitTests/       # swift test; includes captured CLI-output fixtures
+  Config/                    # Shared.xcconfig + gitignored Local.xcconfig (team)
   vendor/TwitchDownloader/   # git submodule, upstream C# — DO NOT EDIT
   scripts/                   # build-ffmpeg.sh, sign.sh, entitlements/
   docs/architecture.md       # decisions + rationale
   docs/design/               # per-subsystem design docs (task-queue.md)
   .github/workflows/
 ```
-
-The Xcode app target does not exist yet. When it lands, the app source goes in
-its own directory alongside `Sources/`, and the app links OxbowKit as a local
-package dependency.
 
 ---
 
@@ -128,6 +134,11 @@ machines. They are not style preferences.
 **Secrets**
 - Never commit `.p12`, `.p8`, provisioning profiles, or Team IDs. CI reads them
   from repository secrets; local builds read them from the keychain.
+- In particular, `DEVELOPMENT_TEAM` never goes in the pbxproj. It lives in the
+  gitignored `Config/Local.xcconfig`, pulled in via an optional include from
+  `Config/Shared.xcconfig` so a fresh clone still builds (unsigned). Xcode's
+  signing editor will happily write the team back into the project file —
+  check the diff before committing pbxproj changes.
 
 ---
 

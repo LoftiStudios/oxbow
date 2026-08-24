@@ -1,0 +1,7 @@
+// Base configuration for all targets, committed to git.
+//
+// Local.xcconfig is NOT committed (see .gitignore) — it carries per-developer
+// values that must stay out of the repo, currently just DEVELOPMENT_TEAM.
+// Copy Local.xcconfig.template to Local.xcconfig and fill it in. The include
+// is optional so a fresh clone builds (unsigned) without it.
+#include? "Local.xcconfig"
