@@ -5,8 +5,7 @@ import OxbowKit
 @main
 struct OxbowApp: App {
   @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
-  @State private var controller: QueueController?
-  @State private var unavailable: String?
+  @State private var content: QueueContent?
 
   var body: some Scene {
     // `Window`, not `WindowGroup`. The engine is built once at launch
@@ -25,15 +24,11 @@ struct OxbowApp: App {
     // drops the menu item as a consequence rather than as the fix.
     Window("Oxbow", id: "queue") {
       Group {
-        if let controller {
-          QueueView(controller: controller, unavailable: unavailable)
-        } else if let unavailable {
-          ContentUnavailableView {
-            Label("Downloads unavailable", systemImage: "exclamationmark.triangle")
-          } description: {
-            Text(unavailable)
-          }
-          .frame(minWidth: 480, minHeight: 320)
+        // One view for both outcomes. `QueueView` owns the toolbar and the
+        // banner, so a payload-missing launch gets the `+`-disabled window
+        // design §6 describes rather than a bare page with no chrome.
+        if let content {
+          QueueView(content: content)
         } else {
           ProgressView().frame(minWidth: 480, minHeight: 320)
         }
@@ -44,7 +39,7 @@ struct OxbowApp: App {
   }
 
   private func setUp() async {
-    guard controller == nil, unavailable == nil else { return }
+    guard content == nil else { return }
 
     let executable = Bundle.main.executableURL ?? URL(filePath: CommandLine.arguments[0])
     do {
@@ -52,14 +47,15 @@ struct OxbowApp: App {
       switch AppComposition.resolve(bundleExecutable: executable, supportDirectory: support) {
       case .ready(let configuration):
         let controller = QueueController(configuration: configuration)
-        self.controller = controller
+        content = .ready(controller)
         appDelegate.controller = controller
         await controller.start()
       case .helperMissing(let message):
-        unavailable = message
+        content = .unavailable(message)
       }
     } catch {
-      unavailable = "Oxbow could not prepare its support directory: \(error.localizedDescription)"
+      content = .unavailable(
+        "Oxbow could not prepare its support directory: \(error.localizedDescription)")
     }
   }
 }
