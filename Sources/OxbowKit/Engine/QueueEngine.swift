@@ -59,6 +59,10 @@ public actor QueueEngine {
   /// a step running when the kill signals were sent. `finish` clears one out
   /// once the last such step actually stops. See `removeJobWorkspaceIfSettled`.
   private var jobsAwaitingWorkspaceRemoval: Set<JobID> = []
+  /// Set for good once `shutDown()` starts. From that moment the engine admits
+  /// nothing new and folds no outcome back in — see `shutDown()` for why the
+  /// results the kills produce must not be recorded.
+  private var isShuttingDown = false
 
   public init(configuration: Configuration) {
     self.configuration = configuration
@@ -165,7 +169,48 @@ public actor QueueEngine {
     tick()
   }
 
-  /// Writes any pending state immediately. Call on app termination.
+  /// Kills every in-flight helper, then writes final state. Call on app
+  /// termination and await it before letting the process exit.
+  ///
+  /// `flush()` alone is not enough to quit safely. `HelperProcessing.cancel()`
+  /// is the only thing that signals a helper's process group, so an app that
+  /// only flushed would exit leaving `TwitchDownloaderCLI` and the FFmpeg it
+  /// spawned running — reparented to `launchd`, still writing into a job
+  /// workspace that the next launch's `Workspace.removeAll()` sweep would then
+  /// delete out from under them.
+  ///
+  /// **In-flight steps stay `.running` in the saved queue.** They are not
+  /// marked `.cancelled`: the user did not cancel them, and `.cancelled` is a
+  /// status they can be retried out of but which claims an intent nobody had.
+  /// Leaving them `.running` is what lets `Reconciler` turn them into
+  /// `.failed(.interrupted)` at the next launch, which is the design's model
+  /// for interrupted work (docs/design/task-queue.md — interrupted work reuses
+  /// `.failed(.interrupted)` rather than earning its own case). That is also
+  /// why `isShuttingDown` has to suppress step completion: killing a helper
+  /// makes its `run` return `.signalled(SIGTERM)`, and folding that in would
+  /// persist "crashed" — and would race the final save for which of the two
+  /// statuses the queue file ends up holding.
+  ///
+  /// Cancelling concurrently is not an optimisation. Each
+  /// `HelperProcess.cancel()` carries its own ~2s SIGTERM grace period, so
+  /// signalling serially would add two seconds to the quit for every running
+  /// step. Concurrently, the whole quit is bounded by one grace period.
+  public func shutDown() async {
+    isShuttingDown = true
+
+    let processes = Array(running.values)
+    await withTaskGroup(of: Void.self) { group in
+      for process in processes {
+        group.addTask { await process.cancel() }
+      }
+    }
+
+    await flush()
+  }
+
+  /// Writes any pending state immediately. Not the app-termination entry
+  /// point on its own — `shutDown()` is, and calls this last. Flushing
+  /// without killing the helpers first is what orphaned them.
   public func flush() async {
     // Loop rather than a single check-and-await: awaiting a task releases
     // the actor, and a `tick()` landing in that window can install a fresh
@@ -187,8 +232,13 @@ public actor QueueEngine {
   /// Admits what it can and launches it. EVERY mutation ends here, so there is
   /// never a question of who was supposed to kick the queue.
   private func tick() {
-    for id in Scheduler.admissible(jobs: jobs, running: Set(running.keys)) {
-      launch(id)
+    // Nothing new may start once the quit is under way. The steps still in
+    // `running` are being killed, not waited on, so admitting against them
+    // would spawn a helper the app is about to walk out on.
+    if !isShuttingDown {
+      for id in Scheduler.admissible(jobs: jobs, running: Set(running.keys)) {
+        launch(id)
+      }
     }
     publish()
     scheduleSave()
@@ -254,11 +304,12 @@ public actor QueueEngine {
       // `FailureInterpreter`, which would surface as a meaningless
       // "exited with code -1" to the user.
       //
-      // The same race `finish` guards against applies here too: this is
+      // Both of `finish`'s guards apply here too, for the same reasons: a
+      // quit must leave the step `.running` for the reconciler, and this is
       // reached after an `await`, so a cancellation may already have
       // finalized this step (e.g. `ProcessSpawner.spawn` failing while a
-      // `cancel(step:)` for it is in flight). Route through the same guard
-      // rather than completing unconditionally.
+      // `cancel(step:)` for it is in flight).
+      guard !isShuttingDown else { return }
       guard isStillRunning(id) else {
         abandonAlreadyFinalizedStep(id)
         return
@@ -277,6 +328,17 @@ public actor QueueEngine {
   }
 
   private func finish(_ id: StepID, result: RunResult, context: StepContext) {
+    // Checked first, ahead of everything: `shutDown()` signalled this helper,
+    // so `result` is our own kill reported back, not an outcome of the work.
+    // Recording it would persist `.failed(.signalled(SIGTERM))` — "crashed" —
+    // where the step must stay `.running` for `Reconciler` to read as
+    // `.failed(.interrupted)` at the next launch. See `shutDown()`.
+    //
+    // Returns bare rather than routing through `abandonAlreadyFinalizedStep`:
+    // the step is not finalized, and that path would clear `running[id]`,
+    // delete the step's directory, and `tick()` — none of which this wants.
+    guard !isShuttingDown else { return }
+
     // Checked *before* any side-effecting work below (in particular, before
     // `move`): cancelled (or otherwise finalized) while this was in flight,
     // the cancellation path already recorded the terminal status and blocked

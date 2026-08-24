@@ -46,9 +46,10 @@ final class QueueController {
     }
   }
 
-  /// Forwards to `QueueEngine.flush()`. Call on app termination so a pending
-  /// debounced save is not lost.
-  func flush() async { await engine.flush() }
+  /// Forwards to `QueueEngine.shutDown()`. Call on app termination: it kills
+  /// the running helpers before the app exits — otherwise they outlive it as
+  /// orphans — and writes the pending debounced save.
+  func shutDown() async { await engine.shutDown() }
 
   func enqueueVideo(urlText: String, destination: URL) throws {
     guard let videoID = TwitchVideoURL.videoID(from: urlText) else {
