@@ -25,16 +25,53 @@ struct ReconcilerTests {
   }
 
   /// An intermediate that only ever lived in the job workspace is gone.
+  ///
+  /// The unfinished second step is load-bearing: a job whose every step is
+  /// `.done` is finished, and finished jobs are exempt from reconciliation
+  /// entirely — see `finishedJobsAreNeverRequeued`.
   @Test func doneStepsRequeueWhenTheirArtifactVanished() {
     var step = Build.network(1, .done)
     step.artifact = URL(filePath: "/tmp/gone/chat.json")
-    let out = Reconciler.reconcile([Build.job(1, step)]) { _ in false }
+    let out = Reconciler.reconcile([Build.job(1, step, Build.compute(2, .queued))]) { _ in false }
     #expect(status(out, 1) == .queued)
     #expect(out[0].steps[0].artifact == nil)
   }
 
   @Test func doneStepsWithNoRecordedArtifactRequeue() {
-    let out = Reconciler.reconcile([Build.job(1, Build.network(1, .done))]) { _ in true }
+    let jobs = [Build.job(1, Build.network(1, .done), Build.compute(2, .queued))]
+    let out = Reconciler.reconcile(jobs) { _ in true }
+    #expect(status(out, 1) == .queued)
+  }
+
+  /// Spec §5: a job that already reached `.done` is finished. Its
+  /// intermediates were deleted on purpose when it finished, so requeueing a
+  /// step of one would un-finish a job the user has been shown as complete and
+  /// re-download a file that is only discarded again — on every launch,
+  /// forever.
+  @Test func finishedJobsAreNeverRequeued() {
+    var chat = Build.network(1, .done)
+    chat.artifact = URL(filePath: "/tmp/gone/chat.json")
+    var render = Build.compute(2, .done, dependsOn: Build.stepID(1))
+    render.artifact = URL(filePath: "/Users/me/Movies/render.mp4")
+
+    let out = Reconciler.reconcile([Build.job(1, chat, render)]) { _ in false }
+
+    #expect(status(out, 1) == .done, "the discarded intermediate must not un-finish the job")
+    #expect(status(out, 2) == .done)
+    #expect(out[0].status == .done)
+  }
+
+  /// The narrowness of that exception matters: a failed job is still
+  /// retryable, and the retry needs its input re-fetched rather than pointed
+  /// at a path that no longer exists.
+  @Test func failedJobsStillRequeueADoneStepWhoseArtifactVanished() {
+    var chat = Build.network(1, .done)
+    chat.artifact = URL(filePath: "/tmp/gone/chat.json")
+    let render = Build.compute(2, .failed(StepFailure(kind: .noArtifact, summary: "no")),
+      dependsOn: Build.stepID(1))
+
+    let out = Reconciler.reconcile([Build.job(1, chat, render)]) { _ in false }
+
     #expect(status(out, 1) == .queued)
   }
 

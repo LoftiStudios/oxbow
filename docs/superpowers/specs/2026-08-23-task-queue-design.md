@@ -319,17 +319,37 @@ plus `replaceItemAt` so a crash mid-write cannot truncate the queue.
 
 1. Delete the entire `jobs/` temp root unconditionally — nothing in it can be
    reused (§1.3), so there is no case to reason about and no way to leak disk.
-2. Reconcile each step:
+   Only `jobs/`: the rest of `~/Library/Caches/<bundle-id>` is not ours to
+   sweep.
+2. **Skip any job that already reached `.done`.** It is finished, and its
+   intermediates were deleted on purpose when it finished; requeueing one of
+   its steps would un-finish a job the user has been shown as complete and
+   re-download a file that is only discarded again. This exception is
+   deliberately narrow — a `.failed` or `.cancelled` job is still retryable,
+   and a retry must re-fetch a vanished intermediate rather than run against a
+   path pointing at nothing.
+3. Reconcile each remaining step:
    - `.running` → `.failed(.interrupted)`
-   - `.done` → stays `.done` **iff `artifact` still exists**, else `.queued`
+   - `.done` → stays `.done` **iff `artifact` still exists and is non-empty**
+     (§1.5), else `.queued`
    - everything else keeps its persisted status
 
-That `fileExists` check is what stops a completed 4 GB VOD download being redone
+That artifact check is what stops a completed 4 GB VOD download being redone
 because a later render failed, while correctly re-running a chat download whose
 JSON only ever lived in the workspace.
 
-**Schema:** a top-level `version` integer. An unrecognised version moves the file
-aside as `queue.json.bak` and starts empty rather than crashing or guessing.
+**Deleting a job workspace is not free.** `artifacts/` holds the intermediates
+handed between steps, so a step may be `.done` only while the artifact it
+records still exists. A job that reached `.done` may have its workspace deleted,
+with the claims on anything inside it cleared in the same breath; any other job
+keeps its workspace for as long as a `.done` step records an artifact in it,
+because a retry of a later step needs exactly that file.
+
+**Schema:** a top-level `version` integer, read on its own before the payload is
+decoded — a future schema that changes `Job`'s shape must reach the version
+check rather than failing inside it. An unrecognised version *or any other
+decode failure* moves the file aside as `queue.json.bak` and starts empty:
+launch must never be blocked by a file the user cannot reach.
 
 ---
 

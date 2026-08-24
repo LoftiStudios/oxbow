@@ -2,84 +2,39 @@ import Foundation
 import Testing
 @testable import OxbowKit
 
-/// A helper that writes whatever the test tells it to and reports a chosen status.
-actor FakeHelper: HelperProcessing {
-  enum Behaviour: Sendable {
-    case succeeds
-    case failsWithoutArtifact(stderr: String)
-    /// Blocks inside `run` until `cancel()` is called, then reports as
-    /// killed by SIGTERM — mirrors a real helper that keeps running until
-    /// it is signalled, so a test can reliably catch the step `.running`
-    /// before cancelling it.
-    case hangsUntilCancelled
-  }
-
-  private let behaviour: Behaviour
-  private var isCancelled = false
-  private var cancelContinuation: CheckedContinuation<Void, Never>?
-
-  init(_ behaviour: Behaviour) { self.behaviour = behaviour }
-
-  func run(
-    _ launch: Launch,
-    onOutput: @escaping @Sendable (ParsedLine) async -> Void)
-    async throws -> RunResult
-  {
-    await onOutput(.status(StepProgress(phase: "Working", fraction: 0.5)))
-
-    switch behaviour {
-    case .succeeds:
-      // The engine's success criterion is the artifact, so produce one.
-      if let output = Self.outputPath(in: launch.arguments) {
-        FileManager.default.createFile(atPath: output, contents: Data("x".utf8))
-      }
-      return RunResult(status: .exited(0), standardError: "")
-
-    case .failsWithoutArtifact(let stderr):
-      return RunResult(status: .exited(134), standardError: stderr)
-
-    case .hangsUntilCancelled:
-      await waitForCancellation()
-      // SIGTERM: 15.
-      return RunResult(status: .signalled(15), standardError: "")
-    }
-  }
-
-  func cancel() async {
-    isCancelled = true
-    cancelContinuation?.resume()
-    cancelContinuation = nil
-  }
-
-  private func waitForCancellation() async {
-    if isCancelled { return }
-    await withCheckedContinuation { continuation in
-      cancelContinuation = continuation
-    }
-  }
-
-  private static func outputPath(in arguments: [String]) -> String? {
-    guard let index = arguments.firstIndex(of: "-o"), index + 1 < arguments.count else { return nil }
-    return arguments[index + 1]
-  }
-}
-
 @Suite("QueueEngine", .serialized)
 struct QueueEngineTests {
+
+  private func makeRoot() -> URL {
+    URL(filePath: NSTemporaryDirectory()).appending(path: "oxbow-engine-\(UUID().uuidString)")
+  }
+
+  /// The queue file lives *outside* the workspace root — see
+  /// `Configuration.store`. Derived from `root` rather than random so
+  /// `cleanUp` can find it again from the one value the tests hold on to.
+  private func storeURL(for root: URL) -> URL {
+    root.deletingLastPathComponent().appending(path: "\(root.lastPathComponent)-queue.json")
+  }
+
+  private func makeConfiguration(
+    root: URL,
+    makeProcess: @escaping @Sendable () -> HelperProcessing)
+    -> QueueEngine.Configuration
+  {
+    QueueEngine.Configuration(
+      helperExecutable: URL(filePath: "/usr/bin/true"),
+      ffmpegPath: URL(filePath: "/usr/bin/true"),
+      workspace: Workspace(root: root),
+      store: QueueStore(fileURL: storeURL(for: root)),
+      makeProcess: makeProcess)
+  }
 
   private func makeEngine(
     _ makeProcess: @escaping @Sendable () -> HelperProcessing)
     -> (engine: QueueEngine, root: URL)
   {
-    let root = URL(filePath: NSTemporaryDirectory())
-      .appending(path: "oxbow-engine-\(UUID().uuidString)")
-    let engine = QueueEngine(configuration: .init(
-      helperExecutable: URL(filePath: "/usr/bin/true"),
-      ffmpegPath: URL(filePath: "/usr/bin/true"),
-      workspace: Workspace(root: root),
-      store: QueueStore(fileURL: root.appending(path: "queue.json")),
-      makeProcess: makeProcess))
-    return (engine, root)
+    let root = makeRoot()
+    return (QueueEngine(configuration: makeConfiguration(root: root, makeProcess: makeProcess)), root)
   }
 
   private func makeEngine(
@@ -87,6 +42,11 @@ struct QueueEngineTests {
     -> (engine: QueueEngine, root: URL)
   {
     makeEngine { FakeHelper(behaviour) }
+  }
+
+  private func cleanUp(_ root: URL) {
+    try? FileManager.default.removeItem(at: root)
+    try? FileManager.default.removeItem(at: storeURL(for: root))
   }
 
   /// The render step's destination is deliberately outside `root`, mirroring
@@ -116,7 +76,7 @@ struct QueueEngineTests {
     let (engine, root) = makeEngine(.succeeds)
     let (template, renderDestination) = makeChatAndRenderTemplate()
     defer {
-      try? FileManager.default.removeItem(at: root)
+      cleanUp(root)
       try? FileManager.default.removeItem(at: renderDestination)
     }
 
@@ -140,7 +100,7 @@ struct QueueEngineTests {
       stderr: "Unhandled exception. System.Exception: vod_manifest_restricted"))
     let (template, renderDestination) = makeChatAndRenderTemplate()
     defer {
-      try? FileManager.default.removeItem(at: root)
+      cleanUp(root)
       try? FileManager.default.removeItem(at: renderDestination)
     }
 
@@ -166,6 +126,12 @@ struct QueueEngineTests {
   /// `QueueEngine` loads the first one's saved queue and reconciles it
   /// against disk. The store file lives outside `root` deliberately — see
   /// `Configuration.store`'s doc comment.
+  ///
+  /// The property under test is that a **finished** job stays finished. Its
+  /// chat artifact was an intermediate, deliberately discarded when the job
+  /// completed; treating that absence as "needs redoing" made a job the user
+  /// saw as Done re-download its chat on every launch, forever, discarding it
+  /// again each time. See the design spec, §5.
   @Test func persistsAcrossRestart() async throws {
     let root = URL(filePath: NSTemporaryDirectory())
       .appending(path: "oxbow-engine-\(UUID().uuidString)")
@@ -192,32 +158,33 @@ struct QueueEngineTests {
     await engine.flush()
 
     // A genuinely new instance, not the same engine reloaded in place — this
-    // is what actually exercises the `Reconciler` wiring in `start()`.
-    let restarted = QueueEngine(configuration: configuration)
+    // is what actually exercises the `Reconciler` wiring in `start()`. Its
+    // helper factory is a tripwire: a finished job must launch nothing at all.
+    var restartConfiguration = configuration
+    restartConfiguration.makeProcess = {
+      Issue.record("a finished job must not relaunch any step on restart")
+      return FakeHelper(.succeeds)
+    }
+
+    let restarted = QueueEngine(configuration: restartConfiguration)
     try await restarted.start()
 
     let reloaded = await restarted.currentJobs
     #expect(reloaded.count == 1)
     #expect(reloaded[0].title == "persisted")
+    #expect(reloaded[0].status == .done, "a finished job must still be finished after a restart")
+    #expect(reloaded[0].steps.allSatisfy { $0.status == .done })
 
-    // The chat step's artifact lived inside the workspace root, which
-    // `start()` sweeps unconditionally, so Reconciler must not have trusted
-    // the stale `.done` — and by the time `start()` returns, its trailing
-    // `tick()` has already picked the now-`.queued` step back up, so this
-    // can observe either state depending on how far that got.
-    let chatStatus = reloaded[0].steps[0].status
+    // The chat artifact was an intermediate. It was deleted when the job
+    // finished, and the claim on it was dropped in the same breath — so
+    // nothing is left pointing at a file that no longer exists.
+    #expect(reloaded[0].steps[0].artifact == nil, "the discarded intermediate must not be claimed")
+    #expect(reloaded[0].steps[1].artifact == renderDestination)
     #expect(
-      chatStatus == .queued || chatStatus == .running,
-      "the swept chat artifact must have been requeued, not trusted as done")
+      FileManager.default.fileExists(atPath: renderDestination.path),
+      "the file the user actually asked for must survive the restart")
 
-    try await settle(restarted)
-
-    let finalSteps = try #require(await restarted.currentJobs.first?.steps)
-    #expect(finalSteps[0].status == .done, "the requeued chat download must re-run successfully")
-    // The render step's artifact is `renderDestination`, outside `root` —
-    // untouched by the sweep — so Reconciler must have left it `.done` as-is,
-    // and it must never have been re-admitted (it isn't `.queued`).
-    #expect(finalSteps[1].status == .done)
+    #expect(await restarted.isIdle, "there must be nothing left to do")
 
     await restarted.flush()
   }
@@ -226,7 +193,7 @@ struct QueueEngineTests {
     let (engine, root) = makeEngine(.succeeds)
     let (template, renderDestination) = makeChatAndRenderTemplate()
     defer {
-      try? FileManager.default.removeItem(at: root)
+      cleanUp(root)
       try? FileManager.default.removeItem(at: renderDestination)
     }
 
@@ -256,7 +223,7 @@ struct QueueEngineTests {
   /// always won, overwriting `.cancelled` with `.failed(signalled(...))`.
   @Test func cancellingARunningStepSettlesAsCancelledNotFailed() async throws {
     let (engine, root) = makeEngine(.hangsUntilCancelled)
-    defer { try? FileManager.default.removeItem(at: root) }
+    defer { cleanUp(root) }
 
     try await engine.start()
     await engine.enqueue(.chat(ChatRequest(videoID: "2844548319", format: .json)), title: "test")
@@ -279,7 +246,7 @@ struct QueueEngineTests {
   @Test func cancellingAJobKeepsFinishedStepsAndCancelsTheRest() async throws {
     let sequenced = SequencedBehaviours([.succeeds, .hangsUntilCancelled])
     let (engine, root) = makeEngine { FakeHelper(sequenced.next()) }
-    defer { try? FileManager.default.removeItem(at: root) }
+    defer { cleanUp(root) }
 
     try await engine.start()
     await engine.enqueue(
@@ -322,7 +289,7 @@ struct QueueEngineTests {
     let (engine, root) = makeEngine(.failsWithoutArtifact(stderr: "boom"))
     let (template, renderDestination) = makeChatAndRenderTemplate()
     defer {
-      try? FileManager.default.removeItem(at: root)
+      cleanUp(root)
       try? FileManager.default.removeItem(at: renderDestination)
     }
 
@@ -355,7 +322,7 @@ struct QueueEngineTests {
   /// otherwise be the thing that deletes the only copy.
   @Test func aFailedMoveFailsTheStepAndPreservesTheArtifact() async throws {
     let (engine, root) = makeEngine(.succeeds)
-    defer { try? FileManager.default.removeItem(at: root) }
+    defer { cleanUp(root) }
 
     try await engine.start()
 
@@ -394,6 +361,171 @@ struct QueueEngineTests {
     #expect(
       FileManager.default.fileExists(atPath: artifact.path),
       "the only copy of the artifact must survive a failed move")
+
+    await engine.flush()
+  }
+
+  /// The invariant this pins: **a step is `.done` only while the artifact it
+  /// records still exists.** `jobs/<id>/` holds `artifacts/`, the intermediates
+  /// handed between steps, so deleting a cancelled job's workspace wholesale
+  /// destroyed the chat file a finished chat step still pointed at — and a
+  /// later retry of the render then ran `-i <deleted path>` and surfaced a
+  /// .NET file-not-found stack trace to the user.
+  @Test func cancellingAJobKeepsAnIntermediateItsDoneStepStillClaims() async throws {
+    let sequenced = SequencedBehaviours([.succeeds, .hangsUntilCancelled, .succeeds])
+    let (engine, root) = makeEngine { FakeHelper(sequenced.next()) }
+    let (template, renderDestination) = makeChatAndRenderTemplate()
+    defer {
+      cleanUp(root)
+      try? FileManager.default.removeItem(at: renderDestination)
+    }
+
+    try await engine.start()
+    await engine.enqueue(template, title: "test")
+
+    // Wait for exactly the state the bug needs: the chat finished, the render
+    // genuinely in flight.
+    for _ in 0..<200 {
+      let steps = await engine.currentJobs.first?.steps
+      if steps?[0].status == .done, steps?[1].status == .running { break }
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    let before = try #require(await engine.currentJobs.first?.steps)
+    #expect(before[0].status == .done, "precondition: the chat download must have finished")
+    #expect(before[1].status == .running, "precondition: the render must be in flight")
+
+    let jobID = try #require(await engine.currentJobs.first?.id)
+    await engine.cancel(job: jobID)
+    try await settle(engine)
+
+    let afterCancel = try #require(await engine.currentJobs.first?.steps)
+    #expect(afterCancel[0].status == .done)
+    let chatArtifact = try #require(afterCancel[0].artifact)
+    #expect(
+      FileManager.default.fileExists(atPath: chatArtifact.path),
+      "a .done step's artifact must not be deleted out from under it")
+
+    // And the consequence that makes it matter: retrying the render works,
+    // because its input is still there.
+    await engine.retry(step: afterCancel[1].id)
+    try await settle(engine)
+
+    let final = try #require(await engine.currentJobs.first?.steps)
+    #expect(final[1].status == .done, "the retried render must run against the surviving chat file")
+    #expect(FileManager.default.fileExists(atPath: renderDestination.path))
+
+    await engine.flush()
+  }
+
+  /// Spec §1.5: a step succeeded iff its artifact exists **and is non-empty**.
+  /// A helper killed after opening its output file leaves a zero-byte file
+  /// behind; existence alone reads that as a finished download and moves it to
+  /// the user's folder.
+  @Test func anEmptyArtifactIsNotASuccess() async throws {
+    let (engine, root) = makeEngine(.leavesAnEmptyArtifact)
+    let destination = URL(filePath: NSTemporaryDirectory())
+      .appending(path: "render-\(UUID().uuidString).mp4")
+    defer {
+      cleanUp(root)
+      try? FileManager.default.removeItem(at: destination)
+    }
+
+    try await engine.start()
+    await engine.enqueue(
+      .video(VideoRequest(videoID: "v", quality: "best", destination: destination)),
+      title: "test")
+    try await settle(engine)
+
+    let step = try #require(await engine.currentJobs.first?.steps.first)
+    guard case .failed(let failure) = step.status else {
+      Issue.record("an empty artifact must not read as success, got \(step.status)")
+      return
+    }
+    #expect(failure.kind == .noArtifact)
+    #expect(
+      !FileManager.default.fileExists(atPath: destination.path),
+      "an empty file must never be moved to the user's folder")
+
+    await engine.flush()
+  }
+
+  /// The same rule at the other site that applies it: load-time
+  /// reconciliation. A `.done` step whose recorded artifact is a zero-byte
+  /// leftover has nothing usable and must be redone.
+  @Test func restartRequeuesADoneStepWhoseArtifactIsEmpty() async throws {
+    let root = makeRoot()
+    let (template, renderDestination) = makeChatAndRenderTemplate()
+    defer {
+      cleanUp(root)
+      try? FileManager.default.removeItem(at: renderDestination)
+    }
+
+    // An artifact outside the workspace, so the launch sweep is not what
+    // requeues it — emptiness is.
+    let stale = URL(filePath: NSTemporaryDirectory())
+      .appending(path: "oxbow-engine-\(UUID().uuidString)-chat.json")
+    defer { try? FileManager.default.removeItem(at: stale) }
+    FileManager.default.createFile(atPath: stale.path, contents: Data())
+
+    var job = template.makeJob(
+      id: JobID(rawValue: UUID()),
+      title: "empty artifact",
+      created: Date(timeIntervalSince1970: 0),
+      nextStepID: { StepID(rawValue: UUID()) })
+    job.steps[0].status = .done
+    job.steps[0].artifact = stale
+    try QueueStore(fileURL: storeURL(for: root)).save([job])
+
+    let engine = QueueEngine(configuration: makeConfiguration(root: root) { FakeHelper(.succeeds) })
+    try await engine.start()
+    try await settle(engine)
+
+    let steps = try #require(await engine.currentJobs.first?.steps)
+    #expect(steps[0].status == .done, "the requeued chat download must have re-run")
+    #expect(steps[0].artifact != stale, "the empty leftover must not still be claimed")
+    #expect(steps[1].status == .done)
+
+    await engine.flush()
+  }
+
+  /// The most common real restart: the app crashed mid-download. The step
+  /// persisted as `.running` cannot resume, so it must come back as
+  /// `.failed(.interrupted)` — and its dependent must neither run against a
+  /// missing input nor be wedged, which retrying the interrupted step proves.
+  @Test func restartInterruptsARunningStepAndReleasesItsDependent() async throws {
+    let root = makeRoot()
+    let (template, renderDestination) = makeChatAndRenderTemplate()
+    defer {
+      cleanUp(root)
+      try? FileManager.default.removeItem(at: renderDestination)
+    }
+
+    var job = template.makeJob(
+      id: JobID(rawValue: UUID()),
+      title: "interrupted",
+      created: Date(timeIntervalSince1970: 0),
+      nextStepID: { StepID(rawValue: UUID()) })
+    job.steps[0].status = .running
+    try QueueStore(fileURL: storeURL(for: root)).save([job])
+
+    let engine = QueueEngine(configuration: makeConfiguration(root: root) { FakeHelper(.succeeds) })
+    try await engine.start()
+    try await settle(engine)
+
+    let afterStart = try #require(await engine.currentJobs.first?.steps)
+    #expect(
+      afterStart[0].status == .failed(StepFailure(kind: .interrupted, summary: "Interrupted")),
+      "a step persisted as running died with the app; there is no resume")
+    #expect(afterStart[0].artifact == nil)
+    #expect(afterStart[1].status != .running, "the dependent must not run without its input")
+    #expect(afterStart[1].status != .done)
+
+    await engine.retry(step: afterStart[0].id)
+    try await settle(engine)
+
+    let final = try #require(await engine.currentJobs.first?.steps)
+    #expect(final[0].status == .done)
+    #expect(final[1].status == .done, "the dependent must be released once its input exists")
 
     await engine.flush()
   }

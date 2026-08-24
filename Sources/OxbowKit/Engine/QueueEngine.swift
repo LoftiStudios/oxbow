@@ -11,9 +11,10 @@ public actor QueueEngine {
     public var ffmpegPath: URL
     public var workspace: Workspace
     /// - Important: `store.fileURL` must **not** live under `workspace.root`.
-    ///   `start()` unconditionally deletes the entire workspace root before
-    ///   loading the store, so a queue file nested inside it would be wiped
-    ///   out immediately before the read that is supposed to recover it.
+    ///   The queue is the app's own data; `workspace.root` is a cache
+    ///   directory that `start()` sweeps on every launch and that the OS is
+    ///   free to purge behind our back. A queue file nested inside it would
+    ///   be lost to either.
     public var store: QueueStore
     public var makeProcess: @Sendable () -> HelperProcessing
 
@@ -32,11 +33,6 @@ public actor QueueEngine {
     }
   }
 
-  private struct RunningStep {
-    let process: HelperProcessing
-    let task: Task<Void, Never>
-  }
-
   /// Where a step's finished output ends up on success.
   private enum MoveOutcome {
     /// The step has no destination outside the workspace — its output stays
@@ -52,7 +48,11 @@ public actor QueueEngine {
 
   private let configuration: Configuration
   private var jobs: [Job] = []
-  private var running: [StepID: RunningStep] = [:]
+  /// The live helper for each in-flight step, keyed by step. Only the helper
+  /// is kept: the unstructured `Task` that drives it is deliberately not
+  /// retained, because cancelling that task would not stop the child process
+  /// — `HelperProcessing.cancel()` is the only thing that does.
+  private var running: [StepID: HelperProcessing] = [:]
   private var observers: [UUID: AsyncStream<[Job]>.Continuation] = [:]
   private var saveTask: Task<Void, Never>?
   /// Jobs whose workspace a `cancel(job:)` wants removed, but that still had
@@ -79,8 +79,13 @@ public actor QueueEngine {
   /// sidesteps that by handing back the continuation directly, so the
   /// mutation happens in plain actor-isolated code instead of inside an
   /// escaping closure.
+  ///
+  /// `.bufferingNewest(1)` rather than the unbounded default: every element
+  /// is a complete `[Job]`, and a render publishes one per status line —
+  /// ~400 of them. A consumer replaces its whole array from each snapshot, so
+  /// a superseded one carries no information and only costs memory.
   public func makeSnapshots() -> AsyncStream<[Job]> {
-    let (stream, continuation) = AsyncStream<[Job]>.makeStream()
+    let (stream, continuation) = AsyncStream<[Job]>.makeStream(bufferingPolicy: .bufferingNewest(1))
     let id = UUID()
     observers[id] = continuation
     continuation.yield(jobs)
@@ -98,7 +103,7 @@ public actor QueueEngine {
     configuration.workspace.removeAll()
 
     let loaded = try configuration.store.load()
-    jobs = Reconciler.reconcile(loaded) { FileManager.default.fileExists(atPath: $0.path) }
+    jobs = Reconciler.reconcile(loaded) { Self.isUsableArtifact($0) }
 
     tick()
   }
@@ -128,7 +133,7 @@ public actor QueueEngine {
     Scheduler.cancel(id, in: &jobs)
     tick()
 
-    await running[id]?.process.cancel()
+    await running[id]?.cancel()
   }
 
   public func cancel(job id: JobID) async {
@@ -140,7 +145,7 @@ public actor QueueEngine {
     Scheduler.cancel(job: id, in: &jobs)
     tick()
 
-    let processes = job.steps.compactMap { running[$0.id]?.process }
+    let processes = job.steps.compactMap { running[$0.id] }
 
     // Concurrently, not one at a time: each `HelperProcess.cancel()` carries
     // its own ~2s grace period, so cancelling a three-step job serially could
@@ -154,6 +159,10 @@ public actor QueueEngine {
     // A helper that ignored SIGTERM can still be alive (and writing) here —
     // `removeJobWorkspaceIfSettled` only deletes once nothing is running.
     removeJobWorkspaceIfSettled(id)
+
+    // Removal can clear a step's artifact, so republish and re-save rather
+    // than leaving observers and the queue file holding the pre-removal view.
+    tick()
   }
 
   /// Writes any pending state immediately. Call on app termination.
@@ -218,11 +227,11 @@ public actor QueueEngine {
       arguments: ArgumentBuilder.arguments(for: step.kind, context: context),
       workingDirectory: context.stepTempDirectory)
 
-    let task = Task { [weak self] in
+    running[id] = process
+    Task { [weak self] in
       guard let self else { return }
       await self.execute(id, process: process, launch: launch, context: context)
     }
-    running[id] = RunningStep(process: process, task: task)
   }
 
   private func execute(
@@ -291,7 +300,7 @@ public actor QueueEngine {
 
     // Success is the artifact, not the exit code: the CLI's `Main` returns
     // void, so nothing sets a meaningful exit status on its own.
-    let produced = FileManager.default.fileExists(atPath: context.outputFile.path)
+    let produced = Self.isUsableArtifact(context.outputFile)
 
     let outcome: StepOutcome
     if let failure = FailureInterpreter.interpret(
@@ -361,16 +370,16 @@ public actor QueueEngine {
   private func completeStep(_ id: StepID, outcome: StepOutcome) {
     running[id] = nil
     guard let location = locate(id) else { return }
-    let job = jobs[location.job]
+    let jobID = jobs[location.job].id
 
     Scheduler.complete(id, with: outcome, in: &jobs)
 
-    configuration.workspace.removeStep(job: job.id, step: id)
+    configuration.workspace.removeStep(job: jobID, step: id)
 
     if jobs[location.job].status == .done {
-      configuration.workspace.removeJob(job.id)
-    } else if jobsAwaitingWorkspaceRemoval.contains(job.id) {
-      removeJobWorkspaceIfSettled(job.id)
+      removeJobWorkspace(jobID)
+    } else if jobsAwaitingWorkspaceRemoval.contains(jobID) {
+      removeJobWorkspaceIfSettled(jobID)
     }
 
     tick()
@@ -412,14 +421,83 @@ public actor QueueEngine {
   /// mid-write into this directory. If so, this defers by recording the job
   /// in `jobsAwaitingWorkspaceRemoval`; `completeStep`/`finish` call back in
   /// here the moment that last step actually clears `running`.
+  ///
+  /// Every exit other than the deferral resolves the pending entry, so it can
+  /// never be left behind to fire against a later, unrelated completion.
   private func removeJobWorkspaceIfSettled(_ id: JobID) {
-    guard let job = jobs.first(where: { $0.id == id }) else { return }
+    guard let job = jobs.first(where: { $0.id == id }) else {
+      jobsAwaitingWorkspaceRemoval.remove(id)
+      configuration.workspace.removeJob(id)
+      return
+    }
     guard !job.steps.contains(where: { running[$0.id] != nil }) else {
       jobsAwaitingWorkspaceRemoval.insert(id)
       return
     }
-    configuration.workspace.removeJob(id)
+    removeJobWorkspace(id)
     jobsAwaitingWorkspaceRemoval.remove(id)
+  }
+
+  /// Deletes a job's workspace while preserving the invariant that **a step is
+  /// `.done` only if the artifact it records still exists**.
+  ///
+  /// `jobs/<id>/` holds `artifacts/`, the intermediates handed from one step to
+  /// the next, so deleting it can destroy a file an earlier `.done` step still
+  /// points at. Two cases, and only two:
+  ///
+  /// 1. The job is `.done`. It is finished and can never run again, so the
+  ///    intermediates are genuinely disposable — but the claims on them go in
+  ///    the same actor turn as the files, leaving no step pointing at
+  ///    something that is gone. Steps whose artifact was moved out to the
+  ///    user's chosen location keep theirs; those live outside the workspace.
+  ///    (`Reconciler` will not requeue a `.done` job's steps, so nothing
+  ///    resurrects what is dropped here.)
+  /// 2. The job is not finished — a cancel, most often. A later step may still
+  ///    be retried, and an earlier `.done` step's intermediate is exactly the
+  ///    input that retry needs, so the directory stays. One chat file per
+  ///    cancelled job is bounded, and `Workspace.removeAll()` sweeps it at the
+  ///    next launch anyway.
+  private func removeJobWorkspace(_ id: JobID) {
+    guard let index = jobs.firstIndex(where: { $0.id == id }) else {
+      configuration.workspace.removeJob(id)
+      return
+    }
+
+    guard jobs[index].status == .done else {
+      let isClaimed = jobs[index].steps.contains { step in
+        guard step.status == .done, let artifact = step.artifact else { return false }
+        return configuration.workspace.contains(artifact, ofJob: id)
+      }
+      guard !isClaimed else { return }
+      configuration.workspace.removeJob(id)
+      return
+    }
+
+    for stepIndex in jobs[index].steps.indices {
+      guard let artifact = jobs[index].steps[stepIndex].artifact else { continue }
+      guard configuration.workspace.contains(artifact, ofJob: id) else { continue }
+      jobs[index].steps[stepIndex].artifact = nil
+    }
+    configuration.workspace.removeJob(id)
+  }
+
+  /// Spec §1.5: a step succeeded iff its artifact exists **and is non-empty**.
+  ///
+  /// The exit code decides nothing — the CLI's `Main` returns void — so this
+  /// is the entire success criterion, and existence alone is not it: a helper
+  /// killed after opening its output file leaves a zero-byte file behind,
+  /// which `fileExists` reads as a finished download and happily moves to the
+  /// user's folder.
+  ///
+  /// `nonisolated` so `start()` can hand it to `Reconciler` as a plain
+  /// function.
+  private nonisolated static func isUsableArtifact(_ url: URL) -> Bool {
+    guard
+      let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]),
+      values.isRegularFile == true,
+      let size = values.fileSize
+    else { return false }
+    return size > 0
   }
 
   private func makeContext(job: Job, step: Step) throws -> StepContext {

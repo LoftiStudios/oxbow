@@ -8,6 +8,9 @@ import Foundation
 /// intermediate that only ever lived in the job workspace does not.
 public enum Reconciler {
 
+  /// - Parameter artifactExists: whether a recorded artifact is still usable —
+  ///   present *and* non-empty, per the design spec §1.5. Injected so this
+  ///   stays a pure function.
   public static func reconcile(
     _ jobs: [Job],
     artifactExists: (URL) -> Bool)
@@ -15,6 +18,20 @@ public enum Reconciler {
   {
     jobs.map { job in
       var job = job
+
+      // A job that already reached `.done` is finished, and its intermediates
+      // were deliberately deleted when it finished. Requeueing a step of one
+      // would un-finish a job the user has already been shown as complete and
+      // re-download something that is only going to be discarded again — see
+      // the design spec, §5. Nothing here can make such a job progress, so
+      // there is nothing to reconcile.
+      //
+      // Deliberately only `.done`, not every terminal status: a `.failed` or
+      // `.cancelled` job can still be retried, and a retry must re-fetch an
+      // intermediate that no longer exists rather than run against a path
+      // pointing at nothing.
+      guard job.status != .done else { return job }
+
       for index in job.steps.indices {
         switch job.steps[index].status {
         case .running:

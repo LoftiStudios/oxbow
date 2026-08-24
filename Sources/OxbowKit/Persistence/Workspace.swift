@@ -14,8 +14,15 @@ public struct Workspace: Sendable {
     self.root = root
   }
 
+  /// The only subtree of `root` this type creates. Scoped deliberately: `root`
+  /// is the app's whole cache directory, and the launch sweep must not take
+  /// anything else in it with it.
+  public var jobsRoot: URL {
+    root.appending(path: "jobs")
+  }
+
   public func jobDirectory(_ job: JobID) -> URL {
-    root.appending(path: "jobs/\(job.rawValue.uuidString)")
+    jobsRoot.appending(path: job.rawValue.uuidString)
   }
 
   /// Passed to the CLI as `--temp-path`.
@@ -51,9 +58,26 @@ public struct Workspace: Sendable {
     try? FileManager.default.removeItem(at: jobDirectory(job))
   }
 
-  /// Launch sweep. Nothing here can ever be reused, so there is no case to
-  /// reason about and no way for a power loss to leak tens of gigabytes.
+  /// True when `url` names a file inside this job's workspace — i.e. an
+  /// intermediate that disappears with the job, rather than a finished file
+  /// already moved to the user's chosen location.
+  ///
+  /// This is what lets a caller tell "deleting this directory destroys an
+  /// artifact a step still claims" from "deleting it is free".
+  public func contains(_ url: URL, ofJob job: JobID) -> Bool {
+    var directory = jobDirectory(job).standardizedFileURL.path
+    if !directory.hasSuffix("/") { directory += "/" }
+    return url.standardizedFileURL.path.hasPrefix(directory)
+  }
+
+  /// Launch sweep of the `jobs/` temp root. Nothing in it can ever be reused,
+  /// so there is no case to reason about and no way for a power loss to leak
+  /// tens of gigabytes.
+  ///
+  /// - Important: scoped to `jobs/`, never `root`. `root` is
+  ///   `~/Library/Caches/<bundle-id>` — everything else the app caches there
+  ///   belongs to somebody else and must survive launch.
   public func removeAll() {
-    try? FileManager.default.removeItem(at: root)
+    try? FileManager.default.removeItem(at: jobsRoot)
   }
 }
