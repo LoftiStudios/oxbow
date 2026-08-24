@@ -63,6 +63,19 @@ struct FailureInterpreterTests {
     #expect(!failure.summary.contains("   at "))
   }
 
+  /// An inner exception with no message has no ": " to split on. The `--->`
+  /// marker must never survive into the user-facing summary regardless.
+  @Test func stripsTheMarkerWhenTheInnermostExceptionHasNoMessage() throws {
+    let stderr = """
+      Unhandled exception. System.AggregateException: One or more errors occurred.
+       ---> System.NullReferenceException
+         at Something(...)
+      """
+    let failure = try #require(interpret(.exited(134), stderr, artifactExists: false))
+    #expect(failure.summary == "System.NullReferenceException")
+    #expect(!failure.summary.contains("--->"))
+  }
+
   /// `waitFailed` means we know nothing about how the process ended — it must
   /// never be reported as success, even if a stale artifact happens to exist
   /// from a previous run. A killed download must never read as a success.

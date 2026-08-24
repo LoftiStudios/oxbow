@@ -55,10 +55,13 @@ public enum FailureInterpreter {
       .map { $0.trimmingCharacters(in: .whitespaces) }
 
     // .NET nests inner exceptions as `---> Type: message`. The last one is the
-    // root cause and carries the most specific message.
-    if let innermost = lines.last(where: { $0.hasPrefix("---> ") }),
-       let message = innermost.split(separator: ": ", maxSplits: 1).last
-    {
+    // root cause and carries the most specific message. Strip the marker
+    // before splitting on the colon: an exception with no message renders as
+    // just `---> SomeException`, which has no ": " to split on, and the
+    // marker must never survive into the user-facing sentence.
+    if let innermost = lines.last(where: { $0.hasPrefix("---> ") }) {
+      let stripped = innermost.dropFirst("---> ".count)
+      let message = stripped.split(separator: ": ", maxSplits: 1).last ?? stripped
       return String(message)
     }
 

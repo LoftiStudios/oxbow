@@ -46,12 +46,21 @@ public struct QueueStore: Sendable {
 
     let scratch = fileURL.deletingLastPathComponent()
       .appending(path: ".\(fileURL.lastPathComponent).\(UUID().uuidString)")
-    try data.write(to: scratch)
 
-    if FileManager.default.fileExists(atPath: fileURL.path) {
-      _ = try FileManager.default.replaceItemAt(fileURL, withItemAt: scratch)
-    } else {
-      try FileManager.default.moveItem(at: scratch, to: fileURL)
+    do {
+      try data.write(to: scratch)
+
+      if FileManager.default.fileExists(atPath: fileURL.path) {
+        _ = try FileManager.default.replaceItemAt(fileURL, withItemAt: scratch)
+      } else {
+        try FileManager.default.moveItem(at: scratch, to: fileURL)
+      }
+    } catch {
+      // Never leave the scratch file behind: this directory is the app's
+      // persistent data directory, not a throwaway temp dir, so a leak here
+      // accumulates hidden files forever rather than being swept on reboot.
+      try? FileManager.default.removeItem(at: scratch)
+      throw error
     }
   }
 }
