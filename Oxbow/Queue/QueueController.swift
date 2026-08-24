@@ -52,7 +52,7 @@ final class QueueController {
   func shutDown() async { await engine.shutDown() }
 
   func enqueueVideo(urlText: String, destination: URL) throws {
-    guard let videoID = TwitchVideoURL.videoID(from: urlText) else {
+    guard case .video(let videoID) = TwitchLink.parse(urlText) else {
       throw IntakeError.notAVideoURL
     }
 

@@ -10,8 +10,8 @@ struct IntakeSheet: View {
   @State private var hostWindow: NSWindow?
 
   /// Live validation, so the destination's suggested name can use the id
-  /// before anything is enqueued.
-  private var videoID: String? { TwitchVideoURL.videoID(from: urlText) }
+  /// or slug before anything is enqueued.
+  private var target: TwitchLink.Target? { TwitchLink.parse(urlText) }
 
   var body: some View {
     VStack(alignment: .leading, spacing: 16) {
@@ -20,7 +20,7 @@ struct IntakeSheet: View {
       VStack(alignment: .leading, spacing: 4) {
         TextField("Twitch VOD URL", text: $urlText)
           .textFieldStyle(.roundedBorder)
-        if !urlText.isEmpty && videoID == nil {
+        if !urlText.isEmpty && target == nil {
           Text("That does not look like a Twitch VOD address.")
             .font(.caption)
             .foregroundStyle(.red)
@@ -34,7 +34,7 @@ struct IntakeSheet: View {
           .truncationMode(.middle)
         Spacer()
         Button("Choose…") { chooseDestination() }
-          .disabled(videoID == nil)
+          .disabled(target == nil)
       }
 
       HStack {
@@ -43,7 +43,7 @@ struct IntakeSheet: View {
           .keyboardShortcut(.cancelAction)
         Button("Add") { add() }
           .keyboardShortcut(.defaultAction)
-          .disabled(videoID == nil || destination == nil)
+          .disabled(target == nil || destination == nil)
       }
     }
     .padding(20)
@@ -52,9 +52,14 @@ struct IntakeSheet: View {
   }
 
   private func chooseDestination() {
-    guard let videoID else { return }
+    guard let target else { return }
+    let id: String
+    switch target {
+    case .video(let videoID): id = videoID
+    case .clip(let slug): id = slug
+    }
     let panel = NSSavePanel()
-    panel.nameFieldStringValue = "twitch-\(videoID).mp4"
+    panel.nameFieldStringValue = "twitch-\(id).mp4"
     panel.directoryURL = try? FileManager.default.url(
       for: .downloadsDirectory, in: .userDomainMask, appropriateFor: nil, create: false)
     panel.canCreateDirectories = true
@@ -73,12 +78,12 @@ struct IntakeSheet: View {
     }
   }
 
-  /// `videoID` is non-nil here — Add is disabled otherwise — so the parse
+  /// `target` is non-nil here — Add is disabled otherwise — so the parse
   /// inside `enqueueVideo` cannot fail, and the message the discarded `catch`
   /// used to set was a word-for-word copy of the inline one under the field.
   /// One validation path, shown live as the user types.
   private func add() {
-    guard videoID != nil, let destination else { return }
+    guard target != nil, let destination else { return }
     try? controller.enqueueVideo(urlText: urlText, destination: destination)
     dismiss()
   }
