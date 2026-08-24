@@ -12,6 +12,16 @@ public struct QueueStore: Sendable {
     var jobs: [Job]
   }
 
+  /// Just enough of the envelope to read the schema version.
+  ///
+  /// Decoding the full `Envelope` first would defeat the version field
+  /// entirely: `jobs: [Job]` has to decode before the version check can run,
+  /// so a v2 file that changes `Job`'s shape — precisely what the version
+  /// exists to signal — would throw before anything looked at the number.
+  private struct VersionProbe: Decodable {
+    var version: Int
+  }
+
   public let fileURL: URL
 
   public init(fileURL: URL) {
@@ -22,17 +32,35 @@ public struct QueueStore: Sendable {
     guard FileManager.default.fileExists(atPath: fileURL.path) else { return [] }
 
     let data = try Data(contentsOf: fileURL)
-    let envelope = try JSONDecoder().decode(Envelope.self, from: data)
 
-    // Do not guess at a schema we do not understand, and do not crash on it.
-    guard envelope.version == Envelope.currentVersion else {
-      let backup = fileURL.appendingPathExtension("bak")
-      try? FileManager.default.removeItem(at: backup)
-      try FileManager.default.moveItem(at: fileURL, to: backup)
-      return []
+    // Every decode failure is recovered the same way, not just a version
+    // mismatch. A file we cannot read is a file the user cannot fix: without
+    // this, a single corrupt byte means `start()` throws, the app never
+    // launches, the bad file is never set aside, and it fails identically on
+    // every subsequent launch forever.
+    do {
+      let probe = try JSONDecoder().decode(VersionProbe.self, from: data)
+      guard probe.version == Envelope.currentVersion else { return setAside() }
+      return try JSONDecoder().decode(Envelope.self, from: data).jobs
+    } catch {
+      return setAside()
     }
+  }
 
-    return envelope.jobs
+  /// Moves an unreadable queue file aside as `queue.json.bak` and starts
+  /// empty. Best-effort by design and deliberately non-throwing: this is the
+  /// recovery path, so it must not be able to fail launch itself. If the move
+  /// cannot be done, the file is removed instead — leaving it in place would
+  /// reproduce the same failure on the next launch.
+  private func setAside() -> [Job] {
+    let backup = fileURL.appendingPathExtension("bak")
+    try? FileManager.default.removeItem(at: backup)
+    do {
+      try FileManager.default.moveItem(at: fileURL, to: backup)
+    } catch {
+      try? FileManager.default.removeItem(at: fileURL)
+    }
+    return []
   }
 
   public func save(_ jobs: [Job]) throws {

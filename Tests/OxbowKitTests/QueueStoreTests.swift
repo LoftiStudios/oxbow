@@ -39,6 +39,42 @@ struct QueueStoreTests {
     #expect(FileManager.default.fileExists(atPath: backup.path))
   }
 
+  /// A corrupt file must never be able to block launch. Without recovery here
+  /// `load()` throws, `QueueEngine.start()` rethrows, the app cannot start,
+  /// the bad file is never set aside, and it fails identically forever.
+  @Test func setsAsideACorruptFile() throws {
+    let url = temporaryFile()
+    let backup = url.appendingPathExtension("bak")
+    defer {
+      try? FileManager.default.removeItem(at: url)
+      try? FileManager.default.removeItem(at: backup)
+    }
+    try #"{"version": 1, "jobs": [{"#.write(to: url, atomically: true, encoding: .utf8)
+
+    let store = QueueStore(fileURL: url)
+    #expect(try store.load().isEmpty)
+    #expect(FileManager.default.fileExists(atPath: backup.path))
+  }
+
+  /// The case the version field exists for, and the one the gate could not
+  /// see: a future schema that changes `Job`'s shape. Decoding the payload
+  /// before reading the version threw inside `[Job]` and never reached the
+  /// check.
+  @Test func setsAsideAFutureVersionWithAnIncompatibleJobShape() throws {
+    let url = temporaryFile()
+    let backup = url.appendingPathExtension("bak")
+    defer {
+      try? FileManager.default.removeItem(at: url)
+      try? FileManager.default.removeItem(at: backup)
+    }
+    try #"{"version": 2, "jobs": [{"identifier": "abc", "phases": []}]}"#
+      .write(to: url, atomically: true, encoding: .utf8)
+
+    let store = QueueStore(fileURL: url)
+    #expect(try store.load().isEmpty)
+    #expect(FileManager.default.fileExists(atPath: backup.path))
+  }
+
   /// A partially written file must never replace a good one.
   @Test func writesAtomically() throws {
     let url = temporaryFile()
