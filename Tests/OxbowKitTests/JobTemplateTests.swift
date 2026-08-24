@@ -29,9 +29,10 @@ struct JobTemplateTests {
     ClipRequest(clipSlug: "AwkwardHelplessSalamanderSwiftRage", quality: "720p", destination: URL(filePath: "/tmp/c.mp4"))
   }
   /// Carries a destination so tests can distinguish "preserved" from
-  /// "coincidentally nil".
+  /// "coincidentally nil", and a non-JSON format so a forced-to-JSON step can
+  /// be told apart from one that merely started out that way.
   private var chat: ChatRequest {
-    ChatRequest(videoID: "2844548319", format: .json, destination: URL(filePath: "/tmp/chat.json"))
+    ChatRequest(videoID: "2844548319", format: .html, destination: URL(filePath: "/tmp/chat.html"))
   }
   private var render: RenderRequest { RenderRequest(destination: URL(filePath: "/tmp/render.mp4")) }
 
@@ -122,8 +123,10 @@ struct JobTemplateTests {
       return
     }
     // Unlike the render pairing, a standalone chat delivery keeps the
-    // caller's requested format untouched.
-    #expect(request.format == .json)
+    // caller's requested format untouched. `chat`'s fixture format is `.html`
+    // specifically so this can tell "preserved" apart from "coincidentally
+    // already JSON".
+    #expect(request.format == .html)
     #expect(request.destination == chat.destination)
   }
 
@@ -154,6 +157,72 @@ struct JobTemplateTests {
 
     #expect(job.steps[2].dependsOn == job.steps[1].id, "render depends on the chat")
     #expect(job.steps[2].dependsOn != job.steps[0].id, "render must not depend on the video")
+  }
+
+  /// A trimmed video must not get chat rendered against the full VOD: the
+  /// implied chat download has to carry the same trim range as the video
+  /// it is paired with, or the render's output would silently desync from
+  /// what the user actually asked to trim.
+  @Test func mediaAndRenderWithATrimmedVideoImpliesAChatWithTheSameTrim() {
+    let trimmedVideo = VideoRequest(
+      videoID: "2844548319",
+      quality: "160p30",
+      trimStart: .seconds(30),
+      trimEnd: .seconds(90),
+      destination: URL(filePath: "/tmp/v.mp4"))
+
+    let job = makeJob(JobTemplate(media: .video(trimmedVideo), render: render))
+    guard case .downloadChat(let chatRequest) = job.steps[1].kind else {
+      Issue.record("expected the implied chat download second")
+      return
+    }
+    #expect(chatRequest.trimStart == trimmedVideo.trimStart)
+    #expect(chatRequest.trimEnd == trimmedVideo.trimEnd)
+  }
+
+  /// Clips are a media type the enum could not add without doubling its case
+  /// count (`clipAndChat`, `clipChatAndRender`). This is the render half: the
+  /// implied chat download has no video to borrow a VOD ID from, so it must
+  /// seed itself with the clip's own slug — upstream's `chatdownload --id`
+  /// accepts either. Asserting the exact slug, not merely "non-empty", is
+  /// deliberate: a wrong implementation could satisfy "non-empty" with any
+  /// placeholder and still fetch nothing.
+  @Test func clipMediaAndRenderImpliesAChatSeededWithTheClipSlug() {
+    let job = makeJob(JobTemplate(media: .clip(clip), render: render))
+    #expect(job.steps.count == 3)
+    guard case .downloadClip = job.steps[0].kind else {
+      Issue.record("expected the clip download first")
+      return
+    }
+    guard case .downloadChat(let chatRequest) = job.steps[1].kind else {
+      Issue.record("expected the implied chat download second")
+      return
+    }
+    #expect(chatRequest.videoID == clip.clipSlug)
+    #expect(chatRequest.format == .json)
+    #expect(chatRequest.destination == nil)
+    #expect(job.steps[2].dependsOn == job.steps[1].id, "render depends on the chat")
+  }
+
+  /// The clip counterpart to `mediaAndChatWithNoRenderAreTwoIndependentSteps`:
+  /// `.clip` media works the same as `.video` in the media+chat, no-render
+  /// combination — two independent steps, the caller's own chat request
+  /// untouched.
+  @Test func clipMediaAndChatWithNoRenderAreTwoIndependentSteps() {
+    let job = makeJob(JobTemplate(media: .clip(clip), chat: chat))
+    #expect(job.steps.count == 2)
+    #expect(job.steps[0].dependsOn == nil)
+    #expect(job.steps[1].dependsOn == nil)
+    guard case .downloadClip = job.steps[0].kind else {
+      Issue.record("expected the clip download to come first")
+      return
+    }
+    guard case .downloadChat(let request) = job.steps[1].kind else {
+      Issue.record("expected the chat download to come second")
+      return
+    }
+    #expect(request.format == .html)
+    #expect(request.destination == chat.destination)
   }
 
   /// Upstream's `chatrender -i` parses JSON and nothing else. Accepting the
@@ -187,8 +256,9 @@ struct JobTemplateTests {
       Issue.record("expected the chat download second")
       return
     }
-    // The render pairing forces JSON, but does not touch the destination the
-    // caller already asked for.
+    // The render pairing forces JSON — `chat`'s fixture format is `.html`, so
+    // this genuinely exercises the override rather than coinciding with it —
+    // but does not touch the destination the caller already asked for.
     #expect(request.format == .json)
     #expect(request.destination == chat.destination)
   }

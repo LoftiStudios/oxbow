@@ -39,6 +39,10 @@ public struct ClipRequest: Codable, Sendable, Equatable {
 }
 
 public struct ChatRequest: Codable, Sendable, Equatable {
+  /// A VOD id or a clip slug — upstream's `chatdownload --id` documents
+  /// itself as taking "a VOD or clip" and accepts either into this same
+  /// parameter (design doc §8). The field predates clip support; a rename
+  /// is a wider change than the task that added it made.
   public var videoID: String
   public var trimStart: Duration?
   public var trimEnd: Duration?

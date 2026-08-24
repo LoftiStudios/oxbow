@@ -15,6 +15,8 @@ public struct JobTemplate: Sendable {
   }
 
   public var media: Media?
+  /// - Note: when paired with `render`, this is always downloaded as JSON,
+  ///   whatever `ChatRequest.format` says — see `renderInput(_:)`.
   public var chat: ChatRequest?
   public var render: RenderRequest?
 
@@ -69,19 +71,30 @@ public struct JobTemplate: Sendable {
     return Job(id: id, created: created, title: title, steps: steps)
   }
 
-  /// Seeds an implied chat request's VOD ID from the video being downloaded
-  /// alongside it, when there is one. A clip's `clipSlug` is not a VOD ID and
-  /// cannot seed a chat download; with no media at all (render requested on
-  /// its own, unrepresentable at real intake — see the design doc, §5) there
-  /// is nothing to seed it with, so it is left empty.
+  /// Seeds an implied chat request's ID from the media being downloaded
+  /// alongside it. Upstream's `chatdownload --id` documents itself as taking
+  /// "a VOD or clip" (design doc §8), so `ChatRequest.videoID` legitimately
+  /// holds a clip slug: a `.clip` media seeds the implied chat with its
+  /// `clipSlug`, a `.video` media seeds it with its `videoID` *and* the same
+  /// `trimStart`/`trimEnd` — otherwise a trimmed video would render against
+  /// full-VOD chat, which is silently wrong output, not a cosmetic gap.
+  /// With no media at all (render requested on its own, unrepresentable at
+  /// real intake — see the design doc, §5) there is nothing to seed it with,
+  /// so it is left empty.
   private static func impliedChatRequest(for media: Media?) -> ChatRequest {
-    let videoID: String
-    if case .video(let request) = media {
-      videoID = request.videoID
-    } else {
-      videoID = ""
+    switch media {
+    case .video(let request):
+      return ChatRequest(
+        videoID: request.videoID,
+        trimStart: request.trimStart,
+        trimEnd: request.trimEnd,
+        format: .json,
+        destination: nil)
+    case .clip(let request):
+      return ChatRequest(videoID: request.clipSlug, format: .json, destination: nil)
+    case nil:
+      return ChatRequest(videoID: "", format: .json, destination: nil)
     }
-    return ChatRequest(videoID: videoID, format: .json, destination: nil)
   }
 
   /// Constrains a chat download that feeds a render to JSON.
