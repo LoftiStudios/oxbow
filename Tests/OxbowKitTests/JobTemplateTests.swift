@@ -25,31 +25,135 @@ struct JobTemplateTests {
   private var video: VideoRequest {
     VideoRequest(videoID: "2844548319", quality: "160p30", destination: URL(filePath: "/tmp/v.mp4"))
   }
-  private var chat: ChatRequest { ChatRequest(videoID: "2844548319", format: .json) }
-  private var render: RenderRequest { RenderRequest(destination: URL(filePath: "/tmp/c.mp4")) }
+  private var clip: ClipRequest {
+    ClipRequest(clipSlug: "AwkwardHelplessSalamanderSwiftRage", quality: "720p", destination: URL(filePath: "/tmp/c.mp4"))
+  }
+  /// Carries a destination so tests can distinguish "preserved" from
+  /// "coincidentally nil".
+  private var chat: ChatRequest {
+    ChatRequest(videoID: "2844548319", format: .json, destination: URL(filePath: "/tmp/chat.json"))
+  }
+  private var render: RenderRequest { RenderRequest(destination: URL(filePath: "/tmp/render.mp4")) }
 
-  @Test func singleVerbTemplatesProduceOneIndependentStep() {
-    let job = makeJob(.video(video))
+  @Test func mediaOnlyProducesOneIndependentStep() {
+    let job = makeJob(JobTemplate(media: .video(video)))
     #expect(job.steps.count == 1)
     #expect(job.steps[0].dependsOn == nil)
+    guard case .downloadVideo(let request) = job.steps[0].kind else {
+      Issue.record("expected a video download step")
+      return
+    }
+    #expect(request == video)
   }
 
-  @Test func chatAndRenderMakesTheRenderDependOnTheChatDownload() {
-    let job = makeJob(.chatAndRender(chat, render))
+  @Test func clipMediaProducesADownloadClipStep() {
+    let job = makeJob(JobTemplate(media: .clip(clip)))
+    #expect(job.steps.count == 1)
+    #expect(job.steps[0].dependsOn == nil)
+    guard case .downloadClip(let request) = job.steps[0].kind else {
+      Issue.record("expected a clip download step")
+      return
+    }
+    #expect(request == clip)
+  }
+
+  @Test func chatOnlyKeepsTheRequestedFormatAndIsIndependent() {
+    let html = ChatRequest(videoID: "2844548319", format: .html)
+    let job = makeJob(JobTemplate(chat: html))
+    #expect(job.steps.count == 1)
+    #expect(job.steps[0].dependsOn == nil)
+    guard case .downloadChat(let request) = job.steps[0].kind else {
+      Issue.record("expected a chat download step")
+      return
+    }
+    #expect(request.format == .html)
+  }
+
+  /// The combination the design spec calls out as unrepresentable at real
+  /// intake — Render's toggle always implies chat as an input there — but
+  /// `makeJob` still has to produce something well-defined for it rather than
+  /// crash or silently drop the render. There is no VOD ID anywhere in this
+  /// template to seed the implied download with, so its content is a nil
+  /// placeholder; only the structure (step count, forced format, forced-nil
+  /// destination, dependency wiring) is meaningful here.
+  @Test func renderOnlyImpliesAChatStepForcedToJsonWithNoDestination() {
+    let job = makeJob(JobTemplate(render: render))
+    #expect(job.steps.count == 2)
+    #expect(job.steps[0].dependsOn == nil)
+    guard case .downloadChat(let request) = job.steps[0].kind else {
+      Issue.record("expected the implied chat download to come first")
+      return
+    }
+    #expect(request.format == .json)
+    #expect(request.destination == nil)
+    #expect(job.steps[1].dependsOn == job.steps[0].id)
+    guard case .renderChat = job.steps[1].kind else {
+      Issue.record("expected the render step to come second")
+      return
+    }
+  }
+
+  @Test func chatAndRenderMakesTheRenderDependOnTheChatDownloadAndKeepsTheDestination() {
+    let job = makeJob(JobTemplate(chat: chat, render: render))
     #expect(job.steps.count == 2)
     #expect(job.steps[0].dependsOn == nil)
     #expect(job.steps[1].dependsOn == job.steps[0].id)
+    guard case .downloadChat(let request) = job.steps[0].kind else {
+      Issue.record("expected a chat download step")
+      return
+    }
+    #expect(request.destination == chat.destination)
+    #expect(request.videoID == chat.videoID)
   }
 
-  /// The case the explicit `dependsOn` field exists for: the render depends on
-  /// step 2 (the chat), NOT step 1 (the video), and the video is independent.
-  @Test func videoChatAndRenderMakesTheRenderDependOnTheChatNotTheVideo() {
-    let job = makeJob(.videoChatAndRender(video, chat, render))
+  /// The combination the enum could not express at all: video plus chat, but
+  /// no render pairing to force a dependency between them.
+  @Test func mediaAndChatWithNoRenderAreTwoIndependentSteps() {
+    let job = makeJob(JobTemplate(media: .video(video), chat: chat))
+    #expect(job.steps.count == 2)
+    #expect(job.steps[0].dependsOn == nil)
+    #expect(job.steps[1].dependsOn == nil)
+    guard case .downloadVideo = job.steps[0].kind else {
+      Issue.record("expected the video download to come first")
+      return
+    }
+    guard case .downloadChat(let request) = job.steps[1].kind else {
+      Issue.record("expected the chat download to come second")
+      return
+    }
+    // Unlike the render pairing, a standalone chat delivery keeps the
+    // caller's requested format untouched.
+    #expect(request.format == .json)
+    #expect(request.destination == chat.destination)
+  }
+
+  /// The case the explicit `dependsOn` field exists for: with no chat
+  /// requested, the render must still depend on the *implied* chat step
+  /// (step 2), never on the media step (step 1). The implied chat borrows the
+  /// video's own ID — a plausible-but-wrong implementation would instead
+  /// synthesise a chat request with no VOD ID at all, which would fetch
+  /// nothing useful even though the VOD ID was sitting right there in the
+  /// media request.
+  @Test func mediaAndRenderWithNoChatDeliveryMakesTheRenderDependOnTheImpliedChatNotTheMedia() {
+    let job = makeJob(JobTemplate(media: .video(video), render: render))
     #expect(job.steps.count == 3)
     #expect(job.steps[0].dependsOn == nil, "video download is independent")
-    #expect(job.steps[1].dependsOn == nil, "chat download is independent")
+
+    guard case .downloadVideo = job.steps[0].kind else {
+      Issue.record("expected the video download first")
+      return
+    }
+    guard case .downloadChat(let chatRequest) = job.steps[1].kind else {
+      Issue.record("expected the implied chat download second")
+      return
+    }
+    #expect(job.steps[1].dependsOn == nil, "the implied chat download is independent of the video")
+    #expect(chatRequest.videoID == video.videoID, "the implied chat should target the same VOD as the video")
+    #expect(chatRequest.format == .json)
+    #expect(chatRequest.destination == nil)
+
     #expect(job.steps[2].dependsOn == job.steps[1].id, "render depends on the chat")
-    #expect(job.steps[2].dependsOn != job.steps[0].id)
+    #expect(job.steps[2].dependsOn != job.steps[0].id, "render must not depend on the video")
   }
 
   /// Upstream's `chatrender -i` parses JSON and nothing else. Accepting the
@@ -58,8 +162,8 @@ struct JobTemplateTests {
   @Test func aRenderPairingAlwaysDownloadsItsChatAsJson() {
     let html = ChatRequest(videoID: "2844548319", format: .html)
     let jobs = [
-      makeJob(.chatAndRender(html, render)),
-      makeJob(.videoChatAndRender(video, html, render)),
+      makeJob(JobTemplate(chat: html, render: render)),
+      makeJob(JobTemplate(media: .video(video), chat: html, render: render)),
     ]
 
     for job in jobs {
@@ -71,18 +175,34 @@ struct JobTemplateTests {
     }
   }
 
-  /// A standalone chat job is the user's own file, so their format stands.
-  @Test func aStandaloneChatJobKeepsTheRequestedFormat() {
-    let job = makeJob(.chat(ChatRequest(videoID: "2844548319", format: .html)))
-    guard case .downloadChat(let request) = job.steps[0].kind else {
-      Issue.record("expected a chat download step")
+  @Test func mediaChatAndRenderShareTheSameDependencyStructure() {
+    let job = makeJob(JobTemplate(media: .video(video), chat: chat, render: render))
+    #expect(job.steps.count == 3)
+    #expect(job.steps[0].dependsOn == nil, "video download is independent")
+    #expect(job.steps[1].dependsOn == nil, "chat download is independent")
+    #expect(job.steps[2].dependsOn == job.steps[1].id, "render depends on the chat")
+    #expect(job.steps[2].dependsOn != job.steps[0].id)
+
+    guard case .downloadChat(let request) = job.steps[1].kind else {
+      Issue.record("expected the chat download second")
       return
     }
-    #expect(request.format == .html)
+    // The render pairing forces JSON, but does not touch the destination the
+    // caller already asked for.
+    #expect(request.format == .json)
+    #expect(request.destination == chat.destination)
+  }
+
+  /// Documented rather than merely permitted: intake makes this unreachable
+  /// (Add is disabled with no outputs selected), but `makeJob` still needs
+  /// well-defined behaviour for the fully-empty template rather than a crash.
+  @Test func emptyTemplateProducesAJobWithNoSteps() {
+    let job = makeJob(JobTemplate())
+    #expect(job.steps.isEmpty)
   }
 
   @Test func everyNewStepStartsQueued() {
-    let job = makeJob(.videoChatAndRender(video, chat, render))
+    let job = makeJob(JobTemplate(media: .video(video), chat: chat, render: render))
     #expect(job.steps.allSatisfy { $0.status == .queued })
   }
 }

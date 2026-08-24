@@ -59,7 +59,7 @@ final class QueueController {
     // An empty quality means best available - see ArgumentBuilder.
     let request = VideoRequest(videoID: videoID, quality: "", destination: destination)
     let engine = engine
-    Task { await engine.enqueue(.video(request), title: "Video \(videoID)") }
+    Task { await engine.enqueue(JobTemplate(media: .video(request)), title: "Video \(videoID)") }
   }
 
   /// The tail of a step's captured helper output, for the detail disclosure.

@@ -4,16 +4,25 @@ import Foundation
 ///
 /// Templates exist only at construction time. Once expanded, the runtime model
 /// is uniform and nothing needs to know which template produced a job.
-public enum JobTemplate: Sendable {
-  case video(VideoRequest)
-  case clip(ClipRequest)
-  case chat(ChatRequest)
-  /// - Note: the chat half is always downloaded as JSON, whatever
-  ///   `ChatRequest.format` says — see `renderInput(_:)`.
-  case chatAndRender(ChatRequest, RenderRequest)
-  /// - Note: the chat half is always downloaded as JSON, whatever
-  ///   `ChatRequest.format` says — see `renderInput(_:)`.
-  case videoChatAndRender(VideoRequest, ChatRequest, RenderRequest)
+///
+/// The three parts are independent toggles, not a fixed list of combinations:
+/// any subset may be present, and `makeJob` wires only the dependency a render
+/// actually needs (on its chat download), never one between media and chat.
+public struct JobTemplate: Sendable {
+  public enum Media: Sendable {
+    case video(VideoRequest)
+    case clip(ClipRequest)
+  }
+
+  public var media: Media?
+  public var chat: ChatRequest?
+  public var render: RenderRequest?
+
+  public init(media: Media? = nil, chat: ChatRequest? = nil, render: RenderRequest? = nil) {
+    self.media = media
+    self.chat = chat
+    self.render = render
+  }
 
   /// `nextStepID` is injected rather than calling `UUID()` directly so that
   /// tests can assert against specific steps.
@@ -26,35 +35,53 @@ public enum JobTemplate: Sendable {
   {
     var steps: [Step] = []
 
-    switch self {
-    case .video(let request):
-      steps = [Step(id: nextStepID(), kind: .downloadVideo(request))]
+    // Independent of the chat/render steps below: a failed video or clip
+    // download must not block the render, and vice versa. Never give this
+    // step a `dependsOn`.
+    if let media {
+      switch media {
+      case .video(let request):
+        steps.append(Step(id: nextStepID(), kind: .downloadVideo(request)))
+      case .clip(let request):
+        steps.append(Step(id: nextStepID(), kind: .downloadClip(request)))
+      }
+    }
 
-    case .clip(let request):
-      steps = [Step(id: nextStepID(), kind: .downloadClip(request))]
+    var chatStep: Step?
+    if render != nil {
+      // A render implies a chat step even when the caller supplied no chat
+      // request of its own, so that render-without-chat is never silently
+      // dropped. The implied request has `destination: nil` so the chat file
+      // stays an intermediate and is discarded with the workspace.
+      let request = Self.renderInput(chat ?? Self.impliedChatRequest(for: media))
+      chatStep = Step(id: nextStepID(), kind: .downloadChat(request))
+    } else if let chat {
+      chatStep = Step(id: nextStepID(), kind: .downloadChat(chat))
+    }
+    if let chatStep {
+      steps.append(chatStep)
+    }
 
-    case .chat(let request):
-      steps = [Step(id: nextStepID(), kind: .downloadChat(request))]
-
-    case .chatAndRender(let chatRequest, let renderRequest):
-      let chatStep = Step(id: nextStepID(), kind: .downloadChat(Self.renderInput(chatRequest)))
-      steps = [
-        chatStep,
-        Step(id: nextStepID(), kind: .renderChat(renderRequest), dependsOn: chatStep.id),
-      ]
-
-    case .videoChatAndRender(let videoRequest, let chatRequest, let renderRequest):
-      let chatStep = Step(id: nextStepID(), kind: .downloadChat(Self.renderInput(chatRequest)))
-      steps = [
-        // Independent of the chat steps: a failed video download must not
-        // block the render, and vice versa.
-        Step(id: nextStepID(), kind: .downloadVideo(videoRequest)),
-        chatStep,
-        Step(id: nextStepID(), kind: .renderChat(renderRequest), dependsOn: chatStep.id),
-      ]
+    if let render, let chatStep {
+      steps.append(Step(id: nextStepID(), kind: .renderChat(render), dependsOn: chatStep.id))
     }
 
     return Job(id: id, created: created, title: title, steps: steps)
+  }
+
+  /// Seeds an implied chat request's VOD ID from the video being downloaded
+  /// alongside it, when there is one. A clip's `clipSlug` is not a VOD ID and
+  /// cannot seed a chat download; with no media at all (render requested on
+  /// its own, unrepresentable at real intake — see the design doc, §5) there
+  /// is nothing to seed it with, so it is left empty.
+  private static func impliedChatRequest(for media: Media?) -> ChatRequest {
+    let videoID: String
+    if case .video(let request) = media {
+      videoID = request.videoID
+    } else {
+      videoID = ""
+    }
+    return ChatRequest(videoID: videoID, format: .json, destination: nil)
   }
 
   /// Constrains a chat download that feeds a render to JSON.
