@@ -37,11 +37,22 @@ struct SpawnTests {
 
   /// THE test. A helper that spawns a grandchild must not leave it running when
   /// we cancel — that is the orphaned-FFmpeg bug, made automatic.
+  ///
+  /// The fixture must spawn exactly two processes — the shell and the
+  /// backgrounded sleep — so every process in the group is known to and
+  /// asserted on by the test. `wait` is a shell builtin and forks nothing, so
+  /// waiting on the backgrounded sleep (rather than the shell running a
+  /// second `sleep 300` in its own foreground) keeps the group at exactly
+  /// {shell, grandchild}. A shell running its own separate foreground sleep
+  /// would be a third, untracked process that the group kill might not
+  /// reliably reach before the test's assertions run — passing the test
+  /// while still leaking a process.
   @Test func killingTheGroupAlsoKillsGrandchildren() throws {
     let (url, directory) = try script("""
       sleep 300 &
-      echo $!
-      sleep 300
+      CHILD=$!
+      echo $CHILD
+      wait $CHILD
       """)
     let spawned = try ProcessSpawner.spawn(executable: url, arguments: [], workingDirectory: directory)
 
@@ -74,9 +85,10 @@ struct SpawnTests {
     ProcessSpawner.signal(SIGKILL, toGroupOf: spawned.pid)
     _ = ProcessSpawner.wait(spawned.pid)
 
-    // Give the kernel a moment to reap.
-    for _ in 0..<50 where isAlive(grandchild) { usleep(20_000) }
+    // Give the kernel a moment to reap both members of the group.
+    for _ in 0..<50 where isAlive(spawned.pid) || isAlive(grandchild) { usleep(20_000) }
 
+    #expect(!isAlive(spawned.pid), "the shell itself would have been orphaned here")
     #expect(!isAlive(grandchild), "FFmpeg would have been orphaned here")
   }
 
