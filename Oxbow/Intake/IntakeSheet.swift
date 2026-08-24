@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import OxbowKit
 
 struct IntakeSheet: View {
   let controller: QueueController
@@ -13,10 +14,11 @@ struct IntakeSheet: View {
   /// before anything is enqueued.
   ///
   /// Only `.video` is surfaced here — `TwitchLink.parse` also recognizes
-  /// clips, but `QueueController.enqueueVideo` only accepts `.video`, and
-  /// this sheet is rewritten wholesale in Task 8 to wire clips up properly.
-  /// Until then, treating a parsed clip as "not a target" keeps Add honestly
-  /// disabled instead of enqueueing nothing and closing as if it worked.
+  /// clips, but this sheet only ever builds a video `JobTemplate`, and is
+  /// rewritten wholesale in Task 8 to wire clips (and the chat/render
+  /// toggles) up properly. Until then, treating a parsed clip as "not a
+  /// target" keeps Add honestly disabled instead of enqueueing nothing and
+  /// closing as if it worked.
   private var target: TwitchLink.Target? {
     let parsed = TwitchLink.parse(urlText)
     guard case .video = parsed else { return nil }
@@ -85,13 +87,13 @@ struct IntakeSheet: View {
     }
   }
 
-  /// `target` is non-nil here — Add is disabled otherwise — so the parse
-  /// inside `enqueueVideo` cannot fail, and the message the discarded `catch`
-  /// used to set was a word-for-word copy of the inline one under the field.
-  /// One validation path, shown live as the user types.
+  /// `target` is only ever `.video` here — Add is disabled otherwise — so
+  /// this always matches. One validation path, shown live as the user types.
   private func add() {
-    guard target != nil, let destination else { return }
-    try? controller.enqueueVideo(urlText: urlText, destination: destination)
+    guard case .video(let videoID) = target, let destination else { return }
+    // An empty quality means best available - see ArgumentBuilder.
+    let request = VideoRequest(videoID: videoID, quality: "", destination: destination)
+    controller.enqueue(JobTemplate(media: .video(request)), title: "Video \(videoID)")
     dismiss()
   }
 }
