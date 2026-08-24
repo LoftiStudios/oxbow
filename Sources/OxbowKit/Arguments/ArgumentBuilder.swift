@@ -17,6 +17,16 @@ public enum ArgumentBuilder {
     value.isEmpty ? [] : ["-q", value]
   }
 
+  /// Argv for `VideoInfoFetcher`, which runs outside the queue at intake —
+  /// there is no `StepKind` for it and never should be (docs/design/
+  /// chat-and-render.md §3).
+  ///
+  /// `--format Raw` because `--format json` throws `NotImplementedException`
+  /// upstream; see `VideoInfo`.
+  public static func infoArguments(id: String) -> [String] {
+    ["info", "--banner=false", "--id", id, "--format", "Raw"]
+  }
+
   public static func arguments(for kind: StepKind, context: StepContext) -> [String] {
     switch kind {
     case .downloadVideo(let request):
