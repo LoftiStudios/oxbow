@@ -1,0 +1,24 @@
+[STATUS] - Fetching Video Info [1/1]
+{"data":{"video":{"title":"indie horror \u002B something else later?? \u0669(\u25D5\u203F\u25D5)\u06F6","thumbnailURLs":["https://static-cdn.jtvnw.net/cf_vods/d2nvs31859zcd8/5652d9d62faa525b5c68_leighxp_317872278872_1786573193//thumb/thumb0-320x180.jpg","https://static-cdn.jtvnw.net/cf_vods/d2nvs31859zcd8/5652d9d62faa525b5c68_leighxp_317872278872_1786573193//thumb/thumb1-320x180.jpg","https://static-cdn.jtvnw.net/cf_vods/d2nvs31859zcd8/5652d9d62faa525b5c68_leighxp_317872278872_1786573193//thumb/thumb2-320x180.jpg","https://static-cdn.jtvnw.net/cf_vods/d2nvs31859zcd8/5652d9d62faa525b5c68_leighxp_317872278872_1786573193//thumb/thumb3-320x180.jpg"],"createdAt":"2026-08-12T22:19:58Z","lengthSeconds":991,"owner":{"id":"169782550","displayName":"LeighXP","login":"leighxp"},"viewCount":518,"game":{"id":"66082","displayName":"Games \u002B Demos","boxArtURL":"https://static-cdn.jtvnw.net/ttv-boxart/66082-{width}x{height}.jpg"},"description":null,"status":"RECORDED"}},"extensions":{"durationMilliseconds":48,"requestID":"01M0TWNKG4H3RFAW5Y8P2KKBYW"}}
+{"data":{"video":{"id":"2844548319","moments":{"edges":[{"node":{"moments":null,"id":"","durationMilliseconds":991000,"positionMilliseconds":0,"type":"GAME_CHANGE","description":"Games \u002B Demos","subDescription":"","thumbnailURL":null,"details":{"game":{"id":"66082","displayName":"Games \u002B Demos","boxArtURL":"https://static-cdn.jtvnw.net/ttv-boxart/66082-40x53.jpg"}},"video":null}}]}}},"extensions":{"durationMilliseconds":47,"requestID":"01M0TWNKVQYXP9GA3YFDGCZ9YR"}}
+#EXTM3U
+#EXT-X-SESSION-DATA:DATA-ID="SUPPRESS",VALUE="false"
+#EXT-X-SESSION-DATA:DATA-ID="USER-IP",VALUE="192.184.161.36"
+#EXT-X-SESSION-DATA:DATA-ID="SERVING-ID",VALUE="7398941446a5451ab3dbc10965f2a5ea"
+#EXT-X-SESSION-DATA:DATA-ID="CLUSTER",VALUE="cloudfront_vod"
+#EXT-X-SESSION-DATA:DATA-ID="ABS",VALUE="false"
+#EXT-X-SESSION-DATA:DATA-ID="USER-COUNTRY",VALUE="US"
+#EXT-X-SESSION-DATA:DATA-ID="MANIFEST-CLUSTER",VALUE="cloudfront_vod"
+#EXT-X-SESSION-DATA:DATA-ID="ORIGIN",VALUE="s3"
+#EXT-X-STREAM-INF:BANDWIDTH=6184466,CODECS="avc1.640029,mp4a.40.2",RESOLUTION=1920x1080,FRAME-RATE=57.034,STABLE-VARIANT-ID="1080p60",IVS-NAME="1080p60",IVS-VARIANT-SOURCE="source"
+https://d2nvs31859zcd8.cloudfront.net/5652d9d62faa525b5c68_leighxp_317872278872_1786573193/chunked/index-dvr.m3u8
+#EXT-X-STREAM-INF:BANDWIDTH=3318217,CODECS="avc1.4D401F,mp4a.40.2",RESOLUTION=1280x720,FRAME-RATE=57.034,STABLE-VARIANT-ID="720p60",IVS-NAME="720p60",IVS-VARIANT-SOURCE="transcode"
+https://d2nvs31859zcd8.cloudfront.net/5652d9d62faa525b5c68_leighxp_317872278872_1786573193/720p60/index-dvr.m3u8
+#EXT-X-STREAM-INF:BANDWIDTH=1467116,CODECS="avc1.4D401F,mp4a.40.2",RESOLUTION=852x480,FRAME-RATE=29.880,STABLE-VARIANT-ID="480p30",IVS-NAME="480p",IVS-VARIANT-SOURCE="transcode"
+https://d2nvs31859zcd8.cloudfront.net/5652d9d62faa525b5c68_leighxp_317872278872_1786573193/480p30/index-dvr.m3u8
+#EXT-X-STREAM-INF:BANDWIDTH=743420,CODECS="avc1.4D401E,mp4a.40.2",RESOLUTION=640x360,FRAME-RATE=29.880,STABLE-VARIANT-ID="360p30",IVS-NAME="360p",IVS-VARIANT-SOURCE="transcode"
+https://d2nvs31859zcd8.cloudfront.net/5652d9d62faa525b5c68_leighxp_317872278872_1786573193/360p30/index-dvr.m3u8
+#EXT-X-STREAM-INF:BANDWIDTH=292631,CODECS="avc1.4D400C,mp4a.40.2",RESOLUTION=284x160,FRAME-RATE=29.880,STABLE-VARIANT-ID="160p30",IVS-NAME="160p",IVS-VARIANT-SOURCE="transcode"
+https://d2nvs31859zcd8.cloudfront.net/5652d9d62faa525b5c68_leighxp_317872278872_1786573193/160p30/index-dvr.m3u8
+#EXT-X-STREAM-INF:BANDWIDTH=217332,CODECS="mp4a.40.2",STABLE-VARIANT-ID="audio_only",IVS-NAME="Audio Only",IVS-VARIANT-SOURCE="transcode"
+https://d2nvs31859zcd8.cloudfront.net/5652d9d62faa525b5c68_leighxp_317872278872_1786573193/audio_only/index-dvr.m3u8
