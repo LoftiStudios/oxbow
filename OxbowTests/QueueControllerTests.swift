@@ -142,4 +142,36 @@ struct QueueControllerTests {
 
     try await waitFor(controller) { $0.first?.status == .done }
   }
+
+  /// The quit path the app delegate actually calls. A `flush()`-only quit
+  /// exited with the helper still running, orphaning `TwitchDownloaderCLI`
+  /// and the FFmpeg it spawned; `shutDown()` has to signal it first.
+  @Test func shuttingDownSignalsTheHelperStillRunning() async throws {
+    // Built inline rather than through `makeController`: the test has to hold
+    // the very `StubHelper` the engine launched in order to ask it whether it
+    // was signalled. Handing back the same instance every time is safe here —
+    // the job has exactly one step, so it is only ever launched once.
+    let helper = StubHelper(.hangsUntilCancelled)
+    let root = URL(filePath: NSTemporaryDirectory()).appending(path: "oxbow-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let controller = QueueController(configuration: QueueEngine.Configuration(
+      helperExecutable: root.appending(path: "helper"),
+      ffmpegPath: root.appending(path: "ffmpeg"),
+      workspace: Workspace(root: root.appending(path: "workspace")),
+      store: QueueStore(fileURL: root.appending(path: "queue.json")),
+      makeProcess: { helper }))
+    await controller.start()
+
+    try controller.enqueueVideo(urlText: "2844548319", destination: root.appending(path: "out.mp4"))
+    try await waitFor(controller) { $0.first?.status == .running }
+
+    await controller.shutDown()
+
+    #expect(await helper.wasCancelled, "quitting must not leave the helper running")
+    #expect(
+      controller.jobs.first?.steps.first?.status == .running,
+      "the step stays running so the next launch reports it as interrupted")
+  }
 }

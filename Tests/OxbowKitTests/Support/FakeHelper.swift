@@ -23,6 +23,12 @@ actor FakeHelper: HelperProcessing {
 
   init(_ behaviour: Behaviour) { self.behaviour = behaviour }
 
+  /// Whether `cancel()` was ever called — i.e. whether a real helper would
+  /// have had its process group signalled. The only way to observe from the
+  /// outside that a shutdown actually reached the child process, since the
+  /// engine deliberately leaves the step's status alone on that path.
+  var wasCancelled: Bool { isCancelled }
+
   func run(
     _ launch: Launch,
     onOutput: @escaping @Sendable (ParsedLine) async -> Void)

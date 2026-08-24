@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import Testing
 @testable import OxbowKit
@@ -528,5 +529,157 @@ struct QueueEngineTests {
     #expect(final[1].status == .done, "the dependent must be released once its input exists")
 
     await engine.flush()
+  }
+
+  // MARK: - Shutdown
+
+  /// The orphaned-helper bug: quitting used to flush the queue and exit
+  /// without ever signalling the running helpers, so `TwitchDownloaderCLI`
+  /// and its FFmpeg outlived the app.
+  ///
+  /// Asserts both halves of the fix at once, because they are one decision:
+  /// the helper is signalled, *and* the step it was running is left `.running`
+  /// in the saved queue so the next launch reconciles it to
+  /// `.failed(.interrupted)` — the design's model for interrupted work — 
+  /// rather than to a `.cancelled` the user never asked for or a
+  /// `.failed(.signalled(SIGTERM))` that would read as a crash.
+  @Test func shutDownSignalsTheRunningHelperAndLeavesItsStepForTheReconciler() async throws {
+    // The same instance every time, so the test can interrogate the one the
+    // engine actually launched. Safe here: only one step ever launches.
+    let helper = FakeHelper(.hangsUntilCancelled)
+    let root = makeRoot()
+    defer { cleanUp(root) }
+    let engine = QueueEngine(configuration: makeConfiguration(root: root) { helper })
+
+    try await engine.start()
+    await engine.enqueue(
+      .video(VideoRequest(
+        videoID: "v",
+        quality: "best",
+        destination: root.appending(path: "video.mp4"))),
+      title: "test")
+
+    for _ in 0..<200 {
+      if await engine.currentJobs.first?.steps.first?.status == .running { break }
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(
+      await engine.currentJobs.first?.steps.first?.status == .running,
+      "precondition: a step must be genuinely in flight")
+
+    await engine.shutDown()
+
+    #expect(
+      await helper.wasCancelled,
+      "the quit must signal the helper, or its process group outlives the app")
+
+    let saved = try QueueStore(fileURL: storeURL(for: root)).load()
+    #expect(
+      saved.first?.steps.first?.status == .running,
+      "an interrupted step must persist as running for the reconciler to read")
+
+    let relaunched = QueueEngine(configuration: makeConfiguration(root: root) { FakeHelper(.succeeds) })
+    try await relaunched.start()
+    let reconciled = try #require(await relaunched.currentJobs.first?.steps.first)
+    #expect(
+      reconciled.status == .failed(StepFailure(kind: .interrupted, summary: "Interrupted")),
+      "the next launch must report the quit as interrupted work")
+    await relaunched.flush()
+  }
+
+  /// A quit is held open by `.terminateLater`, so the window is still alive
+  /// while `shutDown()` runs and the user can still reach the intake sheet.
+  /// Admitting anything in that window would spawn a helper the app is about
+  /// to walk out on — exactly the orphan this change exists to remove.
+  @Test func nothingNewLaunchesOnceTheQuitIsUnderWay() async throws {
+    let (engine, root) = makeEngine(.hangsUntilCancelled)
+    defer { cleanUp(root) }
+
+    try await engine.start()
+    await engine.shutDown()
+
+    await engine.enqueue(
+      .video(VideoRequest(
+        videoID: "v",
+        quality: "best",
+        destination: root.appending(path: "video.mp4"))),
+      title: "late")
+
+    #expect(
+      await engine.currentJobs.first?.steps.first?.status == .queued,
+      "a quit must not launch work it is about to abandon")
+  }
+
+  /// The automated form of the manual check on this bug. `FakeHelper` can only
+  /// prove `cancel()` was called; only a real `HelperProcess` proves the
+  /// signal reaches the whole *process group*, which is the half that keeps
+  /// FFmpeg from being orphaned alongside the CLI that spawned it.
+  ///
+  /// The fixture stands in for that pair: a helper with a child that outlives
+  /// it unless the group is signalled. Both pids must be gone after the quit.
+  @Test func shutDownReapsTheWholeProcessGroupOfARealHelper() async throws {
+    let root = makeRoot()
+    defer { cleanUp(root) }
+
+    let fixtures = URL(filePath: NSTemporaryDirectory())
+      .appending(path: "oxbow-shutdown-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: fixtures, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: fixtures) }
+
+    let pidFile = fixtures.appending(path: "pids")
+    let script = fixtures.appending(path: "helper.sh")
+    try """
+      #!/bin/sh
+      sleep 300 &
+      printf '%s %s\\n' "$$" "$!" > "\(pidFile.path)"
+      sleep 300
+      """.write(to: script, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
+
+    let engine = QueueEngine(configuration: QueueEngine.Configuration(
+      helperExecutable: script,
+      ffmpegPath: URL(filePath: "/usr/bin/true"),
+      workspace: Workspace(root: root),
+      store: QueueStore(fileURL: storeURL(for: root)),
+      makeProcess: { HelperProcess() }))
+
+    try await engine.start()
+    await engine.enqueue(
+      .video(VideoRequest(
+        videoID: "v",
+        quality: "best",
+        destination: root.appending(path: "video.mp4"))),
+      title: "test")
+
+    var pids: [pid_t] = []
+    for _ in 0..<300 {
+      if
+        let text = try? String(contentsOf: pidFile, encoding: .utf8),
+        case let parsed = text.split(whereSeparator: \.isWhitespace).compactMap({ pid_t($0) }),
+        parsed.count == 2
+      {
+        pids = parsed
+        break
+      }
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    try #require(pids.count == 2, "the fixture helper never reported its pids")
+    for pid in pids {
+      try #require(kill(pid, 0) == 0, "precondition: pid \(pid) must be alive before the quit")
+    }
+
+    await engine.shutDown()
+
+    // Polled, not asserted on the first read: a killed grandchild is
+    // reparented to launchd and stays a zombie — which `kill(pid, 0)` still
+    // reports as alive — until launchd gets round to reaping it.
+    for pid in pids {
+      var gone = false
+      for _ in 0..<200 {
+        if kill(pid, 0) != 0 { gone = true; break }
+        try await Task.sleep(for: .milliseconds(10))
+      }
+      #expect(gone, "pid \(pid) outlived the app; it is an orphan")
+    }
   }
 }

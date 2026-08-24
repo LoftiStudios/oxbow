@@ -60,29 +60,38 @@ struct OxbowApp: App {
   }
 }
 
-/// Delays app termination until the queue's pending debounced save is
-/// flushed to disk.
+/// Delays app termination until the running helpers have been killed and the
+/// queue's pending debounced save is on disk.
 ///
-/// `QueueEngine.flush()` is async; `applicationWillTerminate(_:)` is not, and
-/// by the time it runs the app is already committed to quitting, so there is
-/// nothing left to await it against. `applicationShouldTerminate(_:)` is the
-/// hook that is allowed to say "not yet": returning `.terminateLater`
-/// suspends the quit, and `NSApp.reply(toApplicationShouldTerminate:)`
-/// resumes it once the flush actually completes. This blocks no thread —
-/// `flush()` runs to completion on `QueueEngine`'s own actor, and the reply
-/// is sent only after that `await` returns, which is what guarantees the
-/// write lands before the process is allowed to exit.
+/// `QueueController.shutDown()` is async; `applicationWillTerminate(_:)` is
+/// not, and by the time it runs the app is already committed to quitting, so
+/// there is nothing left to await it against. `applicationShouldTerminate(_:)`
+/// is the hook that is allowed to say "not yet": returning `.terminateLater`
+/// suspends the quit, and `NSApp.reply(toApplicationShouldTerminate:)` resumes
+/// it once the shutdown actually completes. This blocks no thread — the work
+/// runs to completion on `QueueEngine`'s own actor, and the reply is sent only
+/// after that `await` returns, which is what guarantees both the kills and the
+/// write land before the process is allowed to exit.
 ///
-/// Verified directly, not assumed: launched the built app from a terminal
-/// (so its process could be tracked), sent it the standard Quit Apple Event,
-/// and confirmed from outside the process that the app stayed alive for the
-/// full duration of an artificial delay inserted before `flush()` — it did
-/// not exit early. `queue.json`'s mtime landed at the exact moment the
-/// awaited flush completed (matching a log line written right after
-/// `flush()` returned), and the process only exited after that. This
-/// confirms `applicationShouldTerminate(_:)` genuinely fires on quit, that
-/// `.terminateLater` genuinely holds the process open, and that the write
-/// completes before exit rather than racing it.
+/// **Both halves have to happen here, and in that order.** Quitting mid-
+/// download used to leave `TwitchDownloaderCLI` and its FFmpeg running as
+/// orphans, because `HelperProcessing.cancel()` is the only thing that signals
+/// their process group and nothing on the quit path called it. The delay this
+/// adds is bounded by one ~2s SIGTERM grace period however many steps are in
+/// flight, because `shutDown()` signals them concurrently — and the scheduler
+/// admits at most one `.network` and one `.compute` step, so it is never more
+/// than two.
+///
+/// Verified directly, not assumed, against a real VOD download in the built
+/// app: quit while both `TwitchDownloaderCLI` and the `ffmpeg` it had spawned
+/// were running, then `pgrep`'d for each from outside. Before this change the
+/// app exited in ~0.3s and both survived, reparented to `launchd` with their
+/// cwd still inside the job workspace that the next launch's
+/// `Workspace.removeAll()` sweep deletes. After it, the app takes ~2.4s to go
+/// — one SIGTERM grace period, externally observable proof that
+/// `.terminateLater` really does hold the process open for the awaited work —
+/// and `pgrep` finds neither. Relaunching then showed the step reconciled to
+/// `.failed(.interrupted)`, as designed.
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
   var controller: QueueController?
@@ -90,7 +99,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
     guard let controller else { return .terminateNow }
     Task {
-      await controller.flush()
+      await controller.shutDown()
       NSApp.reply(toApplicationShouldTerminate: true)
     }
     return .terminateLater

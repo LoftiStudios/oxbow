@@ -31,6 +31,10 @@ actor StubHelper: HelperProcessing {
 
   init(_ behaviour: Behaviour) { self.behaviour = behaviour }
 
+  /// Whether `cancel()` was ever called — i.e. whether a real helper would
+  /// have had its process group signalled.
+  var wasCancelled: Bool { isCancelled }
+
   func run(
     _ launch: Launch,
     onOutput: @escaping @concurrent @Sendable (ParsedLine) async -> Void)
