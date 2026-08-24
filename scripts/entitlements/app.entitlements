@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+	  Entitlements for the Oxbow app bundle itself.
+
+	  Intentionally minimal. The app is a SwiftUI front end that spawns
+	  subprocesses and moves files; it does not JIT, load third-party plugins,
+	  or need relaxed runtime protections.
+
+	  Not sandboxed for v1 (Developer ID distribution, not App Store). If that
+	  changes, this is where app-sandbox, files.user-selected.read-write, and
+	  network.client go - and the helper will need its own sandbox review.
+	-->
+</dict>
+</plist>

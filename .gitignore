@@ -5,6 +5,13 @@
 ## User settings
 xcuserdata/
 
+## macOS
+#
+# Relied on a global gitignore until now; six had accumulated on disk,
+# including inside Tests/OxbowKitTests/Fixtures, which SwiftPM `.copy`s
+# wholesale into the test bundle.
+.DS_Store
+
 ## Obj-C/Swift specific
 *.hmap
 
@@ -60,3 +67,10 @@ fastlane/report.xml
 fastlane/Preview.html
 fastlane/screenshots/**/*.png
 fastlane/test_output
+
+# Oxbow build output (FFmpeg source + binaries, app bundle, DMG)
+build/
+
+# Local AI tool config, untracked. CLAUDE.md is a symlink to docs/development.md.
+.claude/
+CLAUDE.md

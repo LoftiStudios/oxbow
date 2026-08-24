@@ -1,0 +1,14 @@
+Unhandled exception. System.AggregateException: One or more errors occurred. (Invalid VOD, deleted/expired VOD possibly?)
+ ---> System.NullReferenceException: Invalid VOD, deleted/expired VOD possibly?
+   at TwitchDownloaderCore.VideoDownloader.DownloadAsyncImpl(FileInfo outputFileInfo, FileStream outputFs, CancellationToken cancellationToken) in /Users/barclayloftus/Development/oxbow/vendor/TwitchDownloader/TwitchDownloaderCore/VideoDownloader.cs:line 67
+   at TwitchDownloaderCore.VideoDownloader.DownloadAsyncImpl(FileInfo outputFileInfo, FileStream outputFs, CancellationToken cancellationToken) in /Users/barclayloftus/Development/oxbow/vendor/TwitchDownloader/TwitchDownloaderCore/VideoDownloader.cs:line 164
+   at TwitchDownloaderCore.VideoDownloader.DownloadAsync(CancellationToken cancellationToken) in /Users/barclayloftus/Development/oxbow/vendor/TwitchDownloader/TwitchDownloaderCore/VideoDownloader.cs:line 44
+   at TwitchDownloaderCore.VideoDownloader.DownloadAsync(CancellationToken cancellationToken) in /Users/barclayloftus/Development/oxbow/vendor/TwitchDownloader/TwitchDownloaderCore/VideoDownloader.cs:line 52
+   at TwitchDownloaderCore.VideoDownloader.DownloadAsync(CancellationToken cancellationToken) in /Users/barclayloftus/Development/oxbow/vendor/TwitchDownloader/TwitchDownloaderCore/VideoDownloader.cs:line 52
+   --- End of inner exception stack trace ---
+   at System.Threading.Tasks.Task.ThrowIfExceptional(Boolean includeTaskCanceledExceptions)
+   at System.Threading.Tasks.Task.Wait(Int32 millisecondsTimeout, CancellationToken cancellationToken)
+   at System.Threading.Tasks.Task.Wait()
+   at TwitchDownloaderCLI.Modes.DownloadVideo.Download(VideoDownloadArgs inputOptions) in /Users/barclayloftus/Development/oxbow/vendor/TwitchDownloader/TwitchDownloaderCLI/Modes/DownloadVideo.cs:line 23
+   at CommandLine.ParserResultExtensions.WithParsed[T](ParserResult`1 result, Action`1 action)
+   at TwitchDownloaderCLI.Program.Main(String[] args) in /Users/barclayloftus/Development/oxbow/vendor/TwitchDownloader/TwitchDownloaderCLI/Program.cs:line 31

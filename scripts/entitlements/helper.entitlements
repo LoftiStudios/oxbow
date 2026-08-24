@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+	  Entitlements for the bundled TwitchDownloaderCLI helper.
+
+	  Entitlements are PER-PROCESS. The app's entitlements do not propagate to
+	  child processes, so the helper needs its own signature carrying these.
+
+	  allow-jit is required because the helper is CoreCLR, which JIT-compiles.
+
+	  Deliberately ABSENT:
+
+	  - com.apple.security.cs.disable-library-validation
+	      Every Mach-O in the bundle is signed with the same Team ID, which
+	      satisfies library validation on its own. Needing this entitlement
+	      would mean something is signed wrong. This is the payoff for
+	      refusing PublishSingleFile - do not add it to make an error go away.
+
+	  - com.apple.security.cs.allow-unsigned-executable-memory
+	      Strictly weaker than allow-jit alone. Add only if the spike proves
+	      the helper genuinely fails without it, and record why.
+	-->
+	<key>com.apple.security.cs.allow-jit</key>
+	<true/>
+</dict>
+</plist>
