@@ -5,6 +5,11 @@ import Testing
 @Suite("HelperProcess", .serialized)
 struct HelperProcessTests {
 
+  /// Writes an executable shell fixture into its own temp directory.
+  ///
+  /// - Important: the caller owns that directory. Pair every call with
+  ///   `defer { remove(launch) }`, or the suite strews one directory per test
+  ///   through the temp dir on every run.
   private func script(_ body: String) throws -> Launch {
     let directory = URL(filePath: NSTemporaryDirectory())
       .appending(path: "oxbow-helper-\(UUID().uuidString)")
@@ -15,10 +20,15 @@ struct HelperProcessTests {
     return Launch(executable: url, arguments: [], workingDirectory: directory)
   }
 
+  private func remove(_ launch: Launch) {
+    try? FileManager.default.removeItem(at: launch.workingDirectory)
+  }
+
   /// Progress must arrive incrementally, and `\r`-delimited output must be
   /// recovered exactly as it is from the real CLI.
   @Test func streamsParsedProgressWhileRunning() async throws {
     let launch = try script(#"printf '[STATUS] - Downloading 50%%\r[STATUS] - Downloading 100%% [1/1]\n'"#)
+    defer { remove(launch) }
 
     let collected = CollectedOutput()
     let process = HelperProcess()
@@ -37,6 +47,7 @@ struct HelperProcessTests {
 
   @Test func capturesStandardErrorSeparately() async throws {
     let launch = try script("echo boom >&2; exit 134")
+    defer { remove(launch) }
     let result = try await HelperProcess().run(launch) { _ in }
 
     #expect(result.status == .exited(134))
@@ -46,6 +57,7 @@ struct HelperProcessTests {
   /// Cancellation must reach a grandchild, and must not hang.
   @Test func cancellationTerminatesTheProcessGroup() async throws {
     let launch = try script("sleep 300 & sleep 300")
+    defer { remove(launch) }
     let process = HelperProcess()
 
     let running = Task { try await process.run(launch) { _ in } }
@@ -54,6 +66,24 @@ struct HelperProcessTests {
 
     let result = try await running.value
     #expect(result.status == .signalled(SIGTERM) || result.status == .signalled(SIGKILL))
+  }
+
+  /// An instance cancelled before `run` must not spawn anything at all.
+  /// Spawning and then immediately killing still starts a real CLI process,
+  /// which reaches the network before it dies.
+  @Test func cancellingBeforeRunNeverStartsTheProcess() async throws {
+    let launch = try script(#"touch "$(dirname "$0")/ran""#)
+    defer { remove(launch) }
+    let evidence = launch.workingDirectory.appending(path: "ran")
+
+    let process = HelperProcess()
+    await process.cancel()
+    let result = try await process.run(launch) { _ in }
+
+    #expect(result.status == .signalled(SIGKILL))
+    #expect(
+      !FileManager.default.fileExists(atPath: evidence.path),
+      "a cancelled instance must not have run the helper")
   }
 
   /// Regression guard for concurrent draining. A fixture that writes well
@@ -81,6 +111,7 @@ struct HelperProcessTests {
       printf '[STATUS] - Downloading 50%%\r[STATUS] - Downloading 100%% [1/1]\n'
       wait $BG
       """#)
+    defer { remove(launch) }
 
     let collected = CollectedOutput()
     let process = HelperProcess()
@@ -146,6 +177,7 @@ struct HelperProcessTests {
         i=$((i+1))
       done
       """#)
+    defer { remove(launch) }
     let sentinel = launch.workingDirectory.appending(path: "sentinel")
 
     let clock = ContinuousClock()

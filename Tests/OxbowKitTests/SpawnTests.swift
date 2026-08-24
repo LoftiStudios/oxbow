@@ -6,6 +6,11 @@ import Testing
 struct SpawnTests {
 
   /// Writes an executable shell script into a fresh temp directory.
+  /// Writes an executable shell fixture into its own temp directory.
+  ///
+  /// - Important: the caller owns that directory. Pair every call with
+  ///   `defer { try? FileManager.default.removeItem(at: directory) }`, or the
+  ///   suite strews one directory per test through the temp dir on every run.
   private func script(_ body: String) throws -> (url: URL, directory: URL) {
     let directory = URL(filePath: NSTemporaryDirectory())
       .appending(path: "oxbow-spawn-\(UUID().uuidString)")
@@ -20,6 +25,7 @@ struct SpawnTests {
 
   @Test func capturesStdoutAndExitCode() throws {
     let (url, directory) = try script("echo hello; exit 3")
+    defer { try? FileManager.default.removeItem(at: directory) }
     let spawned = try ProcessSpawner.spawn(executable: url, arguments: [], workingDirectory: directory)
 
     let output = String(decoding: spawned.stdout.readDataToEndOfFile(), as: UTF8.self)
@@ -31,6 +37,7 @@ struct SpawnTests {
 
   @Test func distinguishesASignalFromAnExitCode() throws {
     let (url, directory) = try script("kill -9 $$")
+    defer { try? FileManager.default.removeItem(at: directory) }
     let spawned = try ProcessSpawner.spawn(executable: url, arguments: [], workingDirectory: directory)
     #expect(ProcessSpawner.wait(spawned.pid) == .signalled(SIGKILL))
   }
@@ -54,6 +61,7 @@ struct SpawnTests {
       echo $CHILD
       wait $CHILD
       """)
+    defer { try? FileManager.default.removeItem(at: directory) }
     let spawned = try ProcessSpawner.spawn(executable: url, arguments: [], workingDirectory: directory)
 
     // First line of stdout is the grandchild's pid. availableData returns
@@ -106,6 +114,7 @@ struct SpawnTests {
   /// alongside it. This must be refused rather than forwarded.
   @Test func signalOnPidZeroIsANoOp() throws {
     let (url, directory) = try script("sleep 300")
+    defer { try? FileManager.default.removeItem(at: directory) }
     let spawned = try ProcessSpawner.spawn(executable: url, arguments: [], workingDirectory: directory)
     defer {
       ProcessSpawner.signal(SIGKILL, toGroupOf: spawned.pid)
@@ -128,6 +137,7 @@ struct SpawnTests {
       yes x | head -c 100000 1>&2
       echo done
       """)
+    defer { try? FileManager.default.removeItem(at: directory) }
     let spawned = try ProcessSpawner.spawn(executable: url, arguments: [], workingDirectory: directory)
 
     async let stdoutData = Task.detached { spawned.stdout.readDataToEndOfFile() }.value

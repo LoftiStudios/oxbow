@@ -11,7 +11,11 @@ public enum Scheduler {
   ///
   /// Three rules, applied in order:
   ///   1. Eligible — status is `.queued` and any dependency is `.done`.
-  ///   2. Capacity — at most one running step per resource class.
+  ///   2. Capacity — at most one running step per resource class. This cap is
+  ///      load-bearing outside the scheduler: it is what bounds concurrent
+  ///      `HelperProcess.run` calls, each of which pins three *blocking*
+  ///      syscalls on the cooperative thread pool. Read `HelperProcess`'s note
+  ///      on thread pinning before relaxing it.
   ///   3. Order — oldest job first, then step order within the job.
   public static func admissible(jobs: [Job], running: Set<StepID>) -> [StepID] {
     var statusByID: [StepID: StepStatus] = [:]

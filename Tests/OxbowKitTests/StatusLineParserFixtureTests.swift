@@ -16,10 +16,11 @@ struct StatusLineParserFixtureTests {
       return nil
     }
 
-    // 403 is the recorded count for this fixture (401 `\r` + 4 `\n` delimiters,
-    // minus one `\r\n` pair that flushes only once, minus one non-status
-    // completion line). Pinned exactly rather than thresholded, because the
-    // fixture is never regenerated: a regression that silently dropped
+    // 403 is the recorded count for this fixture, verified byte-for-byte:
+    // 401 `\r` + 4 `\n` = 405 delimiters, and the fixture contains no `\r\n`
+    // pair, so each one ends a line. Two of those 405 lines are `[INFO]`
+    // rather than `[STATUS]`. Pinned exactly rather than thresholded, because
+    // the fixture is never regenerated: a regression that silently dropped
     // updates would still satisfy `> 300` but must fail here.
     #expect(statuses.count == 403, "expected exactly 403 updates for this fixture, got \(statuses.count)")
     #expect(statuses.last?.fraction == 1.0)

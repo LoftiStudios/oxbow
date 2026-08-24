@@ -2,7 +2,11 @@
 ///
 /// Keeping these apart is what lets us tell "the user cancelled it" from "it
 /// crashed" — a distinction Foundation's `Process` blurs.
-public enum ExitStatus: Sendable, Equatable {
+///
+/// Named `ProcessExitStatus` rather than `ExitStatus` because the latter
+/// collides with `Testing.ExitStatus`, which would force every test that
+/// names this type to qualify it.
+public enum ProcessExitStatus: Sendable, Equatable {
   case exited(Int32)
   case signalled(Int32)
   /// `waitpid` itself failed (e.g. `ECHILD` because the pid was already

@@ -6,7 +6,7 @@ import Testing
 struct FailureInterpreterTests {
 
   private func interpret(
-    _ status: OxbowKit.ExitStatus,
+    _ status: ProcessExitStatus,
     _ stderr: String = "",
     artifactExists: Bool = true)
     -> StepFailure?

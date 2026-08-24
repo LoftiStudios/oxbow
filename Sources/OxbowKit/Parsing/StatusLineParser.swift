@@ -122,7 +122,7 @@ public struct StatusLineParser: Sendable {
 
 extension String {
   /// Returns the remainder after `prefix`, or nil if the prefix is absent.
-  func strippingPrefix(_ prefix: String) -> String? {
+  fileprivate func strippingPrefix(_ prefix: String) -> String? {
     hasPrefix(prefix) ? String(dropFirst(prefix.count)) : nil
   }
 }

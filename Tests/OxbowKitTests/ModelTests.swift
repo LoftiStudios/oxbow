@@ -118,14 +118,14 @@ struct ModelTests {
       #expect(chatReq.trimStart == .seconds(5.5))
       #expect(chatReq.trimEnd == .seconds(120))
     } else {
-      #expect(false, "wrong step kind")
+      Issue.record("wrong step kind")
     }
 
     if case .downloadVideo(let videoReq) = decoded.steps[1].kind {
       #expect(videoReq.trimStart == .seconds(30))
       #expect(videoReq.trimEnd == .seconds(180))
     } else {
-      #expect(false, "wrong step kind")
+      Issue.record("wrong step kind")
     }
   }
 }

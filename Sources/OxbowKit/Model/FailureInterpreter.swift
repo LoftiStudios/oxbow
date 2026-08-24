@@ -9,7 +9,7 @@ public enum FailureInterpreter {
 
   /// Returns nil when the step succeeded.
   public static func interpret(
-    exitStatus: ExitStatus,
+    exitStatus: ProcessExitStatus,
     standardError: String,
     artifactExists: Bool)
     -> StepFailure?

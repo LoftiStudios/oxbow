@@ -10,20 +10,21 @@ import Foundation
 ///
 /// - Important: Each `run` pins **three threads** of Swift's cooperative
 ///   thread pool for the life of the invocation — the stdout pump, the
-///   stderr pump, and the `waitpid` call are all blocking syscalls inside
-///   `Task.detached`, with no suspension point for the runtime to reclaim
-///   the thread. This is acceptable only because `Scheduler` admits at most
-///   one `.network` step and one `.compute` step concurrently, capping
-///   concurrent `HelperProcess.run` calls at 2 (6 pinned threads worst
-///   case). Raising that admission cap without first revisiting this
-///   (e.g. moving to `DispatchIO` or a dedicated, non-cooperative thread
-///   pool) will starve the cooperative pool.
+///   stderr pump, and the `waitpid` call are three **blocking** syscalls
+///   inside `Task.detached`, with no suspension point for the runtime to
+///   reclaim the thread. (Three pinned threads, not three suspended tasks:
+///   counting awaits will not find them.) This is acceptable only because
+///   `Scheduler` admits at most one `.network` step and one `.compute` step
+///   concurrently, capping concurrent `HelperProcess.run` calls at 2 (6
+///   pinned threads worst case). Raising that admission cap without first
+///   revisiting this (e.g. moving to `DispatchIO` or a dedicated,
+///   non-cooperative thread pool) will starve the cooperative pool.
 ///
 /// One instance drives exactly one invocation of `run`. `cancel()` sets a
-/// one-way flag that is never reset, so calling `run` again on an
-/// already-cancelled instance is refused immediately — reuse across
-/// invocations is unsupported by design. Task 14 creates a fresh instance
-/// per step.
+/// one-way flag that is never reset, so `run` on an already-cancelled
+/// instance returns immediately as killed **without spawning anything** —
+/// reuse across invocations is unsupported by design. `QueueEngine` creates a
+/// fresh instance per step.
 public actor HelperProcess {
   private var spawned: Spawn?
   private var isCancelled = false
@@ -35,13 +36,23 @@ public actor HelperProcess {
     onOutput: @escaping @Sendable (ParsedLine) async -> Void)
     async throws -> RunResult
   {
+    // Checked before the spawn, not after: spawning and then immediately
+    // killing would still have started a real CLI process, which reaches the
+    // network before it dies. The reported status is what the child would
+    // have got had it existed long enough to receive it.
+    if isCancelled {
+      return RunResult(status: .signalled(SIGKILL), standardError: "")
+    }
+
     let spawned = try ProcessSpawner.spawn(
       executable: launch.executable,
       arguments: launch.arguments,
       workingDirectory: launch.workingDirectory)
     self.spawned = spawned
 
-    // Cancelled between the caller's decision and the spawn actually happening.
+    // Cancelled between the check above and the spawn actually happening —
+    // `ProcessSpawner.spawn` is synchronous, but `cancel()` can still have run
+    // on this actor before `run` was first entered.
     if isCancelled {
       ProcessSpawner.signal(SIGKILL, toGroupOf: spawned.pid)
     }

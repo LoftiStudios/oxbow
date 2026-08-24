@@ -90,7 +90,7 @@ public enum ProcessSpawner {
 
   /// Blocks until the child ends. Swift does not expose the `WIFEXITED`
   /// family of C macros, so the wait status is decoded by hand.
-  public static func wait(_ pid: pid_t) -> ExitStatus {
+  public static func wait(_ pid: pid_t) -> ProcessExitStatus {
     var raw: Int32 = 0
     var result: pid_t = 0
     var waitErrno: Int32 = 0
