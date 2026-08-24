@@ -1,0 +1,52 @@
+# CI for pull requests and pushes to main.
+#
+# Two independent jobs, matching the split documented in CONTRIBUTING.md:
+#
+#   - OxbowKit tests: the library test suite. Needs only a Swift toolchain.
+#   - App build: an UNSIGNED build of the app target. No signing identity
+#     exists on runners, so CODE_SIGNING_ALLOWED=NO; the "Embed & Sign
+#     Helpers" phase is designed to warn and continue when build/helper and
+#     build/ffmpeg are absent, so this needs no .NET or FFmpeg toolchain.
+#
+# Neither job needs the vendor/TwitchDownloader submodule (it is only an
+# input to publishing the helper), so checkout skips submodules — the default.
+#
+# Signed release builds are a separate, later workflow: they need the
+# Developer ID certificate and notary key as repository secrets
+# (docs/signing.md §8).
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    name: OxbowKit tests
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain versions
+        run: |
+          xcodebuild -version
+          swift --version
+      - name: Run OxbowKit test suite
+        run: swift test
+
+  app-build:
+    name: App build (unsigned)
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain versions
+        run: xcodebuild -version
+      - name: Build Oxbow.app
+        run: >
+          xcodebuild -project Oxbow.xcodeproj -scheme Oxbow
+          -configuration Debug build
+          CODE_SIGNING_ALLOWED=NO
