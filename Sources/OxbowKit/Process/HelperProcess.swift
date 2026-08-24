@@ -7,6 +7,23 @@ import Foundation
 /// can never fire and installs no signal handler, so there is no cooperative
 /// path. SIGTERM first is purely for FFmpeg's benefit — it closes its output
 /// file on receipt — and SIGKILL follows regardless.
+///
+/// - Important: Each `run` pins **three threads** of Swift's cooperative
+///   thread pool for the life of the invocation — the stdout pump, the
+///   stderr pump, and the `waitpid` call are all blocking syscalls inside
+///   `Task.detached`, with no suspension point for the runtime to reclaim
+///   the thread. This is acceptable only because `Scheduler` admits at most
+///   one `.network` step and one `.compute` step concurrently, capping
+///   concurrent `HelperProcess.run` calls at 2 (6 pinned threads worst
+///   case). Raising that admission cap without first revisiting this
+///   (e.g. moving to `DispatchIO` or a dedicated, non-cooperative thread
+///   pool) will starve the cooperative pool.
+///
+/// One instance drives exactly one invocation of `run`. `cancel()` sets a
+/// one-way flag that is never reset, so calling `run` again on an
+/// already-cancelled instance is refused immediately — reuse across
+/// invocations is unsupported by design. Task 14 creates a fresh instance
+/// per step.
 public actor HelperProcess {
   private var spawned: Spawn?
   private var isCancelled = false
@@ -66,9 +83,25 @@ public actor HelperProcess {
   public func cancel() async {
     isCancelled = true
     guard let spawned else { return }
+    let pid = spawned.pid
 
-    ProcessSpawner.signal(SIGTERM, toGroupOf: spawned.pid)
-    try? await Task.sleep(for: .seconds(2))
-    ProcessSpawner.signal(SIGKILL, toGroupOf: spawned.pid)
+    ProcessSpawner.signal(SIGTERM, toGroupOf: pid)
+
+    // Detached so the grace period survives even if the task calling
+    // `cancel()` is itself cancelled. `Task.sleep` checks the cancellation
+    // of the task it runs on; if it ran on the caller's task directly, an
+    // outer cancellation would make it throw instantly, and the `try?`
+    // would swallow that — firing SIGKILL immediately and defeating the
+    // reason SIGTERM was sent first. A detached task has its own,
+    // independent cancellation state, so the sleep completes in full.
+    try? await Task.detached { try await Task.sleep(for: .seconds(2)) }.value
+
+    // Re-read actor state instead of trusting the pre-sleep local copy:
+    // during those two seconds `run` can complete, reap the child, and
+    // clear `self.spawned`. Signalling the stale pid then would hit
+    // whatever process has since recycled that pgid — every helper is its
+    // own group leader, so pgid == pid — rather than a no-op.
+    guard let stillRunning = self.spawned, stillRunning.pid == pid else { return }
+    ProcessSpawner.signal(SIGKILL, toGroupOf: stillRunning.pid)
   }
 }
