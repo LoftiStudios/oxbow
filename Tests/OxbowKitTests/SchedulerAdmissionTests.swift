@@ -76,4 +76,20 @@ struct SchedulerAdmissionTests {
     // So Job 1's ID should sort first in string comparison
     #expect(Scheduler.admissible(jobs: jobs, running: []) == [Build.stepID(1)])
   }
+
+  @Test func doesNotAdmitACompositeUntilBothParentsAreDone() {
+    let jobs = [Build.job(1,
+      Build.network(1, .done),
+      Build.compute(2),
+      Build.composite(3, dependsOn: [Build.stepID(1), Build.stepID(2)]))]
+    #expect(Scheduler.admissible(jobs: jobs, running: []) == [Build.stepID(2)])
+  }
+
+  @Test func admitsACompositeOnceBothParentsAreDone() {
+    let jobs = [Build.job(1,
+      Build.network(1, .done),
+      Build.compute(2, .done),
+      Build.composite(3, dependsOn: [Build.stepID(1), Build.stepID(2)]))]
+    #expect(Scheduler.admissible(jobs: jobs, running: []) == [Build.stepID(3)])
+  }
 }

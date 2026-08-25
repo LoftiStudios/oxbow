@@ -29,6 +29,23 @@ enum Build {
       dependsOn: dependsOn)
   }
 
+  /// A `.compute` step that consumes two artifacts.
+  static func composite(
+    _ n: Int,
+    _ status: StepStatus = .queued,
+    dependsOn: [StepID] = []) -> Step
+  {
+    Step(
+      id: stepID(n),
+      kind: .composite(CompositeRequest(
+        framerate: 60,
+        bitrateMbps: 8,
+        duration: .seconds(60),
+        destination: URL(filePath: "/tmp/c.mp4"))),
+      status: status,
+      dependsOn: dependsOn)
+  }
+
   static func job(_ n: Int, createdAt seconds: TimeInterval = 0, _ steps: Step...) -> Job {
     Job(
       id: jobID(n),
