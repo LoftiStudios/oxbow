@@ -11,6 +11,10 @@
 #   ./scripts/package-dmg.sh --sign             # + codesign the image
 #   ./scripts/package-dmg.sh --sign --notarize  # + notarize and staple it
 #
+# Notary credentials come from a keychain profile locally (NOTARY_PROFILE,
+# default "oxbow-notary"). CI has no keychain profile, so setting NOTARY_KEY,
+# NOTARY_KEY_ID and NOTARY_ISSUER switches to an App Store Connect API key.
+#
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -91,7 +95,20 @@ if $do_sign; then
 fi
 
 if $do_notarize; then
-    xcrun notarytool submit "$OUT" --keychain-profile "$NOTARY_PROFILE" --wait
+    # An API key is scoped and revocable and does not need an interactive
+    # keychain, which is what makes it the CI path; the keychain profile stays
+    # the default for local releases.
+    if [[ -n "${NOTARY_KEY:-}" ]]; then
+        [[ -n "${NOTARY_KEY_ID:-}" && -n "${NOTARY_ISSUER:-}" ]] || {
+            echo "NOTARY_KEY is set but NOTARY_KEY_ID/NOTARY_ISSUER are not" >&2
+            exit 1
+        }
+        notary_credentials=(--key "$NOTARY_KEY" --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER")
+    else
+        notary_credentials=(--keychain-profile "$NOTARY_PROFILE")
+    fi
+
+    xcrun notarytool submit "$OUT" "${notary_credentials[@]}" --wait
     xcrun stapler staple "$OUT"
     xcrun stapler validate "$OUT"
     spctl -a -vvv -t open --context context:primary-signature "$OUT"

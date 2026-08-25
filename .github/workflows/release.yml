@@ -1,0 +1,354 @@
+# Cut a release: a Developer ID signed, notarized, stapled DMG attached to a
+# GitHub Release.
+#
+# full-build.yml proves the bundle assembles correctly with AD-HOC signing, on
+# every push to main. This workflow is that same build with the real identity,
+# plus the three steps ad-hoc signing cannot reach:
+#
+#   1. sign      - Developer ID, so macOS can attribute the app to a team,
+#   2. notarize  - Apple scans it and issues a ticket,
+#   3. staple    - the ticket is attached to the file, so Gatekeeper can
+#                  verify it with no network. Without this a user on a plane
+#                  cannot launch a perfectly notarized app.
+#
+# The app AND the DMG are both notarized and stapled. The DMG's ticket is gone
+# the moment the user drags the app out of it, so the app needs its own; see
+# docs/signing.md §7.
+#
+# Trigger: pushing a v* tag. workflow_dispatch runs everything except
+# publishing, which is how you test this without burning a version number.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: 'Create the GitHub Release (off = build, sign and notarize only)'
+        type: boolean
+        default: false
+      allow_untagged_submodule:
+        description: 'Permit a non-release submodule pin. Ignored unless publish is off.'
+        type: boolean
+        default: false
+
+concurrency:
+  # Never cancel: a half-cancelled run can leave a notarization submission in
+  # flight and a signing keychain on the runner.
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write   # needed to create the Release; everything else is read
+
+jobs:
+  release:
+    name: Signed, notarized DMG
+    runs-on: macos-26
+    timeout-minutes: 120
+
+    steps:
+      - name: Check out with submodules
+        uses: actions/checkout@v5
+        with:
+          submodules: recursive
+          # stamp-version.sh derives CFBundleVersion from the commit count, and
+          # a depth-1 clone counts one.
+          fetch-depth: 0
+
+      # ---------------------------------------------------------------- gates
+      #
+      # Both of these fail the run before anything expensive happens, and both
+      # guard mistakes that are silent if they get through.
+
+      - name: Agree on the version
+        id: version
+        run: |
+          set -euo pipefail
+          declared="$(sed -n 's/^MARKETING_VERSION[[:space:]]*=[[:space:]]*\(.*\)$/\1/p' Config/Shared.xcconfig | tr -d ' ')"
+          [ -n "${declared}" ] || { echo "::error::no MARKETING_VERSION in Config/Shared.xcconfig"; exit 1; }
+
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            tagged="${GITHUB_REF_NAME#v}"
+            # The classic silent mistake: tag v0.2.0 on a commit that still
+            # says 0.1.0, ship a DMG whose Info.plist disagrees with its own
+            # release page, and only find out from a bug report.
+            [ "${tagged}" = "${declared}" ] || {
+              echo "::error::tag ${GITHUB_REF_NAME} does not match MARKETING_VERSION ${declared} in Config/Shared.xcconfig. Bump one of them."
+              exit 1
+            }
+          fi
+
+          echo "version=${declared}" >> "$GITHUB_OUTPUT"
+          echo "Release version ${declared}"
+
+      - name: Require a tagged submodule pin
+        env:
+          # Only ever true on a dispatch run that is NOT publishing. A tag push
+          # cannot reach this, so the escape hatch cannot be used to ship.
+          ALLOW_UNTAGGED: ${{ github.event_name == 'workflow_dispatch' && !inputs.publish && inputs.allow_untagged_submodule }}
+        run: |
+          set -euo pipefail
+          # docs/development.md, submodule pin policy: a release must pin to an
+          # upstream RELEASE TAG. A mid-stream commit is only reachable while it
+          # stays on a branch — if upstream rebases or force-pushes, the SHA can
+          # be garbage-collected and this release becomes unbuildable by anyone,
+          # including us. Tags do not evaporate.
+          #
+          # As of writing the pin is deliberately ahead of 1.56.5 for the 7TV
+          # endpoint migration, so this gate is EXPECTED to fail until upstream
+          # tags a release containing it. That is the point: it blocks shipping
+          # rather than letting the pin slip out quietly.
+          cd vendor/TwitchDownloader
+          sha="$(git rev-parse HEAD)"
+          if tag="$(git describe --tags --exact-match "${sha}" 2>/dev/null)"; then
+            echo "submodule pinned to ${tag} (${sha})"
+          else
+            described="$(git describe --tags "${sha}" 2>/dev/null || echo 'no tag in ancestry')"
+            if [ "${ALLOW_UNTAGGED}" = "true" ]; then
+              echo "::warning::submodule pinned to ${described}, which is not a release tag. Permitted because this run cannot publish."
+            else
+              echo "::error::vendor/TwitchDownloader is pinned to ${sha}, which is not an upstream release tag: ${described}. Re-pin to a release tag before shipping."
+              exit 1
+            fi
+          fi
+
+      # ------------------------------------------------------------ toolchain
+
+      - name: Set up mise
+        # Brings the pinned Python and the .venv holding dmgbuild, from
+        # mise.toml — the same environment a local release uses.
+        uses: jdx/mise-action@v2
+        with:
+          install: true
+          cache: true
+
+      - name: Install the packaging dependencies
+        run: mise run setup
+
+      - name: Read the FFmpeg pin
+        id: ffmpeg-pin
+        run: |
+          version="$(sed -n 's/^FFMPEG_VERSION="\(.*\)"$/\1/p' scripts/build-ffmpeg.sh)"
+          [ -n "${version}" ] || { echo "::error::could not read FFMPEG_VERSION from scripts/build-ffmpeg.sh"; exit 1; }
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore FFmpeg
+        id: ffmpeg-cache
+        uses: actions/cache@v4
+        with:
+          path: build/ffmpeg
+          # Identical key to full-build.yml so a release reuses the cache that
+          # workflow already warmed, rather than paying for a cold build.
+          key: ffmpeg-${{ runner.os }}-${{ runner.arch }}-${{ steps.ffmpeg-pin.outputs.version }}-${{ hashFiles('scripts/build-ffmpeg.sh') }}
+
+      - name: Build FFmpeg
+        if: steps.ffmpeg-cache.outputs.cache-hit != 'true'
+        run: ./scripts/build-ffmpeg.sh
+
+      - name: Check the FFmpeg licence
+        run: |
+          set -euo pipefail
+          [ -x build/ffmpeg/ffmpeg ] || { echo "::error::no build/ffmpeg/ffmpeg"; exit 1; }
+          # A cache entry is restored without running build-ffmpeg.sh, so its
+          # licence assertion never happens. Re-check the one that matters: a
+          # GPL build must never reach a release.
+          encoders="$(build/ffmpeg/ffmpeg -hide_banner -encoders 2>/dev/null || true)"
+          if grep -q 'libx264' <<<"${encoders}"; then
+            echo "::error::FFmpeg contains libx264 — that is a GPL build and must not ship."
+            exit 1
+          fi
+
+      - name: Install .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Publish the helper
+        run: >
+          dotnet publish vendor/TwitchDownloader/TwitchDownloaderCLI
+          -c Release -r osx-arm64 --self-contained true
+          -p:PublishSingleFile=false -p:PublishTrimmed=false
+          -p:PublishReadyToRun=false -p:DebugType=none
+          -o build/helper
+
+      # -------------------------------------------------------------- signing
+
+      - name: Import the signing certificate
+        env:
+          CERTIFICATE_P12: ${{ secrets.DEVELOPER_ID_P12_BASE64 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.DEVELOPER_ID_P12_PASSWORD }}
+        run: |
+          set -euo pipefail
+          KEYCHAIN="${RUNNER_TEMP}/oxbow-signing.keychain-db"
+          # Generated here, not stored as a secret: the keychain exists for the
+          # length of this job and is deleted below.
+          KEYCHAIN_PASSWORD="$(openssl rand -base64 32)"
+          echo "SIGNING_KEYCHAIN=${KEYCHAIN}" >> "$GITHUB_ENV"
+
+          security create-keychain -p "${KEYCHAIN_PASSWORD}" "${KEYCHAIN}"
+          security set-keychain-settings -lut 7200 "${KEYCHAIN}"
+          security unlock-keychain -p "${KEYCHAIN_PASSWORD}" "${KEYCHAIN}"
+
+          CERT="${RUNNER_TEMP}/certificate.p12"
+          echo "${CERTIFICATE_P12}" | base64 --decode > "${CERT}"
+          security import "${CERT}" -k "${KEYCHAIN}" -P "${CERTIFICATE_PASSWORD}" \
+            -T /usr/bin/codesign -T /usr/bin/security -f pkcs12
+          rm -f "${CERT}"
+
+          # Without this, codesign tries to raise a GUI "allow access to your
+          # keychain?" prompt on a machine with no screen, and the job hangs
+          # until it times out. It is the single most common way this step is
+          # written wrong.
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "${KEYCHAIN_PASSWORD}" "${KEYCHAIN}" >/dev/null
+
+          # Put it on the search list so codesign can find the identity, while
+          # keeping the runner's existing keychains.
+          #
+          # The unquoted expansion is the point: list-keychains prints one path
+          # per line and each must arrive as a separate argument. Quoting it
+          # would pass every existing keychain as one path and drop them all.
+          # shellcheck disable=SC2046
+          security list-keychains -d user -s "${KEYCHAIN}" $(security list-keychains -d user | tr -d '"')
+
+          identity="$(security find-identity -v -p codesigning "${KEYCHAIN}" | grep 'Developer ID Application' | head -1 | sed 's/.*"\(.*\)"/\1/')"
+          [ -n "${identity}" ] || { echo "::error::no Developer ID Application identity in the imported certificate"; exit 1; }
+          echo "IDENTITY=${identity}" >> "$GITHUB_ENV"
+          echo "Imported: ${identity}"
+
+      - name: Build Oxbow.app
+        env:
+          TEAM: ${{ vars.DEVELOPMENT_TEAM }}
+        run: |
+          set -euo pipefail
+          [ -n "${TEAM}" ] || { echo "::error::repository variable DEVELOPMENT_TEAM is not set"; exit 1; }
+          # Release configuration, and the real identity: embed-helpers.sh signs
+          # the helper tree during the build, so it must already be signing with
+          # Developer ID here rather than being re-signed afterwards.
+          xcodebuild -project Oxbow.xcodeproj -scheme Oxbow \
+            -configuration Release -derivedDataPath build/DerivedData build \
+            CODE_SIGNING_ALLOWED=YES CODE_SIGNING_REQUIRED=YES \
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY="${IDENTITY}" \
+            DEVELOPMENT_TEAM="${TEAM}" \
+            OTHER_CODE_SIGN_FLAGS="--keychain ${SIGNING_KEYCHAIN}"
+          mkdir -p build
+          # ditto, not cp -R: the helper's managed assemblies carry
+          # Format=generic signatures stored in extended attributes, and cp can
+          # drop them. Same reason docs/signing.md §7 requires ditto over zip.
+          ditto build/DerivedData/Build/Products/Release/Oxbow.app build/Oxbow.app
+
+      - name: Sign the bundle inside-out
+        # Authoritative pass: every file under Contents/MacOS, per-process
+        # entitlements, app bundle last. Re-running it over an
+        # already-signed bundle is deliberate and idempotent.
+        run: ./scripts/sign.sh build/Oxbow.app
+
+      # ---------------------------------------------------------- notarizing
+
+      - name: Set up notary credentials
+        env:
+          NOTARY_PRIVATE_KEY: ${{ secrets.NOTARY_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          KEY="${RUNNER_TEMP}/notary.p8"
+          printf '%s' "${NOTARY_PRIVATE_KEY}" > "${KEY}"
+          chmod 600 "${KEY}"
+          echo "NOTARY_KEY=${KEY}" >> "$GITHUB_ENV"
+
+      - name: Notarize and staple the app
+        env:
+          NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+          NOTARY_ISSUER: ${{ secrets.NOTARY_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          # ditto -c -k --keepParent, never plain zip: managed assemblies carry
+          # Format=generic signatures stored in extended attributes, and zip
+          # drops xattrs. See docs/signing.md §7.
+          ditto -c -k --keepParent build/Oxbow.app build/Oxbow.zip
+          xcrun notarytool submit build/Oxbow.zip \
+            --key "${NOTARY_KEY}" --key-id "${NOTARY_KEY_ID}" --issuer "${NOTARY_ISSUER}" \
+            --wait
+          xcrun stapler staple build/Oxbow.app
+          xcrun stapler validate build/Oxbow.app
+          rm -f build/Oxbow.zip
+
+      - name: Package, sign, notarize and staple the DMG
+        env:
+          NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+          NOTARY_ISSUER: ${{ secrets.NOTARY_ISSUER_ID }}
+          SIGN_IDENTITY: ${{ env.IDENTITY }}
+        run: mise exec -- ./scripts/package-dmg.sh --notarize
+
+      # ---------------------------------------------------------- verifying
+
+      - name: Verify the release artefacts
+        id: verify
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.version.outputs.version }}"
+          DMG="build/Oxbow-${VERSION}-arm64.dmg"
+          [ -f "${DMG}" ] || { echo "::error::no ${DMG}"; exit 1; }
+
+          echo "== app =="
+          codesign --verify --deep --strict --verbose=2 build/Oxbow.app
+          xcrun stapler validate build/Oxbow.app
+          # Assessment types match the verification commands in
+          # docs/development.md, which were checked against a real signed build.
+          spctl -a -vvv -t install build/Oxbow.app
+
+          echo "== dmg =="
+          codesign --verify --strict --verbose=2 "${DMG}"
+          xcrun stapler validate "${DMG}"
+          spctl -a -vvv -t open --context context:primary-signature "${DMG}"
+
+          # Homebrew needs the checksum, and so does anyone verifying a
+          # download by hand.
+          ( cd build && shasum -a 256 "$(basename "${DMG}")" > "$(basename "${DMG}").sha256" )
+          cat "${DMG}.sha256"
+          echo "dmg=${DMG}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload the artefacts
+        # Always, even on a dispatch run that does not publish: this is how you
+        # inspect a build without cutting a release.
+        uses: actions/upload-artifact@v4
+        with:
+          name: Oxbow-${{ steps.version.outputs.version }}-arm64
+          path: |
+            build/Oxbow-*.dmg
+            build/Oxbow-*.dmg.sha256
+          if-no-files-found: error
+
+      # ---------------------------------------------------------- publishing
+
+      - name: Create the GitHub Release
+        if: github.ref_type == 'tag' || inputs.publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.version.outputs.version }}"
+          TAG="${GITHUB_REF_TYPE:-}"
+          if [ "${TAG}" = "tag" ]; then TAG="${GITHUB_REF_NAME}"; else TAG="v${VERSION}"; fi
+
+          # Draft, deliberately. The in-app update check reads the releases API,
+          # so publishing is the moment every existing install starts offering
+          # this version — that should be a human pressing a button after
+          # downloading the DMG and launching it once.
+          gh release create "${TAG}" \
+            --draft \
+            --title "Oxbow ${VERSION}" \
+            --generate-notes \
+            "${{ steps.verify.outputs.dmg }}" \
+            "${{ steps.verify.outputs.dmg }}.sha256"
+          echo "Draft release ${TAG} created. Review and publish it by hand."
+
+      # ------------------------------------------------------------- cleanup
+
+      - name: Remove the signing keychain and notary key
+        if: always()
+        run: |
+          security delete-keychain "${SIGNING_KEYCHAIN}" 2>/dev/null || true
+          rm -f "${RUNNER_TEMP}/notary.p8" "${RUNNER_TEMP}/certificate.p12"
