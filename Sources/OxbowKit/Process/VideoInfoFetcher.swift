@@ -72,13 +72,35 @@ public enum VideoInfoFetcher {
       workingDirectory: FileManager.default.temporaryDirectory)
 
     let collector = OutputCollector()
-    let result = try await process.run(launch) { line in
-      switch line {
-      case .log(_, let message): await collector.append(message)
-      case .ffmpeg(let message): await collector.append(message)
-      case .status: break
+
+    // Cancelling this task has to reach the child, or it does not reach
+    // anything: `HelperProcess.run` blocks on `waitpid` and observes nothing
+    // about the task it is running on. Intake refetches on every keystroke
+    // (debounced), and SwiftUI's `.task(id:)` cancels the previous fetch when
+    // the link changes — so without this, typing a URL a character at a time
+    // leaves an `info` subprocess per keystroke running to completion, each
+    // one talking to Twitch, all of their results discarded.
+    //
+    // `cancel()` is async and this handler is not, so it goes through a
+    // detached task; `HelperProcess.cancel` is a one-way flag, so arriving
+    // before the spawn is as good as arriving after it.
+    let result = try await withTaskCancellationHandler {
+      try await process.run(launch) { line in
+        switch line {
+        case .log(_, let message): await collector.append(message)
+        case .ffmpeg(let message): await collector.append(message)
+        case .status: break
+        }
       }
+    } onCancel: {
+      Task { await process.cancel() }
     }
+
+    // A cancelled fetch has no answer, and must not be reported as a helper
+    // failure: the caller asked for this to stop, and `.helperFailed` would
+    // put "Oxbow could not read that video's details" in front of a user who
+    // simply carried on typing.
+    try Task.checkCancellation()
 
     guard case .exited(0) = result.status else {
       throw VideoInfoFetchError.helperFailed(

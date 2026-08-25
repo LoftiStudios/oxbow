@@ -524,6 +524,33 @@ struct IntakeModelTests {
     #expect(Timecode.parse("１:３０") == nil, "full-width digits are not a timecode")
   }
 
+  /// A superseded fetch is not a failure. `.task(id:)` cancels the previous
+  /// fetch on every edit to the link, and `generation` cannot hide it — the
+  /// replacement has not necessarily incremented the counter by the time the
+  /// cancelled one unwinds. Reporting it would flash "Oxbow could not read
+  /// that video's details" at someone who is simply still typing.
+  @Test func aCancelledFetchIsNotReportedAsAFailure() async {
+    let model = makeModel(failure: CancellationError())
+    model.linkText = Self.videoLink
+
+    await model.load()
+
+    #expect(model.metadataFailure == nil)
+    #expect(!model.hasSettledMetadata, "a cancelled fetch settles nothing")
+    #expect(model.isLoadingMetadata, "the replacement fetch is what settles this")
+  }
+
+  /// The positive control for the test above: a real failure still shows.
+  @Test func aRealFetchFailureIsStillReported() async {
+    let model = makeModel(failure: VideoInfoFetchError.unparseableOutput(snippet: "x"))
+    model.linkText = Self.videoLink
+
+    await model.load()
+
+    #expect(model.metadataFailure != nil)
+    #expect(model.hasSettledMetadata)
+  }
+
   // MARK: - Render bounds
 
   /// The positive control: with Render on and every option left at its

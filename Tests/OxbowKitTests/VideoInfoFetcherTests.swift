@@ -17,10 +17,17 @@ private actor FakeInfoHelper: HelperProcessing {
   enum Behaviour: Sendable {
     case succeeds(stdout: String)
     case fails(exitCode: Int32, stderr: String)
+    /// Blocks inside `run` until `cancel()` arrives, then reports as killed —
+    /// what a real `info` invocation does, since it observes nothing about
+    /// the task awaiting it.
+    case hangsUntilCancelled
   }
 
   private(set) var lastLaunch: Launch?
+  private(set) var isRunning = false
+  private(set) var wasCancelled = false
   private let behaviour: Behaviour
+  private var cancelContinuation: CheckedContinuation<Void, Never>?
 
   init(_ behaviour: Behaviour) { self.behaviour = behaviour }
 
@@ -30,8 +37,17 @@ private actor FakeInfoHelper: HelperProcessing {
     async throws -> RunResult
   {
     lastLaunch = launch
+    isRunning = true
+    defer { isRunning = false }
 
     switch behaviour {
+    case .hangsUntilCancelled:
+      if !wasCancelled {
+        await withCheckedContinuation { cancelContinuation = $0 }
+      }
+      // SIGTERM: 15.
+      return RunResult(status: .signalled(15), standardError: "")
+
     case .succeeds(let stdout):
       var parser = StatusLineParser()
       for line in parser.consume(Array(stdout.utf8)) { await onOutput(line) }
@@ -47,7 +63,11 @@ private actor FakeInfoHelper: HelperProcessing {
     }
   }
 
-  func cancel() async {}
+  func cancel() async {
+    wasCancelled = true
+    cancelContinuation?.resume()
+    cancelContinuation = nil
+  }
 }
 
 @Suite("Video info fetcher")
@@ -147,6 +167,62 @@ struct VideoInfoFetcherTests {
       // nowhere close to `huge`'s size — the point being tested.
       return snippet.count <= VideoInfoFetcher.snippetLimit + 64 && snippet.count < huge.count
     }
+  }
+
+  /// Intake refetches on every keystroke and SwiftUI cancels the fetch it
+  /// supersedes — but `HelperProcess.run` blocks on `waitpid` and observes
+  /// nothing about the task awaiting it. Without an explicit cancellation
+  /// handler, each superseded paste left a real `info` subprocess talking to
+  /// Twitch until it finished, its result thrown away.
+  @Test func cancellingTheFetchSignalsTheHelper() async throws {
+    let fake = FakeInfoHelper(.hangsUntilCancelled)
+    let task = Task {
+      try await VideoInfoFetcher.fetch(id: "123", helper: helperPath, process: fake)
+    }
+
+    // The helper must actually be running before the cancellation is
+    // meaningful; cancelling a task that has not reached `run` yet would pass
+    // against an implementation that never signals at all.
+    await Self.waitUntil("the helper is running") { await fake.isRunning }
+    task.cancel()
+
+    await #expect(throws: CancellationError.self) { try await task.value }
+    #expect(await fake.wasCancelled)
+  }
+
+  /// And the caller sees a cancellation, not a helper failure — the sheet
+  /// turns `.helperFailed` into "Oxbow could not read that video's details",
+  /// which is the wrong thing to say to someone who simply kept typing.
+  @Test func aCancelledFetchThrowsCancellationNotAHelperFailure() async throws {
+    let fake = FakeInfoHelper(.hangsUntilCancelled)
+    let task = Task {
+      try await VideoInfoFetcher.fetch(id: "123", helper: helperPath, process: fake)
+    }
+    await Self.waitUntil("the helper is running") { await fake.isRunning }
+    task.cancel()
+
+    do {
+      _ = try await task.value
+      Issue.record("expected the cancelled fetch to throw")
+    } catch {
+      #expect(error is CancellationError)
+      #expect(!(error is VideoInfoFetchError))
+    }
+  }
+
+  /// Bounded, so a fetcher that never starts the helper fails the test rather
+  /// than hanging it.
+  private static func waitUntil(
+    _ description: String,
+    yields: Int = 10_000,
+    _ condition: () async -> Bool)
+    async
+  {
+    for _ in 0..<yields {
+      if await condition() { return }
+      await Task.yield()
+    }
+    Issue.record("timed out waiting until \(description)")
   }
 
   @Test func buildsTheExpectedArgv() async throws {

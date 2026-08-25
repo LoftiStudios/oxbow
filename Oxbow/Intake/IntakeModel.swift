@@ -169,6 +169,12 @@ final class IntakeModel {
         title: info.title,
         calendar: calendar,
         reservingSuffixBytes: OutputSuffix.longestBytes)
+    } catch is CancellationError {
+      // The user typed on and this fetch was superseded. Not a failure to
+      // report: the replacement is already on its way and will settle the
+      // state, and `generation` cannot be relied on to hide this — the
+      // replacement has not necessarily incremented it yet.
+      return
     } catch {
       guard issued == generation else { return }
       metadata = .failed(Self.message(for: error))
