@@ -141,6 +141,13 @@ public actor QueueEngine {
     tick()
   }
 
+  /// Retries every unfinished step of a job. See `Scheduler.retry(job:in:)`
+  /// for why retry at this level cannot be "retry the step that broke".
+  public func retry(job id: JobID) {
+    Scheduler.retry(job: id, in: &jobs)
+    tick()
+  }
+
   public func cancel(step id: StepID) async {
     // Record the terminal status — and stop admitting or blocking on it —
     // before awaiting the kill, not after. A real helper can take up to ~2s
@@ -180,6 +187,61 @@ public actor QueueEngine {
 
     // Removal can clear a step's artifact, so republish and re-save rather
     // than leaving observers and the queue file holding the pre-removal view.
+    tick()
+  }
+
+  /// Forgets these jobs entirely: out of the queue, out of the queue file, and
+  /// their workspaces off disk.
+  ///
+  /// **Running jobs are cancelled first, never merely dropped.** Removing the
+  /// row without signalling the helper would leave `TwitchDownloaderCLI` and
+  /// the FFmpeg it spawned alive, reparented to `launchd`, still writing into a
+  /// job workspace this call then deletes — the same orphaning that
+  /// `shutDown()` exists to prevent, reached by a different door. Whether to
+  /// warn the user before doing that is the UI's business; by the time a
+  /// removal arrives here the decision has been made.
+  ///
+  /// **What is never removed is the file the user asked for.** A delivered
+  /// artifact lives at a destination they chose, outside our workspace;
+  /// clearing a row is housekeeping on our own queue and nothing more.
+  ///
+  /// Takes a set because removal is a selection-shaped action — the UI's
+  /// Delete key acts on however many rows are selected, and doing that as N
+  /// separate calls would publish N snapshots and re-save N times.
+  public func remove(jobs ids: Set<JobID>) async {
+    let doomed = jobs.filter { ids.contains($0.id) }
+    guard !doomed.isEmpty else { return }
+
+    // Cancel every one that is live before touching the queue, and
+    // concurrently: each `HelperProcess.cancel()` carries its own ~2s SIGTERM
+    // grace period, so serialising them would multiply the wait by the number
+    // of running steps removed.
+    let processes = doomed.flatMap { job in job.steps.compactMap { running[$0.id] } }
+    if !processes.isEmpty {
+      for job in doomed { Scheduler.cancel(job: job.id, in: &self.jobs) }
+      await withTaskGroup(of: Void.self) { group in
+        for process in processes {
+          group.addTask { await process.cancel() }
+        }
+      }
+    }
+
+    // Drop the `running` entries here rather than waiting for each cancelled
+    // helper's completion callback. That callback fires whenever the SIGTERM
+    // actually lands, and until it does the scheduler still counts the step
+    // against its resource class — so a removal could leave the next queued
+    // download unable to start, for a job that no longer exists. `completeStep`
+    // arriving later is harmless: it clears an already-absent key and then
+    // early-returns, because `locate` can no longer find the step.
+    for job in doomed {
+      for step in job.steps { running[step.id] = nil }
+    }
+
+    self.jobs.removeAll { ids.contains($0.id) }
+    for id in ids { configuration.workspace.removeJob(id) }
+
+    // Publish and save, in that order, so observers and the queue file agree —
+    // and so a removal survives a quit that happens before the debounce fires.
     tick()
   }
 

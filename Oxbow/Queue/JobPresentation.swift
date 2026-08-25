@@ -34,13 +34,64 @@ nonisolated enum JobPresentation {
     }
   }
 
-  static func icon(for status: JobStatus) -> (name: String, isError: Bool) {
+  /// What a status looks like: a symbol, and the tone that says what it means.
+  ///
+  /// Filled circles throughout, bar the warning triangle, so the icons read as
+  /// one family at 16pt — and each carries a distinct tone rather than the
+  /// single shade of secondary grey they all used to share. A queue where only
+  /// the failure is coloured makes every other state invisible at a glance,
+  /// which is exactly the job the icon column exists to do.
+  static func icon(for status: JobStatus) -> (name: String, tone: Tone) {
     switch status {
-    case .queued: ("clock", false)
-    case .running: ("arrow.down.circle", false)
-    case .done: ("checkmark.circle.fill", false)
-    case .failed: ("exclamationmark.triangle.fill", true)
-    case .cancelled: ("slash.circle", false)
+    case .queued: ("clock", .warning)
+    case .running: ("arrow.down.circle.fill", .active)
+    case .done: ("checkmark.circle.fill", .success)
+    case .failed: ("exclamationmark.triangle.fill", .error)
+    case .cancelled: ("slash.circle.fill", .neutral)
     }
+  }
+
+  /// The same family of icons for a single step.
+  ///
+  /// `.blocked` is the one state a job never has: a job whose step is blocked
+  /// reads as `.failed`, because from outside that is what it is — something
+  /// upstream broke and this will not run. A step row shows the distinction,
+  /// because in the expanded view it is the difference between the step that
+  /// failed and the one that merely inherited the failure.
+  static func icon(for status: StepStatus) -> (name: String, tone: Tone) {
+    switch status {
+    case .queued: ("clock", .warning)
+    case .blocked: ("minus.circle.fill", .neutral)
+    case .running: ("arrow.down.circle.fill", .active)
+    case .done: ("checkmark.circle.fill", .success)
+    case .failed: ("exclamationmark.triangle.fill", .error)
+    case .cancelled: ("slash.circle.fill", .neutral)
+    }
+  }
+
+  /// What the icon conveys, said out loud.
+  ///
+  /// The status reaches sighted users as a colour and a shape and reaches
+  /// VoiceOver as nothing at all — the image is `accessibilityHidden`, because
+  /// a row that reads "checkmark circle fill, LeighXP…" is worse than one that
+  /// reads "LeighXP…, finished". This is the other half of that trade.
+  static func accessibilityStatus(of status: JobStatus) -> String {
+    switch status {
+    case .queued: "queued"
+    case .running: "downloading"
+    case .done: "finished"
+    case .failed: "failed"
+    case .cancelled: "cancelled"
+    }
+  }
+
+  /// The meaning behind a status icon's colour. Named here and coloured in the
+  /// view layer, so this type stays free of SwiftUI.
+  enum Tone: Sendable {
+    case neutral
+    case active
+    case success
+    case warning
+    case error
   }
 }

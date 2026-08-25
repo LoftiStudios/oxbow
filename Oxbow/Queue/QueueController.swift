@@ -80,7 +80,16 @@ final class QueueController {
   /// The tail of a step's captured helper output, for the detail disclosure.
   func log(for step: StepID) async -> String? { await engine.log(for: step) }
 
+  /// Forgets these jobs: out of the queue, off disk, helpers killed first if
+  /// any were running. Delivered files are never touched — see
+  /// `QueueEngine.remove(jobs:)`.
+  func remove(jobs ids: Set<JobID>) async { await engine.remove(jobs: ids) }
+
   func cancel(job id: JobID) async { await engine.cancel(job: id) }
   func cancel(step id: StepID) async { await engine.cancel(step: id) }
   func retry(step id: StepID) async { await engine.retry(step: id) }
+
+  /// Retries every unfinished step of a job — what Retry means on a row, as
+  /// opposed to on one step of an expanded job.
+  func retry(job id: JobID) async { await engine.retry(job: id) }
 }

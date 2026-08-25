@@ -2,27 +2,44 @@ import AppKit
 import SwiftUI
 import OxbowKit
 
+/// One step of an expanded multi-step job.
+///
+/// Laid out on the same two columns as `JobRow` (`QueueMetrics`): a reserved
+/// gutter where the job row's disclosure control sits, then the status icon,
+/// then the name. That is what makes an expanded job's steps line up with the
+/// job above them instead of starting at their own arbitrary indent.
 struct StepRow: View {
   let step: Step
-  let controller: QueueController
   let onRetry: () -> Void
 
   var body: some View {
     VStack(alignment: .leading, spacing: 4) {
-      HStack {
+      HStack(spacing: QueueMetrics.iconSpacing) {
+        Image(systemName: icon.name)
+          .foregroundStyle(icon.tone.color)
+          .frame(width: QueueMetrics.icon, height: QueueMetrics.titleLine)
+          .accessibilityHidden(true)
+
         Text(JobPresentation.label(for: step.kind))
           .font(.subheadline)
-        Spacer()
+
+        Spacer(minLength: 8)
+
         RetryButton(step: step, action: onRetry)
       }
 
-      StepDetail(step: step, controller: controller)
+      StepDetail(step: step)
+        .padding(.leading, QueueMetrics.contentIndent)
     }
     .padding(.vertical, 2)
   }
+
+  private var icon: (name: String, tone: JobPresentation.Tone) {
+    JobPresentation.icon(for: step.status)
+  }
 }
 
-/// Retry, for a failed step, and nothing at all otherwise.
+/// Retry, for a step that did not finish, and nothing at all otherwise.
 ///
 /// One definition, shared by the collapsed job row and the expanded step row.
 /// Retry has to be reachable from the job row — a `.video` template expands
@@ -35,18 +52,36 @@ struct RetryButton: View {
   let action: () -> Void
 
   var body: some View {
-    if case .failed = step.status {
+    // Cancelled as well as failed. `Scheduler.retry(_:in:)` has always
+    // accepted both; only the UI insisted a step had to have broken before it
+    // could be run again.
+    if isRetryable {
       Button("Retry", action: action)
-        .buttonStyle(.link)
+        .buttonStyle(.borderless)
+        .controlSize(.small)
+    }
+  }
+
+  private var isRetryable: Bool {
+    switch step.status {
+    case .failed, .cancelled: true
+    case .queued, .blocked, .running, .done: false
     }
   }
 }
 
 /// A step's failure message or its progress line, whichever applies —
 /// the same derivation wherever a step is drawn.
+///
+/// **No log disclosure here.** It used to carry one, from before Get Info
+/// existed and the helper's output had nowhere else to live. A queue row's job
+/// is status at a glance, and the one-line summary below a failed step is that;
+/// the full output is depth, and depth belongs in the window built for it. The
+/// disclosure had also stopped responding once the list became selectable,
+/// which is a good reason to stop rather than to start fighting the row's
+/// selection gesture for the click.
 struct StepDetail: View {
   let step: Step
-  let controller: QueueController
 
   var body: some View {
     if case .failed(let failure) = step.status {
@@ -54,13 +89,9 @@ struct StepDetail: View {
         .font(.caption)
         .foregroundStyle(.red)
         .textSelection(.enabled)
-      StepLogDisclosure(step: step, controller: controller, failure: failure)
+        .fixedSize(horizontal: false, vertical: true)
     } else if step.status == .running {
-      ProgressLine(progress: step.progress)
-      // Offered while running too, not only on failure: a helper that has
-      // finished its work and hung still reads as `.running`, and its last
-      // few log lines are the only thing that says so.
-      StepLogDisclosure(step: step, controller: controller, failure: nil)
+      ProgressLine(progress: step.progress, phases: StepPhases.expected(for: step.kind))
     }
   }
 }
@@ -72,7 +103,7 @@ struct StepDetail: View {
 /// on a debounce during a download.
 struct StepLogDisclosure: View {
   let step: Step
-  let controller: QueueController
+  let log: (StepID) async -> String?
   let failure: StepFailure?
 
   @State private var isExpanded = false
@@ -105,17 +136,18 @@ struct StepLogDisclosure: View {
           NSPasteboard.general.clearContents()
           NSPasteboard.general.setString(text, forType: .string)
         }
-        .buttonStyle(.link)
+        .buttonStyle(.borderless)
+        .controlSize(.small)
         .disabled(text.isEmpty)
       }
     } label: {
-      Text("Details").font(.caption)
+      Text("Details").font(.caption).foregroundStyle(.secondary)
     }
     .task(id: isExpanded) {
       // Re-read on each expand rather than once: a running step is still
       // writing, so a cached copy would show a stale tail.
       guard isExpanded else { return }
-      contents = await controller.log(for: step.id)
+      contents = await log(step.id)
     }
   }
 }
@@ -123,11 +155,19 @@ struct StepLogDisclosure: View {
 /// The progress bar plus its caption, shared by job and step rows.
 struct ProgressLine: View {
   let progress: StepProgress
+  /// The phases this step walks through, when we know them. A segmented bar
+  /// needs them; without them this falls back to the single bar, which is
+  /// still right for a step whose phases we cannot name.
+  var phases: StepPhases?
 
   var body: some View {
     let display = ProgressDisplay(progress: progress)
-    VStack(alignment: .leading, spacing: 2) {
-      if display.isIndeterminate {
+    let segmented = phases.flatMap { $0.index(matching: progress) != nil ? $0 : nil }
+
+    VStack(alignment: .leading, spacing: 3) {
+      if let segmented {
+        PhaseProgressBar(phases: segmented, progress: progress)
+      } else if display.isIndeterminate {
         ProgressView().progressViewStyle(.linear)
       } else {
         ProgressView(value: display.fraction ?? 0)
@@ -135,11 +175,43 @@ struct ProgressLine: View {
 
       HStack(spacing: 6) {
         if let phase = display.phase { Text(phase) }
-        if let counter = display.counter { Text(counter) }
+        // Redundant once the segments are on screen: they already say which
+        // of how many, and say it in the phase's own name.
+        if segmented == nil, let counter = display.counter { Text(counter) }
         if let remaining = display.remaining { Text(remaining) }
       }
       .font(.caption)
       .foregroundStyle(.secondary)
+      .monospacedDigit()
     }
   }
+}
+
+#Preview("Running") {
+  List {
+    StepRow(
+      step: Step(
+        id: StepID(rawValue: UUID()),
+        kind: .downloadVideo(VideoRequest(
+          videoID: "1", quality: "", destination: URL(filePath: "/tmp/a.mp4"))),
+        status: .running,
+        progress: StepProgress(phase: "Downloading", fraction: 0.42, index: 2, total: 5)),
+      onRetry: {})
+  }
+  .frame(width: 520, height: 200)
+}
+
+#Preview("Failed") {
+  List {
+    StepRow(
+      step: Step(
+        id: StepID(rawValue: UUID()),
+        kind: .renderChat(RenderRequest(destination: URL(filePath: "/tmp/r.mp4"))),
+        status: .failed(StepFailure(
+          kind: .exited(code: 1),
+          summary: "The chat renderer exited with code 1.",
+          detail: "Unrecognized option 'crf'."))),
+      onRetry: {})
+  }
+  .frame(width: 520, height: 200)
 }

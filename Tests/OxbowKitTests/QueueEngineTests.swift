@@ -139,6 +139,173 @@ struct QueueEngineTests {
     #expect(!FileManager.default.fileExists(atPath: workspace.logFile(job: job.id, step: step.id).path))
   }
 
+
+  /// Retry is a from-scratch restart, not a resume — nothing in this stack can
+  /// resume — so the real question is whether a cancelled job comes back to
+  /// life at all. Cancelling settles every step as `.cancelled`, and this
+  /// asserts the whole job runs through to `.done` afterwards rather than
+  /// restarting one step and stalling.
+  @Test func aCancelledMultiStepJobCanBeRetriedAndRunsToCompletion() async throws {
+    let (engine, root) = makeEngine(.succeeds)
+    let (template, renderDestination) = makeChatAndRenderTemplate()
+    defer {
+      cleanUp(root)
+      try? FileManager.default.removeItem(at: renderDestination)
+    }
+
+    try await engine.start()
+    await engine.enqueue(template, title: "test")
+
+    let job = try #require(await engine.currentJobs.first)
+    await engine.cancel(job: job.id)
+    #expect(await engine.currentJobs.first?.status == .cancelled, "precondition")
+
+    await engine.retry(job: job.id)
+    try await settle(engine)
+
+    let retried = try #require(await engine.currentJobs.first)
+    #expect(retried.status == .done)
+    #expect(retried.steps.allSatisfy { $0.status == .done })
+    await engine.flush()
+  }
+
+  // MARK: - Removing jobs
+
+  /// The queue had no way to forget anything: every job ever enqueued stayed
+  /// in the list forever, which is what made the window read as an append-only
+  /// log rather than a queue.
+  @Test func removesASettledJobAndLeavesTheOthers() async throws {
+    let (engine, root) = makeEngine(.succeeds)
+    defer { cleanUp(root) }
+
+    try await engine.start()
+    await engine.enqueue(
+      JobTemplate(media: .video(VideoRequest(
+        videoID: "1", quality: "", destination: root.appending(path: "a.mp4")))),
+      title: "a")
+    await engine.enqueue(
+      JobTemplate(media: .video(VideoRequest(
+        videoID: "2", quality: "", destination: root.appending(path: "b.mp4")))),
+      title: "b")
+    try await settle(engine)
+
+    let first = try #require(await engine.currentJobs.first { $0.title == "a" })
+    await engine.remove(jobs: [first.id])
+
+    let remaining = await engine.currentJobs
+    #expect(remaining.map(\.title) == ["b"])
+    await engine.flush()
+  }
+
+  /// Removing a job removes what it left behind in our workspace — the logs
+  /// and any intermediates a failure kept around. Otherwise "clear the list"
+  /// quietly leaks disk forever.
+  @Test func removingAJobDeletesItsWorkspace() async throws {
+    let (engine, root) = makeEngine(.failsWithoutArtifact(stderr: "boom"))
+    defer { cleanUp(root) }
+    let workspace = Workspace(root: root)
+
+    try await engine.start()
+    await engine.enqueue(
+      JobTemplate(media: .video(VideoRequest(
+        videoID: "1", quality: "", destination: root.appending(path: "out.mp4")))),
+      title: "t")
+    try await settle(engine)
+
+    let job = try #require(await engine.currentJobs.first)
+    #expect(FileManager.default.fileExists(atPath: workspace.jobDirectory(job.id).path),
+            "precondition: a failed job keeps its workspace")
+
+    await engine.remove(jobs: [job.id])
+
+    #expect(!FileManager.default.fileExists(atPath: workspace.jobDirectory(job.id).path))
+    await engine.flush()
+  }
+
+  /// **The file the user asked for is not ours to delete.** Removing a row is
+  /// housekeeping on our own queue; the download in their Downloads folder is
+  /// the whole point of the app and survives untouched.
+  @Test func removingAJobLeavesTheDeliveredFileAlone() async throws {
+    let (engine, root) = makeEngine(.succeeds)
+    let destination = URL(filePath: NSTemporaryDirectory())
+      .appending(path: "delivered-\(UUID().uuidString).mp4")
+    defer {
+      cleanUp(root)
+      try? FileManager.default.removeItem(at: destination)
+    }
+
+    try await engine.start()
+    await engine.enqueue(
+      JobTemplate(media: .video(VideoRequest(
+        videoID: "1", quality: "", destination: destination))),
+      title: "t")
+    try await settle(engine)
+
+    let job = try #require(await engine.currentJobs.first)
+    #expect(FileManager.default.fileExists(atPath: destination.path),
+            "precondition: the job delivered its file")
+
+    await engine.remove(jobs: [job.id])
+
+    #expect(await engine.currentJobs.isEmpty)
+    #expect(FileManager.default.fileExists(atPath: destination.path))
+    await engine.flush()
+  }
+
+  /// Removing something still running has to kill its helper first. Dropping
+  /// the row without cancelling would orphan `TwitchDownloaderCLI` and the
+  /// FFmpeg it spawned, still writing into a workspace we just deleted — the
+  /// exact failure `shutDown()` exists to prevent, reached by another door.
+  @Test func removingARunningJobCancelsItsHelperFirst() async throws {
+    let (engine, root) = makeEngine(.hangsUntilCancelled)
+    defer { cleanUp(root) }
+
+    try await engine.start()
+    await engine.enqueue(
+      JobTemplate(media: .video(VideoRequest(
+        videoID: "1", quality: "", destination: root.appending(path: "out.mp4")))),
+      title: "t")
+
+    // Wait for it to actually be running, so this is a removal mid-flight and
+    // not a removal of something still queued.
+    var job: Job?
+    for _ in 0..<200 {
+      if let candidate = await engine.currentJobs.first, candidate.status == .running {
+        job = candidate
+        break
+      }
+      try await Task.sleep(for: .milliseconds(25))
+    }
+    let running = try #require(job, "job never reached .running")
+
+    await engine.remove(jobs: [running.id])
+
+    #expect(await engine.currentJobs.isEmpty)
+    #expect(await engine.isIdle, "the helper was left running after its job was removed")
+    await engine.flush()
+  }
+
+  /// Removal is persisted, not just published: a removed job must not come
+  /// back at the next launch.
+  @Test func aRemovedJobIsNotInTheSavedQueue() async throws {
+    let (engine, root) = makeEngine(.succeeds)
+    defer { cleanUp(root) }
+
+    try await engine.start()
+    await engine.enqueue(
+      JobTemplate(media: .video(VideoRequest(
+        videoID: "1", quality: "", destination: root.appending(path: "out.mp4")))),
+      title: "t")
+    try await settle(engine)
+
+    let job = try #require(await engine.currentJobs.first)
+    await engine.remove(jobs: [job.id])
+    await engine.flush()
+
+    let reloaded = try QueueStore(fileURL: storeURL(for: root)).load()
+    #expect(reloaded.isEmpty)
+  }
+
   /// Waits for the queue to stop having runnable work, or fails the test.
   private func settle(_ engine: QueueEngine) async throws {
     for _ in 0..<200 {

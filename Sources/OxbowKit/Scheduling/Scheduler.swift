@@ -86,6 +86,35 @@ public enum Scheduler {
     }
   }
 
+  /// Retries every unfinished step of a job — the counterpart to
+  /// `cancel(job:)`, and the only correct shape for retry at the job level.
+  ///
+  /// **Why not just retry the representative step.** `cancel(job:)` settles
+  /// *every* unfinished step as `.cancelled`, so retrying one of them would
+  /// requeue that step and leave its siblings cancelled: the job would run its
+  /// first step, then sit there reading as cancelled with nothing left able to
+  /// move it. A failed job is different — its dependents are `.blocked`, and
+  /// retrying the failure unblocks them — but one call has to be right for
+  /// both, so it retries them all.
+  ///
+  /// Nothing here re-runs a step that succeeded. There is no resume anywhere
+  /// in this stack, so a retried step starts from scratch; re-downloading a
+  /// finished 3GB VOD because the chat render after it failed would be a very
+  /// expensive way to express that.
+  public static func retry(job id: JobID, in jobs: inout [Job]) {
+    guard let index = jobs.firstIndex(where: { $0.id == id }) else { return }
+
+    // Collected first, then retried: `retry(_:in:)` unblocks dependents as it
+    // goes, so the statuses this reads would otherwise change underneath it.
+    let retryable = jobs[index].steps.compactMap { step -> StepID? in
+      switch step.status {
+      case .failed, .cancelled: step.id
+      case .queued, .blocked, .running, .done: nil
+      }
+    }
+    for step in retryable { retry(step, in: &jobs) }
+  }
+
   /// Cancels a single step. Only acts on `.queued`, `.blocked`, or `.running` steps;
   /// finished steps (`.done`, `.failed`, `.cancelled`) are no-ops.
   public static func cancel(_ id: StepID, in jobs: inout [Job]) {
