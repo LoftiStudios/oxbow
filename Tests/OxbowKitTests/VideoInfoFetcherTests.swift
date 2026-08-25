@@ -70,6 +70,25 @@ struct VideoInfoFetcherTests {
     #expect(info.qualities.map(\.name) == ["1080p60", "720p60", "480p30", "360p30", "160p30"])
   }
 
+  /// The clip payload is one JSON object with **no trailing newline** — the
+  /// CLI's `HandleClipRaw` serializes and stops — so the whole thing only ever
+  /// reaches the parser through `StatusLineParser.finish()`. A fetcher that
+  /// listened to `consume` alone would see the `[STATUS]` banner and nothing
+  /// else, which is why this goes through the real parser rather than calling
+  /// `VideoInfo.parse` on the fixture directly.
+  @Test func parsesTheRealClipInfoFromTheFixture() async throws {
+    let stdout = String(decoding: try Fixture.bytes("info-clip-raw.stdout"), as: UTF8.self)
+    #expect(!stdout.hasSuffix("\n"))
+    let fake = FakeInfoHelper(.succeeds(stdout: stdout))
+
+    let info = try await VideoInfoFetcher.fetch(
+      id: "AbstemiousSillyPuppyBCouch-x_zVHj6Yc6UvUVuu", helper: helperPath, process: fake)
+
+    #expect(info.streamer == "xQc")
+    #expect(info.title == "Me on stream")
+    #expect(info.qualities.first?.name == "1080p60-1")
+  }
+
   @Test func throwsWhenTheHelperExitsNonZero() async throws {
     let fake = FakeInfoHelper(.fails(exitCode: 134, stderr: "boom"))
 
