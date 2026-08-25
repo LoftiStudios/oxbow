@@ -90,6 +90,7 @@ Everything geometric is known at intake, before a byte is downloaded, from
 | Chat height | = video height | 1080 | 720 | 480 |
 | Output width | video width + chat width | 2280 | 1520 | 1014 |
 | Chat framerate | the video's, halved when it is 60 | 30 | 30 | 30 |
+| Font size | user's Small/Medium/Large, scaled to chat width — see below | 13 / 16 / 20 | 9 / 11 / 13 | 6 / 7 / 9 |
 | Render bitrate | flat 12 Mbps at every quality — see below | 12M | 12M | 12M |
 | Composite bitrate | seeded from `StreamQuality.bitsPerSecond` | — | — | — |
 
@@ -141,12 +142,45 @@ The fix is free: encode the intermediate at **12 Mbps**. At fixed resolution and
 framerate, VideoToolbox's encode speed is essentially independent of bitrate, so
 this costs only transient disk in a workspace that is deleted anyway.
 
-### The one number not derived here
+### Chat text size: a survivor, scaled rather than fixed
 
-**Font size.** The default of 12 was chosen for a 350x600 standalone render.
-What is right in a 360x1080 column inside a 2280-wide frame is a question
-answered by rendering one and looking at it, not from first principles. It is a
-task in the implementation plan, not a ratio invented in this document.
+Font size is the one control the deleted render-options form (§8) left
+behind. Intake offers **Small / Medium / Large**, defaulting to Medium, shown
+only when *Video + chat* is selected. The reason it stays a choice rather than
+becoming one more baked-in constant like everything else in this section: the
+chat column is not a fixed width, it is `videoWidth x 3/16` — 360px at 1080p,
+240px at 720p, 160px at 480p. A point size that reads well in a 360px column
+looks cramped in a 160px one and undersized in reverse, and separately, what
+reads well on a laptop window is not what reads well on a TV across the room.
+A single fixed default cannot serve both axes at once; a proportional preset
+can.
+
+**What *is* fixed by inspection, and what is derived from it, are different
+things.** The anchors — 13/16/20 for Small/Medium/Large — were chosen the way
+the old flat default was: rendering real chat at 360x1080 (1080p's column)
+and looking at the result, at roughly 35, 28, and 19 messages visible. But
+those anchors are not the whole rule. Divided back by the 360px column that
+produced them, they give a ratio the app applies at *every* resolution, so the
+same choice looks the same relative size everywhere rather than needing its
+own inspected anchor per quality:
+
+```
+base   = chatWidth / 22.5   # Medium
+Small  = base x 0.8
+Medium = base x 1.0
+Large  = base x 1.25
+```
+
+Rounded to the nearest whole number, never below 1. `CompositeGeometry.fontSize(for:)`
+implements this; the divisor and the three multipliers are named constants
+with a comment recording that they came from inspection, not derivation, so a
+size that reads wrong later is a one-line fix rather than a re-derivation.
+
+| | 1080p (360) | 720p (240) | 480p (160) |
+|---|---|---|---|
+| Small | 13 | 9 | 6 |
+| Medium | 16 | 11 | 7 |
+| Large | 20 | 13 | 9 |
 
 ## 5. The composite step
 
@@ -323,14 +357,25 @@ for the CLI's grandchild FFmpeg; correct unchanged for a direct one.
 
 | File | Lines | Why |
 |---|---|---|
-| `Oxbow/Intake/RenderOptionsView.swift` | 157 | No render options remain |
+| `Oxbow/Intake/RenderOptionsView.swift` | 157 | Colours, font, badges, emotes, and bitrate all become fixed defaults |
 | `Oxbow/Intake/HexColor.swift` | 60 | Its only consumer was that view's colour wells |
 | `OxbowTests/HexColorTests.swift` | 103 | With it |
 
+Not everything the deleted form controlled becomes a fixed default, though:
+**chat text size survives**, as the Small / Medium / Large picker in §4. Every
+other control there was either derivable (height, framerate) or a decision the
+app can simply make well (colours, badges, timestamps), but size is neither —
+a fixed point size cannot serve both a laptop window and a TV across the room,
+where the same column reads at very different physical sizes. So this is not
+"the render UI, deleted entirely, appearance fixed everywhere": it is that
+form's controls deleted down to the one dimension a fixed default cannot
+answer for everyone.
+
 From `IntakeModel`: `isDownloadingChat`, `isRenderingChat`, `chatFormat`,
 `renderOptions`, `renderIsInvalid`, `renderProblems`, `deliveredChatFormat`, and
-`hasSelectedOutput`, replaced by one two-case enum. `IntakeSheet`'s three
-toggles become a picker. `IntakeModelTests` (882 lines) is pruned heavily.
+`hasSelectedOutput`, replaced by one two-case enum plus `chatSize`.
+`IntakeSheet`'s three toggles become a picker, alongside the new Small /
+Medium / Large one. `IntakeModelTests` (882 lines) is pruned heavily.
 
 **`OutputSuffix` loses `.chat` and `.render`**, dropping `longestBytes` from 12
 to 4. This *loosens* `OutputNaming`'s truncation reserve — titles may now be
@@ -402,7 +447,9 @@ one is a deeper change than a step that spawns a different binary, and because
 
 - Overlaying chat on top of the video instead of beside it, and any other
   frame layout. One shape, chosen deliberately.
-- User-configurable chat appearance. Deleted on purpose (§8).
+- User-configurable chat appearance beyond text size — colours, font, badges,
+  emotes, outline, timestamps. Deleted on purpose (§8); text size is the one
+  exception, and §4/§8 say why.
 - Compositing an already-downloaded VOD with an already-rendered chat. Every
   composite runs as part of a job that produced both inputs.
 - Vertical or "shorts" layouts.

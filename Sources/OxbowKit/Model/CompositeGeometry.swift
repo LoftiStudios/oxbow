@@ -52,6 +52,38 @@ public struct CompositeGeometry: Sendable, Equatable {
         : videoFramerate
   }
 
+  // MARK: - Chat font size
+
+  /// Medium's size is `chatWidth / mediumDivisor`, everything else scales
+  /// off it. Chosen by rendering real chat at 360x1080 (1080p's column) and
+  /// looking at the output, not derived — see `docs/design/compositing.md`
+  /// §4. Trivially adjustable: this is the one number to change if a
+  /// different size reads better later.
+  private static let mediumDivisor = 22.5
+  private static let smallMultiplier = 0.8
+  private static let mediumMultiplier = 1.0
+  private static let largeMultiplier = 1.25
+
+  /// The point size for `size` in this composite's chat column.
+  ///
+  /// Proportional to `chatWidth`, not fixed, so characters-per-line and the
+  /// overall composition look the same at every quality: a size chosen for a
+  /// 360-wide 1080p column would read as oversized or illegible if reused
+  /// verbatim on a 240-wide 720p one. Rounded to the nearest whole number,
+  /// and never below 1 — `chatWidth` is clamped to `minimumChatWidth` but a
+  /// future change to that floor should not silently produce a font size of
+  /// zero or less.
+  public func fontSize(for size: ChatSize) -> Double {
+    let base = Double(chatWidth) / Self.mediumDivisor
+    let multiplier: Double
+    switch size {
+    case .small: multiplier = Self.smallMultiplier
+    case .medium: multiplier = Self.mediumMultiplier
+    case .large: multiplier = Self.largeMultiplier
+    }
+    return max(1, (base * multiplier).rounded())
+  }
+
   /// From the quality NAME, never the m3u8's `FRAME-RATE` attribute: that
   /// reports a measured average (57.034 on a 60 fps VOD) and matching it
   /// reintroduces exactly the drift this avoids. See architecture.md §7.

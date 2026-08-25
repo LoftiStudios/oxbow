@@ -366,6 +366,45 @@ struct IntakeModelTests {
     #expect(render.bitrateMbps >= 12)
   }
 
+  @Test func chatSizeDefaultsToMedium() {
+    let model = makeModel()
+    #expect(model.chatSize == .medium)
+  }
+
+  /// One row per `ChatSize` case, matching the table in
+  /// `docs/design/compositing.md` §4 for a 1080p (360-wide) chat column.
+  @Test(arguments: [
+    (ChatSize.small, 13.0),
+    (ChatSize.medium, 16.0),
+    (ChatSize.large, 20.0),
+  ])
+  func chatSizeSetsTheRendersFontSize(size: ChatSize, expectedFontSize: Double) async throws {
+    let model = await loaded(quality: "1080p60", resolution: "1920x1080")
+    model.output = .videoWithChat
+    model.chatSize = size
+    let render = try #require(model.composedTemplate()?.render)
+    #expect(render.fontSize == expectedFontSize)
+  }
+
+  /// `.video` has no render at all, so a chosen chat size — meaningless
+  /// without one — must not change what gets composed. `JobTemplate` is not
+  /// itself `Equatable` (its `Media` enum carries no such conformance), so
+  /// this compares the one part that could plausibly have drifted.
+  @Test func chatSizeIsIgnoredWhenNoChatIsRequested() async throws {
+    let model = await loaded(quality: "1080p60", resolution: "1920x1080")
+    model.output = .video
+
+    model.chatSize = .large
+    let large = try #require(model.composedTemplate())
+    model.chatSize = .small
+    let small = try #require(model.composedTemplate())
+
+    #expect(videoRequest(of: large) == videoRequest(of: small))
+    #expect(large.render == nil)
+    #expect(large.chat == nil)
+    #expect(large.composite == nil)
+  }
+
   /// A clip's rendition list can carry a quality with no pixel dimensions —
   /// `VideoInfo.clipResolution` has no filter for it, unlike a VOD's
   /// `parseQualities`, which skips a variant with no `RESOLUTION` attribute

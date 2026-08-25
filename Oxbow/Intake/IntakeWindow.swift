@@ -146,6 +146,18 @@ struct IntakeWindow: View {
       }
 
       if model.output == .videoWithChat {
+        // The one control the deleted render-options form left behind (see
+        // docs/design/compositing.md §4, §8): a fixed size cannot serve both
+        // a laptop window and a TV across the room. "Small"/"Medium"/"Large"
+        // does not explain itself the way "Video"/"Video + chat" does above,
+        // so — unlike that picker — this one keeps its label on screen.
+        Picker("Chat text size", selection: $model.chatSize) {
+          Text("Small").tag(ChatSize.small)
+          Text("Medium").tag(ChatSize.medium)
+          Text("Large").tag(ChatSize.large)
+        }
+        .pickerStyle(.segmented)
+
         // Not decoration: a six-hour stream is roughly 75 minutes of
         // encoding, and a user who is not told that reads a busy queue as a
         // hang.
@@ -390,6 +402,17 @@ extension VideoInfo {
 #Preview("Video + chat") {
   let model = previewModel()
   model.output = .videoWithChat
+  return IntakeWindow(model: model)
+}
+
+/// Exercises the chat text size picker away from its `.medium` default, so a
+/// glance at this preview catches the segmented control rendering wrong as
+/// readily as the "Video + chat" one above catches everything else in the
+/// section.
+#Preview("Video + chat - large text") {
+  let model = previewModel()
+  model.output = .videoWithChat
+  model.chatSize = .large
   return IntakeWindow(model: model)
 }
 

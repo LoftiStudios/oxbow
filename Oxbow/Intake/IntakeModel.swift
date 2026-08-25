@@ -48,6 +48,13 @@ final class IntakeModel {
 
   var output: Output = .video
 
+  /// How large the composited chat text is. Only meaningful for
+  /// `.videoWithChat` — a plain video has no render to size — and only shown
+  /// then (see `IntakeWindow`). `CompositeGeometry.fontSize(for:)` turns this
+  /// into an actual point size proportional to the chosen quality's chat
+  /// column, so the same choice reads the same way at 1080p or 480p.
+  var chatSize: ChatSize = .default
+
   /// The empty string means "best available" — the behaviour proven against
   /// the real CLI, which selects source when `-q` is absent (design doc §6).
   /// Video-only keeps that behaviour; a composite cannot leave it unresolved
@@ -412,6 +419,7 @@ final class IntakeModel {
         width: geometry.chatWidth,
         height: geometry.videoHeight,
         framerate: geometry.chatFramerate,
+        fontSize: geometry.fontSize(for: chatSize),
         // Transient and immediately re-encoded, so encode it well: at the old
         // 3 Mbps default the composite carried two generations of lossy H.264
         // over text on flat backgrounds. VideoToolbox's speed is independent

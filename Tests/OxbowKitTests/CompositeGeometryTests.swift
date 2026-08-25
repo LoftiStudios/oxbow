@@ -63,4 +63,39 @@ struct CompositeGeometryTests {
     let tiny = try #require(CompositeGeometry(quality: quality("160p30", "284x160")))
     #expect(tiny.chatWidth == 160)
   }
+
+  // MARK: - Chat font size
+
+  /// The full nine-cell table from `docs/design/compositing.md` §4: three
+  /// standard chat column widths x three sizes.
+  @Test(arguments: [
+    ("1920x1080", ChatSize.small, 13.0),
+    ("1920x1080", ChatSize.medium, 16.0),
+    ("1920x1080", ChatSize.large, 20.0),
+    ("1280x720", ChatSize.small, 9.0),
+    ("1280x720", ChatSize.medium, 11.0),
+    ("1280x720", ChatSize.large, 13.0),
+    ("854x480", ChatSize.small, 6.0),
+    ("854x480", ChatSize.medium, 7.0),
+    ("854x480", ChatSize.large, 9.0),
+  ])
+  func scalesFontSizeToTheChatColumn(resolution: String, size: ChatSize, expected: Double)
+    throws
+  {
+    let geometry = try #require(CompositeGeometry(quality: quality("x", resolution)))
+    #expect(geometry.fontSize(for: size) == expected)
+  }
+
+  /// Never below a legible size, even for an absurdly narrow column.
+  /// `CompositeGeometry.init?` itself never produces one that narrow — it
+  /// clamps to `minimumChatWidth` — so this mutates `chatWidth` directly
+  /// afterwards to exercise `fontSize(for:)`'s own floor independently of
+  /// that clamp, in case the two ever drift apart.
+  @Test func neverReturnsAFontSizeBelowOne() throws {
+    var geometry = try #require(CompositeGeometry(quality: quality("x", "1920x1080")))
+    geometry.chatWidth = 1
+    #expect(geometry.fontSize(for: .small) >= 1)
+    #expect(geometry.fontSize(for: .medium) >= 1)
+    #expect(geometry.fontSize(for: .large) >= 1)
+  }
 }
