@@ -53,6 +53,10 @@ let arrowCenter = CGPoint(x: 320, y: rowY)
 
 struct Palette {
     let name: String
+    /// Appended to the emitted filenames. The default variant takes the plain
+    /// `background.tiff` name, because that is what package-dmg.sh consumes
+    /// when BACKGROUND is unset.
+    let fileSuffix: String
     let backgroundStops: [(NSColor, CGFloat)]
     let card: NSColor
     let cardShadow: NSColor
@@ -69,9 +73,11 @@ func rgb(_ hex: UInt32, _ alpha: CGFloat = 1) -> NSColor {
             alpha: alpha)
 }
 
-/// Faithful to the mockup: white card on a light mauve wash.
+/// Faithful to the original mockup: white card on a light mauve wash. Looks
+/// better in a screenshot; loses its Finder labels in dark mode.
 let lightPalette = Palette(
     name: "light",
+    fileSuffix: "-light",
     backgroundStops: [(rgb(0xF4E8F3), 0.0), (rgb(0xDCC2E0), 0.45), (rgb(0xB98FC0), 1.0)],
     card: rgb(0xFFFFFF),
     cardShadow: rgb(0x2A1F35, 0.13),
@@ -81,10 +87,13 @@ let lightPalette = Palette(
     arrowShade: rgb(0xDCAE14)
 )
 
-/// Mid-tone card (L≈0.19) so Finder's icon labels stay legible in BOTH light
-/// and dark mode — see the note in package-dmg.sh. Same layout, darker skin.
+/// The default. Mid-tone card (L≈0.19) so Finder's icon labels stay legible in
+/// BOTH light and dark mode. Finder draws those labels white in dark mode and
+/// does not consult the background, so the light variant loses them entirely
+/// on a white card. Same layout, darker skin.
 let balancedPalette = Palette(
     name: "balanced",
+    fileSuffix: "",
     backgroundStops: [(rgb(0x2E2447), 0.0), (rgb(0x453257), 0.5), (rgb(0x624468), 1.0)],
     card: rgb(0x8A6E96),
     cardShadow: rgb(0x0A0714, 0.35),
@@ -227,7 +236,7 @@ func writePNG(_ image: CGImage, to url: URL) {
 
 let variantName = CommandLine.arguments.firstIndex(of: "--variant")
     .flatMap { CommandLine.arguments.indices.contains($0 + 1) ? CommandLine.arguments[$0 + 1] : nil }
-    ?? "light"
+    ?? "balanced"
 
 let palette: Palette
 switch variantName {
@@ -241,7 +250,7 @@ default:
 let outputDirectory = URL(fileURLWithPath: CommandLine.arguments[0])
     .deletingLastPathComponent()
 
-let suffix = palette.name == "light" ? "" : "-\(palette.name)"
+let suffix = palette.fileSuffix
 var pngNames: [String] = []
 for scale in [CGFloat(1), CGFloat(2)] {
     let name = "background\(suffix)@\(Int(scale))x.png"
