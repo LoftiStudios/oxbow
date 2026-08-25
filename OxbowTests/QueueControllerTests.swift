@@ -94,13 +94,13 @@ struct QueueControllerTests {
       return
     }
 
-    #expect(steps[0].dependsOn == nil, "media is independent")
+    #expect(steps[0].dependsOn == [], "media is independent")
     // A render pairing forces JSON regardless of what the caller asked for
     // (JobTemplate.renderInput) - asserting this, not just the step order,
     // rules out an implementation that forwarded a mangled copy of the chat
     // request.
     #expect(chatRequest.format == .json)
-    #expect(steps[2].dependsOn == steps[1].id, "render depends on the chat download, not the media")
+    #expect(steps[2].dependsOn == [steps[1].id], "render depends on the chat download, not the media")
   }
 
   @Test func aSucceedingJobReachesDone() async throws {

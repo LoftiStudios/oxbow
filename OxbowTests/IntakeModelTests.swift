@@ -208,9 +208,9 @@ struct IntakeModelTests {
     model.isRenderingChat = true
     let template = try #require(model.composedTemplate())
     let names = [
-      try #require(videoRequest(of: template)?.destination.lastPathComponent),
+      try #require(videoRequest(of: template)?.destination?.lastPathComponent),
       try #require(template.chat?.destination?.lastPathComponent),
-      try #require(template.render?.destination.lastPathComponent),
+      try #require(template.render?.destination?.lastPathComponent),
     ]
     for name in names {
       #expect(name.utf8.count <= 255, "\(name) is \(name.utf8.count) bytes")
@@ -231,9 +231,9 @@ struct IntakeModelTests {
 
     let template = try #require(model.composedTemplate())
     let names = [
-      try #require(videoRequest(of: template)?.destination.lastPathComponent),
+      try #require(videoRequest(of: template)?.destination?.lastPathComponent),
       try #require(template.chat?.destination?.lastPathComponent),
-      try #require(template.render?.destination.lastPathComponent),
+      try #require(template.render?.destination?.lastPathComponent),
     ]
     for name in names {
       #expect(name.utf8.count <= 255, "\(name.utf8.count) bytes: \(name)")
@@ -261,7 +261,7 @@ struct IntakeModelTests {
     model.name = "   "
 
     let template = try #require(model.composedTemplate())
-    #expect(videoRequest(of: template)?.destination.lastPathComponent == "untitled.mp4")
+    #expect(videoRequest(of: template)?.destination?.lastPathComponent == "untitled.mp4")
   }
 
   // MARK: - Destinations
@@ -373,7 +373,7 @@ struct IntakeModelTests {
     #expect(render.width == 700)
     #expect(!render.isSTVEnabled)
     #expect(
-      render.destination.lastPathComponent.hasSuffix(" - chat.mp4"),
+      render.destination?.lastPathComponent.hasSuffix(" - chat.mp4") == true,
       "the destination is the model's to set, not the form's")
   }
 
@@ -759,7 +759,7 @@ struct IntakeModelTests {
     #expect(model.name == Self.videoID)
     #expect(model.canAdd)
     let template = try #require(model.composedTemplate())
-    #expect(videoRequest(of: template)?.destination.lastPathComponent == "2844548319.mp4")
+    #expect(videoRequest(of: template)?.destination?.lastPathComponent == "2844548319.mp4")
     #expect(model.qualities.isEmpty)
     #expect(model.quality == "", "with no quality list, best available is the only honest choice")
   }

@@ -132,6 +132,7 @@ nonisolated struct JobInfo {
       case .downloadClip(let r): r.destination
       case .downloadChat(let r): r.destination
       case .renderChat(let r): r.destination
+      case .composite(let r): r.destination
       }
     }
   }
