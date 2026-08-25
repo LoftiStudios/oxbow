@@ -22,8 +22,8 @@
 # is exactly the half that has only ever been verified on the maintainer's
 # machine. Ad-hoc needs no secrets and still runs the real codesign calls,
 # entitlements and all. Developer ID signing and notarization need the cert and
-# notary key as repository secrets and belong to a later release workflow
-# (docs/signing.md §8).
+# notary key as repository secrets and live in release.yml, which runs this
+# same build with the real identity (docs/signing.md §8).
 name: Full build
 
 on:

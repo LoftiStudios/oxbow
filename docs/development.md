@@ -42,10 +42,16 @@ logic and is unit-tested; the views are not.
 
 ### Next
 
-UI polish and native feel. The remaining functional gaps are release
-infrastructure — `scripts/build.sh` and `scripts/notarize.sh` still do not
-exist, there is no DMG, and no release workflow. The submodule also needs
-re-pinning to a release tag before anything ships.
+UI polish and native feel. Release infrastructure now exists:
+`scripts/package-dmg.sh` builds the disk image and can sign, notarize and
+staple it, and `.github/workflows/release.yml` does the whole chain from a
+`v*` tag. `scripts/build.sh` and `scripts/notarize.sh` were never written —
+the release workflow absorbed both, and a second copy of that logic that only
+runs locally would be a copy that silently drifts.
+
+Two things still block a first release. The submodule needs re-pinning to an
+upstream release tag (the workflow refuses to publish otherwise), and no
+Homebrew tap exists yet.
 
 The About box is done (`Oxbow/About/`), and with it real versioning: the
 marketing version is `MARKETING_VERSION` in `Config/Shared.xcconfig`, bumped
@@ -224,10 +230,26 @@ Sign a built bundle (inside-out; helper first, bundle last):
 ./scripts/sign.sh build/Oxbow.app
 ```
 
-`scripts/build.sh` (assemble the bundle) and `scripts/notarize.sh`
-(`notarytool submit --wait`, then `stapler staple`) do not exist yet — the
-verified pipeline in `docs/signing.md` was driven manually. They land with the
-app target, which is what defines the bundle they operate on.
+Package a signed, stapled bundle into the release DMG. `mise run setup` first;
+this needs dmgbuild, which lives in the mise-managed `.venv`:
+
+```bash
+mise exec -- ./scripts/package-dmg.sh --notarize
+```
+
+Locally that reads notary credentials from the keychain profile `oxbow-notary`.
+CI has no keychain profile, so setting `NOTARY_KEY`, `NOTARY_KEY_ID` and
+`NOTARY_ISSUER` switches it to an App Store Connect API key.
+
+The window layout is a background image plus a `.DS_Store`, and the two must
+agree: the artwork paints an arrow between two points and Finder draws the real
+icons on top of it. The coordinates live in `scripts/dmg/settings.py` and in
+`scripts/dmg/make-background.swift`, which prints them on every run. Regenerate
+the artwork with:
+
+```bash
+mise run background
+```
 
 Verify a signed bundle before shipping:
 
