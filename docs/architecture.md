@@ -253,9 +253,17 @@ emptier namespace — unchecked).
   profiles; universal means `lipo`-ing them. Skipping Intel halves the signing
   surface and test matrix. Easy to add later.
 
-### Under consideration: narrowing the intake (2026-08-24)
+### Narrowing the intake (2026-08-24) — RESOLVED 2026-08-25
 
-**Not decided. Recorded so it is not silently re-litigated.**
+**Decided in [`docs/design/compositing.md`](design/compositing.md).** The intake
+becomes two choices — *video*, or *video + chat composited into one file* — and
+the standalone chat render is removed along with all of its UI. The compositing
+feature and the narrowing landed as one decision, because the composite is what
+makes a standalone render pointless.
+
+Both notes below are kept as the reasoning that led there, not as open
+questions. In particular the framerate note is now load-bearing and implemented
+as specified.
 
 The intake currently offers three independent toggles — Video, Chat, Render
 chat — which compose into every combination the queue can express
