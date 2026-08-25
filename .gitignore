@@ -82,3 +82,10 @@ build
 # Local AI tool config, untracked. CLAUDE.md is a symlink to docs/development.md.
 .claude/
 CLAUDE.md
+
+# DMG artwork intermediates — regenerate with
+#   swift scripts/dmg/make-background.swift
+# which emits the committed background.tiff. VolumeIcon.icns is extracted from
+# the app bundle by package-dmg.sh.
+scripts/dmg/background*@*x.png
+scripts/dmg/VolumeIcon.icns
