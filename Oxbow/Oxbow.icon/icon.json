@@ -20,8 +20,15 @@
       "layers" : [
         {
           "glass" : false,
-          "image-name" : "Image 2.png",
-          "name" : "Image 2"
+          "image-name" : "icon.png",
+          "name" : "icon",
+          "position" : {
+            "scale" : 1,
+            "translation-in-points" : [
+              33.5,
+              -11.5
+            ]
+          }
         }
       ],
       "shadow" : {
