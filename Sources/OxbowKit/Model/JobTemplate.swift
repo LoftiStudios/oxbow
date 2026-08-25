@@ -58,6 +58,10 @@ public struct JobTemplate: Sendable {
     // Independent of the chat/render steps below: a failed video or clip
     // download must not block the render, and vice versa. Never give this
     // step a `dependsOn`.
+    //
+    // Its `nextStepID()` is drawn here, before chat/render, but it is not
+    // *appended* until after them, below — see the note there for why the
+    // append order is load-bearing.
     var mediaStep: Step?
     if let media {
       switch media {
@@ -66,7 +70,6 @@ public struct JobTemplate: Sendable {
       case .clip(let request):
         mediaStep = Step(id: nextStepID(), kind: .downloadClip(request))
       }
-      steps.append(mediaStep!)
     }
 
     var chatStep: Step?
@@ -101,8 +104,23 @@ public struct JobTemplate: Sendable {
       steps.append(renderStep!)
     }
 
-    // Only when there is genuinely something to stack. `mediaStep` is
-    // captured where the media step is appended, above. Unlike `renderStep`
+    // LOAD-BEARING ORDER, not cosmetic: appended after chat and render, even
+    // though `mediaStep` was built first, above. `Scheduler.admissible` caps
+    // running steps at one per `ResourceClass` and walks `job.steps` in
+    // array order, so whichever `.network` step appears first claims that
+    // slot. Both this step and the chat download are `.network` (see
+    // `StepKind.resource`) — appending media first would let the (long)
+    // video download claim the slot and make the (short) chat wait behind
+    // it, then the render wait on the chat, the fully-serial timeline
+    // docs/design/compositing.md §6 rejected. Appending chat first instead
+    // lets the render (`.compute`) and this step (`.network`) become
+    // admissible together, in the same call, once the chat finishes. Do not
+    // "tidy" this back above chat/render.
+    if let mediaStep {
+      steps.append(mediaStep)
+    }
+
+    // Only when there is genuinely something to stack. Unlike `renderStep`
     // (which `composite` itself implies, above), media is the one input a
     // composite cannot manufacture for itself — there is nothing to stack
     // the chat against — so a composite requested with no media is

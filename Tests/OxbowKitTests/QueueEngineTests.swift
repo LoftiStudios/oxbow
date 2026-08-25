@@ -604,7 +604,7 @@ struct QueueEngineTests {
   /// Critical: `cancel(job:)` must preserve steps that had already finished,
   /// and must not report the ones it kills as `.failed`.
   @Test func cancellingAJobKeepsFinishedStepsAndCancelsTheRest() async throws {
-    let sequenced = SequencedBehaviours([.succeeds, .hangsUntilCancelled])
+    let sequenced = SequencedBehaviours([.succeeds, .hangsUntilCancelled, .hangsUntilCancelled])
     let (engine, root) = makeEngine { FakeHelper(sequenced.next()) }
     defer { cleanUp(root) }
 
@@ -613,22 +613,34 @@ struct QueueEngineTests {
       JobTemplate(
         media: .video(VideoRequest(videoID: "v", quality: "best", destination: root.appending(path: "video.mp4"))),
         chat: ChatRequest(videoID: "2844548319", format: .json),
-        render: RenderRequest(destination: root.appending(path: "render.mp4"))),
+        render: RenderRequest(destination: root.appending(path: "render.mp4")),
+        composite: CompositeRequest(
+          framerate: 60, bitrateMbps: 8, duration: .seconds(60),
+          destination: root.appending(path: "composite.mp4"))),
       title: "test")
 
-    // Video and chat both contend for the `.network` slot, so only video
-    // (first in step order) launches immediately; it succeeds via the fake's
-    // first behaviour, which frees the slot for chat to start running with
-    // the fake's second behaviour (hangs). Wait for exactly that state —
-    // one finished step, one genuinely in flight — before cancelling.
+    // `makeJob` appends chat and render before the media step (see the
+    // load-bearing-order note there and docs/design/compositing.md §6), so
+    // chat — depending on nothing — is the only step admissible at t0 and
+    // launches first; it succeeds via the fake's first behaviour. That frees
+    // `.network`, and with chat now `.done`, render's one dependency is
+    // satisfied: render (`.compute`) and the video download (`.network`)
+    // share no resource class, so both are admitted and launched in the same
+    // tick, hanging via the fake's remaining two behaviours. The composite
+    // depends on both and so is left genuinely still queued. Wait for
+    // exactly that state before cancelling.
     for _ in 0..<200 {
       let steps = await engine.currentJobs.first?.steps
-      if steps?[0].status == .done, steps?[1].status == .running { break }
+      if steps?[0].status == .done, steps?[1].status == .running, steps?[2].status == .running {
+        break
+      }
       try await Task.sleep(for: .milliseconds(10))
     }
     let steps = try #require(await engine.currentJobs.first?.steps)
-    #expect(steps[0].status == .done, "precondition: video must have finished first")
-    #expect(steps[1].status == .running, "precondition: chat must be genuinely in flight")
+    #expect(steps[0].status == .done, "precondition: chat must have finished first")
+    #expect(steps[1].status == .running, "precondition: render must be genuinely in flight")
+    #expect(steps[2].status == .running, "precondition: video must be genuinely in flight")
+    #expect(steps[3].status == .queued, "precondition: composite must still be queued")
 
     let jobID = try #require(await engine.currentJobs.first?.id)
     await engine.cancel(job: jobID)
@@ -636,8 +648,9 @@ struct QueueEngineTests {
 
     let final = try #require(await engine.currentJobs.first?.steps)
     #expect(final[0].status == .done, "the already-finished download must keep its status")
-    #expect(final[1].status == .cancelled, "the running step must be cancelled, not failed")
-    #expect(final[2].status == .cancelled, "the still-queued render must also be cancelled")
+    #expect(final[1].status == .cancelled, "the running render must be cancelled, not failed")
+    #expect(final[2].status == .cancelled, "the running video must be cancelled, not failed")
+    #expect(final[3].status == .cancelled, "the still-queued composite must also be cancelled")
 
     await engine.flush()
   }

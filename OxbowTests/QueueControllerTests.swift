@@ -66,7 +66,11 @@ struct QueueControllerTests {
   /// exists only to prove the controller forwards the template to the engine
   /// unmangled, so it checks the same shape end to end through the real
   /// `QueueController.enqueue` → `QueueEngine.enqueue` path.
-  @Test func aMultiOutputTemplateProducesStepsInMediaChatRenderOrder() async throws {
+  /// `JobTemplate.makeJob` appends chat and render before the media step —
+  /// load-bearing for `Scheduler`'s parallelism, not cosmetic; see the note
+  /// in `makeJob` and docs/design/compositing.md §6 — so the realised order
+  /// is chat, render, media, not media, chat, render.
+  @Test func aMultiOutputTemplateProducesStepsInChatRenderMediaOrder() async throws {
     let (controller, root) = try makeController(.succeeds)
     defer { try? FileManager.default.removeItem(at: root) }
     await controller.start()
@@ -81,26 +85,26 @@ struct QueueControllerTests {
     let steps = try #require(controller.jobs.first?.steps)
     #expect(steps.count == 3)
 
-    guard case .downloadVideo = steps[0].kind else {
-      Issue.record("expected the video download first; got \(steps[0].kind)")
+    guard case .downloadChat(let chatRequest) = steps[0].kind else {
+      Issue.record("expected the chat download first; got \(steps[0].kind)")
       return
     }
-    guard case .downloadChat(let chatRequest) = steps[1].kind else {
-      Issue.record("expected the chat download second; got \(steps[1].kind)")
+    guard case .renderChat = steps[1].kind else {
+      Issue.record("expected the render step second; got \(steps[1].kind)")
       return
     }
-    guard case .renderChat = steps[2].kind else {
-      Issue.record("expected the render step third; got \(steps[2].kind)")
+    guard case .downloadVideo = steps[2].kind else {
+      Issue.record("expected the video download third; got \(steps[2].kind)")
       return
     }
 
-    #expect(steps[0].dependsOn == [], "media is independent")
+    #expect(steps[2].dependsOn == [], "media is independent")
     // A render pairing forces JSON regardless of what the caller asked for
     // (JobTemplate.renderInput) - asserting this, not just the step order,
     // rules out an implementation that forwarded a mangled copy of the chat
     // request.
     #expect(chatRequest.format == .json)
-    #expect(steps[2].dependsOn == [steps[1].id], "render depends on the chat download, not the media")
+    #expect(steps[1].dependsOn == [steps[0].id], "render depends on the chat download, not the media")
   }
 
   @Test func aSucceedingJobReachesDone() async throws {

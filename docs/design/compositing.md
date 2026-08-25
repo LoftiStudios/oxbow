@@ -226,16 +226,35 @@ this is a forest and never needs a topological sort." That stops being true.
   for a migration.
 
 **The rejected alternative** was to chain the steps — video -> chat -> render ->
-composite — which needs no model change at all. It was rejected because it
-serialises a `.network` step against a `.compute` one, which is the exact
-overlap `ResourceClass` exists to provide: roughly 74 minutes instead of 54
-before the composite even starts on a six-hour VOD. It also inverts `makeJob`'s
-standing invariant that "a failed video download must not block the render, and
-vice versa."
+composite — which needs no model change at all. It was rejected for failure
+isolation and retry granularity: chaining the video behind the chat/render pair
+means a chat-download hiccup fails the whole chain, and retrying either half
+means re-running the whole chain in front of it — there is no "retry render
+without re-fetching the video" if the video's own success is what the chain's
+position depends on. The two-parent DAG keeps the video and the chat/render
+pair independently retryable, which the single-parent model cannot express.
+It also keeps `makeJob`'s standing invariant that "a failed video download must
+not block the render, and vice versa."
 
-**Wall-clock time is the binding constraint on this feature.** A six-hour stream
-is already ~75 minutes of compositing. Any design choice that trades time for
-anything else loses by default.
+**It is not, on its own, a wall-clock win.** `StepKind.resource` puts
+`downloadVideo`, `downloadClip`, and `downloadChat` all in `.network`, and
+`Scheduler.admissible` admits at most one running step per resource class,
+globally. A DAG with the media step appended *first* (chat and render appended
+after) still serialises: the video takes the network slot, the chat waits
+behind it, the render waits on the chat, and the composite waits on both — the
+exact chained timeline above, just expressed as a DAG instead of a chain. The
+parallelism `ResourceClass` is meant to buy therefore depends on step
+*ordering*, not on the dependency shape: `JobTemplate.makeJob` appends the chat
+and render steps before the media step, so the short chat download claims the
+network slot first, and once it finishes, the render (`.compute`) and the video
+download (`.network`) become admissible in the same `Scheduler.admissible`
+call. The realised timeline is `chat + max(video, render) + composite`, not the
+serial `video + chat + render + composite` a naive append order would produce.
+
+**Wall-clock time is still the binding constraint on this feature** — a
+six-hour stream is already ~75 minutes of compositing even with the corrected
+timeline above — it just is not, itself, an argument for the DAG's shape. Any
+further design choice that trades time for anything else loses by default.
 
 ### Destinations become optional
 
