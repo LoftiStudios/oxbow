@@ -10,14 +10,14 @@ struct HelperProcessTests {
   /// - Important: the caller owns that directory. Pair every call with
   ///   `defer { remove(launch) }`, or the suite strews one directory per test
   ///   through the temp dir on every run.
-  private func script(_ body: String) throws -> Launch {
+  private func script(_ body: String, dialect: OutputDialect = .helper) throws -> Launch {
     let directory = URL(filePath: NSTemporaryDirectory())
       .appending(path: "oxbow-helper-\(UUID().uuidString)")
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     let url = directory.appending(path: "fixture.sh")
     try "#!/bin/sh\n\(body)\n".write(to: url, atomically: true, encoding: .utf8)
     try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path)
-    return Launch(executable: url, arguments: [], workingDirectory: directory)
+    return Launch(executable: url, arguments: [], workingDirectory: directory, dialect: dialect)
   }
 
   private func remove(_ launch: Launch) {
@@ -238,5 +238,40 @@ struct HelperProcessTests {
     if elapsed > .seconds(2) {
       Issue.record("first onOutput did not arrive before the fixture exited (elapsed \(elapsed))")
     }
+  }
+
+  /// The dialect, not the content, decides which parser reads stdout.
+  @Test func theFFmpegDialectParsesProgressBlocks() async throws {
+    let launch = try script(
+      #"printf 'out_time_us=5000000\nspeed=2.0x\nprogress=continue\n'"#,
+      dialect: .ffmpeg(duration: .seconds(10)))
+    defer { remove(launch) }
+
+    let collected = CollectedOutput()
+    let result = try await HelperProcess().run(launch) { await collected.append($0) }
+    let lines = await collected.lines
+
+    #expect(result.status == .exited(0))
+    // One status line for the completed block — not three lines of text.
+    #expect(lines.count == 1)
+    guard case .status(let progress) = lines[0] else {
+      Issue.record("expected a status line"); return
+    }
+    #expect(progress.fraction == 0.5)
+  }
+
+  /// The same bytes under the helper dialect are unrecognised text, which the
+  /// CLI parser deliberately keeps rather than drops. If this ever reports a
+  /// status line, the dialect is being ignored.
+  @Test func theHelperDialectDoesNotParseFFmpegProgress() async throws {
+    let launch = try script(#"printf 'out_time_us=5000000\nprogress=continue\n'"#)
+    defer { remove(launch) }
+
+    let collected = CollectedOutput()
+    _ = try await HelperProcess().run(launch) { await collected.append($0) }
+    let lines = await collected.lines
+
+    #expect(!lines.isEmpty)
+    #expect(lines.allSatisfy { if case .log = $0 { true } else { false } })
   }
 }
