@@ -35,7 +35,79 @@ struct OxbowApp: App {
       }
       .task { await setUp() }
     }
+    .defaultSize(width: 720, height: 480)
     .windowResizability(.contentMinSize)
+    .commands {
+      // ⌘N is free: the queue is a `Window`, so there is no New Window item to
+      // collide with. It opens intake, which is the only thing in this app a
+      // person creates. The toolbar `+` in `QueueView` opens the same window —
+      // the shortcut is a second path to it, never the only one.
+      CommandGroup(replacing: .newItem) {
+        AddDownloadCommand(isEnabled: controller != nil)
+      }
+      // Its own top-level menu, the way Transmission gives transfers one.
+      // Everything here is also reachable by right-clicking a row; the menu is
+      // what makes it discoverable, and what gives it key equivalents.
+      DownloadsCommands()
+    }
+
+    // Intake as its own window, not a sheet on the queue.
+    //
+    // A sheet cannot exceed its host window, and this form legitimately wants
+    // most of a screen once the render options are open — which made the queue
+    // window's minimum size a function of its own modal. A window sizes itself,
+    // remembers what the user dragged it to, and closes with ⌘W.
+    //
+    // `Window`, so ⌘N and the `+` re-focus the one that exists rather than
+    // stacking half-filled copies of a form that each hold their own
+    // `IntakeModel` and their own in-flight metadata fetch.
+    Window("Add Download", id: Self.intakeWindowID) {
+      // Unreachable without a controller — both the menu item and the toolbar
+      // button are disabled in that case — but the window needs one, and there
+      // is no honest thing to put here instead.
+      if let controller {
+        IntakeWindow(controller: controller)
+      }
+    }
+    .defaultSize(width: 560, height: 680)
+    .windowResizability(.contentMinSize)
+    .defaultPosition(.center)
+    // Not restored on launch. macOS reopens whatever windows were open at
+    // quit, which for a half-filled form means every launch starts with an
+    // Add Download window nobody asked for — and its `IntakeModel` is
+    // rebuilt empty anyway, so what reappears is a blank form, not the one
+    // that was there.
+    .restorationBehavior(.disabled)
+
+    // Get Info, one window per download.
+    //
+    // `WindowGroup(for:)` rather than a single inspector window: asking for
+    // info on the same job twice focuses the window that is already open
+    // instead of stacking duplicates, and two downloads can be compared side
+    // by side — which is what Finder's ⌘I does and what a single
+    // follows-the-selection panel cannot.
+    WindowGroup(id: Self.infoWindowID, for: JobID.self) { $jobID in
+      if let jobID, let controller {
+        JobInfoWindow(jobID: jobID, controller: controller)
+      }
+    }
+    .defaultSize(width: 460, height: 620)
+    .windowResizability(.contentMinSize)
+    // Same reasoning as intake: macOS reopens what was open at quit, and a
+    // restored info window would be pointing at a job whose queue has since
+    // been reconciled — or removed entirely.
+    .restorationBehavior(.disabled)
+  }
+
+  /// The id `QueueView` and the Downloads menu open Get Info with.
+  static let infoWindowID = "info"
+
+  /// The id both the menu item and `QueueView`'s toolbar button open.
+  static let intakeWindowID = "intake"
+
+  private var controller: QueueController? {
+    if case .ready(let controller) = content { return controller }
+    return nil
   }
 
   private func setUp() async {
@@ -57,6 +129,25 @@ struct OxbowApp: App {
       content = .unavailable(
         "Oxbow could not prepare its support directory: \(error.localizedDescription)")
     }
+  }
+}
+
+/// The File ▸ Add Download… item.
+///
+/// A `View` rather than a `Button` written inline in the `CommandGroup`,
+/// because `openWindow` is an environment value and an `App` has no
+/// environment to read it from. Command content is a view builder, so a view
+/// placed there does have one — this is the supported way for a menu item to
+/// open a scene.
+private struct AddDownloadCommand: View {
+  let isEnabled: Bool
+
+  @Environment(\.openWindow) private var openWindow
+
+  var body: some View {
+    Button("Add Download…") { openWindow(id: OxbowApp.intakeWindowID) }
+      .keyboardShortcut("n")
+      .disabled(!isEnabled)
   }
 }
 

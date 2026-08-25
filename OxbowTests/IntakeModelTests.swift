@@ -7,6 +7,26 @@ import OxbowKit
 @Suite("Intake model")
 struct IntakeModelTests {
 
+  // MARK: - The default destination
+
+  /// Add used to be disabled on a freshly opened window until you clicked
+  /// Choose…, every time, on every download. A Twitch VOD going to
+  /// ~/Downloads is the overwhelmingly common case, so it is the default and
+  /// Choose… is the override.
+  @Test func offersTheDownloadsFolderAsTheDefaultDestination() throws {
+    let destination = try #require(IntakeModel.defaultDestination)
+    #expect(destination.lastPathComponent == "Downloads")
+  }
+
+  /// The default is applied where the window builds its model, not inside the
+  /// rules: `composedTemplate()` still refuses without a folder, and the tests
+  /// that assert that refusal build a model with none. A default baked into
+  /// every `IntakeModel` would make that rule untestable.
+  @Test func aModelBuiltWithoutADestinationStillHasNone() {
+    let model = IntakeModel(fetchInfo: { _ in throw CancellationError() }, enqueue: { _, _ in })
+    #expect(model.folder == nil)
+  }
+
   // MARK: - Fixtures
 
   private static let videoLink = "https://www.twitch.tv/videos/2844548319"

@@ -106,6 +106,28 @@ final class IntakeModel {
       fetchInfo: { try await controller.fetchInfo(for: $0) },
       enqueue: { await controller.enqueue($0, title: $1) },
       calendar: calendar)
+    // Seeded here rather than in the designated init on purpose: the rule that
+    // `composedTemplate()` refuses without a destination is a real one worth
+    // testing, and a default baked into every model would make it unreachable.
+    // This is the app's starting value, not the model's invariant.
+    folder = Self.defaultDestination
+  }
+
+  /// `~/Downloads`, or nil if the system has no such folder.
+  ///
+  /// The point is that a freshly opened window is already addable: paste a
+  /// link, press Add, and the file lands somewhere sensible. Before this,
+  /// Add stayed disabled until you clicked Choose… — on every download,
+  /// every time — which made the common case pay for the rare one.
+  ///
+  /// Not persisted as "last used" yet. That is the better long-run behaviour
+  /// and a small addition, but it is a different decision: a folder you
+  /// picked once for one video silently becoming the default for everything
+  /// afterwards is a choice to make deliberately, not a side effect of this
+  /// one.
+  static var defaultDestination: URL? {
+    try? FileManager.default.url(
+      for: .downloadsDirectory, in: .userDomainMask, appropriateFor: nil, create: false)
   }
 
   // MARK: - The link
