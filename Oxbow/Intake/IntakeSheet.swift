@@ -108,18 +108,15 @@ struct IntakeSheet: View {
 
       Toggle("Render chat", isOn: $model.isRenderingChat)
       if model.isRenderingChat {
-        // Task 9 hangs `RenderOptionsView(options: $model.renderOptions)`
-        // here. `IntakeModel.renderOptions` is already the form's state and
-        // `composedTemplate()` already carries it into the job, so that task
-        // adds a view and nothing else.
-        Text("Rendered with the default appearance.")
-          .font(.caption)
-          .foregroundStyle(.secondary)
         if !model.isDownloadingChat {
           Text("The chat file is downloaded to render and then discarded.")
             .font(.caption)
             .foregroundStyle(.secondary)
         }
+        ScrollView {
+          RenderOptionsView(options: $model.renderOptions)
+        }
+        .frame(maxHeight: 260)
       }
     }
   }

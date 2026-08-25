@@ -58,10 +58,10 @@ final class IntakeModel {
   var trimStartText = ""
   var trimEndText = ""
 
-  /// The render form's own state. Task 9's `RenderOptionsView` binds straight
-  /// into this; `composedTemplate()` copies it and overwrites the
-  /// destination, so `placeholderDestination` is never read back out.
-  var renderOptions = RenderRequest(destination: IntakeModel.placeholderDestination)
+  /// The render form's own state. `RenderOptionsView` binds straight into
+  /// this; `composedTemplate()` attaches the destination `RenderOptions`
+  /// deliberately omits (see its doc comment).
+  var renderOptions = RenderOptions()
 
   private(set) var metadata: Metadata = .idle
 
@@ -314,8 +314,7 @@ final class IntakeModel {
 
     var render: RenderRequest?
     if isRenderingChat {
-      render = renderOptions
-      render?.destination = destination(OutputSuffix.render)
+      render = renderOptions.request(destination: destination(OutputSuffix.render))
     }
 
     // Unreachable given `hasSelectedOutput`, but a template with no parts
@@ -367,10 +366,70 @@ final class IntakeModel {
       .map { $0.trimmingCharacters(in: .whitespaces) } ?? text
   }
 
-  /// Overwritten by `composedTemplate()` before it reaches a job. It exists
-  /// only because `RenderRequest.destination` is non-optional and the render
-  /// form has to have something to bind to before a folder is chosen.
-  private static let placeholderDestination = URL(filePath: "/dev/null")
+}
+
+/// Every `RenderRequest` field except `destination`.
+///
+/// `RenderRequest.destination` is non-optional (`Sources/OxbowKit`, which
+/// this app does not modify), but the render form exists before a folder is
+/// chosen — there is nothing to put there yet. An earlier pass filled that
+/// gap with a `/dev/null` placeholder `RenderRequest`, safe only by
+/// convention: nothing stopped a future read of `renderOptions.destination`
+/// before `composedTemplate()` overwrote it. `RenderOptions` removes the
+/// field instead, so there is nothing to leave unset — `request(destination:)`
+/// is the only place a destination is attached, and `composedTemplate()` is
+/// the only caller.
+nonisolated struct RenderOptions: Equatable, Sendable {
+  var width = 350
+  var height = 600
+  var framerate = 30
+  var fontSize = 12.0
+  var font = "Inter Embedded"
+  var backgroundColor = "#111111"
+  /// Inert on its own — the CLI documents `--alt-background-color` as
+  /// requiring `--alternate-backgrounds`. `RenderOptionsView` shows this
+  /// colour well only when `hasAlternateBackgrounds` is on, so the
+  /// dependency is visible rather than a silently-ignored setting.
+  var alternateBackgroundColor = "#191919"
+  var hasAlternateBackgrounds = false
+  var messageColor = "#ffffff"
+  var hasBadges = true
+  var hasTimestamps = false
+  var hasSubMessages = true
+  var hasOutline = false
+  var outlineSize = 4
+  var isBTTVEnabled = true
+  var isFFZEnabled = true
+  var isSTVEnabled = true
+  var allowsUnlistedEmotes = true
+  var bitrateMbps = 3
+  var isSharpened = false
+
+  /// Attaches the one field this type deliberately omits.
+  func request(destination: URL) -> RenderRequest {
+    RenderRequest(
+      width: width,
+      height: height,
+      framerate: framerate,
+      fontSize: fontSize,
+      font: font,
+      backgroundColor: backgroundColor,
+      alternateBackgroundColor: alternateBackgroundColor,
+      hasAlternateBackgrounds: hasAlternateBackgrounds,
+      messageColor: messageColor,
+      hasBadges: hasBadges,
+      hasTimestamps: hasTimestamps,
+      hasSubMessages: hasSubMessages,
+      hasOutline: hasOutline,
+      outlineSize: outlineSize,
+      isBTTVEnabled: isBTTVEnabled,
+      isFFZEnabled: isFFZEnabled,
+      isSTVEnabled: isSTVEnabled,
+      allowsUnlistedEmotes: allowsUnlistedEmotes,
+      bitrateMbps: bitrateMbps,
+      isSharpened: isSharpened,
+      destination: destination)
+  }
 }
 
 /// The per-output suffixes from the design doc, §4.
