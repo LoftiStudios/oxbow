@@ -145,57 +145,28 @@ nonisolated struct JobInfo {
 
   // MARK: - Render settings
 
-  /// The render options, which are the biggest thing a job remembers and the
-  /// hardest to reconstruct from memory — most of the reason this window
-  /// exists. Empty without a render step: a section full of defaults nobody
-  /// chose is worse than no section.
+  /// The one thing about a composite worth reporting back: the chat column's
+  /// size and rate. Everything else the old render form exposed — font,
+  /// colours, emotes, outline, bitrate — is now a fixed decision the app
+  /// makes, not something the user chose, so there is nothing honest left to
+  /// say about it (see `IntakeModel.composedTemplate()`: intake no longer has
+  /// a form for any of it). The bitrate in particular would be actively
+  /// wrong to show here — `render.bitrateMbps` is the *intermediate's*, the
+  /// one immediately re-encoded away, not the bitrate of the file the user
+  /// actually got.
+  ///
+  /// Empty without both a render step and a composite step. A render step
+  /// alone is reachable only through the library, never through intake, and
+  /// in that case there is no video to relate its dimensions to — showing
+  /// fixed defaults with nothing to explain them is worse than no section,
+  /// which is the rule this property already lived by and still does.
   var renderSettings: [Setting] {
-    guard let render else { return [] }
-
-    var settings: [Setting] = [
-      Setting(label: "Size", value: "\(render.width) × \(render.height)"),
-      Setting(label: "Frame rate", value: "\(render.framerate) fps"),
-      Setting(label: "Font", value: "\(render.font) \(Self.trimmed(render.fontSize))"),
-      Setting(label: "Background", value: render.backgroundColor),
-      Setting(label: "Message colour", value: render.messageColor),
+    guard let render, composite != nil else { return [] }
+    return [
+      Setting(
+        label: "Chat column",
+        value: "\(render.width) × \(render.height) at \(render.framerate) fps"),
     ]
-
-    if render.hasAlternateBackgrounds {
-      settings.append(
-        Setting(label: "Alternate background", value: render.alternateBackgroundColor))
-    }
-
-    settings.append(Setting(label: "Elements", value: elements(of: render)))
-
-    if render.hasOutline {
-      settings.append(Setting(label: "Outline size", value: "\(render.outlineSize)"))
-    }
-
-    // Named rather than listed as four yes/no rows: "BTTV, 7TV" says more in
-    // less space than three lines of "Yes" and one of "No".
-    settings.append(Setting(label: "Emotes", value: emotes(of: render)))
-    settings.append(Setting(label: "Bitrate", value: "\(render.bitrateMbps) Mbps"))
-    if render.isSharpened {
-      settings.append(Setting(label: "Sharpen", value: "On"))
-    }
-    return settings
-  }
-
-  private func elements(of render: RenderRequest) -> String {
-    var on: [String] = []
-    if render.hasBadges { on.append("Badges") }
-    if render.hasTimestamps { on.append("Timestamps") }
-    if render.hasSubMessages { on.append("Sub messages") }
-    if render.hasOutline { on.append("Outline") }
-    return on.isEmpty ? "None" : on.joined(separator: ", ")
-  }
-
-  private func emotes(of render: RenderRequest) -> String {
-    var on: [String] = []
-    if render.isBTTVEnabled { on.append("BTTV") }
-    if render.isFFZEnabled { on.append("FFZ") }
-    if render.isSTVEnabled { on.append("7TV") }
-    return on.isEmpty ? "None" : on.joined(separator: ", ")
   }
 
   // MARK: - Formatting
@@ -206,11 +177,6 @@ nonisolated struct JobInfo {
     duration.components.seconds >= 3600
       ? duration.formatted(.time(pattern: .hourMinuteSecond))
       : duration.formatted(.time(pattern: .minuteSecond))
-  }
-
-  /// `12` rather than `12.0`, but `12.5` when it really is.
-  private static func trimmed(_ value: Double) -> String {
-    value == value.rounded() ? "\(Int(value))" : "\(value)"
   }
 
   private static func name(of format: ChatFormat) -> String {

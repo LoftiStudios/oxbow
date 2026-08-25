@@ -165,39 +165,28 @@ struct JobInfoTests {
 
   // MARK: - Render settings
 
-  /// The render options are the biggest thing a job remembers and the hardest
-  /// to reconstruct from memory, which is most of the reason Get Info exists.
-  @Test func summarisesTheRenderSettings() {
-    let request = RenderRequest(
-      width: 420, height: 800, framerate: 60, fontSize: 14, font: "Inter Embedded",
-      bitrateMbps: 5,
-      destination: Self.folder.appending(path: "r.mp4"))
-    let rows = JobInfo(job: job(step(.renderChat(request)))).renderSettings
+  /// The only thing left to report about a composite's render step: the chat
+  /// column it actually produced. Everything the old render form exposed —
+  /// font, colours, emotes, bitrate — is now a fixed decision nobody made, so
+  /// there is nothing honest left to say about any of it.
+  @Test func reportsTheChatColumnGeometryOfAComposite() {
+    let render = RenderRequest(width: 420, height: 800, framerate: 30, destination: nil)
+    let composite = CompositeRequest(
+      framerate: 60, bitrateMbps: 6, duration: .seconds(60),
+      destination: Self.folder.appending(path: "a.mp4"))
+    let rows = JobInfo(job: job(step(.renderChat(render)), step(.composite(composite)))).renderSettings
 
-    #expect(rows.first { $0.label == "Size" }?.value == "420 × 800")
-    #expect(rows.first { $0.label == "Frame rate" }?.value == "60 fps")
-    #expect(rows.first { $0.label == "Font" }?.value == "Inter Embedded 14")
-    #expect(rows.first { $0.label == "Bitrate" }?.value == "5 Mbps")
+    #expect(rows == [JobInfo.Setting(label: "Chat column", value: "420 × 800 at 30 fps")])
   }
 
-  /// Emote sources are listed by which are on, not as four yes/no rows —
-  /// "BTTV, 7TV" says more in less space than three lines of "Yes".
-  @Test func namesTheEmoteSourcesThatWereEnabled() {
-    let request = RenderRequest(
-      isBTTVEnabled: true, isFFZEnabled: false, isSTVEnabled: true,
-      destination: Self.folder.appending(path: "r.mp4"))
-    let rows = JobInfo(job: job(step(.renderChat(request)))).renderSettings
-
-    #expect(rows.first { $0.label == "Emotes" }?.value == "BTTV, 7TV")
-  }
-
-  @Test func saysWhenNoEmoteSourcesWereEnabled() {
-    let request = RenderRequest(
-      isBTTVEnabled: false, isFFZEnabled: false, isSTVEnabled: false,
-      destination: Self.folder.appending(path: "r.mp4"))
-    let rows = JobInfo(job: job(step(.renderChat(request)))).renderSettings
-
-    #expect(rows.first { $0.label == "Emotes" }?.value == "None")
+  /// A render step with no composite is reachable only through the library —
+  /// intake never asks for one alone — and in that case there is no video to
+  /// relate the render's dimensions to. Showing them anyway would be exactly
+  /// the "defaults nobody chose" this property exists to avoid.
+  @Test func hasNoRenderSettingsWithoutACompositeStep() {
+    let request = RenderRequest(destination: Self.folder.appending(path: "r.mp4"))
+    let info = JobInfo(job: job(step(.renderChat(request))))
+    #expect(info.renderSettings.isEmpty)
   }
 
   /// A job with no render step has nothing to say about rendering, and an

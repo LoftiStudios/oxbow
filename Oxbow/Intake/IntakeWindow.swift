@@ -129,7 +129,7 @@ struct IntakeWindow: View {
   /// this is just its rendering.
   private var outputs: some View {
     Section("Download") {
-      Picker("", selection: $model.output) {
+      Picker("Output", selection: $model.output) {
         Text(isClip ? "Clip" : "Video").tag(IntakeModel.Output.video)
         Text(isClip ? "Clip + chat" : "Video + chat").tag(IntakeModel.Output.videoWithChat)
       }
@@ -390,6 +390,26 @@ extension VideoInfo {
 #Preview("Video + chat") {
   let model = previewModel()
   model.output = .videoWithChat
+  return IntakeWindow(model: model)
+}
+
+/// A clip old enough that Twitch never backfilled pixel dimensions onto its
+/// only rendition, explicitly chosen for a composite. Exercises
+/// `IntakeModel.compositeProblem`, the one conditional row nothing else here
+/// renders.
+#Preview("Video + chat - composite problem") {
+  let clipInfo = VideoInfo(
+    streamer: "LeighXP",
+    title: "an old clip with no recorded dimensions",
+    createdAt: .now,
+    duration: .seconds(45),
+    qualities: [
+      StreamQuality(name: "720p0-1", resolution: "", bitsPerSecond: 0),
+    ],
+    thumbnailURL: nil)
+  let model = previewModel(link: "https://clips.twitch.tv/TangibleGiantPancakeKappa", info: clipInfo)
+  model.output = .videoWithChat
+  model.quality = "720p0-1"
   return IntakeWindow(model: model)
 }
 
