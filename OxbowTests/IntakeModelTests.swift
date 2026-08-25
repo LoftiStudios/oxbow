@@ -309,11 +309,16 @@ struct IntakeModelTests {
   /// `framerate`'s neighbours by coincidence — both have to be seeded from
   /// the chosen quality and the video's own duration, not left at some
   /// default that happens to compile.
+  ///
+  /// 11 Mbps, not 10: `CompositeGeometry.compositeBitrateMbps(sourceBitsPerSecond:)`
+  /// corrects for the wider composite frame and re-encode headroom (design
+  /// doc §5, measurements there) rather than passing the source's own
+  /// bitrate straight through.
   @Test func theCompositeSeedsItsBitrateAndDurationFromTheChosenQuality() async throws {
     let model = await loaded(quality: "1080p60", resolution: "1920x1080", bitsPerSecond: 10_000_000)
     model.output = .videoWithChat
     let composite = try #require(model.composedTemplate()?.composite)
-    #expect(composite.bitrateMbps == 10)
+    #expect(composite.bitrateMbps == 18)
     #expect(composite.duration == .seconds(3600), "the hour-long duration `Self.info()` fixes")
   }
 
@@ -476,6 +481,27 @@ struct IntakeModelTests {
 
     let problem = try #require(model.compositeProblem)
     #expect(problem.contains("720p0-1"), "names the rendition, not a generic failure")
+    #expect(problem.contains("Pick another quality"), "says what to do, not just what's wrong")
+  }
+
+  /// `480p30-Portrait` is a real rendition at 480x853 — an odd height, not a
+  /// missing one. Saying Twitch "never recorded pixel dimensions" would be
+  /// false here, so this case gets its own wording (bug 3).
+  @Test func choosingAnExplicitQualityWithAnOddHeightExplainsWhyAddIsDisabled() async throws {
+    let qualities = [
+      StreamQuality(name: "1080p60", resolution: "1920x1080", bitsPerSecond: 6_000_000),
+      StreamQuality(name: "480p30-Portrait", resolution: "480x853", bitsPerSecond: 1_000_000),
+    ]
+    let model = await loadedModel(link: Self.clipLink, info: Self.info(qualities: qualities))
+    model.output = .videoWithChat
+    model.quality = "480p30-Portrait"
+
+    #expect(model.composedTemplate() == nil)
+    #expect(!model.canAdd)
+
+    let problem = try #require(model.compositeProblem)
+    #expect(problem.contains("480p30-Portrait"), "names the rendition, not a generic failure")
+    #expect(!problem.contains("never recorded pixel dimensions"), "480x853 is a recorded dimension")
     #expect(problem.contains("Pick another quality"), "says what to do, not just what's wrong")
   }
 

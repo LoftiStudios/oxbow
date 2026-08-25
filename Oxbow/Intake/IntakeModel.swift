@@ -306,20 +306,42 @@ final class IntakeModel {
   /// Why `.videoWithChat` cannot be added right now, or nil when it can (or
   /// when `.video` is selected, where no quality decision is even made).
   ///
-  /// This is only reachable for a clip. A VOD's `VideoInfo.parseQualities`
-  /// skips any m3u8 variant with no `RESOLUTION` attribute outright, so every
-  /// `StreamQuality` it emits already has one. A clip's `clipResolution` has
-  /// no such filter — Twitch does not always backfill dimensions on an older
-  /// clip's rendition, and that rendition still reaches the picker with an
-  /// empty `resolution`. Picking exactly that one is a silent dead end
-  /// without this: `compositeQuality` honours the explicit pick (by design,
-  /// see its doc comment), `CompositeGeometry` then fails to parse it, and
-  /// `composedTemplate()` returns nil with nothing on screen explaining why.
+  /// Two distinct reasons `CompositeGeometry(quality:)` can fail, worded
+  /// differently because they call for different explanations:
+  ///
+  /// - **No pixel dimensions at all.** Only reachable for a clip. A VOD's
+  ///   `VideoInfo.parseQualities` skips any m3u8 variant with no `RESOLUTION`
+  ///   attribute outright, so every `StreamQuality` it emits already has one.
+  ///   A clip's `clipResolution` has no such filter — Twitch does not always
+  ///   backfill dimensions on an older clip's rendition, and that rendition
+  ///   still reaches the picker with an empty `resolution`. Picking exactly
+  ///   that one is a silent dead end without this: `compositeQuality` honours
+  ///   the explicit pick (by design, see its doc comment), `CompositeGeometry`
+  ///   then fails to parse it, and `composedTemplate()` returns nil with
+  ///   nothing on screen explaining why.
+  /// - **An odd video height.** `480p30-Portrait` is a real rendition at
+  ///   480x853 — dimensions are present, but the chat column's height must
+  ///   equal the video's, and an odd height cannot be corrected the way an
+  ///   odd chat width can (there is no scale to adjust). Telling this user
+  ///   their quality "carries no pixel dimensions" would be false — Twitch
+  ///   did record them — so this case gets its own wording.
   var compositeProblem: String? {
     guard output == .videoWithChat,
           let selected = compositeQuality,
           CompositeGeometry(quality: selected) == nil
     else { return nil }
+
+    let parts = selected.resolution.split(separator: "x")
+    let hasOddHeight =
+      parts.count == 2 && Int(parts[0]) != nil
+        && Int(parts[1]).map { !$0.isMultiple(of: 2) } ?? false
+
+    if hasOddHeight {
+      return """
+        \(selected.name) is \(selected.resolution), an odd height that would be \
+        silently cropped. Pick another quality.
+        """
+    }
     return """
       Twitch never recorded pixel dimensions for \(selected.name), so its \
       chat column cannot be sized to match. Pick another quality.
@@ -428,7 +450,7 @@ final class IntakeModel {
         destination: nil)
       composite = CompositeRequest(
         framerate: geometry.videoFramerate,
-        bitrateMbps: max(selected.bitsPerSecond / 1_000_000, 6),
+        bitrateMbps: geometry.compositeBitrateMbps(sourceBitsPerSecond: selected.bitsPerSecond),
         duration: duration,
         destination: destination(OutputSuffix.video))
     }

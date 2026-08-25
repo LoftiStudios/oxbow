@@ -86,19 +86,62 @@ Everything geometric is known at intake, before a byte is downloaded, from
 
 | Constant | Rule | 1080p | 720p | 480p |
 |---|---|---|---|---|
-| Chat width | video width x 3/16, forced even | 360 | 240 | 160 |
-| Chat height | = video height | 1080 | 720 | 480 |
+| Chat width | video width x 3/16, parity-matched to the video width — see below | 360 | 240 | 160 |
+| Chat height | = video height; an odd video height refuses the composite entirely — see below | 1080 | 720 | 480 |
 | Output width | video width + chat width | 2280 | 1520 | 1014 |
 | Chat framerate | the video's, halved when it is 60 | 30 | 30 | 30 |
 | Font size | user's Small/Medium/Large, scaled to chat width — see below | 13 / 16 / 20 | 9 / 11 / 13 | 6 / 7 / 9 |
 | Render bitrate | flat 12 Mbps at every quality — see below | 12M | 12M | 12M |
-| Composite bitrate | seeded from `StreamQuality.bitsPerSecond` | — | — | — |
+| Composite bitrate | derived from the source's own bitrate — see below | — | — | — |
 
-**3/16** is chosen because it lands on exact even integers at every standard
-Twitch width, so the even-width rule never actually bites in practice. It is
-enforced anyway, at the point of derivation and with a comment, because section
-2 shows the encoder's response to an odd width is a silent one-column crop
-rather than an error.
+**3/16** is chosen because it lands on exact even integers at most standard
+Twitch widths. It does not at all of them, and the fix for that is a parity
+rule, not an evenness one — recorded next.
+
+### Chat width: parity, not evenness
+
+The first cut of this rule forced the chat width even outright, on the theory
+that `outputWidth = videoWidth + chatWidth` only needs to come out even, and an
+even chat width guarantees that. It doesn't: `853x480` is a real Twitch
+rendition (480p30, seen on two separate clips), and 853 is odd. Forcing the
+chat width to the nearest even number (160) gives 853 + 160 = 1013 — still odd,
+still silently cropped by `h264_videotoolbox` (§2 records that crop; it does
+not reject the odd width, it just drops a column with exit 0 and no warning).
+
+**The correct rule is parity matching: the chat width must share the video
+width's parity**, so their sum is always even regardless of which parity the
+video itself has. 853 needs an *odd* chat width — 161, not 160 — to land on an
+even 1014.
+
+The minimum-width clamp (`max(rawChatWidth, 160)`) can itself break parity —
+853's raw 3/16 candidate is 159 (odd, correct), but the clamp lifts it to 160
+(even, wrong) — so the parity correction runs **after** the clamp, never
+before, and only ever pushes the value up by one rather than back down below
+the legible floor.
+
+Worked examples (video width -> chat width -> output width), all even outputs:
+
+| Video width | Chat width | Output width |
+|---|---|---|
+| 1920 | 360 | 2280 |
+| 1280 | 240 | 1520 |
+| 853 | 161 | 1014 |
+| 640 | 160 | 800 |
+| 1146 | 214 | 1360 |
+| 284 | 160 | 444 |
+
+### Chat height: refused, not corrected, when odd
+
+Width has a knob to turn — the chat column's own width is free to move a pixel
+either way. Height does not: the chat's height is defined to equal the video's,
+and this design never scales the video (§11), so there is nothing to adjust.
+`480p30-Portrait` is a real rendition at 480x853 — odd height, not odd width —
+and an odd height would be silently cropped exactly like an odd width. Rather
+than invent a correction that doesn't exist, `CompositeGeometry.init?` returns
+`nil` for an odd video height, the same failure mode it already uses for a
+rendition with no pixel dimensions at all, and `IntakeModel.compositeProblem`
+explains it — worded so it doesn't call an odd height "no pixel dimensions,"
+which would be false; Twitch did record 480x853, it's just unusable as-is.
 
 **Framerate comes from the quality *name*** (`1080p60` -> 60), never from the
 m3u8's `FRAME-RATE` attribute, which reports a measured average (57.034 on a 60
@@ -141,6 +184,57 @@ artefacts.
 The fix is free: encode the intermediate at **12 Mbps**. At fixed resolution and
 framerate, VideoToolbox's encode speed is essentially independent of bitrate, so
 this costs only transient disk in a workspace that is deleted anyway.
+
+### The composite's own bitrate: corrected, not copied
+
+The first cut seeded the composite's bitrate straight from the source's own
+rate — `max(StreamQuality.bitsPerSecond / 1_000_000, 6)`. That under-budgets
+it two ways at once: the composite frame is wider than the source (video plus
+chat column, roughly 19% more pixels at 1080p — 2280 vs 1920), so the same
+bitrate is spread over more pixels than it was measured against; and it is
+re-encoding material that is already lossy, which costs bits the first encode
+didn't need to spend. On a visually noisy source the game footage soaks up the
+budget first and the chat column — sharp, high-contrast text on a flat
+background, H.264's worst case — visibly degrades.
+
+**Measured on a real clip** (LeighXP, FF7 Rebirth, 1080p60 @ 6128 kbps), chat
+region compared against the pristine chat render:
+
+| Composite bitrate | PSNR | SSIM |
+|---|---|---|
+| 6 Mbps (the source's own rate — the old seed) | 25.5 dB | 0.916 |
+| 11 Mbps (this formula's output) | 29.5 dB | 0.952 |
+| 16 Mbps | 31.9 dB | 0.963 |
+
+**Also measured: bitrate is free in wall-clock time.** 6.0s to encode at 6 Mbps
+vs 6.1s at 16 Mbps, same clip. `h264_videotoolbox`'s encode speed does not
+depend on the bitrate target, so — as with the intermediate render's bitrate
+above — there is no cost tradeoff to erring generous. Only file size grows.
+
+**The fix:**
+
+```
+compositeBitrateMbps
+  = round( sourceBitsPerSecond x (outputWidth / videoWidth) x 1.5 / 1_000_000 )
+    floored at 6
+```
+
+`outputWidth / videoWidth` corrects for the extra pixels the composite frame
+carries over the source; the flat `1.5` is re-encode headroom. Both factors are
+named constants (`CompositeGeometry.reencodeHeadroom` and the pixel-ratio
+computed inline) with a comment citing the table above, so either number is a
+one-line, traceable adjustment rather than a re-derivation. The `6` Mbps floor
+is the same floor the old flat seed used, kept so a very low source bitrate
+still produces a watchable composite.
+
+Worked examples, all at 1080p (`outputWidth / videoWidth` = 2280/1920 =
+1.1875):
+
+| Source bitrate | Composite bitrate |
+|---|---|
+| 6,128,000 bps | 11 Mbps |
+| 9,685,000 bps | 17 Mbps |
+| 6,184,000 bps | 11 Mbps |
 
 ### Chat text size: a survivor, scaled rather than fixed
 
@@ -399,7 +493,8 @@ day earlier.
 | `Scheduler.blockDependents` | failing either parent blocks the composite |
 | `Step` decoding | a persisted scalar `dependsOn` decodes to a single-element array |
 | `JobTemplate.makeJob` | both intake shapes, x2 for clips; the composite's two dependency edges |
-| Geometry derivation | width/height/framerate per standard quality name; even-width forcing; empty quality resolving to `qualities.first` |
+| Geometry derivation | width/height/framerate per standard quality name; chat-width parity matching (including the 853-wide case and the minimum-clamp interaction); odd video height refusing the composite; empty quality resolving to `qualities.first` |
+| Composite bitrate | the pixel-ratio x headroom formula against the measured clip's values; the 6 Mbps floor |
 | `OutputNaming` | `longestBytes` 12 -> 4 and its effect on truncation |
 | `QueueEngine` | `.composite` spawns `ffmpegPath`, not `helperExecutable` |
 | `FailureInterpreter` | the real height-mismatch stderr from section 2, with the `[component @ 0x…]` prefix stripped |

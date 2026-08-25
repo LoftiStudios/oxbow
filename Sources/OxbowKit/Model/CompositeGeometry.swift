@@ -19,15 +19,28 @@ public struct CompositeGeometry: Sendable, Equatable {
   /// The narrowest legible chat column.
   static let minimumChatWidth = 160
 
-  /// Fails when the quality carries no pixel width. A clip old enough to have
-  /// no dimensions backfilled cannot be composited, because the chat's height
-  /// must equal the video's and a guessed height produces a silently wrong
-  /// frame rather than a loud failure.
+  /// Fails when the quality carries no pixel width, or when the video's
+  /// height is odd.
+  ///
+  /// No pixel width: a clip old enough to have no dimensions backfilled
+  /// cannot be composited, because the chat's height must equal the video's
+  /// and a guessed height produces a silently wrong frame rather than a loud
+  /// failure.
+  ///
+  /// Odd height: the chat column's height always equals the video's (it
+  /// cannot be adjusted independently the way width can — see `chatWidth`
+  /// below), so an odd video height would hand `h264_videotoolbox` an odd
+  /// output height with nothing available to correct it. `480p30-Portrait`
+  /// is a real rendition at 480x853 — odd height, not odd width — so this is
+  /// not a hypothetical. There is deliberately no scaling fallback: this
+  /// design never scales the video (§4, §11), so refusing is the only
+  /// correct response, consistent with the no-pixel-width case above.
   public init?(quality: StreamQuality) {
     let parts = quality.resolution.split(separator: "x")
     guard parts.count == 2,
           let width = Int(parts[0]), let height = Int(parts[1]),
-          width > 0, height > 0
+          width > 0, height > 0,
+          height.isMultiple(of: 2)
     else { return nil }
 
     self.videoWidth = width
@@ -35,13 +48,23 @@ public struct CompositeGeometry: Sendable, Equatable {
     self.videoFramerate = Self.framerate(fromName: quality.name)
 
     // 3/16 of the video's width, because it lands on exact even integers at
-    // every standard Twitch width (1920 -> 360, 1280 -> 240, 854 -> 160).
+    // most standard Twitch widths (1920 -> 360, 1280 -> 240).
     //
-    // Forced even regardless: h264_videotoolbox does NOT reject an odd width,
-    // it accepts it and silently crops a column. 1920+351 produced 2270x1080
-    // with exit 0 and no warning. Verified 2026-08-25.
-    let scaled = max(width * 3 / 16, Self.minimumChatWidth)
-    self.chatWidth = scaled - (scaled % 2)
+    // The output width must still come out even regardless — h264_videotoolbox
+    // does NOT reject an odd width, it accepts it and silently crops a column.
+    // 1920+351 produced 2270x1080 with exit 0 and no warning. Verified
+    // 2026-08-25. But forcing the chat width itself even is not sufficient:
+    // 853x480 is a real Twitch rendition (480p30, present in both clips
+    // tested), and an *odd* video width needs an *odd* chat width to keep
+    // their sum even. So the rule is parity matching, not evenness: the chat
+    // width must share the video width's parity.
+    //
+    // The minimum-width clamp below can itself break parity — 853's raw
+    // 3/16 candidate is 159, which clamps up to 160 (even, but 853 is odd) —
+    // so the parity correction is applied after the clamp, not before, and
+    // only ever pushes the value up (never back below the minimum).
+    let raw = max(width * 3 / 16, Self.minimumChatWidth)
+    self.chatWidth = (raw + width).isMultiple(of: 2) ? raw : raw + 1
 
     // Halved above 30 so a 60 fps VOD does not pay for 60 fps of slowly
     // scrolling text. Always an integer ratio, so chat frames land evenly on
@@ -50,6 +73,47 @@ public struct CompositeGeometry: Sendable, Equatable {
       videoFramerate > 30 && videoFramerate.isMultiple(of: 2)
         ? videoFramerate / 2
         : videoFramerate
+  }
+
+  // MARK: - Composite bitrate
+
+  /// How much wider the composite frame is than the source video, and how
+  /// much re-encode headroom to add on top of that — the two corrections the
+  /// old flat `max(source bps, 6 Mbps)` seed was missing.
+  ///
+  /// Measured on a real clip (LeighXP, FF7 Rebirth, 1080p60 @ 6128 kbps),
+  /// chat region PSNR/SSIM against the pristine chat render:
+  ///
+  /// | composite bitrate | PSNR | SSIM |
+  /// |---|---|---|
+  /// | 6 Mbps (source's own rate — the old seed) | 25.5 dB | 0.916 |
+  /// | 11 Mbps (this formula's output) | 29.5 dB | 0.952 |
+  /// | 16 Mbps | 31.9 dB | 0.963 |
+  ///
+  /// The composite frame carries ~19% more pixels than the source (video +
+  /// chat column) while re-encoding already-lossy material, so seeding it at
+  /// the source's own bitrate starves the chat column — sharp, high-contrast
+  /// text is H.264's worst case — of bits the noisy game footage soaks up
+  /// first. Also measured: bitrate is free in wall-clock time on
+  /// `h264_videotoolbox` — 6.0s to encode at 6 Mbps vs 6.1s at 16 Mbps on the
+  /// same clip — so there is no speed cost to erring high, only file size.
+  private static let reencodeHeadroom = 1.5
+
+  /// The floor below which a composite is not worth shipping — the same
+  /// floor the old flat seed used.
+  static let minimumBitrateMbps = 6
+
+  /// The composite's bitrate, in Mbps, for a source encoded at
+  /// `sourceBitsPerSecond`.
+  ///
+  /// `outputWidth / videoWidth` corrects for the extra pixels the composite
+  /// frame carries over the source; `reencodeHeadroom` accounts for
+  /// re-encoding material that is already lossy. See the constants above for
+  /// the measurements behind both factors.
+  public func compositeBitrateMbps(sourceBitsPerSecond: Int) -> Int {
+    let pixelRatio = Double(outputWidth) / Double(videoWidth)
+    let mbps = Double(sourceBitsPerSecond) * pixelRatio * Self.reencodeHeadroom / 1_000_000
+    return max(Self.minimumBitrateMbps, Int(mbps.rounded()))
   }
 
   // MARK: - Chat font size
