@@ -72,8 +72,12 @@ fastlane/test_output
 # never committed. Copy Config/Local.xcconfig.template to create it.
 Config/Local.xcconfig
 
-# Oxbow build output (FFmpeg source + binaries, app bundle, DMG)
+# Oxbow build output (FFmpeg source + binaries, app bundle, DMG).
+# The trailing slash matches a directory only, so a `build` SYMLINK — which a
+# worktree needs, since the payloads live in the primary checkout — slips past
+# it and gets committed as a dangling absolute path. Both forms are ignored.
 build/
+build
 
 # Local AI tool config, untracked. CLAUDE.md is a symlink to docs/development.md.
 .claude/

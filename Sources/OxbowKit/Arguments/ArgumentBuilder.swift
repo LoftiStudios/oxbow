@@ -17,6 +17,16 @@ public enum ArgumentBuilder {
     value.isEmpty ? [] : ["-q", value]
   }
 
+  /// Argv for `VideoInfoFetcher`, which runs outside the queue at intake —
+  /// there is no `StepKind` for it and never should be (docs/design/
+  /// chat-and-render.md §3).
+  ///
+  /// `--format Raw` because `--format json` throws `NotImplementedException`
+  /// upstream; see `VideoInfo`.
+  public static func infoArguments(id: String) -> [String] {
+    ["info", "--banner=false", "--id", id, "--format", "Raw"]
+  }
+
   public static func arguments(for kind: StepKind, context: StepContext) -> [String] {
     switch kind {
     case .downloadVideo(let request):
@@ -59,6 +69,27 @@ public enum ArgumentBuilder {
       args += ["-h", String(request.height)]
       args += ["--framerate", String(request.framerate)]
       args += ["--font-size", String(request.fontSize)]
+      args += ["-f", request.font]
+      args += ["--background-color", request.backgroundColor]
+      args += ["--alt-background-color", request.alternateBackgroundColor]
+      // Without this, --alt-background-color is documented by the CLI as
+      // inert.
+      args += ["--alternate-backgrounds=\(request.hasAlternateBackgrounds)"]
+      args += ["--message-color", request.messageColor]
+      args += ["--outline-size", String(request.outlineSize)]
+
+      // Booleans follow the same single-token `--flag=value` shape already
+      // proven by `--banner=false` above, rather than a second, untested form.
+      args += ["--badges=\(request.hasBadges)"]
+      args += ["--timestamp=\(request.hasTimestamps)"]
+      args += ["--sub-messages=\(request.hasSubMessages)"]
+      args += ["--outline=\(request.hasOutline)"]
+      // The emote switches are surfaced deliberately: 7TV resolution is why
+      // the submodule is pinned past 1.56.5 (CLAUDE.md), not left invisible.
+      args += ["--bttv=\(request.isBTTVEnabled)"]
+      args += ["--ffz=\(request.isFFZEnabled)"]
+      args += ["--stv=\(request.isSTVEnabled)"]
+      args += ["--allow-unlisted-emotes=\(request.allowsUnlistedEmotes)"]
 
       // The CLI's default is `-c:v libx264`, which is GPL and absent from our
       // LGPL FFmpeg. VideoToolbox is bitrate-targeted; there is no CRF.

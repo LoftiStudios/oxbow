@@ -11,19 +11,22 @@ import OxbowKit
 @Observable
 final class QueueController {
 
-  enum IntakeError: Error, Equatable {
-    case notAVideoURL
-  }
-
   private(set) var jobs: [Job] = []
   /// Set when `start()` fails. The queue is unusable; the UI says why.
   private(set) var startFailure: String?
 
   private let engine: QueueEngine
+  /// Threaded through from `AppComposition` via `configuration`, rather than
+  /// re-derived here, so there is exactly one place that resolves the
+  /// bundle's `Contents/MacOS/helper/TwitchDownloaderCLI` path.
+  private let helperExecutable: URL
+  private let makeProcess: @Sendable () -> HelperProcessing
   private var observation: Task<Void, Never>?
 
   init(configuration: QueueEngine.Configuration) {
     engine = QueueEngine(configuration: configuration)
+    helperExecutable = configuration.helperExecutable
+    makeProcess = configuration.makeProcess
   }
 
   func start() async {
@@ -51,15 +54,27 @@ final class QueueController {
   /// orphans — and writes the pending debounced save.
   func shutDown() async { await engine.shutDown() }
 
-  func enqueueVideo(urlText: String, destination: URL) throws {
-    guard let videoID = TwitchVideoURL.videoID(from: urlText) else {
-      throw IntakeError.notAVideoURL
-    }
+  /// Runs the helper's `info` verb directly, outside the queue: this
+  /// produces no artifact, is not a step, and must never appear in `jobs`
+  /// (design doc §3). Intake calls it once per pasted link, before any job
+  /// exists, to derive a filename and offer a quality picker.
+  func fetchInfo(for id: String) async throws -> VideoInfo {
+    try await VideoInfoFetcher.fetch(id: id, helper: helperExecutable, process: makeProcess())
+  }
 
-    // An empty quality means best available - see ArgumentBuilder.
-    let request = VideoRequest(videoID: videoID, quality: "", destination: destination)
-    let engine = engine
-    Task { await engine.enqueue(.video(request), title: "Video \(videoID)") }
+  /// Enqueues an already-composed template. Intake now builds the whole
+  /// `JobTemplate` — parsing the link, resolving destinations per output,
+  /// and wiring the toggles — so the controller no longer parses URLs or
+  /// constructs requests itself.
+  ///
+  /// `async`, awaiting the engine, rather than spawning an untracked `Task`:
+  /// intake dismisses its sheet on the strength of this call, and a
+  /// fire-and-forget enqueue cannot tell the caller whether the job landed.
+  /// The failure it invites is the worst kind — the sheet closes, nothing
+  /// appears in the queue, and nothing says why. Returning only once the
+  /// engine holds the job makes "it is queued" a fact the sheet can act on.
+  func enqueue(_ template: JobTemplate, title: String) async {
+    await engine.enqueue(template, title: title)
   }
 
   /// The tail of a step's captured helper output, for the detail disclosure.

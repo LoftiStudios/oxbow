@@ -58,9 +58,9 @@ struct QueueEngineTests {
   private func makeChatAndRenderTemplate() -> (template: JobTemplate, renderDestination: URL) {
     let destination = URL(filePath: NSTemporaryDirectory())
       .appending(path: "render-\(UUID().uuidString).mp4")
-    let template = JobTemplate.chatAndRender(
-      ChatRequest(videoID: "2844548319", format: .json),
-      RenderRequest(destination: destination))
+    let template = JobTemplate(
+      chat: ChatRequest(videoID: "2844548319", format: .json),
+      render: RenderRequest(destination: destination))
     return (template, destination)
   }
 
@@ -79,9 +79,9 @@ struct QueueEngineTests {
 
     try await engine.start()
     await engine.enqueue(
-      .video(VideoRequest(
+      JobTemplate(media: .video(VideoRequest(
         videoID: "1", quality: "",
-        destination: root.appending(path: "out.mp4"))),
+        destination: root.appending(path: "out.mp4")))),
       title: "t")
     try await settle(engine)
 
@@ -103,9 +103,9 @@ struct QueueEngineTests {
 
     try await engine.start()
     await engine.enqueue(
-      .video(VideoRequest(
+      JobTemplate(media: .video(VideoRequest(
         videoID: "1", quality: "",
-        destination: root.appending(path: "out.mp4"))),
+        destination: root.appending(path: "out.mp4")))),
       title: "t")
     try await settle(engine)
 
@@ -127,9 +127,9 @@ struct QueueEngineTests {
 
     try await engine.start()
     await engine.enqueue(
-      .video(VideoRequest(
+      JobTemplate(media: .video(VideoRequest(
         videoID: "1", quality: "",
-        destination: root.appending(path: "out.mp4"))),
+        destination: root.appending(path: "out.mp4")))),
       title: "t")
     try await settle(engine)
 
@@ -302,7 +302,7 @@ struct QueueEngineTests {
     defer { cleanUp(root) }
 
     try await engine.start()
-    await engine.enqueue(.chat(ChatRequest(videoID: "2844548319", format: .json)), title: "test")
+    await engine.enqueue(JobTemplate(chat: ChatRequest(videoID: "2844548319", format: .json)), title: "test")
 
     // `enqueue` runs `tick()` to completion synchronously before returning,
     // so the step is already `.running` here — no polling needed.
@@ -326,10 +326,10 @@ struct QueueEngineTests {
 
     try await engine.start()
     await engine.enqueue(
-      .videoChatAndRender(
-        VideoRequest(videoID: "v", quality: "best", destination: root.appending(path: "video.mp4")),
-        ChatRequest(videoID: "2844548319", format: .json),
-        RenderRequest(destination: root.appending(path: "render.mp4"))),
+      JobTemplate(
+        media: .video(VideoRequest(videoID: "v", quality: "best", destination: root.appending(path: "video.mp4"))),
+        chat: ChatRequest(videoID: "2844548319", format: .json),
+        render: RenderRequest(destination: root.appending(path: "render.mp4"))),
       title: "test")
 
     // Video and chat both contend for the `.network` slot, so only video
@@ -413,7 +413,7 @@ struct QueueEngineTests {
     let destination = blocker.appending(path: "output.mp4")
 
     await engine.enqueue(
-      .video(VideoRequest(videoID: "v", quality: "best", destination: destination)),
+      JobTemplate(media: .video(VideoRequest(videoID: "v", quality: "best", destination: destination))),
       title: "test")
     try await settle(engine)
 
@@ -508,7 +508,7 @@ struct QueueEngineTests {
 
     try await engine.start()
     await engine.enqueue(
-      .video(VideoRequest(videoID: "v", quality: "best", destination: destination)),
+      JobTemplate(media: .video(VideoRequest(videoID: "v", quality: "best", destination: destination))),
       title: "test")
     try await settle(engine)
 
@@ -628,10 +628,10 @@ struct QueueEngineTests {
 
     try await engine.start()
     await engine.enqueue(
-      .video(VideoRequest(
+      JobTemplate(media: .video(VideoRequest(
         videoID: "v",
         quality: "best",
-        destination: root.appending(path: "video.mp4"))),
+        destination: root.appending(path: "video.mp4")))),
       title: "test")
 
     for _ in 0..<200 {
@@ -674,10 +674,10 @@ struct QueueEngineTests {
     await engine.shutDown()
 
     await engine.enqueue(
-      .video(VideoRequest(
+      JobTemplate(media: .video(VideoRequest(
         videoID: "v",
         quality: "best",
-        destination: root.appending(path: "video.mp4"))),
+        destination: root.appending(path: "video.mp4")))),
       title: "late")
 
     #expect(
@@ -720,10 +720,10 @@ struct QueueEngineTests {
 
     try await engine.start()
     await engine.enqueue(
-      .video(VideoRequest(
+      JobTemplate(media: .video(VideoRequest(
         videoID: "v",
         quality: "best",
-        destination: root.appending(path: "video.mp4"))),
+        destination: root.appending(path: "video.mp4")))),
       title: "test")
 
     var pids: [pid_t] = []
