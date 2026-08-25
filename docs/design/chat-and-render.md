@@ -1,6 +1,24 @@
 # Chat, render, and clips — design
 
-**Status:** approved 2026-08-24, not yet implemented.
+**Status:** approved 2026-08-24, implemented 2026-08-24 on `chat-and-render`.
+
+Implemented as designed, with three notes where reality was sharper than §3
+and §6 anticipated:
+
+- **`info --format Raw` emits two different documents, not one.** §3 describes
+  only the VOD shape. A clip's output is a single JSON object under
+  `data.clip` — no moments line, no m3u8 section, and no trailing newline —
+  with its renditions inline at `clip.assets[].videoQualities`.
+  `VideoInfo.parse` handles both and produces the same `VideoInfo` either way.
+- **A clip's quality names come from upstream, verbatim.** `{quality}p{fps}`,
+  `-Portrait` for a vertical asset, `-1`/`-2` for the repeats Twitch always
+  returns. The name is what the picker hands back as `-q`, and upstream's
+  fallback regex cannot parse a `-Portrait` name at all — so a prettier name
+  of our own would leave every vertical rendition unselectable. Identical
+  duplicates are collapsed; the survivor keeps upstream's name.
+- **The render options are bounds-checked**, the way §5's trim already is. A
+  render is the second step of its job, so a `0` width reaches FFmpeg only
+  after the chat download has finished.
 
 Prerequisites: `docs/design/task-queue.md` (the engine and its templates) and
 `docs/design/queue-ui.md` (the intake this replaces).
