@@ -99,6 +99,31 @@ struct VideoInfoTests {
     let output = "[STATUS] - Fetching Video Info [1/1]\nno brace-prefixed line here at all\n"
     #expect(VideoInfo.parse(output) == nil)
   }
+
+  /// The sheet shows the video's own thumbnail, so the URL has to survive the
+  /// parse. The CLI asks Twitch for `thumbnailURLs(height:180,width:320)` and
+  /// gets back one URL per preview frame; the first is the one upstream's own
+  /// UI uses.
+  @Test func readsTheFirstThumbnailURL() throws {
+    let info = try #require(VideoInfo.parse(try fixture()))
+    let thumbnail = try #require(info.thumbnailURL)
+    #expect(thumbnail.absoluteString.hasSuffix("/thumb/thumb0-320x180.jpg"))
+  }
+
+  /// A VOD still processing, or one whose previews Twitch has not generated,
+  /// arrives with the key absent or its list empty. Nil, not a broken URL:
+  /// the sheet draws a placeholder rather than an image that will 404.
+  @Test func hasNoThumbnailWhenTwitchOffersNone() throws {
+    let output = """
+      [STATUS] - Fetching Video Info [1/1]
+      {"data":{"video":{"title":"t","thumbnailURLs":[],\
+      "createdAt":"2026-01-01T00:00:00Z","lengthSeconds":10,\
+      "owner":{"displayName":"s"}}}}
+      """
+
+    let info = try #require(VideoInfo.parse(output))
+    #expect(info.thumbnailURL == nil)
+  }
 }
 
 /// `info --format Raw` for a clip is a different document from a VOD's — one
@@ -292,5 +317,45 @@ struct ClipInfoTests {
       String(decoding: try Fixture.bytes("info-vod-raw.stdout"), as: UTF8.self)))
     #expect(vod.streamer == "LeighXP")
     #expect(vod.qualities.map(\.name) == ["1080p60", "720p60", "480p30", "360p30", "160p30"])
+  }
+
+  /// The clip's thumbnail comes from its asset, and a clip can carry more than
+  /// one: the fixture has a landscape asset and a portrait one. The landscape
+  /// preview is the one to show — it is the same asset the quality list sorts
+  /// first, and a 16:9 image is what the sheet's frame is shaped for.
+  @Test func readsTheLandscapeAssetsThumbnailURL() throws {
+    let info = try #require(VideoInfo.parse(try fixture()))
+    let thumbnail = try #require(info.thumbnailURL)
+    #expect(thumbnail.absoluteString.contains("/landscape/"))
+  }
+
+  /// A vertical clip has no landscape asset at all, so the portrait preview is
+  /// the only one there is. Showing it beats showing nothing; the sheet fits
+  /// it into the frame rather than assuming 16:9.
+  @Test func fallsBackToAPortraitAssetsThumbnailWhenThatIsAllThereIs() throws {
+    let output = """
+      [STATUS] - Fetching Clip Info [1/1]
+      {"data":{"clip":{"title":"t","createdAt":"2026-01-01T00:00:00Z","durationSeconds":10,\
+      "broadcaster":{"displayName":"s"},"assets":[{"aspectRatio":0.5625,\
+      "thumbnailURL":"https://example.com/portrait/thumb.jpg","portraitMetadata":null,\
+      "videoQualities":[{"quality":"1080","frameRate":60,"bitrate":1,"width":1080,"height":1920}]}]}}}
+      """
+
+    let info = try #require(VideoInfo.parse(output))
+    let thumbnail = try #require(info.thumbnailURL)
+    #expect(thumbnail.absoluteString == "https://example.com/portrait/thumb.jpg")
+  }
+
+  /// A clip with no assets has no preview either — and still parses, for the
+  /// same reason it still offers a name.
+  @Test func hasNoThumbnailWhenTheClipHasNoAssets() throws {
+    let output = """
+      [STATUS] - Fetching Clip Info [1/1]
+      {"data":{"clip":{"title":"t","createdAt":"2026-01-01T00:00:00Z","durationSeconds":10,\
+      "broadcaster":{"displayName":"s"},"assets":null}}}
+      """
+
+    let info = try #require(VideoInfo.parse(output))
+    #expect(info.thumbnailURL == nil)
   }
 }

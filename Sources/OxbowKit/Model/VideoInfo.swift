@@ -44,19 +44,38 @@ public struct VideoInfo: Sendable, Equatable {
   public var createdAt: Date
   public var duration: Duration
   public var qualities: [StreamQuality]
+  /// The video's own preview image, for the intake sheet to show.
+  ///
+  /// Optional because Twitch does not always have one: a VOD still processing
+  /// arrives with an empty `thumbnailURLs`, and a clip whose assets are
+  /// missing has no preview either. Both are states the sheet already handles
+  /// for the rest of the metadata, so this is one more thing that may be
+  /// absent rather than a reason to fail the parse.
+  ///
+  /// **The two shapes give us different sizes.** A VOD's is 320x180 — the CLI
+  /// hardcodes `thumbnailURLs(height:180,width:320)` in its GraphQL query, so
+  /// there is no larger one to ask for. A clip's is the asset's full-size
+  /// preview, 1920x1080 on a modern clip. The smaller of the two is what caps
+  /// how large the sheet may draw it.
+  public var thumbnailURL: URL?
 
+  /// `thumbnailURL` defaults to nil: it adorns the intake sheet and nothing
+  /// else derives from it, so the tests and previews that build a `VideoInfo`
+  /// for its name, duration or qualities should not have to name one.
   public init(
     streamer: String,
     title: String,
     createdAt: Date,
     duration: Duration,
-    qualities: [StreamQuality])
+    qualities: [StreamQuality],
+    thumbnailURL: URL? = nil)
   {
     self.streamer = streamer
     self.title = title
     self.createdAt = createdAt
     self.duration = duration
     self.qualities = qualities
+    self.thumbnailURL = thumbnailURL
   }
 
   public static func parse(_ output: String) -> VideoInfo? {
@@ -81,7 +100,11 @@ public struct VideoInfo: Sendable, Equatable {
         createdAt: video.createdAt,
         duration: .seconds(video.lengthSeconds),
         // The m3u8 master playlist follows the JSON lines, and only for a VOD.
-        qualities: Self.parseQualities(from: lines[(jsonLineIndex + 1)...]))
+        qualities: Self.parseQualities(from: lines[(jsonLineIndex + 1)...]),
+        // One URL per preview frame, in order. The first is the one upstream's
+        // own WPF pages show (`PageVodDownload.xaml.cs`), so it is the one a
+        // person recognises as "that VOD's thumbnail".
+        thumbnailURL: video.thumbnailURLs?.first.flatMap(URL.init(string:)))
     }
 
     if let envelope = try? decoder.decode(ClipInfoEnvelope.self, from: jsonData) {
@@ -91,7 +114,8 @@ public struct VideoInfo: Sendable, Equatable {
         title: clip.title,
         createdAt: clip.createdAt,
         duration: .seconds(clip.durationSeconds),
-        qualities: Self.clipQualities(of: clip))
+        qualities: Self.clipQualities(of: clip),
+        thumbnailURL: Self.clipThumbnailURL(of: clip))
     }
 
     return nil
@@ -219,6 +243,21 @@ public struct VideoInfo: Sendable, Equatable {
       }
   }
 
+  /// The clip's preview image: the first landscape asset's, falling back to
+  /// the first asset that has one at all.
+  ///
+  /// Landscape first for the same reason `clipQualities` sorts it first — a
+  /// clip commonly carries both a landscape and a portrait asset, and the
+  /// landscape one is the clip as it was streamed. The fallback is what makes
+  /// a genuinely vertical clip (which has no landscape asset) show a preview
+  /// rather than nothing.
+  private static func clipThumbnailURL(of clip: ClipInfoEnvelope.ClipEnvelope) -> URL? {
+    let assets = clip.assets ?? []
+    let preferred = assets.first { !$0.isPortrait && $0.thumbnailURL != nil }
+      ?? assets.first { $0.thumbnailURL != nil }
+    return preferred?.thumbnailURL.flatMap(URL.init(string:))
+  }
+
   /// Upstream's `BuildClipResolution`: the explicit pixel dimensions when the
   /// payload has them, and otherwise the `quality` string read as a height
   /// with the asset's aspect ratio supplying the width. Older clips carry
@@ -288,6 +327,11 @@ private struct VideoInfoEnvelope: Decodable {
     var createdAt: Date
     var lengthSeconds: Int
     var owner: OwnerEnvelope
+    /// Optional, and optional for a reason: a VOD that is still processing
+    /// comes back without previews. Making it required would fail the whole
+    /// parse over a decoration and drop the sheet back to naming the job
+    /// after a bare id.
+    var thumbnailURLs: [String]?
   }
 
   struct OwnerEnvelope: Decodable {
