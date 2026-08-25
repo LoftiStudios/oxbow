@@ -125,10 +125,16 @@ public struct VideoInfo: Sendable, Equatable {
   /// **The names have to match upstream's, character for character**, because
   /// the name is what the picker later hands back as `-q`. Upstream's
   /// `ClipVideoQualities.GetQuality` tries an exact-name match first and only
-  /// then falls back to keywords and a `WIDTHxHEIGHTpFPS` regex — and that
-  /// regex cannot parse a `-Portrait` name at all, so a prettier name of our
-  /// own invention would leave every vertical rendition unselectable. So this
-  /// reproduces `VideoQualities.FromClip` / `BuildQualityList`:
+  /// then falls back to keywords and a `WIDTHxHEIGHTpFPS` regex, which cannot
+  /// parse a `-Portrait` name at all.
+  ///
+  /// That fallback does not fail loudly. Verified against the real CLI:
+  /// `-q 1080p60-Portrait-1` downloads the portrait rendition, and the
+  /// tidier-looking `-q 1080p60-Portrait` downloads the **landscape** one —
+  /// byte-for-byte the same file as `-q 1080p60-1`, exit code 0, no warning.
+  /// A prettier name of our own invention would therefore hand people the
+  /// wrong video and call it a success. So this reproduces
+  /// `VideoQualities.FromClip` / `BuildQualityList`:
   ///
   /// - `{quality}p{frameRate rounded}`, with `-Portrait` appended for a
   ///   vertical asset;

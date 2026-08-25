@@ -13,9 +13,11 @@ and §6 anticipated:
 - **A clip's quality names come from upstream, verbatim.** `{quality}p{fps}`,
   `-Portrait` for a vertical asset, `-1`/`-2` for the repeats Twitch always
   returns. The name is what the picker hands back as `-q`, and upstream's
-  fallback regex cannot parse a `-Portrait` name at all — so a prettier name
-  of our own would leave every vertical rendition unselectable. Identical
-  duplicates are collapsed; the survivor keeps upstream's name.
+  fallback regex cannot parse a `-Portrait` name — verified against the real
+  CLI, `-q 1080p60-Portrait` silently downloads the *landscape* rendition,
+  exit code 0 and no warning, so a prettier name of our own would hand people
+  the wrong video and call it a success. Identical duplicates are collapsed;
+  the survivor keeps upstream's name.
 - **The render options are bounds-checked**, the way §5's trim already is. A
   render is the second step of its job, so a `0` width reaches FFmpeg only
   after the chat download has finished.
