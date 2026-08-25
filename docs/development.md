@@ -163,11 +163,20 @@ machines. They are not style preferences.
   traceable to an exact upstream commit. Surface that string in the About box.
 
 **Secrets**
-- Never commit `.p12`, `.p8`, provisioning profiles, or Team IDs. CI reads them
-  from repository secrets; local builds read them from the keychain.
-- In particular, `DEVELOPMENT_TEAM` never goes in the pbxproj. It lives in the
-  gitignored `Config/Local.xcconfig`, pulled in via an optional include from
-  `Config/Shared.xcconfig` so a fresh clone still builds (unsigned). Xcode's
+- Never commit `.p12`, `.p8`, or provisioning profiles. CI reads the signing
+  certificate and the notary key from repository secrets; local builds read
+  them from the keychain.
+- **A Team ID is not a secret**, and this file states one. It is embedded in
+  every binary we ship — `codesign -dv` on any distributed app prints it — so
+  guarding it is theatre, and the rule that used to say otherwise was already
+  contradicted by this file and by `docs/signing.md`. CI passes it as the
+  repository *variable* `DEVELOPMENT_TEAM`; variables are the right primitive
+  for config that is merely per-environment.
+- `DEVELOPMENT_TEAM` still never goes in the pbxproj, for a different reason:
+  it is per-developer, not per-project. It lives in the gitignored
+  `Config/Local.xcconfig`, pulled in via an optional include from
+  `Config/Shared.xcconfig`, so a fresh clone still builds (unsigned) and a
+  contributor signing with their own team never edits a tracked file. Xcode's
   signing editor will happily write the team back into the project file —
   check the diff before committing pbxproj changes.
 
