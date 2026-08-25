@@ -112,9 +112,23 @@ public struct JobTemplate: Sendable {
   /// pairing the chat file is an intermediate — the user asked for a video,
   /// not a chat log — so its format is ours to pick, not theirs. A user who
   /// wants HTML chat asks for a chat job.
+  ///
+  /// The destination follows the format. Rewriting one without the other
+  /// delivered JSON bytes inside a file called `… - chat.html`, which is
+  /// worse than either honest outcome: the extension is the only thing that
+  /// tells the user — or Finder, or the next program to open it — what is
+  /// actually in there. Intake never hit this because it derives the
+  /// extension from `deliveredChatFormat` after the same override, but
+  /// `JobTemplate` is public library surface and a caller composing its own
+  /// template gets no such protection.
   private static func renderInput(_ request: ChatRequest) -> ChatRequest {
     var request = request
     request.format = .json
+    if let destination = request.destination,
+       destination.pathExtension.lowercased() != "json"
+    {
+      request.destination = destination.deletingPathExtension().appendingPathExtension("json")
+    }
     return request
   }
 }

@@ -94,7 +94,7 @@ struct JobTemplateTests {
     }
   }
 
-  @Test func chatAndRenderMakesTheRenderDependOnTheChatDownloadAndKeepsTheDestination() {
+  @Test func chatAndRenderMakesTheRenderDependOnTheChatDownload() {
     let job = makeJob(JobTemplate(chat: chat, render: render))
     #expect(job.steps.count == 2)
     #expect(job.steps[0].dependsOn == nil)
@@ -103,8 +103,76 @@ struct JobTemplateTests {
       Issue.record("expected a chat download step")
       return
     }
-    #expect(request.destination == chat.destination)
     #expect(request.videoID == chat.videoID)
+    // Same folder and same base name — only the extension moves, to match the
+    // format the pairing forced.
+    #expect(request.destination?.deletingPathExtension()
+      == chat.destination?.deletingPathExtension())
+  }
+
+  /// A render pairing forces the chat download to JSON, so the file it
+  /// delivers has to be *named* JSON too. Leaving the caller's `.html` path
+  /// alone wrote JSON bytes into a file called `chat.html` — the extension is
+  /// the only thing telling the user, or Finder, what is actually in there.
+  @Test func aRenderPairingRewritesTheChatDestinationToMatchTheForcedFormat() {
+    let job = makeJob(JobTemplate(chat: chat, render: render))
+    guard case .downloadChat(let request) = job.steps[0].kind else {
+      Issue.record("expected a chat download step")
+      return
+    }
+    #expect(chat.destination?.pathExtension == "html", "the fixture must start out non-JSON")
+    #expect(request.format == .json)
+    #expect(request.destination == URL(filePath: "/tmp/chat.json"))
+  }
+
+  @Test func aRenderPairingLeavesAnAlreadyJsonChatDestinationAlone() {
+    let jsonChat = ChatRequest(
+      videoID: "2844548319", format: .json, destination: URL(filePath: "/tmp/chat.json"))
+    let job = makeJob(JobTemplate(chat: jsonChat, render: render))
+    guard case .downloadChat(let request) = job.steps[0].kind else {
+      Issue.record("expected a chat download step")
+      return
+    }
+    #expect(request.destination == jsonChat.destination)
+  }
+
+  /// A base name with a dot in it — a stream title like `v1.5 speedrun` —
+  /// must lose only its real extension, not everything after the first dot.
+  @Test func rewritingTheChatDestinationKeepsDotsInsideTheName() {
+    let dottedChat = ChatRequest(
+      videoID: "2844548319",
+      format: .html,
+      destination: URL(filePath: "/tmp/leighxp - v1.5 speedrun - chat.html"))
+    let job = makeJob(JobTemplate(chat: dottedChat, render: render))
+    guard case .downloadChat(let request) = job.steps[0].kind else {
+      Issue.record("expected a chat download step")
+      return
+    }
+    #expect(request.destination
+      == URL(filePath: "/tmp/leighxp - v1.5 speedrun - chat.json"))
+  }
+
+  /// Chat off with render on: there is no delivered file, so there is no
+  /// destination to rewrite and none to invent.
+  @Test func aRenderPairingWithNoChatDeliveryStillHasNoDestination() {
+    let job = makeJob(JobTemplate(render: render))
+    guard case .downloadChat(let request) = job.steps[0].kind else {
+      Issue.record("expected the implied chat download first")
+      return
+    }
+    #expect(request.destination == nil)
+  }
+
+  /// The rewrite belongs to the render pairing alone. A chat job on its own
+  /// keeps whatever the caller asked for, extension included.
+  @Test func aChatDownloadWithNoRenderKeepsItsDestinationExactly() {
+    let job = makeJob(JobTemplate(chat: chat))
+    guard case .downloadChat(let request) = job.steps[0].kind else {
+      Issue.record("expected a chat download step")
+      return
+    }
+    #expect(request.format == .html)
+    #expect(request.destination == chat.destination)
   }
 
   /// The combination the enum could not express at all: video plus chat, but
@@ -288,9 +356,9 @@ struct JobTemplateTests {
     }
     // The render pairing forces JSON — `chat`'s fixture format is `.html`, so
     // this genuinely exercises the override rather than coinciding with it —
-    // but does not touch the destination the caller already asked for.
+    // and the destination follows the format rather than staying `.html`.
     #expect(request.format == .json)
-    #expect(request.destination == chat.destination)
+    #expect(request.destination == URL(filePath: "/tmp/chat.json"))
   }
 
   /// Documented rather than merely permitted: intake makes this unreachable
