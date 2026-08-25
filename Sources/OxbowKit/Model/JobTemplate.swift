@@ -65,7 +65,7 @@ public struct JobTemplate: Sendable {
     }
 
     if let render, let chatStep {
-      steps.append(Step(id: nextStepID(), kind: .renderChat(render), dependsOn: chatStep.id))
+      steps.append(Step(id: nextStepID(), kind: .renderChat(render), dependsOn: [chatStep.id]))
     }
 
     return Job(id: id, created: created, title: title, steps: steps)

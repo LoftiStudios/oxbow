@@ -661,12 +661,9 @@ public actor QueueEngine {
     case .renderChat: "render.mp4"
     }
 
-    // Guaranteed non-nil when a render runs: `Scheduler.admissible` only
-    // admits a step whose `dependsOn` is `.done`, and `.done` is only
-    // reachable via `.succeeded(artifact:)`. No defensive branch here — the
-    // `?? ""` fallback in `ArgumentBuilder` is what covers a wiring bug, not
-    // this.
-    let input = step.dependsOn.flatMap { dependency in
+    // Order-preserving: `Step.dependsOn` is ordered and the argument builder
+    // reads these positionally.
+    let inputs = step.dependsOn.compactMap { dependency in
       job.steps.first { $0.id == dependency }?.artifact
     }
 
@@ -674,7 +671,7 @@ public actor QueueEngine {
       stepTempDirectory: stepDirectory,
       outputFile: artifacts.appending(path: name),
       ffmpegPath: configuration.ffmpegPath,
-      inputArtifact: input,
+      inputArtifacts: inputs,
       log: StepLog(fileURL: configuration.workspace.logFile(job: job.id, step: step.id)))
   }
 

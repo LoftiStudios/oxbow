@@ -12,7 +12,7 @@ struct SchedulerTransitionTests {
   private var chatThenRender: [Job] {
     [Build.job(1,
       Build.network(1, .running),
-      Build.compute(2, .queued, dependsOn: Build.stepID(1)))]
+      Build.compute(2, .queued, dependsOn: [Build.stepID(1)]))]
   }
 
   @Test func successMarksTheStepDoneAndRecordsItsArtifact() {
@@ -95,8 +95,8 @@ struct SchedulerTransitionTests {
   @Test func blockingPropagatesTransitively() {
     var jobs = [Build.job(1,
       Build.network(1, .running),
-      Build.compute(2, .queued, dependsOn: Build.stepID(1)),
-      Build.compute(3, .queued, dependsOn: Build.stepID(2)))]
+      Build.compute(2, .queued, dependsOn: [Build.stepID(1)]),
+      Build.compute(3, .queued, dependsOn: [Build.stepID(2)]))]
 
     Scheduler.complete(Build.stepID(1), with: .cancelled, in: &jobs)
 
@@ -110,7 +110,7 @@ struct SchedulerTransitionTests {
     var jobs = [Build.job(1,
       Build.network(9, .done),                                    // succeeded sibling
       Build.network(1, .failed(StepFailure(kind: .noArtifact, summary: "x"))),
-      Build.compute(2, .blocked, dependsOn: Build.stepID(1)))]
+      Build.compute(2, .blocked, dependsOn: [Build.stepID(1)]))]
 
     Scheduler.retry(Build.stepID(1), in: &jobs)
 
@@ -136,7 +136,7 @@ struct SchedulerTransitionTests {
   @Test func admissionResumesOnIndependentWorkAfterAFailure() {
     var jobs = [Build.job(1,
       Build.network(1, .running),
-      Build.compute(2, .queued, dependsOn: Build.stepID(1)),
+      Build.compute(2, .queued, dependsOn: [Build.stepID(1)]),
       Build.compute(3, .queued))]                                  // independent render
 
     Scheduler.complete(Build.stepID(1), with: .failed(
@@ -169,7 +169,7 @@ struct SchedulerTransitionTests {
   @Test func retryingACancelledStepRequeuesIt() {
     var jobs = [Build.job(1,
       Build.network(1, .cancelled),
-      Build.compute(2, .blocked, dependsOn: Build.stepID(1)))]
+      Build.compute(2, .blocked, dependsOn: [Build.stepID(1)]))]
 
     Scheduler.retry(Build.stepID(1), in: &jobs)
 
@@ -181,7 +181,7 @@ struct SchedulerTransitionTests {
   @Test func cancellingARunningStepCancelsIt() {
     var jobs = [Build.job(1,
       Build.network(1, .running),
-      Build.compute(2, .queued, dependsOn: Build.stepID(1)))]
+      Build.compute(2, .queued, dependsOn: [Build.stepID(1)]))]
 
     Scheduler.cancel(Build.stepID(1), in: &jobs)
 

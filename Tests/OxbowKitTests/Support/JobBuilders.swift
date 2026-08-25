@@ -12,7 +12,7 @@ enum Build {
   }
 
   /// A `.network` step — any of the download verbs contends the same way.
-  static func network(_ n: Int, _ status: StepStatus = .queued, dependsOn: StepID? = nil) -> Step {
+  static func network(_ n: Int, _ status: StepStatus = .queued, dependsOn: [StepID] = []) -> Step {
     Step(
       id: stepID(n),
       kind: .downloadChat(ChatRequest(videoID: "v", format: .json)),
@@ -21,7 +21,7 @@ enum Build {
   }
 
   /// A `.compute` step.
-  static func compute(_ n: Int, _ status: StepStatus = .queued, dependsOn: StepID? = nil) -> Step {
+  static func compute(_ n: Int, _ status: StepStatus = .queued, dependsOn: [StepID] = []) -> Step {
     Step(
       id: stepID(n),
       kind: .renderChat(RenderRequest(destination: URL(filePath: "/tmp/o.mp4"))),

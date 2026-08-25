@@ -10,7 +10,7 @@ struct ArgumentBuilderTests {
       stepTempDirectory: URL(filePath: "/tmp/job/step"),
       outputFile: URL(filePath: "/tmp/job/out.mp4"),
       ffmpegPath: URL(filePath: "/Apps/Oxbow.app/Contents/MacOS/ffmpeg"),
-      inputArtifact: URL(filePath: "/tmp/job/chat.json"))
+      inputArtifacts: [URL(filePath: "/tmp/job/chat.json")])
   }
 
   private func args(_ kind: StepKind) -> [String] {

@@ -29,12 +29,12 @@ struct SchedulerAdmissionTests {
   }
 
   @Test func doesNotAdmitAStepWhoseDependencyIsUnfinished() {
-    let jobs = [Build.job(1, Build.network(1), Build.compute(2, dependsOn: Build.stepID(1)))]
+    let jobs = [Build.job(1, Build.network(1), Build.compute(2, dependsOn: [Build.stepID(1)]))]
     #expect(Scheduler.admissible(jobs: jobs, running: []) == [Build.stepID(1)])
   }
 
   @Test func admitsAStepOnceItsDependencyIsDone() {
-    let jobs = [Build.job(1, Build.network(1, .done), Build.compute(2, dependsOn: Build.stepID(1)))]
+    let jobs = [Build.job(1, Build.network(1, .done), Build.compute(2, dependsOn: [Build.stepID(1)]))]
     #expect(Scheduler.admissible(jobs: jobs, running: []) == [Build.stepID(2)])
   }
 
@@ -59,7 +59,7 @@ struct SchedulerAdmissionTests {
     let jobs = [Build.job(1,
       Build.network(1),                                    // video, independent
       chatFailed,                                          // chat, failed
-      Build.compute(3, .blocked, dependsOn: Build.stepID(2)))]
+      Build.compute(3, .blocked, dependsOn: [Build.stepID(2)]))]
 
     #expect(Scheduler.admissible(jobs: jobs, running: []) == [Build.stepID(1)])
   }

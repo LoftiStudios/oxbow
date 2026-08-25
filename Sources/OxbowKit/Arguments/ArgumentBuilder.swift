@@ -61,7 +61,7 @@ public enum ArgumentBuilder {
 
     case .renderChat(let request):
       var args = ["chatrender", "--banner=false"] + collision
-      args += ["-i", context.inputArtifact?.path ?? ""]
+      args += ["-i", context.inputArtifacts.first?.path ?? ""]
       args += ["-o", context.outputFile.path]
       args += ["--temp-path", context.stepTempDirectory.path]
       args += ["--ffmpeg-path", context.ffmpegPath.path]

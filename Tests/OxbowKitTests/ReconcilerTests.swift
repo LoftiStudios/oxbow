@@ -51,7 +51,7 @@ struct ReconcilerTests {
   @Test func finishedJobsAreNeverRequeued() {
     var chat = Build.network(1, .done)
     chat.artifact = URL(filePath: "/tmp/gone/chat.json")
-    var render = Build.compute(2, .done, dependsOn: Build.stepID(1))
+    var render = Build.compute(2, .done, dependsOn: [Build.stepID(1)])
     render.artifact = URL(filePath: "/Users/me/Movies/render.mp4")
 
     let out = Reconciler.reconcile([Build.job(1, chat, render)]) { _ in false }
@@ -68,7 +68,7 @@ struct ReconcilerTests {
     var chat = Build.network(1, .done)
     chat.artifact = URL(filePath: "/tmp/gone/chat.json")
     let render = Build.compute(2, .failed(StepFailure(kind: .noArtifact, summary: "no")),
-      dependsOn: Build.stepID(1))
+      dependsOn: [Build.stepID(1)])
 
     let out = Reconciler.reconcile([Build.job(1, chat, render)]) { _ in false }
 

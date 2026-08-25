@@ -39,7 +39,7 @@ struct JobTemplateTests {
   @Test func mediaOnlyProducesOneIndependentStep() {
     let job = makeJob(JobTemplate(media: .video(video)))
     #expect(job.steps.count == 1)
-    #expect(job.steps[0].dependsOn == nil)
+    #expect(job.steps[0].dependsOn.isEmpty)
     guard case .downloadVideo(let request) = job.steps[0].kind else {
       Issue.record("expected a video download step")
       return
@@ -50,7 +50,7 @@ struct JobTemplateTests {
   @Test func clipMediaProducesADownloadClipStep() {
     let job = makeJob(JobTemplate(media: .clip(clip)))
     #expect(job.steps.count == 1)
-    #expect(job.steps[0].dependsOn == nil)
+    #expect(job.steps[0].dependsOn.isEmpty)
     guard case .downloadClip(let request) = job.steps[0].kind else {
       Issue.record("expected a clip download step")
       return
@@ -62,7 +62,7 @@ struct JobTemplateTests {
     let html = ChatRequest(videoID: "2844548319", format: .html)
     let job = makeJob(JobTemplate(chat: html))
     #expect(job.steps.count == 1)
-    #expect(job.steps[0].dependsOn == nil)
+    #expect(job.steps[0].dependsOn.isEmpty)
     guard case .downloadChat(let request) = job.steps[0].kind else {
       Issue.record("expected a chat download step")
       return
@@ -80,14 +80,14 @@ struct JobTemplateTests {
   @Test func renderOnlyImpliesAChatStepForcedToJsonWithNoDestination() {
     let job = makeJob(JobTemplate(render: render))
     #expect(job.steps.count == 2)
-    #expect(job.steps[0].dependsOn == nil)
+    #expect(job.steps[0].dependsOn.isEmpty)
     guard case .downloadChat(let request) = job.steps[0].kind else {
       Issue.record("expected the implied chat download to come first")
       return
     }
     #expect(request.format == .json)
     #expect(request.destination == nil)
-    #expect(job.steps[1].dependsOn == job.steps[0].id)
+    #expect(job.steps[1].dependsOn == [job.steps[0].id])
     guard case .renderChat = job.steps[1].kind else {
       Issue.record("expected the render step to come second")
       return
@@ -97,8 +97,8 @@ struct JobTemplateTests {
   @Test func chatAndRenderMakesTheRenderDependOnTheChatDownload() {
     let job = makeJob(JobTemplate(chat: chat, render: render))
     #expect(job.steps.count == 2)
-    #expect(job.steps[0].dependsOn == nil)
-    #expect(job.steps[1].dependsOn == job.steps[0].id)
+    #expect(job.steps[0].dependsOn.isEmpty)
+    #expect(job.steps[1].dependsOn == [job.steps[0].id])
     guard case .downloadChat(let request) = job.steps[0].kind else {
       Issue.record("expected a chat download step")
       return
@@ -180,8 +180,8 @@ struct JobTemplateTests {
   @Test func mediaAndChatWithNoRenderAreTwoIndependentSteps() {
     let job = makeJob(JobTemplate(media: .video(video), chat: chat))
     #expect(job.steps.count == 2)
-    #expect(job.steps[0].dependsOn == nil)
-    #expect(job.steps[1].dependsOn == nil)
+    #expect(job.steps[0].dependsOn.isEmpty)
+    #expect(job.steps[1].dependsOn.isEmpty)
     guard case .downloadVideo = job.steps[0].kind else {
       Issue.record("expected the video download to come first")
       return
@@ -208,7 +208,7 @@ struct JobTemplateTests {
   @Test func mediaAndRenderWithNoChatDeliveryMakesTheRenderDependOnTheImpliedChatNotTheMedia() {
     let job = makeJob(JobTemplate(media: .video(video), render: render))
     #expect(job.steps.count == 3)
-    #expect(job.steps[0].dependsOn == nil, "video download is independent")
+    #expect(job.steps[0].dependsOn.isEmpty, "video download is independent")
 
     guard case .downloadVideo = job.steps[0].kind else {
       Issue.record("expected the video download first")
@@ -218,13 +218,13 @@ struct JobTemplateTests {
       Issue.record("expected the implied chat download second")
       return
     }
-    #expect(job.steps[1].dependsOn == nil, "the implied chat download is independent of the video")
+    #expect(job.steps[1].dependsOn.isEmpty, "the implied chat download is independent of the video")
     #expect(chatRequest.videoID == video.videoID, "the implied chat should target the same VOD as the video")
     #expect(chatRequest.format == .json)
     #expect(chatRequest.destination == nil)
 
-    #expect(job.steps[2].dependsOn == job.steps[1].id, "render depends on the chat")
-    #expect(job.steps[2].dependsOn != job.steps[0].id, "render must not depend on the video")
+    #expect(job.steps[2].dependsOn == [job.steps[1].id], "render depends on the chat")
+    #expect(job.steps[2].dependsOn != [job.steps[0].id], "render must not depend on the video")
   }
 
   /// A trimmed video must not get chat rendered against the full VOD: the
@@ -299,7 +299,7 @@ struct JobTemplateTests {
     #expect(chatRequest.videoID == clip.clipSlug)
     #expect(chatRequest.format == .json)
     #expect(chatRequest.destination == nil)
-    #expect(job.steps[2].dependsOn == job.steps[1].id, "render depends on the chat")
+    #expect(job.steps[2].dependsOn == [job.steps[1].id], "render depends on the chat")
   }
 
   /// The clip counterpart to `mediaAndChatWithNoRenderAreTwoIndependentSteps`:
@@ -309,8 +309,8 @@ struct JobTemplateTests {
   @Test func clipMediaAndChatWithNoRenderAreTwoIndependentSteps() {
     let job = makeJob(JobTemplate(media: .clip(clip), chat: chat))
     #expect(job.steps.count == 2)
-    #expect(job.steps[0].dependsOn == nil)
-    #expect(job.steps[1].dependsOn == nil)
+    #expect(job.steps[0].dependsOn.isEmpty)
+    #expect(job.steps[1].dependsOn.isEmpty)
     guard case .downloadClip = job.steps[0].kind else {
       Issue.record("expected the clip download to come first")
       return
@@ -345,10 +345,10 @@ struct JobTemplateTests {
   @Test func mediaChatAndRenderShareTheSameDependencyStructure() {
     let job = makeJob(JobTemplate(media: .video(video), chat: chat, render: render))
     #expect(job.steps.count == 3)
-    #expect(job.steps[0].dependsOn == nil, "video download is independent")
-    #expect(job.steps[1].dependsOn == nil, "chat download is independent")
-    #expect(job.steps[2].dependsOn == job.steps[1].id, "render depends on the chat")
-    #expect(job.steps[2].dependsOn != job.steps[0].id)
+    #expect(job.steps[0].dependsOn.isEmpty, "video download is independent")
+    #expect(job.steps[1].dependsOn.isEmpty, "chat download is independent")
+    #expect(job.steps[2].dependsOn == [job.steps[1].id], "render depends on the chat")
+    #expect(job.steps[2].dependsOn != [job.steps[0].id])
 
     guard case .downloadChat(let request) = job.steps[1].kind else {
       Issue.record("expected the chat download second")
