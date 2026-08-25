@@ -41,6 +41,56 @@ struct SchedulerTransitionTests {
     #expect(status(jobs, 2) == .blocked)
   }
 
+  /// **Retrying is job-level, because cancelling is.**
+  ///
+  /// `cancel(job:)` settles *every* unfinished step as `.cancelled`, so
+  /// retrying only the first one would requeue step 1 and leave the rest
+  /// cancelled — the job would run its first step and then sit there reading
+  /// as cancelled forever, with nothing left that could move it.
+  @Test func retryingACancelledJobRequeuesEveryCancelledStep() {
+    var jobs = chatThenRender
+    Scheduler.cancel(job: Build.jobID(1), in: &jobs)
+    #expect(status(jobs, 1) == .cancelled, "precondition")
+    #expect(status(jobs, 2) == .cancelled, "precondition")
+
+    Scheduler.retry(job: Build.jobID(1), in: &jobs)
+
+    #expect(status(jobs, 1) == .queued)
+    #expect(status(jobs, 2) == .queued)
+  }
+
+  /// A failed job's dependents are `.blocked` rather than cancelled, and
+  /// retrying the step that failed already unblocks them. Job-level retry has
+  /// to reach the same end state by the same route, not double-queue them.
+  @Test func retryingAFailedJobRequeuesTheFailureAndUnblocksItsDependents() {
+    var jobs = chatThenRender
+    Scheduler.complete(
+      Build.stepID(1),
+      with: .failed(StepFailure(kind: .noArtifact, summary: "no artifact")),
+      in: &jobs)
+
+    Scheduler.retry(job: Build.jobID(1), in: &jobs)
+
+    #expect(status(jobs, 1) == .queued)
+    #expect(status(jobs, 2) == .queued)
+  }
+
+  /// Successful steps are never re-run. Retry is "start the parts that did not
+  /// finish", not "start over" — re-downloading a 3GB VOD because its chat
+  /// render failed would be a very expensive misunderstanding.
+  @Test func retryingAJobLeavesItsFinishedStepsAlone() {
+    var jobs = chatThenRender
+    let artifact = URL(filePath: "/tmp/chat.json")
+    Scheduler.complete(Build.stepID(1), with: .succeeded(artifact: artifact), in: &jobs)
+    Scheduler.complete(Build.stepID(2), with: .cancelled, in: &jobs)
+
+    Scheduler.retry(job: Build.jobID(1), in: &jobs)
+
+    #expect(status(jobs, 1) == .done)
+    #expect(jobs[0].steps[0].artifact == artifact)
+    #expect(status(jobs, 2) == .queued)
+  }
+
   /// Blocking must reach a dependent's dependents, not just direct children.
   @Test func blockingPropagatesTransitively() {
     var jobs = [Build.job(1,
