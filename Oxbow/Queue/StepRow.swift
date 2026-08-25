@@ -10,7 +10,6 @@ import OxbowKit
 /// job above them instead of starting at their own arbitrary indent.
 struct StepRow: View {
   let step: Step
-  let log: (StepID) async -> String?
   let onRetry: () -> Void
 
   var body: some View {
@@ -29,7 +28,7 @@ struct StepRow: View {
         RetryButton(step: step, action: onRetry)
       }
 
-      StepDetail(step: step, log: log)
+      StepDetail(step: step)
         .padding(.leading, QueueMetrics.contentIndent)
     }
     .padding(.vertical, 2)
@@ -73,9 +72,16 @@ struct RetryButton: View {
 
 /// A step's failure message or its progress line, whichever applies —
 /// the same derivation wherever a step is drawn.
+///
+/// **No log disclosure here.** It used to carry one, from before Get Info
+/// existed and the helper's output had nowhere else to live. A queue row's job
+/// is status at a glance, and the one-line summary below a failed step is that;
+/// the full output is depth, and depth belongs in the window built for it. The
+/// disclosure had also stopped responding once the list became selectable,
+/// which is a good reason to stop rather than to start fighting the row's
+/// selection gesture for the click.
 struct StepDetail: View {
   let step: Step
-  let log: (StepID) async -> String?
 
   var body: some View {
     if case .failed(let failure) = step.status {
@@ -84,13 +90,8 @@ struct StepDetail: View {
         .foregroundStyle(.red)
         .textSelection(.enabled)
         .fixedSize(horizontal: false, vertical: true)
-      StepLogDisclosure(step: step, log: log, failure: failure)
     } else if step.status == .running {
-      ProgressLine(progress: step.progress)
-      // Offered while running too, not only on failure: a helper that has
-      // finished its work and hung still reads as `.running`, and its last
-      // few log lines are the only thing that says so.
-      StepLogDisclosure(step: step, log: log, failure: nil)
+      ProgressLine(progress: step.progress, phases: StepPhases.expected(for: step.kind))
     }
   }
 }
@@ -154,11 +155,19 @@ struct StepLogDisclosure: View {
 /// The progress bar plus its caption, shared by job and step rows.
 struct ProgressLine: View {
   let progress: StepProgress
+  /// The phases this step walks through, when we know them. A segmented bar
+  /// needs them; without them this falls back to the single bar, which is
+  /// still right for a step whose phases we cannot name.
+  var phases: StepPhases?
 
   var body: some View {
     let display = ProgressDisplay(progress: progress)
-    VStack(alignment: .leading, spacing: 2) {
-      if display.isIndeterminate {
+    let segmented = phases.flatMap { $0.index(matching: progress) != nil ? $0 : nil }
+
+    VStack(alignment: .leading, spacing: 3) {
+      if let segmented {
+        PhaseProgressBar(phases: segmented, progress: progress)
+      } else if display.isIndeterminate {
         ProgressView().progressViewStyle(.linear)
       } else {
         ProgressView(value: display.fraction ?? 0)
@@ -166,7 +175,9 @@ struct ProgressLine: View {
 
       HStack(spacing: 6) {
         if let phase = display.phase { Text(phase) }
-        if let counter = display.counter { Text(counter) }
+        // Redundant once the segments are on screen: they already say which
+        // of how many, and say it in the phase's own name.
+        if segmented == nil, let counter = display.counter { Text(counter) }
         if let remaining = display.remaining { Text(remaining) }
       }
       .font(.caption)
@@ -185,7 +196,6 @@ struct ProgressLine: View {
           videoID: "1", quality: "", destination: URL(filePath: "/tmp/a.mp4"))),
         status: .running,
         progress: StepProgress(phase: "Downloading", fraction: 0.42, index: 2, total: 5)),
-      log: { _ in "[STATUS] - Downloading 42% [2/5]" },
       onRetry: {})
   }
   .frame(width: 520, height: 200)
@@ -201,7 +211,6 @@ struct ProgressLine: View {
           kind: .exited(code: 1),
           summary: "The chat renderer exited with code 1.",
           detail: "Unrecognized option 'crf'."))),
-      log: { _ in "" },
       onRetry: {})
   }
   .frame(width: 520, height: 200)

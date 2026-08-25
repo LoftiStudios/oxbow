@@ -75,7 +75,6 @@ struct QueueView: View {
         ForEach(controller.jobs) { job in
           JobRow(
             job: job,
-            log: { await controller.log(for: $0) },
             onCancel: { Task { await controller.cancel(job: job.id) } },
             onRetryJob: { Task { await controller.retry(job: job.id) } },
             onRetryStep: { step in Task { await controller.retry(step: step) } })

@@ -197,9 +197,29 @@ private struct StepInfoRow: View {
           .foregroundStyle(.secondary)
       }
 
-      StepDetail(step: step, log: log)
-        .padding(.leading, QueueMetrics.contentIndent)
+      VStack(alignment: .leading, spacing: 4) {
+        StepDetail(step: step)
+        // The helper's own output, which the queue row no longer carries.
+        // This is the window it was always really for.
+        if showsLog {
+          StepLogDisclosure(step: step, log: log, failure: failure)
+        }
+      }
+      .padding(.leading, QueueMetrics.contentIndent)
     }
+  }
+
+  /// A finished step has no log to show: its workspace, log included, goes
+  /// with it when the job succeeds. Offering an empty disclosure would be a
+  /// control that can only ever say it has nothing.
+  private var showsLog: Bool {
+    if case .failed = step.status { return true }
+    return step.status == .running
+  }
+
+  private var failure: StepFailure? {
+    if case .failed(let failure) = step.status { return failure }
+    return nil
   }
 
   private var status: String {

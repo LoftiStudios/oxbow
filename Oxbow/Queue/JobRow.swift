@@ -13,11 +13,6 @@ import OxbowKit
 /// the columns is what makes a list of mixed states line up.
 struct JobRow: View {
   let job: Job
-  /// The tail of a step's captured helper output. A closure rather than the
-  /// `QueueController` itself: it is the only thing these rows ever asked the
-  /// controller for, and taking just that makes the row previewable and
-  /// testable without an engine behind it.
-  let log: (StepID) async -> String?
   let onCancel: () -> Void
   /// Restarts the whole job. Distinct from `onRetryStep` because cancelling
   /// settles *every* unfinished step, so a row-level Retry that only restarted
@@ -52,13 +47,13 @@ struct JobRow: View {
         header()
 
         if summarisesRepresentativeStep, let representative {
-          StepDetail(step: representative, log: log)
+          StepDetail(step: representative)
             .padding(.leading, QueueMetrics.contentIndent)
         }
 
         if isExpanded {
           ForEach(job.steps) { step in
-            StepRow(step: step, log: log) { onRetryStep(step.id) }
+            StepRow(step: step) { onRetryStep(step.id) }
               .padding(.leading, QueueMetrics.contentIndent)
           }
         }
@@ -144,7 +139,7 @@ struct JobRow: View {
 #Preview("Mixed states") {
   List {
     ForEach(JobRowPreviewData.jobs) { job in
-      JobRow(job: job, log: { _ in "…" }, onCancel: {}, onRetryJob: {}, onRetryStep: { _ in })
+      JobRow(job: job, onCancel: {}, onRetryJob: {}, onRetryStep: { _ in })
     }
   }
   .frame(width: 560, height: 320)
@@ -154,7 +149,6 @@ struct JobRow: View {
   List {
     JobRow(
       job: JobRowPreviewData.multiStep,
-      log: { _ in "[STATUS] - Rendering 42%" },
       onCancel: {},
       onRetryJob: {},
       onRetryStep: { _ in })
