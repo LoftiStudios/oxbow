@@ -7,6 +7,11 @@ struct OxbowApp: App {
   @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
   @State private var content: QueueContent?
 
+  /// Read once. Nothing in it can change while the app runs — it is all
+  /// stamped into the bundle at build time — and both the menu item and the
+  /// window title need the name.
+  private let about = AboutInfo.main
+
   var body: some Scene {
     // `Window`, not `WindowGroup`. The engine is built once at launch
     // (design §2) and the app is single-window (design §4), and a
@@ -38,6 +43,14 @@ struct OxbowApp: App {
     .defaultSize(width: 720, height: 480)
     .windowResizability(.contentMinSize)
     .commands {
+      // Replace, not add. The stock item calls
+      // `orderFrontStandardAboutPanel`, whose one small credits scroller has
+      // no room for the licence text this app is obliged to make reachable
+      // (see `AboutView`). Leaving it in place would put two About items in
+      // the menu, one of them insufficient.
+      CommandGroup(replacing: .appInfo) {
+        AboutCommand(applicationName: about.applicationName)
+      }
       // ⌘N is free: the queue is a `Window`, so there is no New Window item to
       // collide with. It opens intake, which is the only thing in this app a
       // person creates. The toolbar `+` in `QueueView` opens the same window —
@@ -97,7 +110,27 @@ struct OxbowApp: App {
     // restored info window would be pointing at a job whose queue has since
     // been reconciled — or removed entirely.
     .restorationBehavior(.disabled)
+
+    // `Window`, so the About box is single-instance for the same reason the
+    // queue and intake are: choosing the menu item twice brings the existing
+    // one forward instead of stacking copies.
+    //
+    // `commandsRemoved()` drops the menu commands this scene would otherwise
+    // contribute. The About box should be reachable only from the menu item,
+    // the way a Mac About box is.
+    Window("About \(about.applicationName)", id: Self.aboutWindowID) {
+      AboutView(info: about)
+    }
+    .windowResizability(.contentSize)
+    .commandsRemoved()
+    .defaultPosition(.center)
+    // Nothing here is worth restoring, and an About box reappearing on launch
+    // is the same unasked-for window intake would be.
+    .restorationBehavior(.disabled)
   }
+
+  /// The id the About menu item opens.
+  static let aboutWindowID = "about"
 
   /// The id `QueueView` and the Downloads menu open Get Info with.
   static let infoWindowID = "info"
@@ -148,6 +181,20 @@ private struct AddDownloadCommand: View {
     Button("Add Download…") { openWindow(id: OxbowApp.intakeWindowID) }
       .keyboardShortcut("n")
       .disabled(!isEnabled)
+  }
+}
+
+/// The Oxbow ▸ About Oxbow item.
+///
+/// A `View` for the same reason `AddDownloadCommand` is one: `openWindow` is
+/// an environment value, and an `App` has no environment to read it from.
+private struct AboutCommand: View {
+  let applicationName: String
+
+  @Environment(\.openWindow) private var openWindow
+
+  var body: some View {
+    Button("About \(applicationName)") { openWindow(id: OxbowApp.aboutWindowID) }
   }
 }
 
