@@ -55,6 +55,16 @@ proven rather than assumed.
 
 ## 2. Intake
 
+> **Note added 2026-08-24, after implementation.** The three-toggle intake
+> described here is built and working, but whether it should stay this general
+> is under review — see `docs/architecture.md` §7, "Narrowing the intake". The
+> leaning is that a chat render in isolation has little value, and that the app
+> should offer roughly *VOD* and *VOD + chat* instead. Nothing here is wrong;
+> it may simply become more opinionated. Read that note before building on the
+> toggles.
+
+
+
 One sheet, in this order:
 
 1. **Paste a link.** VOD or clip; the parser decides which.

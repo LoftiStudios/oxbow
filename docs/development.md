@@ -7,49 +7,47 @@ SwiftUI app that drives a bundled `TwitchDownloaderCLI` helper as a subprocess.
 rationale. This file holds the rules and commands.
 `docs/ffmpeg.md` and `docs/signing.md` hold the two resolved spikes.
 
-**Current state:** the risky infrastructure and the core library are done; no
-app target yet.
+**Current state:** the app works end to end. It downloads a VOD or clip, its
+chat, and a rendered chat video, into files named from the stream's own
+metadata.
 
 - **FFmpeg sourcing: resolved.** `./scripts/build-ffmpeg.sh` produces a verified
   LGPL 2.1+ arm64 binary. See `docs/ffmpeg.md`.
-- **Signing + notarization: resolved and verified end to end.** A bundle with the
-  real helper and FFmpeg was signed, notarized (Accepted first try), stapled,
-  packaged as a DMG, and launched from quarantine spawning both children. See
-  `docs/signing.md`.
-- **Xcode build-phase integration: resolved.** The "Embed & Sign Helpers" Run
-  Script phase (`scripts/embed-helpers.sh`) embeds the helper tree and FFmpeg
-  into `Contents/MacOS` and signs them inside-out; no Copy Files phase exists,
-  so the "Code Sign On Copy" trap cannot occur. The phase skips work when the
-  `build/` sources are unchanged, and building without `build/helper` or
-  `build/ffmpeg` succeeds with a warning so UI work needs no extra toolchains.
-- **Deployment target: macOS 15.** Set deliberately — `@Observable` and the modern
-  SwiftUI surface need 14+, and 15 keeps us on current APIs. `MIN_MACOS` in
-  `scripts/build-ffmpeg.sh` must stay in lockstep with it.
-- **OxbowKit: built and tested.** The task queue, CLI wrapper, and everything
-  under them — job/step model, scheduler, queue engine, argument builder,
-  status-line parser, atomic persistence with load-time reconciliation, and the
-  async process wrapper — live in `Sources/OxbowKit` as a SwiftPM library
-  (Swift 6 language mode). `swift test` runs the whole suite. Design and
-  rationale: `docs/design/task-queue.md`.
-- **Xcode app target: created and wired.** `Oxbow.xcodeproj` at the repo root
-  links OxbowKit as a local package, deployment target 15.0 (lockstep with
-  `MIN_MACOS`), Swift 6 language mode, hardened runtime on. **Not sandboxed for
-  v1** — a deliberate decision recorded in `scripts/entitlements/app.entitlements`:
-  Developer ID distribution doesn't require it, and the verified signing spike
-  ran unsandboxed. `DEVELOPMENT_TEAM` is never committed; it comes from the
-  gitignored `Config/Local.xcconfig` (copy `Config/Local.xcconfig.template`).
-- **CI: running.** `.github/workflows/ci.yml` runs the OxbowKit test suite and
-  an unsigned app build on every PR and push to main. Neither job needs the
-  submodule, .NET, or FFmpeg. `.github/workflows/full-build.yml` covers what
-  that cannot: it checks out the submodule, publishes the helper, builds (or
-  restores from cache) FFmpeg, builds the app with **ad-hoc** signing so the
-  "Embed & Sign Helpers" phase really embeds *and* signs, and asserts the
-  bundle — 205 embedded files, all of `Contents/MacOS` signed, `--deep
-  --strict` clean, helper carrying `allow-jit`. It runs on pushes to main,
-  nightly, and on demand, never per PR. Signed release builds are a later,
-  separate workflow needing cert secrets (`docs/signing.md` §8).
-- Next task: the **queue UI** (the queue is the core abstraction, see
-  Conventions), then the forms.
+- **Signing + notarization: resolved and verified end to end**, including Xcode
+  integration. The "Embed & Sign Helpers" Run Script phase
+  (`scripts/embed-helpers.sh`) embeds the helper tree and FFmpeg into
+  `Contents/MacOS` and signs them inside-out; there is deliberately no Copy
+  Files phase, so the "Code Sign On Copy" trap cannot occur. Building without
+  `build/helper` or `build/ffmpeg` succeeds with a warning, so UI work needs
+  neither the .NET nor the FFmpeg toolchain. See `docs/signing.md`.
+- **Deployment target: macOS 15.** `MIN_MACOS` in `scripts/build-ffmpeg.sh`
+  must stay in lockstep with it.
+- **OxbowKit: built and tested.** Job/step model, scheduler, queue engine,
+  argument builder, status-line parser, atomic persistence with load-time
+  reconciliation, per-step helper logs, and the async process wrapper.
+- **The app: built and working.** Single window, queue list with expandable
+  multi-step jobs, and an intake that takes a VOD or clip link, fetches the
+  video's metadata, and derives filenames from it. Designs live in
+  `docs/design/`.
+
+Verified against the real bundled binaries, not only in tests: a chat + render
+job run to completion, delivering a valid chat JSON and a playable h264 render
+under metadata-derived names. Chat render matters most here — it is the reason
+`docs/architecture.md` §3.5 keeps that part in C#, and our LGPL FFmpeg renders
+it correctly with `h264_videotoolbox`.
+
+**Not verified by anyone clicking it:** nothing in the SwiftUI layer has been
+exercised by hand at the time of writing. `IntakeModel` carries the intake's
+logic and is unit-tested; the views are not.
+
+### Next
+
+UI polish and native feel. The remaining functional gaps are release
+infrastructure — `scripts/build.sh` and `scripts/notarize.sh` still do not
+exist, there is no DMG, no release workflow, and no About box (which the hard
+rules require, since it must surface the FFmpeg licence and the helper's
+`1.56.5+<sha>` version string). The submodule also needs re-pinning to a
+release tag before anything ships.
 
 Local prerequisites, all now in place: .NET 10 SDK (`brew install --cask
 dotnet-sdk`), a `Developer ID Application` certificate for team `M9WJGEJKBF`, and

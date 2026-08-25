@@ -253,6 +253,47 @@ emptier namespace — unchecked).
   profiles; universal means `lipo`-ing them. Skipping Intel halves the signing
   surface and test matrix. Easy to add later.
 
+### Under consideration: narrowing the intake (2026-08-24)
+
+**Not decided. Recorded so it is not silently re-litigated.**
+
+The intake currently offers three independent toggles — Video, Chat, Render
+chat — which compose into every combination the queue can express
+(`docs/design/chat-and-render.md` §2). The leaning is to be more opinionated
+than upstream and offer roughly two shapes instead: *download the VOD*, and
+*download the VOD with its chat rendered alongside* (warned as slow).
+
+The argument: a rendered chat video **in isolation** has little use. It is
+interesting next to the video it belongs to, and hardly at all on its own. A
+Mac app earns its keep by having a view about what people actually want, where
+the CLI's job is to expose every combination. Anyone who genuinely wants a
+standalone chat render can run the CLI; that is not a hard thing to do.
+
+The counter-argument, such as it is: the toggles already exist and work, and
+narrowing removes capability from people who have not asked for it to be
+removed.
+
+Worth noting the cost asymmetry — this direction **deletes** options rather
+than adding them, so it stays cheap for as long as nothing is built on top of
+the current three-toggle shape. It gets more expensive once the UI grows
+around it.
+
+Related, and part of the same thought: **compositing the VOD and the rendered
+chat into one video** for offline viewing. Neither upstream CLI nor the WPF app
+does this. Measured on an M1 Max with real inputs, a side-by-side composite
+runs at **4.79x realtime** with `h264_videotoolbox` — about **75 minutes and
+~22 GB for a six-hour stream**. There is no cheaper path: spatial composition
+changes every pixel, so a full re-encode is unavoidable. Note also that the
+obvious reference implementation uses `libx264`, which we cannot ship.
+
+If that is ever built, one small thing makes it painless and could land
+earlier: **default the chat render's framerate to the selected quality's**, so
+the two videos line up before anything is composited. The framerate is
+derivable from the quality name (`1080p60` → 60). Do **not** take it from the
+m3u8's `FRAME-RATE` attribute — it reports a measured average (57.034 on a
+60 fps VOD) rather than the container's rate, and matching it would introduce
+exactly the drift the change exists to avoid.
+
 ---
 
 ## 8. Upstream relationship
