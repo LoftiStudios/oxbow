@@ -200,6 +200,28 @@ final class IntakeModel {
     return quality.estimatedBytes(over: info.duration)
   }
 
+  /// One row of the quality picker.
+  ///
+  /// The pixel size is shown alongside the name because the name does not
+  /// always imply it. A VOD's `480p30` is 852x480, not 854 or 640; a clip's
+  /// name comes from upstream's `{quality}p{framerate}` and degenerates to
+  /// things like `720p0` on older clips, where the resolution is the only
+  /// legible part. And when a clip carries no bitrate there is no size
+  /// estimate at all, so without it the row would be a bare `720p0-1`.
+  ///
+  /// Here rather than in the view so it can be tested, like every other rule
+  /// the sheet obeys.
+  func label(for quality: StreamQuality) -> String {
+    var label = quality.name
+    if !quality.resolution.isEmpty { label += " · \(quality.resolution)" }
+    // `bytes == 0` is not an estimate of nothing, it is the absence of one:
+    // older clips carry `bitrate: 0` for every rendition, and "about Zero KB"
+    // reads as a fact rather than as a missing input.
+    guard let bytes = estimatedBytes(for: quality), bytes > 0 else { return label }
+    // "about", because it is bitrate x duration and nothing more (§6).
+    return "\(label) — about \(Int64(bytes).formatted(.byteCount(style: .file)))"
+  }
+
   // MARK: - Trim
 
   /// Clips have no trim options, so they are hidden rather than disabled

@@ -127,7 +127,7 @@ struct IntakeSheet: View {
       Picker("Quality", selection: $model.quality) {
         Text("Best available").tag("")
         ForEach(model.qualities, id: \.name) { quality in
-          Text(label(for: quality)).tag(quality.name)
+          Text(model.label(for: quality)).tag(quality.name)
         }
       }
     }
@@ -224,12 +224,6 @@ struct IntakeSheet: View {
     return names.isEmpty ? "No outputs selected." : names.joined(separator: "\n")
   }
 
-  private func label(for quality: StreamQuality) -> String {
-    guard let bytes = model.estimatedBytes(for: quality) else { return quality.name }
-    let size = Int64(bytes).formatted(.byteCount(style: .file))
-    // "about", because it is bitrate x duration and nothing more (§6).
-    return "\(quality.name) — about \(size)"
-  }
 }
 
 /// Hands back the AppKit window hosting this SwiftUI view.

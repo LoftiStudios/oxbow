@@ -391,6 +391,41 @@ struct IntakeModelTests {
     #expect(model.estimatedBytes(for: quality) == nil)
   }
 
+  /// The pixel size is on the row because the name does not always imply it:
+  /// `480p30` is 852x480, not 854 or 640, and a clip's upstream-derived name
+  /// degenerates to things like `720p0`.
+  @Test func aQualityRowNamesItsResolutionAndItsEstimate() async throws {
+    let model = await loadedModel()
+    let quality = try #require(model.qualities.first)
+
+    let label = model.label(for: quality)
+    #expect(label.hasPrefix("1080p60"))
+    #expect(label.contains("1920x1080"))
+    #expect(label.contains("about"), "the estimate is labelled as one (§6)")
+    #expect(label.contains("GB"), "3.6 GB, formatted for the reader")
+  }
+
+  /// Older clips carry `bitrate: 0` for every rendition, so there is no
+  /// estimate to show — and then the resolution is the only thing telling one
+  /// row from the next. A zero is the absence of an estimate, not an estimate
+  /// of nothing, so it is left off rather than printed as "about Zero KB".
+  @Test func aQualityRowWithNoBitrateNamesItsResolutionAndNoEstimate() async throws {
+    let qualities = [StreamQuality(name: "720p0-1", resolution: "1280x720", bitsPerSecond: 0)]
+    let model = await loadedModel(link: Self.clipLink, info: Self.info(qualities: qualities))
+    let quality = try #require(model.qualities.first)
+
+    #expect(model.label(for: quality) == "720p0-1 · 1280x720")
+  }
+
+  /// A rendition Twitch described with neither pixel dimensions nor a usable
+  /// `quality` string: the row is the bare name rather than a dangling
+  /// separator.
+  @Test func aQualityRowWithNoResolutionIsJustTheName() {
+    let model = makeModel()
+    let quality = StreamQuality(name: "audio_only", resolution: "", bitsPerSecond: 0)
+    #expect(model.label(for: quality) == "audio_only")
+  }
+
   // MARK: - Clips (design doc §8)
 
   @Test func aClipTargetHidesTrimOptions() async {
