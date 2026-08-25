@@ -260,7 +260,7 @@ table-driven in tests, and preserves `ParsedLine`'s invariant that only a parser
 ever touches raw text.
 
 **`FFmpegProgressParser`**, a sibling to `StatusLineParser`, and pure the same
-way: no clock, no I/O. `-progress pipe:1` emits repeating blocks of thirteen
+way: no clock, no I/O. `-progress pipe:1` emits repeating blocks of twelve
 `key=value` lines terminated by `progress=continue`, with a final
 `progress=end`. Observed keys, in order:
 
@@ -324,7 +324,7 @@ day earlier.
 
 | Unit | Covered by |
 |---|---|
-| `FFmpegProgressParser` | the thirteen-key block; blocks split mid-chunk; `progress=end`; `speed` -> `remaining`; `speed=0` guarded; `out_time_us=N/A`; missing keys |
+| `FFmpegProgressParser` | the twelve-key block; blocks split mid-chunk; `progress=end`; `speed` -> `remaining`; `speed=0` guarded; `out_time_us=N/A`; missing keys |
 | `ArgumentBuilder` `.composite` | the exact filter graph, `-nostdin`, `-c:a copy`, `0:a:0?`, absence of `+faststart`; the two GPL rules still hold |
 | `Scheduler.admissible` | a two-parent step is not admitted until both parents are `.done` |
 | `Scheduler.retry` | retrying one failed parent does not requeue a step whose other parent is still failed |
