@@ -17,6 +17,19 @@ struct ArgumentBuilderTests {
     ArgumentBuilder.arguments(for: kind, context: context)
   }
 
+  /// Two inputs, in the order a composite consumes them: the video first, the
+  /// chat render second. `ArgumentBuilder` reads them positionally.
+  private var compositeContext: StepContext {
+    StepContext(
+      stepTempDirectory: URL(filePath: "/tmp/job/step"),
+      outputFile: URL(filePath: "/tmp/job/composite.mp4"),
+      ffmpegPath: URL(filePath: "/Apps/Oxbow.app/Contents/MacOS/ffmpeg"),
+      inputArtifacts: [
+        URL(filePath: "/tmp/job/video.mp4"),
+        URL(filePath: "/tmp/job/render.mp4"),
+      ])
+  }
+
   private var video: StepKind {
     .downloadVideo(VideoRequest(
       videoID: "2844548319",
@@ -464,5 +477,62 @@ struct ArgumentBuilderTests {
     #expect(!a.contains("--sharpening"))
     #expect(!a.contains { $0.contains("smartblur") })
     #expect(a.contains { $0.hasPrefix("--input-args=") && $0.contains("unsharp") })
+  }
+
+  @Test func compositeStacksTheChatColumnBesideTheVideo() {
+    let request = CompositeRequest(
+      framerate: 60,
+      bitrateMbps: 8,
+      duration: .seconds(3600),
+      destination: URL(filePath: "/out/stream.mp4"))
+
+    let args = ArgumentBuilder.arguments(for: .composite(request), context: compositeContext)
+
+    #expect(args == [
+      "-nostdin", "-y", "-hide_banner",
+      "-i", "/tmp/job/video.mp4",
+      "-i", "/tmp/job/render.mp4",
+      "-filter_complex",
+      "[0:v]setpts=PTS-STARTPTS[v];"
+        + "[1:v]setpts=PTS-STARTPTS,fps=60[c];"
+        + "[v][c]hstack=inputs=2[out]",
+      "-map", "[out]",
+      "-map", "0:a:0?",
+      "-c:v", "h264_videotoolbox",
+      "-b:v", "8M",
+      "-pix_fmt", "yuv420p",
+      "-c:a", "copy",
+      "-progress", "pipe:1",
+      "-nostats",
+      "-loglevel", "error",
+      "/tmp/job/composite.mp4",
+    ])
+  }
+
+  /// The prototype this replaces carried `shortest=1`, which truncates the
+  /// video to the chat's length whenever a stream goes quiet before it ends.
+  @Test func compositeNeverPassesShortestOrFaststartOrAGPLEncoder() {
+    let request = CompositeRequest(
+      framerate: 30, bitrateMbps: 6, duration: .seconds(60),
+      destination: URL(filePath: "/out/x.mp4"))
+    let context = StepContext(
+      stepTempDirectory: URL(filePath: "/tmp/s"),
+      outputFile: URL(filePath: "/tmp/s/composite.mp4"),
+      ffmpegPath: URL(filePath: "/bin/ffmpeg"),
+      inputArtifacts: [URL(filePath: "/w/v.mp4"), URL(filePath: "/w/r.mp4")])
+    let joined = ArgumentBuilder.arguments(for: .composite(request), context: context)
+      .joined(separator: " ")
+
+    #expect(!joined.contains("shortest"))
+    #expect(!joined.contains("faststart"))
+    #expect(!joined.contains("libx264"))
+    #expect(joined.contains("h264_videotoolbox"))
+  }
+
+  @Test func compositeIsAComputeStep() {
+    let request = CompositeRequest(
+      framerate: 30, bitrateMbps: 6, duration: .seconds(60),
+      destination: URL(filePath: "/out/x.mp4"))
+    #expect(StepKind.composite(request).resource == .compute)
   }
 }

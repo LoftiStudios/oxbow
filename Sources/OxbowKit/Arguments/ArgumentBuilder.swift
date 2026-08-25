@@ -112,6 +112,44 @@ public enum ArgumentBuilder {
           + "-filter_complex \"unsharp=5:5:1.0\""]
       }
       return args
+
+    case .composite(let request):
+      // FFmpeg's own argv, not the CLI's: no verb, no --banner, and the
+      // executable is `ffmpegPath` rather than the helper (QueueEngine.launch).
+      //
+      // Input order is positional and comes from `Step.dependsOn`: [0] is the
+      // video, [1] is the chat render.
+      let video = request.inputPath(context, at: 0)
+      let chat = request.inputPath(context, at: 1)
+      return [
+        "-nostdin", "-y", "-hide_banner",
+        "-i", video,
+        "-i", chat,
+        "-filter_complex",
+        // setpts precedes fps so the rate conversion runs on a zero-based
+        // timeline. No `scale` on either input: the chat is rendered at the
+        // right size and the video is already native.
+        //
+        // No `shortest`: chat renders end at the last message, so a quiet
+        // final stretch would truncate the VIDEO. hstack's default
+        // eof_action=repeat holds the last chat frame instead. Verified.
+        "[0:v]setpts=PTS-STARTPTS[v];"
+          + "[1:v]setpts=PTS-STARTPTS,fps=\(request.framerate)[c];"
+          + "[v][c]hstack=inputs=2[out]",
+        "-map", "[out]",
+        // The `?` makes the audio map optional so a silent VOD does not fail.
+        "-map", "0:a:0?",
+        "-c:v", "h264_videotoolbox",
+        "-b:v", "\(request.bitrateMbps)M",
+        "-pix_fmt", "yuv420p",
+        // VOD audio is already AAC in MP4. Re-encoding it buys nothing.
+        "-c:a", "copy",
+        "-progress", "pipe:1", "-nostats", "-loglevel", "error",
+        // No -movflags +faststart: it rewrites the whole file to relocate the
+        // moov atom, which on a 22 GB output is minutes of disk churn for
+        // HTTP progressive streaming a local file does not need.
+        context.outputFile.path,
+      ]
     }
   }
 

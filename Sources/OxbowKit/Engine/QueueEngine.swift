@@ -659,6 +659,7 @@ public actor QueueEngine {
     case .downloadClip: "clip.mp4"
     case .downloadChat(let request): "chat.\(request.format.rawValue)"
     case .renderChat: "render.mp4"
+    case .composite: "composite.mp4"
     }
 
     // Order-preserving: `Step.dependsOn` is ordered and the argument builder
@@ -688,6 +689,7 @@ public actor QueueEngine {
     case .downloadClip(let request): request.destination
     case .downloadChat(let request): request.destination
     case .renderChat(let request): request.destination
+    case .composite(let request): request.destination
     }
     guard let destination else { return .notApplicable }
 

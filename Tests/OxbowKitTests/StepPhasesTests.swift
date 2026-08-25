@@ -167,4 +167,14 @@ struct StepPhasesTests {
         "unplaced phase \(status.phase ?? "nil")")
     }
   }
+
+  @Test func aCompositeIsOnePhaseThatSimplyFills() throws {
+    let request = CompositeRequest(
+      framerate: 60, bitrateMbps: 8, duration: .seconds(60),
+      destination: URL(filePath: "/out/x.mp4"))
+    let phases = try #require(StepPhases.expected(for: .composite(request)))
+    #expect(phases.phases.count == 1)
+    // The parser stamps this exact phase, so the bar can place a status line.
+    #expect(phases.index(matching: StepProgress(phase: "Compositing")) == 0)
+  }
 }
