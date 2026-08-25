@@ -59,6 +59,9 @@ jobs:
           # to publishing the helper. See the submodule pin policy in
           # docs/development.md.
           submodules: recursive
+          # Full history: scripts/stamp-version.sh counts commits to derive
+          # CFBundleVersion, and the default depth-1 clone counts one.
+          fetch-depth: 0
 
       - name: Toolchain versions
         run: |
@@ -177,6 +180,58 @@ jobs:
           [ "${embedded}" -ge "${lo}" ] && [ "${embedded}" -le "${hi}" ] \
             || fail "embedded file count ${embedded} is outside ${lo}..${hi}. If this is a legitimate change (submodule pin bump, .NET runtime churn), update EXPECTED_EMBEDDED here and the counts in docs/signing.md §2 and §4."
           ok "${embedded} embedded files (helper tree + ffmpeg), expected ~${EXPECTED_EMBEDDED}"
+
+          echo "== LGPL compliance files =="
+          # docs/ffmpeg.md §6: the licence text and the source record ship
+          # with the binary. They live in the bundle, not only in the DMG, so
+          # the About window's buttons still work after the app is dragged
+          # out. embed-helpers.sh stages them; nothing else checks it.
+          for licence in COPYING.LGPLv2.1 FFMPEG-SOURCE.txt; do
+            [ -f "${APP}/Contents/Resources/${licence}" ] \
+              || fail "no Contents/Resources/${licence}. embed-helpers.sh stages this next to the ffmpeg it embeds; its absence means the bundle ships an LGPL binary with no licence text."
+            ok "${licence}"
+          done
+
+          echo "== version stamping =="
+          # scripts/stamp-version.sh writes these into the built Info.plist.
+          # Worth asserting because the ways it fails are silent.
+          plist() { /usr/libexec/PlistBuddy -c "Print :$1" "${APP}/Contents/Info.plist" 2>/dev/null; }
+
+          # Checked separately, and first. A shallow checkout makes the commit
+          # count 1, and it would make the comparison below compare 1 against
+          # 1 and pass — the depth has to be asserted directly or not at all.
+          [ "$(git rev-parse --is-shallow-repository)" = "false" ] \
+            || fail "shallow checkout: every build here would be stamped CFBundleVersion 1. Restore fetch-depth: 0 on actions/checkout."
+          ok "full history"
+
+          # Catches the Stamp Version phase losing its declared
+          # $(TARGET_BUILD_DIR)/$(INFOPLIST_PATH) input, which lets Xcode's own
+          # Info.plist task run afterwards and overwrite CFBundleVersion back
+          # to the CURRENT_PROJECT_VERSION fallback. That reordering is
+          # invisible on a clean build and happens on every incremental one.
+          expected_build="$(git rev-list --count HEAD)"
+          actual_build="$(plist CFBundleVersion)"
+          [ "${actual_build}" = "${expected_build}" ] \
+            || fail "CFBundleVersion is ${actual_build}, expected the commit count ${expected_build}. The Stamp Version phase most likely lost its declared Info.plist input; see scripts/stamp-version.sh."
+          ok "CFBundleVersion ${actual_build} matches the commit count"
+
+          short_version="$(plist CFBundleShortVersionString)"
+          [ -n "${short_version}" ] || fail "no CFBundleShortVersionString"
+          ok "CFBundleShortVersionString ${short_version}"
+
+          # The string that makes this bundle traceable to an exact upstream
+          # commit. This job publishes the helper, so it must be present here
+          # even though it is legitimately absent from a UI-only build.
+          helper_version="$(plist OXHelperVersion)"
+          case "${helper_version}" in
+            *+*) ok "OXHelperVersion ${helper_version}" ;;
+            *) fail "OXHelperVersion is '${helper_version}', expected something like 1.56.5+<sha>. stamp-version.sh reads it from the helper's own --version, which prints to stderr and exits 1." ;;
+          esac
+
+          ffmpeg_version="$(plist OXFFmpegVersion)"
+          [ -n "${ffmpeg_version}" ] \
+            || fail "no OXFFmpegVersion, but an ffmpeg was embedded. stamp-version.sh reads FFMPEG_VERSION from scripts/build-ffmpeg.sh."
+          ok "OXFFmpegVersion ${ffmpeg_version}"
 
           echo "== no executable code under Contents/Resources =="
           while IFS= read -r res; do

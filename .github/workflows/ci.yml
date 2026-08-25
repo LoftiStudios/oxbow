@@ -48,6 +48,14 @@ jobs:
     runs-on: macos-26
     steps:
       - uses: actions/checkout@v5
+        with:
+          # scripts/stamp-version.sh derives CFBundleVersion from the commit
+          # count, and checkout defaults to a depth-1 clone that would report
+          # 1. The script warns when it sees a shallow checkout rather than
+          # stamping a wrong number, so removing this turns into a build
+          # warning rather than a silent bad version — but it still needs to
+          # be here. The `tests` job below builds no bundle and does not.
+          fetch-depth: 0
       - name: Toolchain versions
         run: xcodebuild -version
       # `test` rather than `build`: it compiles the app target AND runs the
