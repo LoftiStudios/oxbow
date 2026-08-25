@@ -21,6 +21,10 @@ actor FakeHelper: HelperProcessing {
   private var isCancelled = false
   private var cancelContinuation: CheckedContinuation<Void, Never>?
 
+  /// Every `Launch` this helper was handed. The only way to observe which
+  /// binary the engine chose for a step, and which output dialect it expected.
+  private(set) var launches: [Launch] = []
+
   init(_ behaviour: Behaviour) { self.behaviour = behaviour }
 
   /// Whether `cancel()` was ever called — i.e. whether a real helper would
@@ -34,6 +38,7 @@ actor FakeHelper: HelperProcessing {
     onOutput: @escaping @Sendable (ParsedLine) async -> Void)
     async throws -> RunResult
   {
+    launches.append(launch)
     await onOutput(.status(StepProgress(phase: "Working", fraction: 0.5)))
     // The narrative output a real helper interleaves with its status lines.
     await onOutput(.log(level: .info, message: "Fetching video info"))

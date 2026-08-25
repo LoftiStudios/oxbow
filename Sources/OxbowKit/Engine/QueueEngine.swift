@@ -348,10 +348,25 @@ public actor QueueEngine {
     // its `isCancelled` flag never resets, so reusing one across steps would
     // have every step after the first killed immediately.
     let process = configuration.makeProcess()
+
+    // A composite runs FFmpeg directly rather than the C# helper, so both the
+    // executable and the stdout dialect follow the step kind.
+    let executable: URL
+    let dialect: OutputDialect
+    switch step.kind {
+    case .composite(let request):
+      executable = configuration.ffmpegPath
+      dialect = .ffmpeg(duration: request.duration)
+    case .downloadVideo, .downloadClip, .downloadChat, .renderChat:
+      executable = configuration.helperExecutable
+      dialect = .helper
+    }
+
     let launch = Launch(
-      executable: configuration.helperExecutable,
+      executable: executable,
       arguments: ArgumentBuilder.arguments(for: step.kind, context: context),
-      workingDirectory: context.stepTempDirectory)
+      workingDirectory: context.stepTempDirectory,
+      dialect: dialect)
 
     running[id] = process
     Task { [weak self] in

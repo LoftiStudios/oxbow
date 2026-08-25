@@ -24,7 +24,9 @@ struct QueueEngineTests {
   {
     QueueEngine.Configuration(
       helperExecutable: URL(filePath: "/usr/bin/true"),
-      ffmpegPath: URL(filePath: "/usr/bin/true"),
+      // Distinct from helperExecutable so a test can tell which binary a step
+      // was launched against. Never executed — FakeHelper stands in for both.
+      ffmpegPath: URL(filePath: "/usr/bin/false"),
       workspace: Workspace(root: root),
       store: QueueStore(fileURL: storeURL(for: root)),
       makeProcess: makeProcess)
@@ -337,6 +339,39 @@ struct QueueEngineTests {
     await engine.flush()
   }
 
+  /// A composite step runs FFmpeg directly rather than the C# helper: both
+  /// the executable and the stdout dialect follow the step kind.
+  @Test func aCompositeStepRunsFFmpegRatherThanTheHelper() async throws {
+    let helper = FakeHelper(.succeeds)
+    let (engine, root) = makeEngine { helper }
+    defer { cleanUp(root) }
+
+    let template = JobTemplate(
+      media: .video(VideoRequest(videoID: "v", quality: "1080p60")),
+      render: RenderRequest(),
+      composite: CompositeRequest(
+        framerate: 60,
+        bitrateMbps: 8,
+        duration: .seconds(60),
+        destination: root.appending(path: "out.mp4")))
+
+    try await engine.start()
+    await engine.enqueue(template, title: "t")
+    try await settle(engine)
+
+    let launches = await helper.launches
+    let composite = try #require(launches.first { $0.dialect != .helper })
+    #expect(composite.executable == URL(filePath: "/usr/bin/false"))
+    #expect(composite.dialect == .ffmpeg(duration: .seconds(60)))
+
+    // Every other step still runs the C# helper.
+    #expect(launches.filter { $0.dialect == .helper }.allSatisfy {
+      $0.executable == URL(filePath: "/usr/bin/true")
+    })
+
+    await engine.flush()
+  }
+
   /// The scenario the whole failure model exists for.
   @Test func aFailedDependencyBlocksItsDependent() async throws {
     let (engine, root) = makeEngine(.failsWithoutArtifact(
@@ -389,7 +424,9 @@ struct QueueEngineTests {
 
     let configuration = QueueEngine.Configuration(
       helperExecutable: URL(filePath: "/usr/bin/true"),
-      ffmpegPath: URL(filePath: "/usr/bin/true"),
+      // Distinct from helperExecutable so a test can tell which binary a step
+      // was launched against. Never executed — FakeHelper stands in for both.
+      ffmpegPath: URL(filePath: "/usr/bin/false"),
       workspace: Workspace(root: root),
       store: QueueStore(fileURL: storeURL),
       makeProcess: { FakeHelper(.succeeds) })
@@ -910,7 +947,9 @@ struct QueueEngineTests {
 
     let engine = QueueEngine(configuration: QueueEngine.Configuration(
       helperExecutable: script,
-      ffmpegPath: URL(filePath: "/usr/bin/true"),
+      // Distinct from helperExecutable so a test can tell which binary a step
+      // was launched against. Never executed — FakeHelper stands in for both.
+      ffmpegPath: URL(filePath: "/usr/bin/false"),
       workspace: Workspace(root: root),
       store: QueueStore(fileURL: storeURL(for: root)),
       makeProcess: { HelperProcess() }))

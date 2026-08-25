@@ -83,4 +83,21 @@ struct FailureInterpreterTests {
     let failure = try #require(interpret(.waitFailed(errno: ECHILD), artifactExists: true))
     #expect(failure.kind == StepFailure.Kind.waitFailed(errno: ECHILD))
   }
+
+  /// Real FFmpeg stderr. The address prefix is noise; the sentence is not.
+  @Test func stripsFFmpegsComponentPrefixFromTheSummary() throws {
+    let stderr = """
+      [Parsed_hstack_3 @ 0x87101cd80] Input 1 height 900 does not match input 0 height 1080.
+      [Parsed_hstack_3 @ 0x87101cd80] Failed to configure output pad on Parsed_hstack_3
+      """
+    let failure = try #require(FailureInterpreter.interpret(
+      exitStatus: .exited(234), standardError: stderr, artifactExists: false))
+    #expect(failure.summary == "Input 1 height 900 does not match input 0 height 1080.")
+  }
+
+  @Test func doesNotCallEveryStepADownload() throws {
+    let failure = try #require(FailureInterpreter.interpret(
+      exitStatus: .exited(1), standardError: "", artifactExists: false))
+    #expect(!failure.summary.contains("download tool"))
+  }
 }
