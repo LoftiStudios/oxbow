@@ -83,6 +83,65 @@ jobs:
           echo "version=${declared}" >> "$GITHUB_OUTPUT"
           echo "Release version ${declared}"
 
+      - name: Check the release credentials are present
+        env:
+          # Named exactly as the secrets they read, so the error below names
+          # what you actually have to go and create.
+          DEVELOPER_ID_P12_BASE64: ${{ secrets.DEVELOPER_ID_P12_BASE64 }}
+          DEVELOPER_ID_P12_PASSWORD: ${{ secrets.DEVELOPER_ID_P12_PASSWORD }}
+          NOTARY_PRIVATE_KEY: ${{ secrets.NOTARY_PRIVATE_KEY }}
+          NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+          NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
+          DEVELOPMENT_TEAM: ${{ vars.DEVELOPMENT_TEAM }}
+        run: |
+          set -euo pipefail
+          # An absent secret is the empty string, not an error, so every step
+          # downstream of one runs happily on nothing. Without this gate the
+          # first symptom is `security: SecKeychainItemImport: Unable to decode
+          # the provided data` from the certificate import — which blames the
+          # certificate for a missing secret, and only after the job has spent
+          # ten minutes on FFmpeg and .NET. Fail here instead, in seconds.
+          #
+          # Names only, never values: these are printed into a public log.
+          missing=()
+          for name in DEVELOPER_ID_P12_BASE64 DEVELOPER_ID_P12_PASSWORD \
+                      NOTARY_PRIVATE_KEY NOTARY_KEY_ID NOTARY_ISSUER_ID; do
+            [ -n "${!name:-}" ] || missing+=("secret ${name}")
+          done
+          [ -n "${DEVELOPMENT_TEAM}" ] || missing+=("variable DEVELOPMENT_TEAM")
+
+          if [ "${#missing[@]}" -gt 0 ]; then
+            # ${arr[*]} joins on the FIRST character of IFS only, so the
+            # separator is widened afterwards.
+            joined="$(IFS=,; echo "${missing[*]}")"
+            printf '::error::release credentials not configured. Missing: %s\n' "${joined//,/, }"
+            echo "Add them under Settings -> Secrets and variables -> Actions." >&2
+            echo "Note the tabs on that page: Actions, Codespaces and Dependabot are" >&2
+            echo "separate stores, and only the Actions tab is visible to this workflow." >&2
+            exit 1
+          fi
+
+          # Shape checks. Cheap, and they catch the two ways these arrive
+          # malformed without ever revealing a value.
+          probe="${RUNNER_TEMP}/probe.bin"
+          if ! printf '%s' "${DEVELOPER_ID_P12_BASE64}" | base64 --decode > "${probe}" 2>/dev/null \
+             || [ ! -s "${probe}" ]; then
+            rm -f "${probe}"
+            echo "::error::DEVELOPER_ID_P12_BASE64 is set but does not decode to a non-empty file. Re-run: base64 -i cert.p12 | pbcopy"
+            exit 1
+          fi
+          rm -f "${probe}"
+
+          case "${NOTARY_PRIVATE_KEY}" in
+            *"BEGIN PRIVATE KEY"*) ;;
+            *)
+              echo "::error::NOTARY_PRIVATE_KEY does not look like a .p8 key. Paste the whole file, including the BEGIN and END lines."
+              exit 1
+              ;;
+          esac
+
+          echo "All release credentials present."
+
       - name: Require a tagged submodule pin
         env:
           # Only ever true on a dispatch run that is NOT publishing. A tag push
