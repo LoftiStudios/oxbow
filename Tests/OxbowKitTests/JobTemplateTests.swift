@@ -373,4 +373,48 @@ struct JobTemplateTests {
     let job = makeJob(JobTemplate(media: .video(video), chat: chat, render: render))
     #expect(job.steps.allSatisfy { $0.status == .queued })
   }
+
+  @Test func aCompositeDependsOnTheVideoThenTheRender() {
+    let template = JobTemplate(
+      media: .video(VideoRequest(videoID: "v", quality: "1080p60")),
+      render: RenderRequest(),
+      composite: CompositeRequest(
+        framerate: 60, bitrateMbps: 8, duration: .seconds(60),
+        destination: URL(filePath: "/out/x.mp4")))
+
+    var n = 0
+    let job = template.makeJob(id: Build.jobID(1), title: "t", created: .init()) {
+      n += 1
+      return Build.stepID(n)
+    }
+
+    // video, chat, render, composite
+    #expect(job.steps.count == 4)
+    let composite = job.steps[3]
+    guard case .composite = composite.kind else {
+      Issue.record("last step is not the composite")
+      return
+    }
+    // ORDER IS THE CONTRACT: ArgumentBuilder reads [0] as the video and [1]
+    // as the chat render.
+    #expect(composite.dependsOn == [job.steps[0].id, job.steps[2].id])
+  }
+
+  /// A composite with nothing to stack would run FFmpeg against one input and
+  /// produce a file that is just the video with extra steps.
+  @Test func aCompositeWithoutBothInputsIsNotBuilt() {
+    let template = JobTemplate(
+      media: .video(VideoRequest(videoID: "v", quality: "1080p60")),
+      composite: CompositeRequest(
+        framerate: 60, bitrateMbps: 8, duration: .seconds(60),
+        destination: URL(filePath: "/out/x.mp4")))
+
+    var n = 0
+    let job = template.makeJob(id: Build.jobID(1), title: "t", created: .init()) {
+      n += 1
+      return Build.stepID(n)
+    }
+
+    #expect(!job.steps.contains { if case .composite = $0.kind { return true } else { return false } })
+  }
 }

@@ -19,11 +19,21 @@ public struct JobTemplate: Sendable {
   ///   whatever `ChatRequest.format` says — see `renderInput(_:)`.
   public var chat: ChatRequest?
   public var render: RenderRequest?
+  /// Stacks the finished media and the finished render into one file. Implies
+  /// both: a composite with only one input would produce a file that is just
+  /// the video with extra steps.
+  public var composite: CompositeRequest?
 
-  public init(media: Media? = nil, chat: ChatRequest? = nil, render: RenderRequest? = nil) {
+  public init(
+    media: Media? = nil,
+    chat: ChatRequest? = nil,
+    render: RenderRequest? = nil,
+    composite: CompositeRequest? = nil)
+  {
     self.media = media
     self.chat = chat
     self.render = render
+    self.composite = composite
   }
 
   /// `nextStepID` is injected rather than calling `UUID()` directly so that
@@ -40,13 +50,15 @@ public struct JobTemplate: Sendable {
     // Independent of the chat/render steps below: a failed video or clip
     // download must not block the render, and vice versa. Never give this
     // step a `dependsOn`.
+    var mediaStep: Step?
     if let media {
       switch media {
       case .video(let request):
-        steps.append(Step(id: nextStepID(), kind: .downloadVideo(request)))
+        mediaStep = Step(id: nextStepID(), kind: .downloadVideo(request))
       case .clip(let request):
-        steps.append(Step(id: nextStepID(), kind: .downloadClip(request)))
+        mediaStep = Step(id: nextStepID(), kind: .downloadClip(request))
       }
+      steps.append(mediaStep!)
     }
 
     var chatStep: Step?
@@ -55,6 +67,12 @@ public struct JobTemplate: Sendable {
       // request of its own, so that render-without-chat is never silently
       // dropped. The implied request has `destination: nil` so the chat file
       // stays an intermediate and is discarded with the workspace.
+      //
+      // `composite` does NOT belong in this condition. A caller may set
+      // `composite` without `render` (see `aCompositeWithoutBothInputsIsNotBuilt`);
+      // treating that as "good enough to imply a render" would build a
+      // composite whose second input was manufactured on the spot rather than
+      // genuinely requested, defeating the guard below.
       let request = Self.renderInput(chat ?? Self.impliedChatRequest(for: media))
       chatStep = Step(id: nextStepID(), kind: .downloadChat(request))
     } else if let chat {
@@ -64,8 +82,25 @@ public struct JobTemplate: Sendable {
       steps.append(chatStep)
     }
 
+    var renderStep: Step?
     if let render, let chatStep {
-      steps.append(Step(id: nextStepID(), kind: .renderChat(render), dependsOn: [chatStep.id]))
+      renderStep = Step(id: nextStepID(), kind: .renderChat(render), dependsOn: [chatStep.id])
+      steps.append(renderStep!)
+    }
+
+    // Only when there is genuinely something to stack. `mediaStep` is captured
+    // where the media step is appended, above; `renderStep` only exists when
+    // `render` was actually requested (see the note above) — a composite set
+    // without a render is deliberately left unbuilt rather than manufacturing
+    // one to satisfy this guard.
+    if let composite, let mediaStep, let renderStep {
+      steps.append(Step(
+        id: nextStepID(),
+        kind: .composite(composite),
+        // ORDER IS THE CONTRACT: ArgumentBuilder reads input 0 as the video
+        // and input 1 as the chat render. Swapping these silently produces a
+        // frame with the chat on the left and a 350-pixel-wide video.
+        dependsOn: [mediaStep.id, renderStep.id]))
     }
 
     return Job(id: id, created: created, title: title, steps: steps)
