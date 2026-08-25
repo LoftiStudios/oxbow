@@ -59,6 +59,38 @@ if (( missing )); then
 fi
 [[ -f "${HELPER_ENTITLEMENTS}" ]] || die "missing ${HELPER_ENTITLEMENTS}"
 
+# ----------------------------------------------------- LGPL compliance files
+# The LGPL 2.1+ obligation for the FFmpeg we ship is discharged by carrying its
+# licence text and a record of the exact source and configure line
+# (docs/ffmpeg.md §6). Both are emitted into build/ffmpeg by
+# scripts/build-ffmpeg.sh; both go in the DMG, and both go INSIDE the bundle
+# so the About window's buttons still have something to open after the user
+# drags Oxbow.app out of the DMG and throws the DMG away — which is what
+# everyone does.
+#
+# Contents/Resources, not Contents/MacOS. The no-code-in-Resources rule
+# (docs/signing.md §2) is about executable code; plain text is a resource, and
+# putting it here keeps it out of the bundle's code location, so it is sealed
+# by the app's own signature rather than needing one of its own. Nothing below
+# signs these, and nothing should.
+#
+# This runs before the freshness check on purpose: it is two file copies, and
+# making it conditional on the expensive embed being stale is how the licence
+# text goes missing from a bundle nobody rebuilt from scratch.
+: "${UNLOCALIZED_RESOURCES_FOLDER_PATH:?must run from an Xcode Run Script phase}"
+RESOURCES="${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}"
+FFMPEG_DIR="$(dirname "${FFMPEG_SRC}")"
+mkdir -p "${RESOURCES}"
+for licence in COPYING.LGPLv2.1 FFMPEG-SOURCE.txt; do
+  # build-ffmpeg.sh always writes these next to the binary it produces, so an
+  # ffmpeg without them means the binary came from somewhere else. That is the
+  # precise situation the LGPL obligation exists for, so it is fatal.
+  [[ -f "${FFMPEG_DIR}/${licence}" ]] \
+    || die "build/ffmpeg/${licence} is missing next to the ffmpeg binary. Rebuild with ./scripts/build-ffmpeg.sh — never hand-place an ffmpeg."
+  cp -f "${FFMPEG_DIR}/${licence}" "${RESOURCES}/${licence}"
+done
+note "staged FFmpeg licence text into Contents/Resources"
+
 # ------------------------------------------------------------ skip if current
 # Signing rewrites the embedded copies, so they can never be compared against
 # the source tree after the fact - the freshness check must run BEFORE the
