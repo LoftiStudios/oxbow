@@ -20,8 +20,13 @@ public struct JobTemplate: Sendable {
   public var chat: ChatRequest?
   public var render: RenderRequest?
   /// Stacks the finished media and the finished render into one file. Implies
-  /// both: a composite with only one input would produce a file that is just
-  /// the video with extra steps.
+  /// a render exactly as `render` implies a chat download — asking for a
+  /// composite without one is enough to get all four steps. An implied
+  /// `RenderRequest()` carries default geometry (350x600 at 30fps), which
+  /// will not match a real video's height; `hstack` then fails immediately
+  /// and loudly, which is the designed behaviour, but a library caller
+  /// composing a template directly should set the render's geometry itself.
+  /// The intake always does.
   public var composite: CompositeRequest?
 
   public init(
@@ -62,17 +67,19 @@ public struct JobTemplate: Sendable {
     }
 
     var chatStep: Step?
-    if render != nil {
+    if render != nil || composite != nil {
       // A render implies a chat step even when the caller supplied no chat
       // request of its own, so that render-without-chat is never silently
       // dropped. The implied request has `destination: nil` so the chat file
       // stays an intermediate and is discarded with the workspace.
       //
-      // `composite` does NOT belong in this condition. A caller may set
-      // `composite` without `render` (see `aCompositeWithoutBothInputsIsNotBuilt`);
-      // treating that as "good enough to imply a render" would build a
-      // composite whose second input was manufactured on the spot rather than
-      // genuinely requested, defeating the guard below.
+      // A composite implies a render exactly the same way, one level up: a
+      // caller who sets `composite` without `render` still wants a stacked
+      // file, not a silently discarded request, and `makeJob` has no error
+      // channel to refuse with (see `renderInput`'s note on the same
+      // problem). The implied render carries default geometry, which will
+      // fail loudly in `hstack` if it does not match the video — see the
+      // note on `composite` above.
       let request = Self.renderInput(chat ?? Self.impliedChatRequest(for: media))
       chatStep = Step(id: nextStepID(), kind: .downloadChat(request))
     } else if let chat {
@@ -83,16 +90,20 @@ public struct JobTemplate: Sendable {
     }
 
     var renderStep: Step?
-    if let render, let chatStep {
-      renderStep = Step(id: nextStepID(), kind: .renderChat(render), dependsOn: [chatStep.id])
+    if let chatStep, render != nil || composite != nil {
+      renderStep = Step(
+        id: nextStepID(),
+        kind: .renderChat(render ?? RenderRequest()),
+        dependsOn: [chatStep.id])
       steps.append(renderStep!)
     }
 
-    // Only when there is genuinely something to stack. `mediaStep` is captured
-    // where the media step is appended, above; `renderStep` only exists when
-    // `render` was actually requested (see the note above) — a composite set
-    // without a render is deliberately left unbuilt rather than manufacturing
-    // one to satisfy this guard.
+    // Only when there is genuinely something to stack. `mediaStep` is
+    // captured where the media step is appended, above. Unlike `renderStep`
+    // (which `composite` itself implies, above), media is the one input a
+    // composite cannot manufacture for itself — there is nothing to stack
+    // the chat against — so a composite requested with no media is
+    // genuinely left unbuilt.
     if let composite, let mediaStep, let renderStep {
       steps.append(Step(
         id: nextStepID(),

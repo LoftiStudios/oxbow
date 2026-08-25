@@ -400,9 +400,9 @@ struct JobTemplateTests {
     #expect(composite.dependsOn == [job.steps[0].id, job.steps[2].id])
   }
 
-  /// A composite with nothing to stack would run FFmpeg against one input and
-  /// produce a file that is just the video with extra steps.
-  @Test func aCompositeWithoutBothInputsIsNotBuilt() {
+  /// A composite implies the render it stacks, exactly as a render already
+  /// implies the chat download it reads. Asking for one is enough.
+  @Test func aCompositeImpliesTheRenderItStacks() {
     let template = JobTemplate(
       media: .video(VideoRequest(videoID: "v", quality: "1080p60")),
       composite: CompositeRequest(
@@ -415,6 +415,29 @@ struct JobTemplateTests {
       return Build.stepID(n)
     }
 
-    #expect(!job.steps.contains { if case .composite = $0.kind { return true } else { return false } })
+    #expect(job.steps.count == 4)
+    let composite = job.steps[3]
+    guard case .composite = composite.kind else {
+      Issue.record("last step is not the composite")
+      return
+    }
+    #expect(composite.dependsOn == [job.steps[0].id, job.steps[2].id])
+  }
+
+  /// The one case that genuinely cannot be built: media is the input a
+  /// composite cannot manufacture for itself.
+  @Test func aCompositeWithNoMediaIsNotBuilt() {
+    let template = JobTemplate(
+      composite: CompositeRequest(
+        framerate: 60, bitrateMbps: 8, duration: .seconds(60),
+        destination: URL(filePath: "/out/x.mp4")))
+
+    var n = 0
+    let job = template.makeJob(id: Build.jobID(1), title: "t", created: .init()) {
+      n += 1
+      return Build.stepID(n)
+    }
+
+    #expect(!job.steps.contains { if case .composite = $0.kind { true } else { false } })
   }
 }
