@@ -276,16 +276,47 @@ final class IntakeModel {
   /// passes it explicitly. Video-only keeps today's behaviour, where empty
   /// means the CLI picks.
   ///
-  /// `CompositeGeometry.init?(quality:)` fails for a rendition with no pixel
-  /// width — old clips Twitch backfilled no dimensions for — so this prefers
-  /// the chosen quality only when it actually parses, and otherwise the first
-  /// one in the list that does. If none does, `composedTemplate()` returns
-  /// nil and Add stays disabled: honest, not a workaround.
+  /// **An explicit pick is honoured even when it cannot be composited — never
+  /// silently swapped for one that can.** `docs/design/chat-and-render.md`
+  /// already records the cost of that shortcut: `-q 1080p60-Portrait` on the
+  /// real CLI silently downloads the landscape rendition instead, exit 0, no
+  /// warning — handing someone the wrong video and calling it a success,
+  /// which is worse than either honest outcome. So this only falls back to
+  /// the first rendition `CompositeGeometry` can parse when `quality` is
+  /// empty, meaning the user asked for "best available" and never named a
+  /// rendition to begin with. An explicit pick that turns out unparseable
+  /// (`CompositeGeometry.init?(quality:)` fails for a rendition with no pixel
+  /// width — see `compositeProblem`) is returned as-is; `composedTemplate()`
+  /// then refuses rather than substituting, and `compositeProblem` is what
+  /// says why.
   private var compositeQuality: StreamQuality? {
     if !quality.isEmpty, let named = qualities.first(where: { $0.name == quality }) {
       return named
     }
     return qualities.first { CompositeGeometry(quality: $0) != nil }
+  }
+
+  /// Why `.videoWithChat` cannot be added right now, or nil when it can (or
+  /// when `.video` is selected, where no quality decision is even made).
+  ///
+  /// This is only reachable for a clip. A VOD's `VideoInfo.parseQualities`
+  /// skips any m3u8 variant with no `RESOLUTION` attribute outright, so every
+  /// `StreamQuality` it emits already has one. A clip's `clipResolution` has
+  /// no such filter — Twitch does not always backfill dimensions on an older
+  /// clip's rendition, and that rendition still reaches the picker with an
+  /// empty `resolution`. Picking exactly that one is a silent dead end
+  /// without this: `compositeQuality` honours the explicit pick (by design,
+  /// see its doc comment), `CompositeGeometry` then fails to parse it, and
+  /// `composedTemplate()` returns nil with nothing on screen explaining why.
+  var compositeProblem: String? {
+    guard output == .videoWithChat,
+          let selected = compositeQuality,
+          CompositeGeometry(quality: selected) == nil
+    else { return nil }
+    return """
+      Twitch never recorded pixel dimensions for \(selected.name), so its \
+      chat column cannot be sized to match. Pick another quality.
+      """
   }
 
   /// True once *this link's* fetch has settled either way. `.failed` counts:

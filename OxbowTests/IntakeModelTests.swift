@@ -299,6 +299,22 @@ struct IntakeModelTests {
     #expect(video.destination == nil)
     #expect(template.render?.destination == nil)
     #expect(template.chat?.destination == nil)
+    // Built here rather than left to `JobTemplate`'s implied chat request —
+    // seeding it from an empty id would produce a job that runs and
+    // downloads nothing.
+    #expect(template.chat?.videoID == Self.videoID)
+  }
+
+  /// The composite's `bitrateMbps` and `duration` are its own fields, not
+  /// `framerate`'s neighbours by coincidence — both have to be seeded from
+  /// the chosen quality and the video's own duration, not left at some
+  /// default that happens to compile.
+  @Test func theCompositeSeedsItsBitrateAndDurationFromTheChosenQuality() async throws {
+    let model = await loaded(quality: "1080p60", resolution: "1920x1080", bitsPerSecond: 10_000_000)
+    model.output = .videoWithChat
+    let composite = try #require(model.composedTemplate()?.composite)
+    #expect(composite.bitrateMbps == 10)
+    #expect(composite.duration == .seconds(3600), "the hour-long duration `Self.info()` fixes")
   }
 
   @Test func aClipGetsTheSameTwoChoicesAsAVOD() async throws {
@@ -348,6 +364,80 @@ struct IntakeModelTests {
     // A transient input that is immediately re-encoded: 3 Mbps would put two
     // generations of lossy H.264 over text on flat backgrounds.
     #expect(render.bitrateMbps >= 12)
+  }
+
+  /// A clip's rendition list can carry a quality with no pixel dimensions —
+  /// `VideoInfo.clipResolution` has no filter for it, unlike a VOD's
+  /// `parseQualities`, which skips a variant with no `RESOLUTION` attribute
+  /// outright. When *none* of the clip's renditions parse, "best available"
+  /// has nothing to fall back to.
+  @Test func compositingRefusesWhenNoRenditionCanBeComposited() async throws {
+    let qualities = [StreamQuality(name: "720p0-1", resolution: "", bitsPerSecond: 0)]
+    let model = await loadedModel(link: Self.clipLink, info: Self.info(qualities: qualities))
+    model.output = .videoWithChat
+
+    #expect(model.composedTemplate() == nil)
+    #expect(!model.canAdd)
+  }
+
+  /// A failed fetch still settles (`hasSettledMetadata` counts `.failed`),
+  /// but `info` — and so `qualities` and the composite's duration — stays
+  /// nil. A composite needs both, so it refuses rather than crash on a force
+  /// unwrap or compose a job with a guessed duration.
+  @Test func compositingRefusesWithoutMetadata() async throws {
+    let model = makeModel(failure: VideoInfoFetchError.unparseableOutput(snippet: "x"))
+    model.linkText = Self.videoLink
+    await model.load()
+    model.folder = Self.folder
+    model.output = .videoWithChat
+
+    #expect(model.info == nil)
+    #expect(model.composedTemplate() == nil)
+    #expect(!model.canAdd)
+  }
+
+  // MARK: - Composite problem
+
+  /// The positive control: a chosen quality that parses fine has nothing to
+  /// explain.
+  @Test func compositeProblemIsNilWhenTheChosenQualityCanBeComposited() async throws {
+    let model = await loaded(quality: "1080p60", resolution: "1920x1080")
+    model.output = .videoWithChat
+    #expect(model.compositeProblem == nil)
+  }
+
+  /// `.video` never makes a quality decision for compositing, so it can never
+  /// have a composite problem — even sitting on a quality that could not be
+  /// composited.
+  @Test func compositeProblemIsNilForVideoOnly() async throws {
+    let qualities = [StreamQuality(name: "720p0-1", resolution: "", bitsPerSecond: 0)]
+    let model = await loadedModel(link: Self.clipLink, info: Self.info(qualities: qualities))
+    model.quality = "720p0-1"
+
+    #expect(model.output == .video, "the default")
+    #expect(model.compositeProblem == nil)
+  }
+
+  /// The bug the review caught: `compositeQuality` honours an explicit pick
+  /// even when it cannot be composited (see its doc comment — silently
+  /// substituting a different rendition is worse), which used to mean Add
+  /// simply greyed out with nothing on screen explaining why.
+  @Test func choosingAnExplicitQualityWithNoDimensionsExplainsWhyAddIsDisabled() async throws {
+    let qualities = [
+      StreamQuality(name: "1080p60", resolution: "1920x1080", bitsPerSecond: 6_000_000),
+      StreamQuality(name: "720p0-1", resolution: "", bitsPerSecond: 0),
+    ]
+    let model = await loadedModel(link: Self.clipLink, info: Self.info(qualities: qualities))
+    model.output = .videoWithChat
+    model.quality = "720p0-1"
+
+    // Not silently substituted for the 1080p60 that *would* work.
+    #expect(model.composedTemplate() == nil)
+    #expect(!model.canAdd)
+
+    let problem = try #require(model.compositeProblem)
+    #expect(problem.contains("720p0-1"), "names the rendition, not a generic failure")
+    #expect(problem.contains("Pick another quality"), "says what to do, not just what's wrong")
   }
 
   // MARK: - Quality
