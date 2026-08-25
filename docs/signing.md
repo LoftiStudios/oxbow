@@ -175,6 +175,13 @@ signatures stored in extended attributes, and a plain `zip` drops xattrs.
   It then asserts §2–§4 the way `sign.sh` does locally: helper and ffmpeg
   present under `Contents/MacOS`, ~205 embedded files, every file individually
   signed, `--deep --strict` clean, `allow-jit` on the helper's own signature
-  and absent from ffmpeg's. What is still missing is **distribution** signing
-  and notarization, which need the cert as a base64 `.p12` and the notary key
-  as repository secrets — a separate release workflow.
+  and absent from ffmpeg's.
+- **Release: resolved (2026-08-25).** `.github/workflows/release.yml` runs that
+  same build with the real Developer ID identity, then notarizes and staples
+  the app AND the DMG — the image's ticket is gone the moment the user drags
+  the app out of it, so the app needs its own. The certificate arrives as a
+  base64 `.p12` secret and is imported into a throwaway keychain deleted in an
+  `always()` step; notarization uses an App Store Connect API key rather than a
+  keychain profile, which CI cannot have. Two gates run before anything
+  expensive: the tag must match `MARKETING_VERSION`, and the submodule must be
+  pinned to an upstream release tag.

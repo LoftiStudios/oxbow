@@ -1,0 +1,7 @@
+# Python dependencies for release packaging. Installed into .venv by `mise run setup`.
+#
+# dmgbuild writes the DMG's .DS_Store directly (via ds-store/mac-alias) instead
+# of driving Finder over AppleScript. That is the whole reason it is here: the
+# AppleScript approach needs a logged-in GUI session and Automation permission,
+# so it cannot run on a CI runner.
+dmgbuild==1.6.7

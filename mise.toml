@@ -1,0 +1,55 @@
+# Tool versions and task shortcuts for Oxbow.
+#
+# Xcode and the Swift toolchain are NOT managed here — they come from the Mac
+# App Store or developer.apple.com, and mise has no business pinning them.
+# What this file does manage is the small Python environment the release
+# packaging needs, so `./scripts/package-dmg.sh` has dmgbuild on PATH without
+# anyone pip-installing into their system Python.
+#
+#   mise install     # fetch Python, create .venv
+#   mise run setup   # + install the Python packaging deps into it
+#   mise tasks       # list everything below
+
+[tools]
+python = "3.13"
+actionlint = "1.7"
+
+[env]
+# Creates and activates .venv automatically whenever you cd into the repo, so
+# `dmgbuild` resolves without a manual `source .venv/bin/activate`.
+_.python.venv = { path = ".venv", create = true }
+
+[tasks.setup]
+description = "Create the venv and install the Python packaging dependencies"
+run = "python -m pip install --quiet --upgrade pip && python -m pip install -r requirements-dev.txt"
+
+[tasks.lint]
+description = "Lint the GitHub Actions workflows"
+run = "actionlint .github/workflows/*.yml"
+
+[tasks.test]
+description = "Run the OxbowKit test suite (needs only Xcode)"
+run = "swift test"
+
+[tasks.background]
+description = "Regenerate the DMG background artwork and its multi-resolution TIFF"
+run = "swift scripts/dmg/make-background.swift"
+
+[tasks.dmg]
+description = "Package build/Oxbow.app into a release DMG (app must be signed and stapled)"
+depends = ["setup"]
+run = "./scripts/package-dmg.sh"
+
+[tasks.ffmpeg]
+description = "Build the bundled LGPL arm64 FFmpeg"
+run = "./scripts/build-ffmpeg.sh"
+
+[tasks.helper]
+description = "Publish the TwitchDownloaderCLI helper into build/helper"
+run = """
+dotnet publish vendor/TwitchDownloader/TwitchDownloaderCLI \
+  -c Release -r osx-arm64 --self-contained true \
+  -p:PublishSingleFile=false -p:PublishTrimmed=false \
+  -p:PublishReadyToRun=false -p:DebugType=none \
+  -o build/helper
+"""
