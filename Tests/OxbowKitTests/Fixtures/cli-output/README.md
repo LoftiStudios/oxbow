@@ -31,9 +31,11 @@ we parse reads that field.
 They are two fixtures rather than one because clip payloads differ by age.
 The 2026 clip carries two assets (a landscape and a portrait re-crop) with
 real bitrates, framerates and pixel dimensions; the 2020 clip carries one
-asset with `bitrate`, `frameRate`, `width` and `height` all zero, so the
-resolution has to be derived from the `quality` string and the asset's aspect
-ratio. Both list every rendition twice, which is why quality names carry
+asset whose `bitrate` and `frameRate` are zero. Its `width` and `height` are
+present (1280x720, 852x480, 640x360), so the aspect-ratio fallback for a
+missing resolution is exercised by a synthetic case in `VideoInfoTests`, not by
+this fixture — what this fixture pins is that a zero bitrate produces no size
+estimate rather than "about Zero KB". Both list every rendition twice, which is why quality names carry
 upstream's `-1` disambiguator.
 
 A clip's `Raw` output is a different document from a VOD's — one JSON object
