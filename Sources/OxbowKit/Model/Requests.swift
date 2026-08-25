@@ -9,14 +9,17 @@ public struct VideoRequest: Codable, Sendable, Equatable {
   public var quality: String
   public var trimStart: Duration?
   public var trimEnd: Duration?
-  public var destination: URL
+  /// `nil` means the user does not want this file — it stays in the job
+  /// workspace and is discarded with it. A composite job sets this, because
+  /// the composite replaces its inputs rather than accompanying them.
+  public var destination: URL?
 
   public init(
     videoID: String,
     quality: String,
     trimStart: Duration? = nil,
     trimEnd: Duration? = nil,
-    destination: URL)
+    destination: URL? = nil)
   {
     self.videoID = videoID
     self.quality = quality
@@ -29,9 +32,12 @@ public struct VideoRequest: Codable, Sendable, Equatable {
 public struct ClipRequest: Codable, Sendable, Equatable {
   public var clipSlug: String
   public var quality: String
-  public var destination: URL
+  /// `nil` means the user does not want this file — it stays in the job
+  /// workspace and is discarded with it. A composite job sets this, because
+  /// the composite replaces its inputs rather than accompanying them.
+  public var destination: URL?
 
-  public init(clipSlug: String, quality: String, destination: URL) {
+  public init(clipSlug: String, quality: String, destination: URL? = nil) {
     self.clipSlug = clipSlug
     self.quality = quality
     self.destination = destination
@@ -100,7 +106,10 @@ public struct RenderRequest: Codable, Sendable, Equatable {
   /// See docs/ffmpeg.md, section 3.
   public var bitrateMbps: Int
   public var isSharpened: Bool
-  public var destination: URL
+  /// `nil` means the user does not want this file — it stays in the job
+  /// workspace and is discarded with it. A composite job sets this, because
+  /// the composite replaces its inputs rather than accompanying them.
+  public var destination: URL?
 
   public init(
     width: Int = 350,
@@ -123,7 +132,7 @@ public struct RenderRequest: Codable, Sendable, Equatable {
     allowsUnlistedEmotes: Bool = true,
     bitrateMbps: Int = 3,
     isSharpened: Bool = false,
-    destination: URL)
+    destination: URL? = nil)
   {
     self.width = width
     self.height = height

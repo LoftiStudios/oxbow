@@ -680,9 +680,11 @@ public actor QueueEngine {
   ///
   /// Distinguishes "this kind has no destination, keep it as an intermediate"
   /// from "the move itself failed" — collapsing those (e.g. via `?? file`)
-  /// would report a move failure as success. `ChatRequest.destination` is the
-  /// only optional one of the four; every other kind's destination is
-  /// required, so `.failed` is the only way `nil` can mean anything there.
+  /// would report a move failure as success. Four of the five kinds carry an
+  /// optional destination — chat, video, clip, and render — because a
+  /// composite job delivers one file and keeps its inputs as intermediates.
+  /// `.failed` remains the only way `nil` can mean a problem, so the two cases
+  /// must stay distinguishable.
   private func move(_ file: URL, toDestinationFor kind: StepKind) -> MoveOutcome {
     let destination: URL? = switch kind {
     case .downloadVideo(let request): request.destination

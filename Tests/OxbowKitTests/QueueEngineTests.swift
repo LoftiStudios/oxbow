@@ -432,6 +432,36 @@ struct QueueEngineTests {
     await restarted.flush()
   }
 
+  /// A composite job keeps its downloaded video as an intermediate exactly as
+  /// a render already keeps its chat file: `destination: nil` discards it
+  /// with the rest of the workspace once the job finishes, rather than
+  /// delivering a stray file the user never asked for. Mirrors
+  /// `persistsAcrossRestart`'s check on the chat artifact, minus the restart.
+  @Test func aVideoWithNoDestinationStaysInTheWorkspace() async throws {
+    let (engine, root) = makeEngine(.succeeds)
+    defer { cleanUp(root) }
+
+    try await engine.start()
+    await engine.enqueue(
+      JobTemplate(media: .video(VideoRequest(videoID: "1", quality: "", destination: nil))),
+      title: "t")
+    try await settle(engine)
+
+    let job = try #require(await engine.currentJobs.first)
+    #expect(job.status == .done)
+
+    // The video was an intermediate. It was deleted when the job finished,
+    // and the claim on it was dropped in the same breath — so nothing is left
+    // pointing at a file that no longer exists.
+    #expect(job.steps[0].artifact == nil, "the discarded intermediate must not be claimed")
+
+    // Nothing reached the user's folder: nil means "discard with the job,"
+    // exactly as it already does for a chat file.
+    let enumerator = FileManager.default.enumerator(atPath: root.path)
+    let delivered = (enumerator?.allObjects as? [String] ?? []).filter { $0.hasSuffix(".mp4") }
+    #expect(delivered.isEmpty)
+  }
+
   @Test func publishesSnapshotsAsWorkProgresses() async throws {
     let (engine, root) = makeEngine(.succeeds)
     let (template, renderDestination) = makeChatAndRenderTemplate()
