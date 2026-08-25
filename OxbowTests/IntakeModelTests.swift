@@ -236,6 +236,20 @@ struct IntakeModelTests {
     #expect(template.chat?.format == .html)
   }
 
+  /// A render pairing forces the chat download to JSON
+  /// (`JobTemplate.renderInput`), so the delivered file cannot be named
+  /// `.html`: that name would promise something the queue does not write.
+  @Test func aRenderPairingNamesTheChatFileJSONWhateverTheFormatPickerSays() async throws {
+    let model = await loadedModel()
+    model.isDownloadingChat = true
+    model.chatFormat = .html
+    model.isRenderingChat = true
+
+    let template = try #require(model.composedTemplate())
+    #expect(template.chat?.destination?.pathExtension == "json")
+    #expect(template.chat?.format == .json)
+  }
+
   // MARK: - The chat/render pairing (task-queue.md §10)
 
   /// Render on, Chat off: the chat file is the render's input and nothing

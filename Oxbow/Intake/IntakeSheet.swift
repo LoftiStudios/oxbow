@@ -93,7 +93,9 @@ struct IntakeSheet: View {
 
       HStack {
         Toggle("Chat", isOn: $model.isDownloadingChat)
-        if model.isDownloadingChat {
+        // Hidden under Render, which forces the download to JSON whatever the
+        // picker says — see `IntakeModel.deliveredChatFormat`.
+        if model.isDownloadingChat && !model.isRenderingChat {
           Picker("Format", selection: $model.chatFormat) {
             Text("JSON").tag(ChatFormat.json)
             Text("Text").tag(ChatFormat.text)
@@ -219,7 +221,7 @@ struct IntakeSheet: View {
     var names: [String] = []
     if model.isDownloadingMedia { names.append(model.outputBaseName + OutputSuffix.video) }
     if model.isDownloadingChat {
-      names.append(model.outputBaseName + OutputSuffix.chat(model.chatFormat))
+      names.append(model.outputBaseName + OutputSuffix.chat(model.deliveredChatFormat))
     }
     if model.isRenderingChat { names.append(model.outputBaseName + OutputSuffix.render) }
     return names.isEmpty ? "No outputs selected." : names.joined(separator: "\n")

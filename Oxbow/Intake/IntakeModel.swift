@@ -248,6 +248,15 @@ final class IntakeModel {
     OutputNaming.sanitized(name, reservingSuffixBytes: OutputSuffix.longestBytes)
   }
 
+  /// The format the chat file will actually be in.
+  ///
+  /// A render pairing forces the download to JSON — the renderer reads nothing
+  /// else, so `JobTemplate.renderInput` overrides whatever was asked for. The
+  /// name has to follow, or the sheet promises `… - chat.html` and the queue
+  /// delivers JSON inside it. The picker is hidden under Render for the same
+  /// reason: an option the engine will override is not an option.
+  var deliveredChatFormat: ChatFormat { isRenderingChat ? .json : chatFormat }
+
   /// The job this sheet would add, or `nil` if it is not in a state to add
   /// one. Every disabled-Add rule in the design doc is a `guard` here.
   func composedTemplate() -> JobTemplate? {
@@ -297,8 +306,10 @@ final class IntakeModel {
         videoID: target.identifier,
         trimStart: trimStart,
         trimEnd: trimEnd,
-        format: chatFormat,
-        destination: isDownloadingChat ? destination(OutputSuffix.chat(chatFormat)) : nil)
+        format: deliveredChatFormat,
+        destination: isDownloadingChat
+          ? destination(OutputSuffix.chat(deliveredChatFormat))
+          : nil)
     }
 
     var render: RenderRequest?
