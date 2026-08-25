@@ -89,3 +89,6 @@ CLAUDE.md
 # the app bundle by package-dmg.sh.
 scripts/dmg/background*@*x.png
 scripts/dmg/VolumeIcon.icns
+
+# mise-managed Python environment for release packaging
+.venv/
