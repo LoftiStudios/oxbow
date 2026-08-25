@@ -44,10 +44,17 @@ logic and is unit-tested; the views are not.
 
 UI polish and native feel. The remaining functional gaps are release
 infrastructure — `scripts/build.sh` and `scripts/notarize.sh` still do not
-exist, there is no DMG, no release workflow, and no About box (which the hard
-rules require, since it must surface the FFmpeg licence and the helper's
-`1.56.5+<sha>` version string). The submodule also needs re-pinning to a
-release tag before anything ships.
+exist, there is no DMG, and no release workflow. The submodule also needs
+re-pinning to a release tag before anything ships.
+
+The About box is done (`Oxbow/About/`), and with it real versioning: the
+marketing version is `MARKETING_VERSION` in `Config/Shared.xcconfig`, bumped
+by hand as part of a release commit, and `CFBundleVersion` is the repository's
+commit count, stamped into the built `Info.plist` by
+`scripts/stamp-version.sh` on every build, local and CI alike. That script
+also records the helper's `1.56.5+<sha>` string and the FFmpeg version as
+`OXHelperVersion` and `OXFFmpegVersion`, which is where the About box reads
+them from.
 
 Local prerequisites, all now in place: .NET 10 SDK (`brew install --cask
 dotnet-sdk`), a `Developer ID Application` certificate for team `M9WJGEJKBF`, and
@@ -127,6 +134,12 @@ machines. They are not style preferences.
   downloaded binary isn't signed and won't execute on Apple Silicon.
 - Ship `COPYING.LGPLv2.1` and `FFMPEG-SOURCE.txt` (both emitted into
   `build/ffmpeg/`) in the DMG, and reference them from the About box.
+  `scripts/embed-helpers.sh` also stages both into `Contents/Resources`, and
+  the About box reads them from there — the DMG copy is gone the moment the
+  user drags the app out of it. The About box shows the text in place rather
+  than handing the file to `NSWorkspace`: `COPYING.LGPLv2.1` has the extension
+  `1`, which macOS cannot classify, so there is no application registered to
+  open it.
 
 **Upstream**
 - `vendor/TwitchDownloader` is read-only. Changes go upstream as separate PRs, not
