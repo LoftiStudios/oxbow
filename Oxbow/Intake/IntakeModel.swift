@@ -285,17 +285,30 @@ final class IntakeModel {
   ///
   /// **An explicit pick is honoured even when it cannot be composited — never
   /// silently swapped for one that can.** `docs/design/chat-and-render.md`
-  /// already records the cost of that shortcut: `-q 1080p60-Portrait` on the
-  /// real CLI silently downloads the landscape rendition instead, exit 0, no
-  /// warning — handing someone the wrong video and calling it a success,
-  /// which is worse than either honest outcome. So this only falls back to
-  /// the first rendition `CompositeGeometry` can parse when `quality` is
-  /// empty, meaning the user asked for "best available" and never named a
-  /// rendition to begin with. An explicit pick that turns out unparseable
-  /// (`CompositeGeometry.init?(quality:)` fails for a rendition with no pixel
-  /// width — see `compositeProblem`) is returned as-is; `composedTemplate()`
-  /// then refuses rather than substituting, and `compositeProblem` is what
-  /// says why.
+  /// already records the cost of that shortcut: a name carrying a
+  /// disambiguating `-<digits>` suffix (`-q 480p30-1`) silently downloads the
+  /// highest rendition instead when passed unstripped, exit 0, no warning —
+  /// handing someone the wrong video and calling it a success, which is worse
+  /// than either honest outcome. (`StreamQuality.commandLineValue` strips
+  /// that suffix before it reaches `-q`; this comment is about the hazard of
+  /// silent substitution in general, not that specific one.) So this only
+  /// falls back to the first rendition `CompositeGeometry` can parse when
+  /// `quality` is empty, meaning the user asked for "best available" and
+  /// never named a rendition to begin with. An explicit pick that turns out
+  /// unparseable (`CompositeGeometry.init?(quality:)` fails for a rendition
+  /// with no pixel width — see `compositeProblem`) is returned as-is;
+  /// `composedTemplate()` then refuses rather than substituting, and
+  /// `compositeProblem` is what says why.
+  /// `quality` translated to what `-q` actually needs — see
+  /// `StreamQuality.commandLineValue`. `quality` itself stays the picker's
+  /// name (matched against `qualities` by `compositeQuality` and used to
+  /// look the row back up for its label), so this is resolved only where a
+  /// request is actually built. Falls back to `quality` unchanged — which is
+  /// only ever `""`, "best available" — when it names no known rendition.
+  private var commandLineQuality: String {
+    qualities.first(where: { $0.name == quality })?.commandLineValue ?? quality
+  }
+
   private var compositeQuality: StreamQuality? {
     if !quality.isEmpty, let named = qualities.first(where: { $0.name == quality }) {
       return named
@@ -382,14 +395,14 @@ final class IntakeModel {
       case .video(let id):
         media = .video(VideoRequest(
           videoID: id,
-          quality: quality,
+          quality: commandLineQuality,
           trimStart: trimStart,
           trimEnd: trimEnd,
           destination: destination(OutputSuffix.video)))
       case .clip(let slug):
         media = .clip(ClipRequest(
           clipSlug: slug,
-          quality: quality,
+          quality: commandLineQuality,
           destination: destination(OutputSuffix.video)))
       }
 
@@ -411,14 +424,14 @@ final class IntakeModel {
       switch target {
       case .video(let id):
         media = .video(VideoRequest(
-          videoID: id, quality: selected.name,
+          videoID: id, quality: selected.commandLineValue,
           trimStart: trimStart, trimEnd: trimEnd, destination: nil))
         chat = ChatRequest(
           videoID: id, trimStart: trimStart, trimEnd: trimEnd,
           format: .json, destination: nil)
       case .clip(let slug):
         media = .clip(ClipRequest(
-          clipSlug: slug, quality: selected.name, destination: nil))
+          clipSlug: slug, quality: selected.commandLineValue, destination: nil))
         chat = ChatRequest(videoID: slug, format: .json, destination: nil)
       }
       render = RenderRequest(

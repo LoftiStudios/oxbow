@@ -10,14 +10,41 @@ and §6 anticipated:
   `data.clip` — no moments line, no m3u8 section, and no trailing newline —
   with its renditions inline at `clip.assets[].videoQualities`.
   `VideoInfo.parse` handles both and produces the same `VideoInfo` either way.
-- **A clip's quality names come from upstream, verbatim.** `{quality}p{fps}`,
-  `-Portrait` for a vertical asset, `-1`/`-2` for the repeats Twitch always
-  returns. The name is what the picker hands back as `-q`, and upstream's
-  fallback regex cannot parse a `-Portrait` name — verified against the real
-  CLI, `-q 1080p60-Portrait` silently downloads the *landscape* rendition,
-  exit code 0 and no warning, so a prettier name of our own would hand people
-  the wrong video and call it a success. Identical duplicates are collapsed;
-  the survivor keeps upstream's name.
+- **A clip's quality names come from upstream, verbatim — but the name is not
+  what reaches `-q`.** `{quality}p{fps}`, `-Portrait` for a vertical asset,
+  `-1`/`-2` for the repeats Twitch always returns. `name` stays exactly this,
+  because it is what the picker displays and what disambiguates two
+  renditions that would otherwise collide — a prettier name of our own would
+  hand people the wrong video (see below) and call it a success.
+
+  What changed since this was first written: **a trailing `-<digits>`
+  disambiguation suffix does not resolve as `-q` at all.** Measured against
+  the real bundled helper (1.56.5) on clip
+  `BitterPoorLadiesNerfRedBlaster-MBUzt9WrmWvpraw3`, whose renditions include
+  1080p60, 720p60 and 480p30:
+
+  | `-q` argument | resolution actually downloaded |
+  |---|---|
+  | `480p30-1` | 1920x1080 (wrong) |
+  | `480p30-2` | 1920x1080 (wrong) |
+  | `720p60-1` | 1920x1080 (wrong) |
+  | `480p30`   | 852x480 (correct) |
+  | `720p60`   | 1280x720 (correct) |
+  | `480p`     | 852x480 (correct) |
+
+  Exit code 0, no warning, every time — it silently falls back to the
+  highest rendition rather than failing loudly. Stripping the trailing
+  `-<digits>` before it reaches `-q` is what makes it resolve.
+
+  **`-Portrait` is not affected — this is narrower than the original note
+  claimed.** `1080p0-Portrait` and `480p30-Portrait` both resolved to the
+  correct rendition, unstripped. So `StreamQuality.commandLineValue` strips
+  only a trailing hyphen-then-digits, never `-Portrait`, and leaves a name
+  with neither untouched. The trap in that rule is `720p0`: the `0` there is
+  the framerate, not a suffix, and there is no hyphen before it to match —
+  stripping it would turn `720p0` into `720p`, a different (and possibly
+  nonexistent) rendition. Identical duplicates are collapsed; the survivor
+  keeps upstream's name.
 - **The render options are bounds-checked**, the way §5's trim already is. A
   render is the second step of its job, so a `0` width reaches FFmpeg only
   after the chat download has finished.

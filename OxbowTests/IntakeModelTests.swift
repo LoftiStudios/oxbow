@@ -359,6 +359,50 @@ struct IntakeModelTests {
     #expect(video.quality.isEmpty)
   }
 
+  /// The bug this pins: a name upstream disambiguated with a trailing
+  /// `-<digits>` (`480p30-1`, `480p30-2`, …) does not resolve as `-q` at all —
+  /// verified against the real bundled helper, it silently falls back to the
+  /// highest rendition, exit code 0, no warning. `model.quality` keeps the
+  /// picker's exact name (it is matched against `qualities` by name, and the
+  /// picker's own tag), but the request that reaches the CLI must carry
+  /// `StreamQuality.commandLineValue` instead.
+  @Test func theVideoRequestPassesTheStrippedQualityNotThePickerName() async throws {
+    let model = await loaded(quality: "480p30-1", resolution: "852x480")
+    model.output = .video
+    let template = try #require(model.composedTemplate())
+    let video = try #require(videoRequest(of: template))
+    #expect(video.quality == "480p30")
+  }
+
+  @Test func theClipRequestPassesTheStrippedQualityNotThePickerName() async throws {
+    let model = await loadedClip(quality: "480p30-2", resolution: "852x480")
+    model.output = .video
+    let template = try #require(model.composedTemplate())
+    let clip = try #require(clipRequest(of: template))
+    #expect(clip.quality == "480p30")
+  }
+
+  /// The composite path resolves through `compositeQuality` rather than
+  /// `commandLineQuality`, but the same stripping has to happen before the
+  /// name reaches the media request.
+  @Test func theCompositesMediaRequestPassesTheStrippedQualityNotThePickerName() async throws {
+    let model = await loaded(quality: "1080p60-1", resolution: "1920x1080")
+    model.output = .videoWithChat
+    let template = try #require(model.composedTemplate())
+    let video = try #require(videoRequest(of: template))
+    #expect(video.quality == "1080p60")
+  }
+
+  /// `-Portrait` is not affected — measured separately — so a portrait pick
+  /// must reach the CLI unchanged rather than stripped.
+  @Test func aPortraitQualityReachesTheRequestUnchanged() async throws {
+    let model = await loaded(quality: "480p30-Portrait", resolution: "480x853")
+    model.output = .video
+    let template = try #require(model.composedTemplate())
+    let video = try #require(videoRequest(of: template))
+    #expect(video.quality == "480p30-Portrait")
+  }
+
   @Test func theRenderMatchesTheVideosGeometry() async throws {
     let model = await loaded(quality: "1080p60", resolution: "1920x1080")
     model.output = .videoWithChat

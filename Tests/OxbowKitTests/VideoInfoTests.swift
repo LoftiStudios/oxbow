@@ -359,3 +359,53 @@ struct ClipInfoTests {
     #expect(info.thumbnailURL == nil)
   }
 }
+
+/// `StreamQuality.commandLineValue` — measured against the real bundled
+/// helper (1.56.5) on clip `BitterPoorLadiesNerfRedBlaster-MBUzt9WrmWvpraw3`:
+/// a name upstream disambiguated with a trailing `-<digits>` does not resolve
+/// as `-q` at all, silently falling back to the highest rendition. `name`
+/// itself is untouched everywhere else — only this derived value is stripped.
+@Suite("Stream quality command line value")
+struct StreamQualityCommandLineValueTests {
+
+  private func quality(_ name: String) -> StreamQuality {
+    StreamQuality(name: name, resolution: "", bitsPerSecond: 0)
+  }
+
+  @Test func leavesAPlainNameUnchanged() {
+    #expect(quality("1080p60").commandLineValue == "1080p60")
+  }
+
+  @Test func stripsATrailingDisambiguationSuffix() {
+    #expect(quality("1080p60-1").commandLineValue == "1080p60")
+  }
+
+  @Test func stripsAMultiDigitDisambiguationSuffix() {
+    #expect(quality("480p30-2").commandLineValue == "480p30")
+  }
+
+  @Test func leavesAPortraitSuffixUnchanged() {
+    #expect(quality("1080p60-Portrait").commandLineValue == "1080p60-Portrait")
+  }
+
+  @Test func leavesAPortraitSuffixWithAZeroFramerateUnchanged() {
+    #expect(quality("1080p0-Portrait").commandLineValue == "1080p0-Portrait")
+  }
+
+  /// The trap: `0` here is the framerate, upstream's placeholder for a clip
+  /// with no framerate metadata — not a disambiguation suffix. Stripping it
+  /// would turn `720p0` into `720p`, a different (and possibly nonexistent)
+  /// rendition. Only a hyphen followed by digits counts, and this name has no
+  /// hyphen at all.
+  @Test func doesNotStripABareTrailingDigitThatIsPartOfTheFramerate() {
+    #expect(quality("720p0").commandLineValue == "720p0")
+  }
+
+  @Test func leavesSourceUnchanged() {
+    #expect(quality("source").commandLineValue == "source")
+  }
+
+  @Test func leavesAnEmptyNameUnchanged() {
+    #expect(quality("").commandLineValue == "")
+  }
+}
