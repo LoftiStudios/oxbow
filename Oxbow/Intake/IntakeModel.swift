@@ -412,13 +412,24 @@ nonisolated enum Timecode {
 
     var total = 0
     for (index, part) in parts.enumerated() {
-      // `Int(_:)` alone would accept "+5", " 5", and non-ASCII digits.
+      // `Int(_:)` alone would accept "+5", " 5", and non-ASCII digits — and
+      // returns nil for a run of digits too long for `Int`, which is the
+      // first half of the overflow guard below.
       guard !part.isEmpty, part.allSatisfy({ $0.isASCII && $0.isNumber }), let value = Int(part)
       else { return nil }
       // Only the leading field may exceed 59: "90" is a minute and a half,
       // but "1:90" is not a time anybody means.
       if index > 0 && value > 59 { return nil }
-      total = total * 60 + value
+      // Reported rather than trapping. Swift traps on integer overflow, so a
+      // plain `total * 60 + value` turns a long number pasted into the trim
+      // field into a crash — no privileged input required, just a text field
+      // and a fat thumb. Too big to be a time is invalid input like any
+      // other, and the sheet already refuses invalid input gracefully.
+      let (scaled, didScaleOverflow) = total.multipliedReportingOverflow(by: 60)
+      guard !didScaleOverflow else { return nil }
+      let (sum, didSumOverflow) = scaled.addingReportingOverflow(value)
+      guard !didSumOverflow else { return nil }
+      total = sum
     }
     return .seconds(total)
   }

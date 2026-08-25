@@ -87,6 +87,16 @@ struct IntakeModelTests {
     return request
   }
 
+  /// The byte length of whichever output suffix `filename` ends with, so a
+  /// test can recover the base name every output shares.
+  private func suffixBytes(of filename: String) -> Int {
+    let suffixes = [
+      OutputSuffix.render, OutputSuffix.chat(.json), OutputSuffix.chat(.text),
+      OutputSuffix.chat(.html), OutputSuffix.video,
+    ]
+    return suffixes.first { filename.hasSuffix($0) }?.utf8.count ?? 0
+  }
+
   private func clipRequest(of template: JobTemplate) -> ClipRequest? {
     guard case .clip(let request) = template.media else { return nil }
     return request
@@ -185,6 +195,31 @@ struct IntakeModelTests {
     for name in names {
       #expect(name.utf8.count <= 255, "\(name) is \(name.utf8.count) bytes")
     }
+  }
+
+  /// The name field is the user's, and it is the seam the prefilled-name test
+  /// above cannot reach: that name arrives from `load()` already reserved, so
+  /// re-sanitizing it with any budget at all leaves it unchanged. A name the
+  /// user edited or pasted has had no reservation applied, and `outputBaseName`
+  /// is the only thing standing between it and a chat sibling that does not
+  /// fit while its video does — the §4 disagreement itself.
+  @Test func aLongEditedNameStillLeavesRoomForTheLongestSuffix() async throws {
+    let model = await loadedModel()
+    model.isDownloadingChat = true
+    model.isRenderingChat = true
+    model.name = String(repeating: "b", count: 250)
+
+    let template = try #require(model.composedTemplate())
+    let names = [
+      try #require(videoRequest(of: template)?.destination.lastPathComponent),
+      try #require(template.chat?.destination?.lastPathComponent),
+      try #require(template.render?.destination.lastPathComponent),
+    ]
+    for name in names {
+      #expect(name.utf8.count <= 255, "\(name.utf8.count) bytes: \(name)")
+    }
+    // One base name, whatever suffix follows it — the point of reserving.
+    #expect(Set(names.map { $0.utf8.count - suffixBytes(of: $0) }).count == 1)
   }
 
   /// The name field is the user's, and a user can type a `/`. Left alone it
@@ -459,6 +494,24 @@ struct IntakeModelTests {
     #expect(Timecode.parse("1:30") == .seconds(90))
     #expect(Timecode.parse("1:02:03") == .seconds(3723))
     #expect(Timecode.parse(" 1:30 ") == .seconds(90))
+  }
+
+  /// Swift traps on integer overflow, so an over-long number in the trim
+  /// field used to take the whole app down — from a text field, with no
+  /// privileged input. Too big to be a time is invalid input like any other.
+  @Test func anOverflowingTimecodeIsRejectedRatherThanTrapping() async {
+    #expect(Timecode.parse("999999999999999999:0") == nil, "overflows the x60")
+    #expect(Timecode.parse("99999999999999999999999999") == nil, "too long for Int at all")
+    #expect(Timecode.parse("999999999999999999:59:59") == nil)
+    // The largest value that does NOT overflow still has to convert to a
+    // `Duration` rather than trapping on the way out.
+    #expect(Timecode.parse("9223372036854775807") != nil)
+
+    // And it reaches the sheet as a refusal, not a crash.
+    let model = await loadedModel()
+    model.trimStartText = "999999999999999999:0"
+    #expect(model.trimIsInvalid)
+    #expect(!model.canAdd)
   }
 
   @Test func malformedTimecodesAreRejectedRatherThanCoerced() {
