@@ -29,10 +29,6 @@ struct CompositeGeometryTests {
 
   /// h264_videotoolbox accepts an odd width and SILENTLY CROPS a column —
   /// 1920+351 produced 2270x1080, exit 0, no warning. Verified 2026-08-25.
-  /// Every one of these has an EVEN video width, so the old "force the chat
-  /// width even" rule and the parity rule that replaced it agree here — the
-  /// disagreement only shows up on an odd video width, covered separately
-  /// below.
   @Test(arguments: ["1920x1080", "1280x720", "1146x646"])
   func neverProducesAnOddWidth(resolution: String) throws {
     let geometry = try #require(CompositeGeometry(quality: quality("x", resolution)))
@@ -40,38 +36,41 @@ struct CompositeGeometryTests {
     #expect(geometry.outputWidth.isMultiple(of: 2))
   }
 
-  /// The exact table from `docs/design/compositing.md` §4: the chat width
-  /// must share the video width's parity, not simply be even. `853x480` is a
-  /// real Twitch rendition (480p30) with an ODD video width — forcing the
-  /// chat width even there produces an odd sum (853 + 160 = 1013). `284x160`
-  /// exercises the minimum-width clamp breaking parity on an even width the
-  /// other way, showing the correction runs after the clamp either way.
+  /// Twitch's metadata dimensions are not always the decoded stream's: h264
+  /// 4:2:0 cannot carry an odd coded width or height, so an odd value in
+  /// metadata is a rounding artifact, never a real frame. A real download of
+  /// `480p30-Portrait` — whose clip-API metadata claims `480x853` — decodes
+  /// as `480x852`. `CompositeGeometry.init?` rounds every metadata dimension
+  /// down to even as its first step, before deriving anything from it, so
+  /// the chat render's height agrees with what the video actually decodes
+  /// to — the mismatch `hstack` otherwise refuses outright (§2: exit 234, a
+  /// 0-byte output).
+  ///
+  /// `853x480` (landscape 480p from the clip API) and `480x853` (the
+  /// portrait rendition) each round down on the odd axis only; `640x360` and
+  /// `1146x646` are already even on both axes and pass through unchanged,
+  /// covering the minimum-width clamp and the plain case respectively.
   @Test(arguments: [
-    (1920, 360, 2280),
-    (1280, 240, 1520),
-    (853, 161, 1014),
-    (640, 160, 800),
-    (1146, 214, 1360),
-    (284, 160, 444),
+    ("1920x1080", 1920, 1080, 360, 2280, 1080),
+    ("1280x720", 1280, 720, 240, 1520, 720),
+    ("853x480", 852, 480, 160, 1012, 480),
+    ("480x853", 480, 852, 160, 640, 852),
+    ("640x360", 640, 360, 160, 800, 360),
+    ("1146x646", 1146, 646, 214, 1360, 646),
   ])
-  func matchesTheChatWidthsParityToTheVideos(
-    videoWidth: Int, chatWidth: Int, outputWidth: Int)
+  func roundsAnOddMetadataDimensionDownToEven(
+    resolution: String, videoWidth: Int, videoHeight: Int,
+    chatWidth: Int, outputWidth: Int, outputHeight: Int)
     throws
   {
-    let geometry = try #require(
-      CompositeGeometry(quality: quality("x", "\(videoWidth)x480")))
+    let geometry = try #require(CompositeGeometry(quality: quality("x", resolution)))
+    #expect(geometry.videoWidth == videoWidth)
+    #expect(geometry.videoHeight == videoHeight)
     #expect(geometry.chatWidth == chatWidth)
     #expect(geometry.outputWidth == outputWidth)
+    #expect(geometry.videoHeight == outputHeight, "the chat's height always equals the video's")
     #expect(geometry.outputWidth.isMultiple(of: 2), "every output width must be even")
-  }
-
-  /// The chat's height always equals the video's, and unlike width there is
-  /// nothing to adjust for parity — this design never scales the video. An
-  /// odd height would be silently cropped the same way an odd width would,
-  /// so it is refused outright. `480p30-Portrait` is a real rendition at
-  /// 480x853 (odd height, not odd width).
-  @Test func refusesAnOddVideoHeight() {
-    #expect(CompositeGeometry(quality: quality("480p30-Portrait", "480x853")) == nil)
+    #expect(geometry.videoHeight.isMultiple(of: 2), "every output height must be even")
   }
 
   /// A clip old enough that Twitch backfilled no framerate is named `720p0`

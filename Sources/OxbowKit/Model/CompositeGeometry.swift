@@ -19,29 +19,39 @@ public struct CompositeGeometry: Sendable, Equatable {
   /// The narrowest legible chat column.
   static let minimumChatWidth = 160
 
-  /// Fails when the quality carries no pixel width, or when the video's
-  /// height is odd.
+  /// Fails when the quality carries no pixel width.
   ///
-  /// No pixel width: a clip old enough to have no dimensions backfilled
-  /// cannot be composited, because the chat's height must equal the video's
-  /// and a guessed height produces a silently wrong frame rather than a loud
+  /// A clip old enough to have no dimensions backfilled cannot be
+  /// composited, because the chat's height must equal the video's and a
+  /// guessed height produces a silently wrong frame rather than a loud
   /// failure.
-  ///
-  /// Odd height: the chat column's height always equals the video's (it
-  /// cannot be adjusted independently the way width can — see `chatWidth`
-  /// below), so an odd video height would hand `h264_videotoolbox` an odd
-  /// output height with nothing available to correct it. `480p30-Portrait`
-  /// is a real rendition at 480x853 — odd height, not odd width — so this is
-  /// not a hypothetical. There is deliberately no scaling fallback: this
-  /// design never scales the video (§4, §11), so refusing is the only
-  /// correct response, consistent with the no-pixel-width case above.
   public init?(quality: StreamQuality) {
     let parts = quality.resolution.split(separator: "x")
     guard parts.count == 2,
-          let width = Int(parts[0]), let height = Int(parts[1]),
-          width > 0, height > 0,
-          height.isMultiple(of: 2)
+          let rawWidth = Int(parts[0]), let rawHeight = Int(parts[1]),
+          rawWidth > 0, rawHeight > 0
     else { return nil }
+
+    // Twitch's *metadata* dimensions are not always the decoded stream's:
+    // h264 4:2:0 (yuv420p/yuvj420p, what every Twitch rendition uses)
+    // cannot have an odd coded width or height, so a metadata value that is
+    // odd is a rounding artifact, never a real frame. Verified by
+    // downloading the real `480p30-Portrait` rendition, whose clip API
+    // metadata claims `480x853`: the decoded stream is `480x852`. Twitch's
+    // clip API *derives* dimensions arithmetically (480 x 16/9 = 853.3,
+    // rounded) rather than reporting the coded size — the same rendition
+    // reads `852x480` from a VOD's m3u8 but `853x480` from the clip API.
+    //
+    // This matters here, specifically, because the chat render's height is
+    // derived from `videoHeight` below and must equal the *decoded* video's
+    // height for `hstack` to accept it (§2: a mismatch is exit 234 and a
+    // 0-byte output, immediately). Deriving it from an unrounded 853 while
+    // the video decodes at 852 is exactly that mismatch. Rounding every
+    // metadata dimension down to even, here, before anything downstream
+    // reads it, keeps the two in agreement on both axes.
+    let width = rawWidth - (rawWidth % 2)
+    let height = rawHeight - (rawHeight % 2)
+    guard width > 0, height > 0 else { return nil }
 
     self.videoWidth = width
     self.videoHeight = height
@@ -50,21 +60,13 @@ public struct CompositeGeometry: Sendable, Equatable {
     // 3/16 of the video's width, because it lands on exact even integers at
     // most standard Twitch widths (1920 -> 360, 1280 -> 240).
     //
-    // The output width must still come out even regardless — h264_videotoolbox
-    // does NOT reject an odd width, it accepts it and silently crops a column.
-    // 1920+351 produced 2270x1080 with exit 0 and no warning. Verified
-    // 2026-08-25. But forcing the chat width itself even is not sufficient:
-    // 853x480 is a real Twitch rendition (480p30, present in both clips
-    // tested), and an *odd* video width needs an *odd* chat width to keep
-    // their sum even. So the rule is parity matching, not evenness: the chat
-    // width must share the video width's parity.
-    //
-    // The minimum-width clamp below can itself break parity — 853's raw
-    // 3/16 candidate is 159, which clamps up to 160 (even, but 853 is odd) —
-    // so the parity correction is applied after the clamp, not before, and
-    // only ever pushes the value up (never back below the minimum).
-    let raw = max(width * 3 / 16, Self.minimumChatWidth)
-    self.chatWidth = (raw + width).isMultiple(of: 2) ? raw : raw + 1
+    // Forced even regardless: h264_videotoolbox does NOT reject an odd
+    // width, it accepts it and silently crops a column. 1920+351 produced
+    // 2270x1080 with exit 0 and no warning. Verified 2026-08-25. This still
+    // matters even though `width` above is now always even: 852 x 3/16 = 159,
+    // an odd result from an even input.
+    let scaled = max(width * 3 / 16, Self.minimumChatWidth)
+    self.chatWidth = scaled - (scaled % 2)
 
     // Halved above 30 so a 60 fps VOD does not pay for 60 fps of slowly
     // scrolling text. Always an integer ratio, so chat frames land evenly on

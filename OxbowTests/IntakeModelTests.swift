@@ -484,25 +484,23 @@ struct IntakeModelTests {
     #expect(problem.contains("Pick another quality"), "says what to do, not just what's wrong")
   }
 
-  /// `480p30-Portrait` is a real rendition at 480x853 — an odd height, not a
-  /// missing one. Saying Twitch "never recorded pixel dimensions" would be
-  /// false here, so this case gets its own wording (bug 3).
-  @Test func choosingAnExplicitQualityWithAnOddHeightExplainsWhyAddIsDisabled() async throws {
+  /// `480p30-Portrait` is a real rendition whose clip-API metadata claims
+  /// `480x853`, an odd height. The real decoded stream is `480x852` — h264
+  /// 4:2:0 cannot carry an odd coded dimension, so 853 is a rounding
+  /// artifact in Twitch's metadata, not a real frame.
+  /// `CompositeGeometry.init?` rounds it down to the true 852 rather than
+  /// refusing, so this composes rather than disabling Add.
+  @Test func anOddHeightInMetadataComposesAtItsRoundedDownValue() async throws {
     let qualities = [
-      StreamQuality(name: "1080p60", resolution: "1920x1080", bitsPerSecond: 6_000_000),
       StreamQuality(name: "480p30-Portrait", resolution: "480x853", bitsPerSecond: 1_000_000),
     ]
     let model = await loadedModel(link: Self.clipLink, info: Self.info(qualities: qualities))
     model.output = .videoWithChat
     model.quality = "480p30-Portrait"
 
-    #expect(model.composedTemplate() == nil)
-    #expect(!model.canAdd)
-
-    let problem = try #require(model.compositeProblem)
-    #expect(problem.contains("480p30-Portrait"), "names the rendition, not a generic failure")
-    #expect(!problem.contains("never recorded pixel dimensions"), "480x853 is a recorded dimension")
-    #expect(problem.contains("Pick another quality"), "says what to do, not just what's wrong")
+    #expect(model.compositeProblem == nil)
+    let render = try #require(model.composedTemplate()?.render)
+    #expect(render.height == 852, "rounded down from the metadata's odd 853")
   }
 
   // MARK: - Quality

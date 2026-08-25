@@ -86,8 +86,8 @@ Everything geometric is known at intake, before a byte is downloaded, from
 
 | Constant | Rule | 1080p | 720p | 480p |
 |---|---|---|---|---|
-| Chat width | video width x 3/16, parity-matched to the video width — see below | 360 | 240 | 160 |
-| Chat height | = video height; an odd video height refuses the composite entirely — see below | 1080 | 720 | 480 |
+| Chat width | video width x 3/16, forced even | 360 | 240 | 160 |
+| Chat height | = video height, after metadata is rounded down to even — see below | 1080 | 720 | 480 |
 | Output width | video width + chat width | 2280 | 1520 | 1014 |
 | Chat framerate | the video's, halved when it is 60 | 30 | 30 | 30 |
 | Font size | user's Small/Medium/Large, scaled to chat width — see below | 13 / 16 / 20 | 9 / 11 / 13 | 6 / 7 / 9 |
@@ -95,53 +95,67 @@ Everything geometric is known at intake, before a byte is downloaded, from
 | Composite bitrate | derived from the source's own bitrate — see below | — | — | — |
 
 **3/16** is chosen because it lands on exact even integers at most standard
-Twitch widths. It does not at all of them, and the fix for that is a parity
-rule, not an evenness one — recorded next.
+Twitch widths. It does not at all of them, so the chat width is still forced
+even at the point of derivation regardless — h264_videotoolbox does NOT reject
+an odd width, it accepts it and silently crops a column (§2: 1920+351 produced
+2270x1080, exit 0, no warning).
 
-### Chat width: parity, not evenness
+### Metadata dimensions are rounded down to even before anything is derived
 
-The first cut of this rule forced the chat width even outright, on the theory
-that `outputWidth = videoWidth + chatWidth` only needs to come out even, and an
-even chat width guarantees that. It doesn't: `853x480` is a real Twitch
-rendition (480p30, seen on two separate clips), and 853 is odd. Forcing the
-chat width to the nearest even number (160) gives 853 + 160 = 1013 — still odd,
-still silently cropped by `h264_videotoolbox` (§2 records that crop; it does
-not reject the odd width, it just drops a column with exit 0 and no warning).
+An earlier version of this section chased odd *video* widths and heights with
+a parity rule and an outright refusal, on the premise that Twitch renditions
+can genuinely carry odd dimensions. **That premise was wrong.** A real
+download of the `480p30-Portrait` rendition — whose clip-API metadata claims
+`480x853` — decodes as:
 
-**The correct rule is parity matching: the chat width must share the video
-width's parity**, so their sum is always even regardless of which parity the
-video itself has. 853 needs an *odd* chat width — 161, not 160 — to land on an
-even 1014.
+```
+Video: h264 (Main), yuvj420p, 480x852
+```
 
-The minimum-width clamp (`max(rawChatWidth, 160)`) can itself break parity —
-853's raw 3/16 candidate is 159 (odd, correct), but the clamp lifts it to 160
-(even, wrong) — so the parity correction runs **after** the clamp, never
-before, and only ever pushes the value up by one rather than back down below
-the legible floor.
+h264 4:2:0 (`yuv420p`/`yuvj420p`, what every Twitch rendition uses) cannot
+carry an odd coded width or height — the chroma planes are half-resolution on
+both axes, so an odd luma dimension has no valid chroma sample to pair with.
+**An odd dimension in Twitch's metadata is therefore always a rounding
+artifact, never a real frame.** The clip API derives it arithmetically
+(480 x 16/9 = 853.3, rounded) rather than reporting the coded size — which is
+also why the same nominal 480p rendition reads `852x480` from a VOD's m3u8 but
+`853x480` from the clip API: two different derivations of the same real frame.
 
-Worked examples (video width -> chat width -> output width), all even outputs:
+This is why deriving the chat render's height from the metadata's `853`
+produced the failure this design exists to avoid: the video itself decodes at
+`852`, `hstack` requires its two inputs to agree exactly on height, and a
+1-pixel mismatch is exit 234 and a 0-byte output (§2), immediately.
 
-| Video width | Chat width | Output width |
-|---|---|---|
-| 1920 | 360 | 2280 |
-| 1280 | 240 | 1520 |
-| 853 | 161 | 1014 |
-| 640 | 160 | 800 |
-| 1146 | 214 | 1360 |
-| 284 | 160 | 444 |
+**The fix: `CompositeGeometry.init?` rounds both metadata dimensions down to
+the nearest even value, as its very first step**, before anything —
+`chatWidth`, `videoHeight`, the render's dimensions — is derived from them.
+Rounding down (rather than up, or refusing) is what makes the render agree
+with what the video actually decodes to, since the decoder itself always
+truncates. Everything past that first step (the 3/16 chat-width rule, the
+even-forcing, the minimum-width clamp) is unchanged and operates on the
+already-corrected, always-even `videoWidth`/`videoHeight` — so an odd chat
+width can still arise from an even video width (852 x 3/16 = 159) and is still
+forced even the same way it always was; there is no longer a parity rule to
+apply, because the video dimension it would have matched against no longer
+exists.
 
-### Chat height: refused, not corrected, when odd
+Worked examples (metadata -> the video dimensions actually used -> chat
+width -> output), all even on both axes:
 
-Width has a knob to turn — the chat column's own width is free to move a pixel
-either way. Height does not: the chat's height is defined to equal the video's,
-and this design never scales the video (§11), so there is nothing to adjust.
-`480p30-Portrait` is a real rendition at 480x853 — odd height, not odd width —
-and an odd height would be silently cropped exactly like an odd width. Rather
-than invent a correction that doesn't exist, `CompositeGeometry.init?` returns
-`nil` for an odd video height, the same failure mode it already uses for a
-rendition with no pixel dimensions at all, and `IntakeModel.compositeProblem`
-explains it — worded so it doesn't call an odd height "no pixel dimensions,"
-which would be false; Twitch did record 480x853, it's just unusable as-is.
+| Metadata | Effective video | Chat width | Output |
+|---|---|---|---|
+| 1920x1080 | 1920x1080 | 360 | 2280x1080 |
+| 1280x720 | 1280x720 | 240 | 1520x720 |
+| 853x480 | 852x480 | 160 | 1012x480 |
+| 480x853 (portrait) | 480x852 | 160 (clamped) | 640x852 |
+| 640x360 | 640x360 | 160 (clamped) | 800x360 |
+| 1146x646 | 1146x646 | 214 | 1360x646 |
+
+Because the round-down happens before any other rule, a rendition Twitch
+reports with an odd dimension is no longer refused (the earlier, wrong fix
+would have rejected `480p30-Portrait` outright) and no longer needs a
+width-only parity correction (the earlier, also-wrong fix): it simply
+composites at the one-pixel-smaller size the stream actually is.
 
 **Framerate comes from the quality *name*** (`1080p60` -> 60), never from the
 m3u8's `FRAME-RATE` attribute, which reports a measured average (57.034 on a 60
@@ -493,7 +507,7 @@ day earlier.
 | `Scheduler.blockDependents` | failing either parent blocks the composite |
 | `Step` decoding | a persisted scalar `dependsOn` decodes to a single-element array |
 | `JobTemplate.makeJob` | both intake shapes, x2 for clips; the composite's two dependency edges |
-| Geometry derivation | width/height/framerate per standard quality name; chat-width parity matching (including the 853-wide case and the minimum-clamp interaction); odd video height refusing the composite; empty quality resolving to `qualities.first` |
+| Geometry derivation | width/height/framerate per standard quality name; rounding an odd metadata width or height down to even before deriving anything else (the 853-wide and 853-tall cases, including the minimum-clamp interaction); empty quality resolving to `qualities.first` |
 | Composite bitrate | the pixel-ratio x headroom formula against the measured clip's values; the 6 Mbps floor |
 | `OutputNaming` | `longestBytes` 12 -> 4 and its effect on truncation |
 | `QueueEngine` | `.composite` spawns `ffmpegPath`, not `helperExecutable` |
