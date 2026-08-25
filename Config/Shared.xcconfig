@@ -5,3 +5,28 @@
 // Copy Local.xcconfig.template to Local.xcconfig and fill it in. The include
 // is optional so a fresh clone builds (unsigned) without it.
 #include? "Local.xcconfig"
+
+// ------------------------------------------------------------------ versioning
+//
+// Both keys live here rather than in the pbxproj, where Xcode's template had
+// written them into all six target configurations — six copies of the same
+// number, and target-level settings win over this file, so a value set here
+// would have been silently ignored. They were deleted from those
+// configurations so every target inherits these.
+//
+// MARKETING_VERSION is CFBundleShortVersionString: the semver users read, and
+// the one CHANGELOG.md tracks. Bump it by hand, here, as part of the release
+// commit.
+MARKETING_VERSION = 0.1.0
+
+// CURRENT_PROJECT_VERSION is CFBundleVersion, which must increase
+// monotonically across shipped builds. The value below is only a fallback:
+// scripts/stamp-version.sh overwrites CFBundleVersion in the built Info.plist
+// with the repository's commit count on every build. It applies when there is
+// no git history to count — a source tarball, or an exported tree.
+CURRENT_PROJECT_VERSION = 1
+
+// The About window shows this, and so does the Finder's Get Info panel.
+// GENERATE_INFOPLIST_FILE turns INFOPLIST_KEY_* settings into Info.plist
+// entries, so this needs no plist file of our own.
+INFOPLIST_KEY_NSHumanReadableCopyright = © 2026 barclay loftus. MIT licensed.

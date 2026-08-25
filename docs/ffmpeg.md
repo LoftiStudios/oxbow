@@ -127,7 +127,10 @@ Requirements, all emitted into `build/ffmpeg/` by the build script:
 - `FFMPEG-SOURCE.txt` — version, upstream URL, source SHA-256, and the exact
   `configure` line, so anyone can reproduce the binary.
 
-Both must be included in the DMG and referenced from the About box.
+Both must be included in the DMG, and both are staged into the app bundle's
+`Contents/Resources` by `scripts/embed-helpers.sh` so the About box can show
+them after the app has been dragged out of the DMG. `.github/workflows/full-
+build.yml` asserts their presence in the assembled bundle.
 
 ## 7. Open items this spike did not close
 

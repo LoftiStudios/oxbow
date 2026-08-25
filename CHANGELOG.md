@@ -9,6 +9,11 @@ Entries record changes to **Oxbow**. Bumps to the pinned
 `vendor/TwitchDownloader` submodule are noted under Changed, with the upstream
 version they move to, because they change what the shipped helper does.
 
+The version here is `MARKETING_VERSION` in `Config/Shared.xcconfig`; bump it
+there as part of the release commit. The build number is not tracked here — it
+is the repository's commit count, stamped into the bundle at build time by
+`scripts/stamp-version.sh`.
+
 ## [Unreleased]
 
 Pre-alpha. Nothing released yet.
@@ -32,9 +37,25 @@ Pre-alpha. Nothing released yet.
 - A quality picker with estimated sizes, for VODs and clips alike.
 - One intake sheet for the whole job: paste a link, toggle video, chat, and
   render independently, and choose one destination folder for all of them.
+- An About window, replacing the stock About panel, which has no room for what
+  we are obliged to show: the "not affiliated with Twitch Interactive, Inc."
+  disclaimer, attribution for TwitchDownloaderCLI (MIT) and FFmpeg (LGPL
+  2.1+), the helper's `1.56.5+<sha>` string, and the bundled FFmpeg licence
+  text and source record. The licence files are shown in place rather than
+  handed to `NSWorkspace`, which has no application registered for a file
+  named `COPYING.LGPLv2.1`.
+- Real versioning. `MARKETING_VERSION` is `0.1.0`, and `CFBundleVersion` is
+  the repository's commit count, stamped into the built `Info.plist` by
+  `scripts/stamp-version.sh` so a local build and a CI build agree.
 
 ### Changed
 
+- Version settings moved out of the Xcode project, where the template had
+  written `MARKETING_VERSION = 1.0` into all six target configurations, and
+  into `Config/Shared.xcconfig` as a single inherited source of truth.
+- `scripts/embed-helpers.sh` also stages `COPYING.LGPLv2.1` and
+  `FFMPEG-SOURCE.txt` into `Contents/Resources`, so the LGPL text survives the
+  app being dragged out of the DMG.
 - `JobTemplate` is a composition of three optional parts (media, chat, render)
   rather than an enum of five fixed combinations. Every previous case is still
   expressible, and combinations the enum could not express — video plus chat
