@@ -235,10 +235,11 @@ anything else loses by default.
 
 ### Destinations become optional
 
-Composite delivers **one file**. `VideoRequest.destination` and
-`RenderRequest.destination` become `URL?`, matching `ChatRequest`; on a
-composite job both are `nil`, so both stay in the workspace and are discarded
-with it. `QueueEngine.move`'s comment that `ChatRequest.destination` is "the only
+Composite delivers **one file**. `VideoRequest.destination`,
+`ClipRequest.destination`, and `RenderRequest.destination` all become `URL?`,
+matching `ChatRequest`; on a composite job every one of them is `nil`, so the
+inputs stay in the workspace and are discarded with it. Clips are included
+because §3 gives them the same two choices as VODs. `QueueEngine.move`'s comment that `ChatRequest.destination` is "the only
 optional one of the four" is corrected.
 
 The composite takes the plain `{base}.mp4` filename. The user asked for the
