@@ -90,18 +90,9 @@ public struct RenderRequest: Codable, Sendable, Equatable {
   public var alternateBackgroundColor: String
   public var hasAlternateBackgrounds: Bool
   public var messageColor: String
-  public var hasBadges: Bool
   public var hasTimestamps: Bool
-  public var hasSubMessages: Bool
   public var hasOutline: Bool
   public var outlineSize: Int
-  /// Surfaced deliberately, not left as invisible defaults: 7TV resolution is
-  /// why the submodule is pinned past 1.56.5 (CLAUDE.md), so the switch that
-  /// controls it should be visible and user-controllable.
-  public var isBTTVEnabled: Bool
-  public var isFFZEnabled: Bool
-  public var isSTVEnabled: Bool
-  public var allowsUnlistedEmotes: Bool
   /// VideoToolbox is bitrate-targeted; there is no CRF equivalent.
   /// See docs/ffmpeg.md, section 3.
   public var bitrateMbps: Int
@@ -121,15 +112,9 @@ public struct RenderRequest: Codable, Sendable, Equatable {
     alternateBackgroundColor: String = "#191919",
     hasAlternateBackgrounds: Bool = false,
     messageColor: String = "#ffffff",
-    hasBadges: Bool = true,
     hasTimestamps: Bool = false,
-    hasSubMessages: Bool = true,
     hasOutline: Bool = false,
     outlineSize: Int = 4,
-    isBTTVEnabled: Bool = true,
-    isFFZEnabled: Bool = true,
-    isSTVEnabled: Bool = true,
-    allowsUnlistedEmotes: Bool = true,
     bitrateMbps: Int = 3,
     isSharpened: Bool = false,
     destination: URL? = nil)
@@ -143,15 +128,9 @@ public struct RenderRequest: Codable, Sendable, Equatable {
     self.alternateBackgroundColor = alternateBackgroundColor
     self.hasAlternateBackgrounds = hasAlternateBackgrounds
     self.messageColor = messageColor
-    self.hasBadges = hasBadges
     self.hasTimestamps = hasTimestamps
-    self.hasSubMessages = hasSubMessages
     self.hasOutline = hasOutline
     self.outlineSize = outlineSize
-    self.isBTTVEnabled = isBTTVEnabled
-    self.isFFZEnabled = isFFZEnabled
-    self.isSTVEnabled = isSTVEnabled
-    self.allowsUnlistedEmotes = allowsUnlistedEmotes
     self.bitrateMbps = bitrateMbps
     self.isSharpened = isSharpened
     self.destination = destination

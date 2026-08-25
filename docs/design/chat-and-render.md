@@ -222,19 +222,51 @@ Clips carry their own quality list from the same `info` call.
 |---|---|
 | Size | width, height, framerate, fontSize, font |
 | Colour | backgroundColor, alternateBackgroundColor, messageColor |
-| Elements | badges, timestamps, subMessages, outline, outlineSize |
-| Emotes | bttv, ffz, stv, allowUnlistedEmotes |
+| Elements | timestamps, outline, outlineSize |
+| Backgrounds | alternateBackgrounds |
 | Encoding | bitrateMbps, isSharpened |
 
 Colours are stored as hex strings because that is what the CLI takes
 (`#111111`, and `#C8FF0059` with alpha); the form uses a colour well and
-converts. The emote switches are surfaced deliberately: 7TV resolution is why
-the submodule is pinned past `1.56.5` (`docs/development.md`), so it should be
-visible and switchable rather than an invisible default.
+converts.
 
-Every new option is emitted by `ArgumentBuilder` and asserted in its tests. The
-two GPL-avoidance rules are unchanged and non-negotiable: always
-`--output-args` with `h264_videotoolbox`, never `--sharpening`.
+**`chatrender`'s boolean options are switches, not `--flag=value` options —
+verified empirically, not asserted from the `--help` text.** Upstream's
+parser reads mere *presence* of a boolean flag as true and ignores any value
+that follows it: `--timestamp=false` and `--timestamp false` both turn
+timestamps ON, identically to `--timestamp` on its own. Verified against the
+bundled 1.56.5 helper on 2026-08-25 by rendering the same chat file with
+`--timestamp=false` and `--timestamp=true`, extracting frames from both
+outputs, and hashing them: the two renders were byte-identical (sha256
+`d9b7fea7be2a10be…`), and both differed from a render that omitted the flag
+entirely (`6a2b525002429b03…`). The same check on `--outline` gave the same
+shape: `=false` and `=true` identical (`735d58632d7ada2c…`), omission
+different (`53952cd96edf2289…`). **There is no way to pass `false` through
+this CLI for these options; omitting the flag is the only way to get it.**
+
+`--banner` is a genuine, verified exception: it is declared differently
+upstream, and `--banner=false` really does suppress the banner. It is the
+one flag in `ArgumentBuilder` that keeps the `=value` shape.
+
+Given that, only the three options whose CLI default is `false` — timestamps,
+outline, and alternate backgrounds — are expressible through this CLI at all:
+`ArgumentBuilder` emits them bare (`--timestamp`, not `--timestamp=true`) when
+the user wants them on, and omits them otherwise. The other six upstream
+switches this design originally meant to expose — badges, sub-messages, and
+the four emote toggles (bttv, ffz, stv, allow-unlisted-emotes) — all default
+to `true` and **cannot be turned off through this CLI at all**. `RenderRequest`
+carries no fields for them; a settable field that can never take effect is a
+lie. They stay on, at the CLI's own default — the emote switches in
+particular were meant to be surfaced deliberately (7TV resolution is why the
+submodule is pinned past `1.56.5`, `docs/development.md`), but "on by
+upstream default, not user-controllable" is what that surfacing amounts to
+until an upstream fix changes the parsing.
+
+Every option above is emitted by `ArgumentBuilder` and asserted in its tests,
+including the empirically-derived contract itself — see the comment above
+`ArgumentBuilderTests`'s boolean-flag suite. The two GPL-avoidance rules are
+unchanged and non-negotiable: always `--output-args` with
+`h264_videotoolbox`, never `--sharpening`.
 
 ## 8. Clips
 

@@ -72,24 +72,37 @@ public enum ArgumentBuilder {
       args += ["-f", request.font]
       args += ["--background-color", request.backgroundColor]
       args += ["--alt-background-color", request.alternateBackgroundColor]
-      // Without this, --alt-background-color is documented by the CLI as
-      // inert.
-      args += ["--alternate-backgrounds=\(request.hasAlternateBackgrounds)"]
       args += ["--message-color", request.messageColor]
       args += ["--outline-size", String(request.outlineSize)]
 
-      // Booleans follow the same single-token `--flag=value` shape already
-      // proven by `--banner=false` above, rather than a second, untested form.
-      args += ["--badges=\(request.hasBadges)"]
-      args += ["--timestamp=\(request.hasTimestamps)"]
-      args += ["--sub-messages=\(request.hasSubMessages)"]
-      args += ["--outline=\(request.hasOutline)"]
-      // The emote switches are surfaced deliberately: 7TV resolution is why
-      // the submodule is pinned past 1.56.5 (CLAUDE.md), not left invisible.
-      args += ["--bttv=\(request.isBTTVEnabled)"]
-      args += ["--ffz=\(request.isFFZEnabled)"]
-      args += ["--stv=\(request.isSTVEnabled)"]
-      args += ["--allow-unlisted-emotes=\(request.allowsUnlistedEmotes)"]
+      // Upstream declares these nine options as switches, not as
+      // `--flag=value` options: the parser reads mere *presence* as true and
+      // ignores any value that follows, so both `--timestamp=false` and
+      // `--timestamp false` turn timestamps ON. Verified against the bundled
+      // 1.56.5 helper on 2026-08-25 by extracting frames from paired
+      // `=false`/`=true` renders and hashing them: `--timestamp=false` and
+      // `--timestamp=true` produced byte-identical frames (sha256
+      // `d9b7fea7be2a10be…`), differing only from omitting the flag entirely
+      // (`6a2b525002429b03…`); same result for `--outline` (`735d58632d7ada2c…`
+      // identical, `53952cd96edf2289…` when omitted). There is no way to pass
+      // `false` through this CLI — omitting the flag is the only way to get
+      // it. `--banner` is a genuine exception: it is declared differently
+      // upstream and its `=false` form really does suppress the banner
+      // (verified separately) — that flag is untouched, above.
+      //
+      // Three of the nine default to false and are therefore fully
+      // expressible: emit the bare flag when true, omit it when false.
+      // Without `--alternate-backgrounds`, `--alt-background-color` is
+      // documented by the CLI as inert.
+      if request.hasAlternateBackgrounds { args += ["--alternate-backgrounds"] }
+      if request.hasTimestamps { args += ["--timestamp"] }
+      if request.hasOutline { args += ["--outline"] }
+
+      // The other six (`--badges`, `--sub-messages`, `--bttv`, `--ffz`,
+      // `--stv`, `--allow-unlisted-emotes`) default to true and, per the
+      // above, cannot be turned off through this CLI at all — so
+      // `RenderRequest` carries no fields for them and nothing is emitted
+      // here. A settable field that can never take effect is a lie.
 
       // The CLI's default is `-c:v libx264`, which is GPL and absent from our
       // LGPL FFmpeg. VideoToolbox is bitrate-targeted; there is no CRF.
