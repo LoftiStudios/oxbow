@@ -50,7 +50,6 @@ struct IntakeWindow: View {
           naming
           outputs
           if model.showsTrimOptions { trim }
-          if model.isRenderingChat { RenderOptionsView(options: $model.renderOptions) }
         }
       }
       .formStyle(.grouped)
@@ -123,37 +122,24 @@ struct IntakeWindow: View {
     }
   }
 
+  // TODO(task 10): this is a placeholder pending the view-layer task. It
+  // exists only to keep the app target building after `IntakeModel` narrowed
+  // to `Output`; the real two-choice UI (design doc §3) is that task's job.
   private var outputs: some View {
     Section("Download") {
-      Toggle(isClip ? "Clip" : "Video", isOn: $model.isDownloadingMedia)
-      // Directly under the toggle it qualifies, rather than in a row of its
-      // own below every toggle: the quality is a property of the video
+      Picker("Output", selection: $model.output) {
+        Text(isClip ? "Clip" : "Video").tag(IntakeModel.Output.video)
+        Text(isClip ? "Clip + chat" : "Video + chat").tag(IntakeModel.Output.videoWithChat)
+      }
+      .pickerStyle(.inline)
+
+      // Directly under the picker: the quality is a property of the media
       // download, and nothing else on this sheet reads it.
-      if model.isDownloadingMedia {
-        Picker("Quality", selection: $model.quality) {
-          Text("Best available").tag("")
-          ForEach(model.qualities, id: \.name) { quality in
-            Text(model.label(for: quality)).tag(quality.name)
-          }
+      Picker("Quality", selection: $model.quality) {
+        Text("Best available").tag("")
+        ForEach(model.qualities, id: \.name) { quality in
+          Text(model.label(for: quality)).tag(quality.name)
         }
-      }
-
-      Toggle("Chat", isOn: $model.isDownloadingChat)
-      // Hidden under Render, which forces the download to JSON whatever the
-      // picker says — see `IntakeModel.deliveredChatFormat`.
-      if model.isDownloadingChat && !model.isRenderingChat {
-        Picker("Chat format", selection: $model.chatFormat) {
-          Text("JSON").tag(ChatFormat.json)
-          Text("Text").tag(ChatFormat.text)
-          Text("HTML").tag(ChatFormat.html)
-        }
-      }
-
-      Toggle("Render chat", isOn: $model.isRenderingChat)
-      if model.isRenderingChat && !model.isDownloadingChat {
-        Text("The chat file is downloaded to render and then discarded.")
-          .font(.caption)
-          .foregroundStyle(.secondary)
       }
     }
   }
@@ -300,14 +286,12 @@ struct IntakeWindow: View {
   }
 
   /// What this job will actually write, so the name field is not a guess.
+  ///
+  /// One line always: `.video` and `.videoWithChat` both produce exactly one
+  /// file, sharing the same suffix — a composite replaces the video it
+  /// stacks rather than accompanying it.
   private var exampleFilenames: String {
-    var names: [String] = []
-    if model.isDownloadingMedia { names.append(model.outputBaseName + OutputSuffix.video) }
-    if model.isDownloadingChat {
-      names.append(model.outputBaseName + OutputSuffix.chat(model.deliveredChatFormat))
-    }
-    if model.isRenderingChat { names.append(model.outputBaseName + OutputSuffix.render) }
-    return names.isEmpty ? "No outputs selected." : names.joined(separator: "\n")
+    model.outputBaseName + OutputSuffix.video
   }
 
 }
@@ -381,10 +365,9 @@ extension VideoInfo {
   IntakeWindow(model: previewModel())
 }
 
-#Preview("Chat + render") {
+#Preview("Video + chat") {
   let model = previewModel()
-  model.isDownloadingChat = true
-  model.isRenderingChat = true
+  model.output = .videoWithChat
   return IntakeWindow(model: model)
 }
 

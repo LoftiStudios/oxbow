@@ -37,17 +37,22 @@ final class IntakeModel {
   /// own metadata and then the user's to edit.
   var name = ""
 
-  /// The three toggles from §2. `isDownloadingMedia` covers a VOD and a clip
-  /// alike — which one it means is the pasted link's business, not a fourth
-  /// switch's.
-  var isDownloadingMedia = true
-  var isDownloadingChat = false
-  var isRenderingChat = false
+  /// What the user gets. Deliberately two choices rather than three
+  /// independent toggles: a chat render in isolation has little use, and the
+  /// composite is what makes it worth producing at all. See
+  /// docs/design/compositing.md §3.
+  enum Output: CaseIterable, Hashable {
+    case video
+    case videoWithChat
+  }
 
-  var chatFormat: ChatFormat = .json
+  var output: Output = .video
 
   /// The empty string means "best available" — the behaviour proven against
   /// the real CLI, which selects source when `-q` is absent (design doc §6).
+  /// Video-only keeps that behaviour; a composite cannot leave it unresolved
+  /// (see `compositeQuality`) because the chat column's height must equal the
+  /// video's.
   var quality = ""
 
   var folder: URL?
@@ -57,11 +62,6 @@ final class IntakeModel {
   /// silently reading as no trim at all.
   var trimStartText = ""
   var trimEndText = ""
-
-  /// The render form's own state. `RenderOptionsView` binds straight into
-  /// this; `composedTemplate()` attaches the destination `RenderOptions`
-  /// deliberately omits (see its doc comment).
-  var renderOptions = RenderOptions()
 
   private(set) var metadata: Metadata = .idle
 
@@ -268,22 +268,25 @@ final class IntakeModel {
     return false
   }
 
-  // MARK: - Render options
-
-  /// A render option outside the bounds `RenderOptions` documents — same rule
-  /// as `trimIsInvalid`, for the same reason: the value would reach FFmpeg and
-  /// fail there, after the chat download it depends on has already run.
-  ///
-  /// Only while Render is on. The form is hidden otherwise, and refusing Add
-  /// over a field nobody can see is a dead end.
-  var renderIsInvalid: Bool { isRenderingChat && !renderOptions.isValid }
-
-  /// What to say about it, or nil when there is nothing to say.
-  var renderProblems: [String] { isRenderingChat ? renderOptions.validationProblems : [] }
-
   // MARK: - Composing the job
 
-  var hasSelectedOutput: Bool { isDownloadingMedia || isDownloadingChat || isRenderingChat }
+  /// The quality a composite will actually download. "Best available" leaves
+  /// the resolution unknown, which is fatal when the chat's height must equal
+  /// the video's — so a composite resolves it to a concrete rendition and
+  /// passes it explicitly. Video-only keeps today's behaviour, where empty
+  /// means the CLI picks.
+  ///
+  /// `CompositeGeometry.init?(quality:)` fails for a rendition with no pixel
+  /// width — old clips Twitch backfilled no dimensions for — so this prefers
+  /// the chosen quality only when it actually parses, and otherwise the first
+  /// one in the list that does. If none does, `composedTemplate()` returns
+  /// nil and Add stays disabled: honest, not a workaround.
+  private var compositeQuality: StreamQuality? {
+    if !quality.isEmpty, let named = qualities.first(where: { $0.name == quality }) {
+      return named
+    }
+    return qualities.first { CompositeGeometry(quality: $0) != nil }
+  }
 
   /// True once *this link's* fetch has settled either way. `.failed` counts:
   /// the sheet stays usable, with a name derived from the id or slug.
@@ -303,22 +306,13 @@ final class IntakeModel {
   /// The name every output of this job shares, sanitized and with room
   /// reserved for the longest suffix any of them can take.
   ///
-  /// The reservation is over *every* suffix, not just the selected outputs':
-  /// the toggles change after the name is derived, and a base name that has
-  /// to be recomputed when Chat is switched on is a base name the video and
-  /// its chat sibling can disagree about (design doc §4).
+  /// The reservation is over the suffix regardless of the current `output`:
+  /// that setting can change after the name is derived, and a base name that
+  /// had to be recomputed when it did would be a base name a rename could
+  /// disagree with itself about (design doc §4).
   var outputBaseName: String {
     OutputNaming.sanitized(name, reservingSuffixBytes: OutputSuffix.longestBytes)
   }
-
-  /// The format the chat file will actually be in.
-  ///
-  /// A render pairing forces the download to JSON — the renderer reads nothing
-  /// else, so `JobTemplate.renderInput` overrides whatever was asked for. The
-  /// name has to follow, or the sheet promises `… - chat.html` and the queue
-  /// delivers JSON inside it. The picker is hidden under Render for the same
-  /// reason: an option the engine will override is not an option.
-  var deliveredChatFormat: ChatFormat { isRenderingChat ? .json : chatFormat }
 
   /// The job this sheet would add, or `nil` if it is not in a state to add
   /// one. Every disabled-Add rule in the design doc is a `guard` here.
@@ -326,17 +320,20 @@ final class IntakeModel {
     guard
       let target,
       let folder,
-      hasSelectedOutput,
       hasSettledMetadata,
-      !trimIsInvalid,
-      !renderIsInvalid
+      !trimIsInvalid
     else { return nil }
 
     let base = outputBaseName
     func destination(_ suffix: String) -> URL { folder.appending(path: base + suffix) }
 
     var media: JobTemplate.Media?
-    if isDownloadingMedia {
+    var chat: ChatRequest?
+    var render: RenderRequest?
+    var composite: CompositeRequest?
+
+    switch output {
+    case .video:
       switch target {
       case .video(let id):
         media = .video(VideoRequest(
@@ -351,42 +348,53 @@ final class IntakeModel {
           quality: quality,
           destination: destination(OutputSuffix.video)))
       }
+
+    case .videoWithChat:
+      // The composite needs a concrete rendition to derive its geometry from
+      // (see `compositeQuality`), and a duration to report FFmpeg progress
+      // against. Neither is available without settled metadata.
+      guard let selected = compositeQuality,
+            let geometry = CompositeGeometry(quality: selected),
+            let duration = info?.duration
+      else { return nil }
+
+      // One file out: the media and the render are intermediates, so neither
+      // gets a destination of its own — only the composite does, below.
+      //
+      // Clips get the same two choices as VODs (design doc §3). A clip has no
+      // trim, and `chatdownload --id` takes a slug as readily as a VOD id, so
+      // the only difference is which request type carries the identifier.
+      switch target {
+      case .video(let id):
+        media = .video(VideoRequest(
+          videoID: id, quality: selected.name,
+          trimStart: trimStart, trimEnd: trimEnd, destination: nil))
+        chat = ChatRequest(
+          videoID: id, trimStart: trimStart, trimEnd: trimEnd,
+          format: .json, destination: nil)
+      case .clip(let slug):
+        media = .clip(ClipRequest(
+          clipSlug: slug, quality: selected.name, destination: nil))
+        chat = ChatRequest(videoID: slug, format: .json, destination: nil)
+      }
+      render = RenderRequest(
+        width: geometry.chatWidth,
+        height: geometry.videoHeight,
+        framerate: geometry.chatFramerate,
+        // Transient and immediately re-encoded, so encode it well: at the old
+        // 3 Mbps default the composite carried two generations of lossy H.264
+        // over text on flat backgrounds. VideoToolbox's speed is independent
+        // of bitrate, so this costs only workspace disk.
+        bitrateMbps: 12,
+        destination: nil)
+      composite = CompositeRequest(
+        framerate: geometry.videoFramerate,
+        bitrateMbps: max(selected.bitsPerSecond / 1_000_000, 6),
+        duration: duration,
+        destination: destination(OutputSuffix.video))
     }
 
-    // A render needs a chat file to render, so it implies the download even
-    // with the Chat toggle off. The toggle decides only whether that file is
-    // *delivered*: with Chat off the destination is `nil`, which is how the
-    // queue already says "stays in the workspace and is discarded with it" —
-    // the open question in task-queue.md §10, answered by the toggle rather
-    // than by a new concept (design doc §2).
-    //
-    // Built here rather than left to `JobTemplate`'s implied request, which
-    // seeds its id from the media: with Media off and Render on there is no
-    // media to seed from, and the implied request would carry an empty id —
-    // a job that runs and downloads nothing.
-    var chat: ChatRequest?
-    if isDownloadingChat || isRenderingChat {
-      chat = ChatRequest(
-        videoID: target.identifier,
-        trimStart: trimStart,
-        trimEnd: trimEnd,
-        format: deliveredChatFormat,
-        destination: isDownloadingChat
-          ? destination(OutputSuffix.chat(deliveredChatFormat))
-          : nil)
-    }
-
-    var render: RenderRequest?
-    if isRenderingChat {
-      render = renderOptions.request(destination: destination(OutputSuffix.render))
-    }
-
-    // Unreachable given `hasSelectedOutput`, but a template with no parts
-    // makes a job with no steps: something that appears in the queue, does
-    // nothing, and explains nothing.
-    guard media != nil || chat != nil || render != nil else { return nil }
-
-    return JobTemplate(media: media, chat: chat, render: render)
+    return JobTemplate(media: media, chat: chat, render: render, composite: composite)
   }
 
   /// Adds the job. Returns whether it landed, so the sheet dismisses on a
@@ -554,24 +562,20 @@ nonisolated struct RenderOptions: Equatable, Sendable {
   }
 }
 
-/// The per-output suffixes from the design doc, §4.
+/// The per-output suffix from the design doc, §4.
+///
+/// One case now, not five: intake no longer offers a bare chat download or a
+/// bare chat render (see `IntakeModel.Output`), so the video suffix — shared
+/// by a plain video and a composite alike, since a composite replaces the
+/// video it stacks rather than accompanying it — is the only one left.
 nonisolated enum OutputSuffix {
   static let video = ".mp4"
-  static let render = " - chat.mp4"
-
-  static func chat(_ format: ChatFormat) -> String {
-    switch format {
-    case .json: " - chat.json"
-    case .text: " - chat.txt"
-    case .html: " - chat.html"
-    }
-  }
 
   /// The longest suffix any output can take, in UTF-8 bytes, computed from
   /// the suffixes themselves — a literal would quietly stop being the longest
   /// the first time one of them grows.
   static let longestBytes: Int = {
-    let all = [video, render, chat(.json), chat(.text), chat(.html)]
+    let all = [video]
     return all.map(\.utf8.count).max() ?? 0
   }()
 }
