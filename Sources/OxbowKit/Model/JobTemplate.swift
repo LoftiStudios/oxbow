@@ -187,10 +187,11 @@ public struct JobTemplate: Sendable {
   /// delivered JSON bytes inside a file called `… - chat.html`, which is
   /// worse than either honest outcome: the extension is the only thing that
   /// tells the user — or Finder, or the next program to open it — what is
-  /// actually in there. Intake never hit this because it derives the
-  /// extension from `deliveredChatFormat` after the same override, but
-  /// `JobTemplate` is public library surface and a caller composing its own
-  /// template gets no such protection.
+  /// actually in there. Intake never hits this: `IntakeModel` gives a
+  /// composite's chat request no destination at all, since the composite is
+  /// its only output, so there is nothing here for this to rewrite.
+  /// `JobTemplate` is public library surface, though, and a caller composing
+  /// its own template gets no such protection.
   private static func renderInput(_ request: ChatRequest) -> ChatRequest {
     var request = request
     request.format = .json

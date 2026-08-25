@@ -126,6 +126,24 @@ struct JobInfoTests {
     #expect(JobInfo(job: subject).outputs == ["Rendered chat"])
   }
 
+  /// A composite job's video, chat, and render steps are all intermediates —
+  /// none of them has a destination — so the one file that actually reaches
+  /// the user's folder is the composite. "Video" and "Rendered chat" are
+  /// exactly the intermediates that never do, and reporting either alongside
+  /// the composite would promise files the job never delivers.
+  @Test func reportsExactlyTheCompositeAsAnOutputOfACompositeJob() {
+    let video = VideoRequest(videoID: "2844548319", quality: "1080p60", destination: nil)
+    let subject = job(
+      step(.downloadVideo(video)),
+      step(.downloadChat(ChatRequest(videoID: "1", format: .json, destination: nil))),
+      step(.renderChat(RenderRequest(destination: nil))),
+      step(.composite(CompositeRequest(
+        framerate: 60, bitrateMbps: 6, duration: .seconds(60),
+        destination: Self.folder.appending(path: "a.mp4")))))
+
+    #expect(JobInfo(job: subject).outputs == ["Video + chat"])
+  }
+
   // MARK: - Where it went
 
   @Test func readsTheDestinationFolderFromWhereTheOutputsWereSentR() {

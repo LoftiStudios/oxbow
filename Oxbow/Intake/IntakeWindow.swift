@@ -7,9 +7,10 @@ import OxbowKit
 /// the rendering of it.
 ///
 /// **A window, not a sheet.** A sheet cannot be taller than the window that
-/// hosts it, and this form legitimately is: with the render options open it
-/// wants most of a screen. As a sheet that meant either a clipped, scrolling
-/// form or a queue window whose minimum size was dictated by its own modal —
+/// hosts it, and this form legitimately grew past that with the old render
+/// options open — since deleted (docs/design/compositing.md §3, §8), but the
+/// shape earned here is kept: a sheet meant either a clipped, scrolling form
+/// or a queue window whose minimum size was dictated by its own modal —
 /// both of which were tried, and both of which are the tail wagging the dog.
 /// A window sizes itself, remembers what the user dragged it to, and closes
 /// with ⌘W. This is the shape Transmission uses for the same job.
@@ -122,16 +123,18 @@ struct IntakeWindow: View {
     }
   }
 
-  // TODO(task 10): this is a placeholder pending the view-layer task. It
-  // exists only to keep the app target building after `IntakeModel` narrowed
-  // to `Output`; the real two-choice UI (design doc §3) is that task's job.
+  /// Two choices, not three independent toggles: a chat render in isolation
+  /// has little use, and the composite is what makes it worth producing at
+  /// all (design doc §3). `IntakeModel.Output` already narrowed to this pair;
+  /// this is just its rendering.
   private var outputs: some View {
     Section("Download") {
-      Picker("Output", selection: $model.output) {
+      Picker("", selection: $model.output) {
         Text(isClip ? "Clip" : "Video").tag(IntakeModel.Output.video)
         Text(isClip ? "Clip + chat" : "Video + chat").tag(IntakeModel.Output.videoWithChat)
       }
-      .pickerStyle(.inline)
+      .pickerStyle(.radioGroup)
+      .labelsHidden()
 
       // Directly under the picker: the quality is a property of the media
       // download, and nothing else on this sheet reads it.
@@ -140,6 +143,25 @@ struct IntakeWindow: View {
         ForEach(model.qualities, id: \.name) { quality in
           Text(model.label(for: quality)).tag(quality.name)
         }
+      }
+
+      if model.output == .videoWithChat {
+        // Not decoration: a six-hour stream is roughly 75 minutes of
+        // encoding, and a user who is not told that reads a busy queue as a
+        // hang.
+        Text("Chat is rendered in a column beside the video and encoded into "
+          + "one file. This takes roughly as long as the stream itself.")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+      }
+
+      // Only reachable for a clip whose selected rendition Twitch never
+      // recorded pixel dimensions for — see `IntakeModel.compositeProblem`.
+      // Shown the same way the trim section shows its own refusal reason.
+      if let compositeProblem = model.compositeProblem {
+        Label(compositeProblem, systemImage: "exclamationmark.triangle")
+          .font(.caption)
+          .foregroundStyle(.red)
       }
     }
   }
