@@ -335,6 +335,11 @@ public actor QueueEngine {
     let context: StepContext
     do {
       context = try makeContext(job: job, step: step)
+    } catch let error as StepWiringError {
+      completeStep(id, outcome: .failed(StepFailure(
+        kind: .launchFailed("\(error)"),
+        summary: "Wiring bug: this step's inputs did not match its dependencies.")))
+      return
     } catch {
       completeStep(id, outcome: .failed(StepFailure(
         kind: .launchFailed("\(error)"),
@@ -418,7 +423,7 @@ public actor QueueEngine {
       }
       completeStep(id, outcome: .failed(StepFailure(
         kind: .launchFailed("\(error)"),
-        summary: "The download tool failed to start.",
+        summary: "The tool failed to start.",
         detail: "\(error)")))
     }
   }
@@ -683,6 +688,20 @@ public actor QueueEngine {
       job.steps.first { $0.id == dependency }?.artifact
     }
 
+    // `compactMap` silently drops a missing artifact, which would otherwise
+    // shift every later positional input down by one — a composite reading
+    // its chat render as `input 0` because the video's artifact went missing.
+    // That surfaces as a baffling FFmpeg error (wrong stream mapped, or a
+    // filter given too few inputs) far from its real cause: a step ran with a
+    // parent that was not actually `.done`, which should never happen given
+    // `Scheduler.admissible`'s guard, but a future regression there should be
+    // loud here rather than silently mis-wired.
+    guard inputs.count == step.dependsOn.count else {
+      throw StepWiringError(
+        "step \(step.id) expected \(step.dependsOn.count) input artifact(s) "
+          + "but only \(inputs.count) parent(s) had one")
+    }
+
     return StepContext(
       stepTempDirectory: stepDirectory,
       outputFile: artifacts.appending(path: name),
@@ -723,5 +742,16 @@ public actor QueueEngine {
     } catch {
       return .failed("\(error)")
     }
+  }
+}
+
+/// Thrown by `QueueEngine.makeContext` when a step's resolved input artifacts
+/// are shorter than its `dependsOn`, so `launch` can report a wiring bug
+/// distinctly from an ordinary working-directory failure.
+private struct StepWiringError: Error, CustomStringConvertible {
+  let description: String
+
+  init(_ description: String) {
+    self.description = description
   }
 }

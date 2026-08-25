@@ -124,7 +124,7 @@ struct Step: Identifiable, Codable, Sendable {
     let kind: StepKind
     var status: StepStatus
     var progress: StepProgress
-    let dependsOn: StepID?   // the step whose artifact this consumes
+    let dependsOn: [StepID]  // the steps whose artifacts this consumes, in order
     var artifact: URL?
 }
 
@@ -204,12 +204,19 @@ alongside the argument builder, since the builder is their only consumer.
 Deliberate choices:
 
 - **`dependsOn` is explicit.** In *VOD + chat + render* the render depends on
-  step 2, not step 1. At most one parent per step — a forest, never a general
-  graph, so no topological sort exists anywhere in the codebase.
+  step 2, not step 1. Originally at most one parent per step — a forest, never
+  a general graph, so no topological sort existed anywhere in the codebase.
+  Compositing broke that: a composite step depends on both the finished media
+  and the finished render, so `dependsOn` is now `[StepID]` and steps form a
+  DAG rather than a forest. No topological sort was added, because none was
+  needed — `JobTemplate` is the only place steps get created, and it only ever
+  builds acyclic graphs (a composite's parents are steps already appended
+  earlier in the same call), so the scheduler's fixed-point walks over
+  `dependsOn` still terminate without one.
 - **Job status is derived**, never stored. A stored summary can drift from the
   steps it summarises.
 - **Resource class is derived** from `kind`: `downloadVideo/Clip/Chat` →
-  `.network`, `renderChat` → `.compute`.
+  `.network`, `renderChat`/`.composite` → `.compute`.
 - **Interrupted work reuses `.failed(.interrupted)`** rather than earning its own
   case, because it behaves identically to a failure in every respect.
 
@@ -243,7 +250,8 @@ enum Scheduler {
 
 **Admission, in order:**
 
-1. Eligible: status is `.queued` and (`dependsOn == nil` or that step is `.done`)
+1. Eligible: status is `.queued` and every step in `dependsOn` is `.done`
+   (vacuously true when `dependsOn` is empty)
 2. Capacity: at most one running step per resource class
 3. Tie-break: job `created`, then step index — deterministic and FIFO
 

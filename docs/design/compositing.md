@@ -1,6 +1,10 @@
 # Compositing the VOD and chat into one video — design
 
-**Status:** approved 2026-08-25. Not yet implemented.
+**Status:** approved 2026-08-25. Phases 1-3 (the engine, scheduler, geometry,
+parser, and argv) implemented on branch `compositing`. Phase 4 — narrowing the
+intake to the two-choice UI in §3, deleting the standalone render UI, and the
+font-size calibration — is still outstanding; nothing in the app constructs a
+composite yet.
 
 Prerequisites: `docs/design/task-queue.md` (the engine and its templates),
 `docs/design/chat-and-render.md` (the intake this narrows), and

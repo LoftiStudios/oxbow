@@ -47,6 +47,10 @@ nonisolated struct JobInfo {
     job.steps.lazy.compactMap { if case .renderChat(let r) = $0.kind { r } else { nil } }.first
   }
 
+  var composite: CompositeRequest? {
+    job.steps.lazy.compactMap { if case .composite(let r) = $0.kind { r } else { nil } }.first
+  }
+
   // MARK: - Where it came from
 
   /// The address this job was created from, rebuilt.
@@ -98,17 +102,19 @@ nonisolated struct JobInfo {
 
   /// What this job was asked to deliver.
   ///
-  /// A chat step with no destination was downloaded only to feed the renderer
-  /// and then discarded (`JobTemplate.renderInput`), so it is not an output —
-  /// listing it would promise a file that never arrived.
+  /// A step with no destination was downloaded or rendered only to feed a
+  /// later step and then discarded (`JobTemplate.renderInput`, and the same
+  /// pattern for a composite's video and render inputs), so it is not an
+  /// output — listing it would promise a file that never arrived.
   var outputs: [String] {
     var outputs: [String] = []
-    if video != nil { outputs.append("Video") }
-    if clip != nil { outputs.append("Clip") }
+    if let video, video.destination != nil { outputs.append("Video") }
+    if let clip, clip.destination != nil { outputs.append("Clip") }
     if let chat, chat.destination != nil {
       outputs.append("Chat (\(Self.name(of: chat.format)))")
     }
-    if render != nil { outputs.append("Rendered chat") }
+    if let render, render.destination != nil { outputs.append("Rendered chat") }
+    if composite != nil { outputs.append("Video + chat") }
     return outputs
   }
 

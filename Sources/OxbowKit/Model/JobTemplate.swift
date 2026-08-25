@@ -5,9 +5,12 @@ import Foundation
 /// Templates exist only at construction time. Once expanded, the runtime model
 /// is uniform and nothing needs to know which template produced a job.
 ///
-/// The three parts are independent toggles, not a fixed list of combinations:
-/// any subset may be present, and `makeJob` wires only the dependency a render
-/// actually needs (on its chat download), never one between media and chat.
+/// Four parts, not a fixed list of combinations — but not four independent
+/// toggles either: `composite` implies `render` exactly as `render` implies
+/// `chat`, so setting it alone still produces a chat-download, render, and
+/// composite step. `makeJob` wires only the dependencies each implication
+/// actually needs: a render depends on its chat download, and a composite
+/// depends on both its media and its render.
 public struct JobTemplate: Sendable {
   public enum Media: Sendable {
     case video(VideoRequest)
@@ -109,8 +112,11 @@ public struct JobTemplate: Sendable {
         id: nextStepID(),
         kind: .composite(composite),
         // ORDER IS THE CONTRACT: ArgumentBuilder reads input 0 as the video
-        // and input 1 as the chat render. Swapping these silently produces a
-        // frame with the chat on the left and a 350-pixel-wide video.
+        // and input 1 as the chat render. Swapping these does not resize
+        // anything — `hstack` does not scale its inputs — so the frame comes
+        // out chat-on-the-left at full size, and worse, silently loses audio:
+        // `-map 0:a:0?` would then point at input 0, which is the chat
+        // render, and a chat render has no audio track.
         dependsOn: [mediaStep.id, renderStep.id]))
     }
 

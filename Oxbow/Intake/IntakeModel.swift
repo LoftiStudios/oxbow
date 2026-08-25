@@ -434,15 +434,14 @@ final class IntakeModel {
 
 /// Every `RenderRequest` field except `destination`.
 ///
-/// `RenderRequest.destination` is non-optional (`Sources/OxbowKit`, which
-/// this app does not modify), but the render form exists before a folder is
-/// chosen — there is nothing to put there yet. An earlier pass filled that
-/// gap with a `/dev/null` placeholder `RenderRequest`, safe only by
-/// convention: nothing stopped a future read of `renderOptions.destination`
-/// before `composedTemplate()` overwrote it. `RenderOptions` removes the
-/// field instead, so there is nothing to leave unset — `request(destination:)`
-/// is the only place a destination is attached, and `composedTemplate()` is
-/// the only caller.
+/// `RenderRequest.destination` is now optional, but the render form still
+/// exists before a folder is chosen — there is nothing to put there yet. An
+/// earlier pass filled that gap with a `/dev/null` placeholder `RenderRequest`,
+/// safe only by convention: nothing stopped a future read of
+/// `renderOptions.destination` before `composedTemplate()` overwrote it.
+/// `RenderOptions` removes the field instead, so there is nothing to leave
+/// unset — `request(destination:)` is the only place a destination is
+/// attached, and `composedTemplate()` is the only caller.
 nonisolated struct RenderOptions: Equatable, Sendable {
   var width = 350
   var height = 600

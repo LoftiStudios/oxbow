@@ -47,8 +47,20 @@ Pre-alpha. Nothing released yet.
 - Real versioning. `MARKETING_VERSION` is `0.1.0`, and `CFBundleVersion` is
   the repository's commit count, stamped into the built `Info.plist` by
   `scripts/stamp-version.sh` so a local build and a CI build agree.
+- Compositing: a `.composite` step that stacks a finished video beside its
+  finished chat render into one file, via `hstack` on the bundled FFmpeg
+  (`docs/design/compositing.md`). The engine, scheduler, geometry derivation,
+  argument builder, and progress parsing all exist and are tested, but the
+  feature is **not reachable from the UI yet** — no intake constructs a
+  composite. That is Phase 4, tracked separately.
 
 ### Changed
+
+- `Step.dependsOn` is `[StepID]` rather than a single optional `StepID`, since
+  a composite step depends on two finished steps (its media and its render)
+  rather than one. A queue persisted by an older build still loads: the
+  decoder accepts either the old scalar shape or the new array and no
+  migration step is needed.
 
 - Version settings moved out of the Xcode project, where the template had
   written `MARKETING_VERSION = 1.0` into all six target configurations, and
@@ -56,7 +68,9 @@ Pre-alpha. Nothing released yet.
 - `scripts/embed-helpers.sh` also stages `COPYING.LGPLv2.1` and
   `FFMPEG-SOURCE.txt` into `Contents/Resources`, so the LGPL text survives the
   app being dragged out of the DMG.
-- `JobTemplate` is a composition of three optional parts (media, chat, render)
-  rather than an enum of five fixed combinations. Every previous case is still
-  expressible, and combinations the enum could not express — video plus chat
-  without a render, and the clip equivalents — now are.
+- `JobTemplate` is a composition of four optional parts (media, chat, render,
+  composite) rather than an enum of five fixed combinations. Every previous
+  case is still expressible, and combinations the enum could not express —
+  video plus chat without a render, and the clip equivalents — now are.
+  `composite` is not independent of the other three: asking for one implies a
+  render exactly as a render implies a chat download.
