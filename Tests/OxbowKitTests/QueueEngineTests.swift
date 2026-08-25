@@ -372,6 +372,56 @@ struct QueueEngineTests {
     await engine.flush()
   }
 
+  /// The "one file out" promise the whole feature rests on: a composite job's
+  /// video and chat render are intermediates shaped exactly like real intake
+  /// output (`destination: nil`) and must never reach the user's chosen
+  /// folder, while the composite itself is delivered to its own destination.
+  @Test func aCompositeJobDeliversExactlyOneFile() async throws {
+    let (engine, root) = makeEngine(.succeeds)
+    defer { cleanUp(root) }
+
+    let destination = root.appending(path: "out.mp4")
+    let template = JobTemplate(
+      media: .video(VideoRequest(videoID: "v", quality: "1080p60")),
+      render: RenderRequest(),
+      composite: CompositeRequest(
+        framerate: 60,
+        bitrateMbps: 8,
+        duration: .seconds(60),
+        destination: destination))
+
+    try await engine.start()
+    await engine.enqueue(template, title: "t")
+    try await settle(engine)
+
+    let job = try #require(await engine.currentJobs.first)
+    #expect(job.status == .done)
+    #expect(job.steps.allSatisfy { $0.status == .done })
+
+    // The video, chat, and render steps carried no destination of their own,
+    // so each is an intermediate: deleted with the job's workspace, its claim
+    // dropped in the same breath. Only the composite was actually moved out.
+    for step in job.steps {
+      switch step.kind {
+      case .composite:
+        #expect(step.artifact == destination)
+      case .downloadVideo, .downloadClip, .downloadChat, .renderChat:
+        #expect(step.artifact == nil, "an intermediate must not be claimed")
+      }
+    }
+
+    #expect(FileManager.default.fileExists(atPath: destination.path))
+
+    // Nothing else reached disk under root: exactly the composite's own
+    // file, nowhere else — the video and render never left the workspace
+    // that was just swept.
+    let enumerator = FileManager.default.enumerator(atPath: root.path)
+    let delivered = (enumerator?.allObjects as? [String] ?? []).filter { $0.hasSuffix(".mp4") }
+    #expect(delivered == ["out.mp4"])
+
+    await engine.flush()
+  }
+
   /// The scenario the whole failure model exists for.
   @Test func aFailedDependencyBlocksItsDependent() async throws {
     let (engine, root) = makeEngine(.failsWithoutArtifact(

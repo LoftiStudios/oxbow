@@ -78,12 +78,22 @@ actor FakeHelper: HelperProcessing {
   }
 
   private nonisolated func write(_ contents: Data, for launch: Launch) {
-    guard let output = Self.outputPath(in: launch.arguments) else { return }
+    guard let output = Self.outputPath(in: launch) else { return }
     FileManager.default.createFile(atPath: output, contents: contents)
   }
 
-  private static func outputPath(in arguments: [String]) -> String? {
-    guard let index = arguments.firstIndex(of: "-o"), index + 1 < arguments.count else { return nil }
-    return arguments[index + 1]
+  /// Where the launched tool would write. The two dialects disagree: the CLI
+  /// takes `-o <path>`, while FFmpeg takes its output as a trailing positional
+  /// argument with no flag at all.
+  private static func outputPath(in launch: Launch) -> String? {
+    switch launch.dialect {
+    case .helper:
+      guard let index = launch.arguments.firstIndex(of: "-o"),
+            index + 1 < launch.arguments.count
+      else { return nil }
+      return launch.arguments[index + 1]
+    case .ffmpeg:
+      return launch.arguments.last
+    }
   }
 }
