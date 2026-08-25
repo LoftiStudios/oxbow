@@ -17,6 +17,26 @@ struct RenderOptionsView: View {
       elements
       emotes
       encoding
+      problems
+    }
+  }
+
+  /// Why Add is disabled, spelled out.
+  ///
+  /// The alternative — clamping a typed value back into range as the user
+  /// types — fights the text field: half of "1080" is "1", which would be
+  /// silently rewritten to the minimum before the next keystroke arrived.
+  /// Showing the rule and refusing Add matches how the trim fields already
+  /// behave.
+  @ViewBuilder
+  private var problems: some View {
+    let problems = options.validationProblems
+    if !problems.isEmpty {
+      VStack(alignment: .leading, spacing: 2) {
+        ForEach(problems, id: \.self) { problem in
+          Text(problem).font(.caption).foregroundStyle(.red)
+        }
+      }
     }
   }
 

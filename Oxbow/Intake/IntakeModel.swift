@@ -218,6 +218,19 @@ final class IntakeModel {
     return false
   }
 
+  // MARK: - Render options
+
+  /// A render option outside the bounds `RenderOptions` documents — same rule
+  /// as `trimIsInvalid`, for the same reason: the value would reach FFmpeg and
+  /// fail there, after the chat download it depends on has already run.
+  ///
+  /// Only while Render is on. The form is hidden otherwise, and refusing Add
+  /// over a field nobody can see is a dead end.
+  var renderIsInvalid: Bool { isRenderingChat && !renderOptions.isValid }
+
+  /// What to say about it, or nil when there is nothing to say.
+  var renderProblems: [String] { isRenderingChat ? renderOptions.validationProblems : [] }
+
   // MARK: - Composing the job
 
   var hasSelectedOutput: Bool { isDownloadingMedia || isDownloadingChat || isRenderingChat }
@@ -265,7 +278,8 @@ final class IntakeModel {
       let folder,
       hasSelectedOutput,
       hasSettledMetadata,
-      !trimIsInvalid
+      !trimIsInvalid,
+      !renderIsInvalid
     else { return nil }
 
     let base = outputBaseName
@@ -404,6 +418,65 @@ nonisolated struct RenderOptions: Equatable, Sendable {
   var allowsUnlistedEmotes = true
   var bitrateMbps = 3
   var isSharpened = false
+
+  // MARK: - Bounds
+  //
+  // A render is the *second* step of a job: the chat download has to finish
+  // first, and for a long VOD that is minutes. A `0` typed into any of these
+  // reaches FFmpeg as `-w 0` or `-b:v 0M` and fails there — so the cost of not
+  // checking is not a wasted keystroke, it is a wasted download and a failure
+  // that reads as "the render broke" rather than "that number is not a size".
+  // Add refuses first, the same way it already refuses an unparseable trim.
+  //
+  // The bounds are the encoder's, not taste. A chat render 40px wide is
+  // useless, but useless is the user's call; what is not theirs is a number
+  // h264_videotoolbox cannot encode.
+
+  /// H.264 codes in 16x16 macroblocks, so a dimension under 16 has no whole
+  /// block in it; 4096 is where VideoToolbox's hardware encoder stops.
+  static let dimensionRange = 16...4096
+  /// Zero frames per second is not a video. The ceiling is well past any
+  /// display and past the point where a chat render's cost stops being worth
+  /// paying.
+  static let framerateRange = 1...240
+  /// Below 1pt the glyphs have no pixels; above 200 a single message is
+  /// taller than the default canvas.
+  static let fontSizeRange = 1.0...200.0
+  /// Only meaningful while `hasOutline` is on, and checked only then.
+  static let outlineSizeRange = 1...20
+  /// `-b:v 0M` is rejected outright by the encoder. 100 Mbps is an order of
+  /// magnitude past what a 350x600 chat canvas can use.
+  static let bitrateRange = 1...100
+
+  /// What is out of bounds, in the order the form shows the fields. Empty
+  /// means the form is addable.
+  ///
+  /// Phrased as complete sentences naming the field and its range, because
+  /// this is the entire explanation the user gets for a disabled Add button.
+  var validationProblems: [String] {
+    var problems: [String] = []
+    func check(_ value: Int, _ range: ClosedRange<Int>, _ label: String) {
+      guard !range.contains(value) else { return }
+      problems.append("\(label) must be between \(range.lowerBound) and \(range.upperBound).")
+    }
+
+    check(width, Self.dimensionRange, "Width")
+    check(height, Self.dimensionRange, "Height")
+    check(framerate, Self.framerateRange, "FPS")
+    if !Self.fontSizeRange.contains(fontSize) {
+      problems.append("Font size must be between 1 and 200.")
+    }
+    // A size for an outline that is not being drawn is not an error; the form
+    // hides the field entirely in that case, so it cannot be an error the user
+    // can see and fix either.
+    if hasOutline {
+      check(outlineSize, Self.outlineSizeRange, "Outline size")
+    }
+    check(bitrateMbps, Self.bitrateRange, "Bitrate")
+    return problems
+  }
+
+  var isValid: Bool { validationProblems.isEmpty }
 
   /// Attaches the one field this type deliberately omits.
   func request(destination: URL) -> RenderRequest {

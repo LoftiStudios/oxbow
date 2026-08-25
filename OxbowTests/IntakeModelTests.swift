@@ -524,6 +524,140 @@ struct IntakeModelTests {
     #expect(Timecode.parse("１:３０") == nil, "full-width digits are not a timecode")
   }
 
+  // MARK: - Render bounds
+
+  /// The positive control: with Render on and every option left at its
+  /// default, Add is legal. Without this the refusals below would pass
+  /// against a `canAdd` that simply never allows a render.
+  @Test func addIsEnabledWithARenderAtItsDefaults() async {
+    let model = await loadedModel()
+    model.isRenderingChat = true
+
+    #expect(!model.renderIsInvalid)
+    #expect(model.canAdd)
+  }
+
+  /// A zero here becomes `-w 0` / `-b:v 0M`, which FFmpeg rejects — but only
+  /// after the chat download the render depends on has already finished. Add
+  /// refuses first.
+  @Test func aZeroRenderDimensionOrBitrateRefuses() async {
+    for (field, set) in Self.zeroableRenderFields {
+      let model = await loadedModel()
+      model.isRenderingChat = true
+      set(model, 0)
+
+      #expect(model.renderIsInvalid, "\(field) = 0 should refuse")
+      #expect(!model.canAdd, "\(field) = 0 should disable Add")
+      #expect(model.composedTemplate() == nil, "\(field) = 0 should compose nothing")
+    }
+  }
+
+  @Test func aNegativeRenderDimensionOrBitrateRefuses() async {
+    for (field, set) in Self.zeroableRenderFields {
+      let model = await loadedModel()
+      model.isRenderingChat = true
+      set(model, -1)
+
+      #expect(!model.canAdd, "\(field) = -1 should disable Add")
+    }
+  }
+
+  /// The bounds are the encoder's: 4096 is where VideoToolbox's hardware
+  /// H.264 encoder stops, so 4097 is a render that fails at the last step.
+  @Test func anOversizedRenderDimensionRefuses() async {
+    let model = await loadedModel()
+    model.isRenderingChat = true
+
+    model.renderOptions.width = 4096
+    #expect(model.canAdd, "4096 is the last width that encodes")
+
+    model.renderOptions.width = 4097
+    #expect(!model.canAdd)
+  }
+
+  /// H.264 codes in 16x16 macroblocks, so 15 has no whole block in it.
+  @Test func theSmallestLegalDimensionIsOneMacroblock() async {
+    let model = await loadedModel()
+    model.isRenderingChat = true
+
+    model.renderOptions.height = 16
+    #expect(model.canAdd)
+
+    model.renderOptions.height = 15
+    #expect(!model.canAdd)
+  }
+
+  @Test func aZeroFontSizeRefuses() async {
+    let model = await loadedModel()
+    model.isRenderingChat = true
+    model.renderOptions.fontSize = 0
+
+    #expect(!model.canAdd)
+
+    model.renderOptions.fontSize = 12
+    #expect(model.canAdd)
+  }
+
+  /// An outline size only reaches the CLI when the outline is on, and the
+  /// form hides the field otherwise — so refusing Add over it while it is
+  /// hidden would be a dead end with nothing to fix.
+  @Test func anOutlineSizeIsOnlyCheckedWhileTheOutlineIsOn() async {
+    let model = await loadedModel()
+    model.isRenderingChat = true
+    model.renderOptions.outlineSize = 0
+
+    #expect(model.canAdd, "the outline is off, so its size is not emitted")
+
+    model.renderOptions.hasOutline = true
+    #expect(!model.canAdd)
+  }
+
+  /// Render off means the whole form is hidden. Whatever is left in it from
+  /// an earlier session must not block a chat-only job.
+  @Test func renderBoundsAreIgnoredWhileRenderIsOff() async {
+    let model = await loadedModel()
+    model.renderOptions.width = 0
+    model.renderOptions.bitrateMbps = 0
+
+    #expect(!model.renderIsInvalid)
+    #expect(model.canAdd)
+  }
+
+  /// The refusal has to be explicable — a disabled button with no reason is
+  /// the silent failure this path exists to avoid. The message names the
+  /// field and its range, so it cannot be satisfied by a fixed placeholder.
+  @Test func eachOutOfRangeFieldExplainsItself() async {
+    let model = await loadedModel()
+    model.isRenderingChat = true
+    model.renderOptions.width = 0
+    model.renderOptions.bitrateMbps = 999
+
+    let problems = model.renderProblems
+    #expect(problems.count == 2)
+    #expect(problems.contains { $0.contains("Width") && $0.contains("16") && $0.contains("4096") })
+    #expect(problems.contains { $0.contains("Bitrate") && $0.contains("100") })
+  }
+
+  @Test func thereIsNothingToExplainWhileTheRenderIsValid() async {
+    let model = await loadedModel()
+    model.isRenderingChat = true
+    #expect(model.renderProblems.isEmpty)
+
+    model.isRenderingChat = false
+    model.renderOptions.width = 0
+    #expect(model.renderProblems.isEmpty, "the form is hidden, so it has nothing to say")
+  }
+
+  /// Every render field that a `0` would send to FFmpeg as a fatal argument.
+  private static let zeroableRenderFields:
+    [(name: String, set: @MainActor (IntakeModel, Int) -> Void)] = [
+      ("width", { $0.renderOptions.width = $1 }),
+      ("height", { $0.renderOptions.height = $1 }),
+      ("framerate", { $0.renderOptions.framerate = $1 }),
+      ("fontSize", { $0.renderOptions.fontSize = Double($1) }),
+      ("bitrateMbps", { $0.renderOptions.bitrateMbps = $1 }),
+    ]
+
   // MARK: - Metadata failure
 
   @Test func aMetadataFailureIsSurfacedAndTheSheetStaysUsable() async throws {
