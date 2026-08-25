@@ -189,6 +189,26 @@ struct SchedulerTransitionTests {
     #expect(status(jobs, 2) == .blocked)
   }
 
+  /// The multi-parent branch of `unblockDependents`, which every other test
+  /// leaves vacuous: with one parent the guard can only ever see the parent
+  /// that was just retried.
+  @Test func aStepStaysBlockedUntilNoParentIsStillFailed() {
+    let failure = StepFailure(kind: .noArtifact, summary: "x")
+    var jobs = [Build.job(1,
+      Build.network(1, .failed(failure)),
+      Build.network(2, .failed(failure)),
+      Build.compute(3, .blocked, dependsOn: [Build.stepID(1), Build.stepID(2)]))]
+
+    Scheduler.retry(Build.stepID(1), in: &jobs)
+    #expect(jobs[0].steps[2].status == .blocked)
+
+    Scheduler.retry(Build.stepID(2), in: &jobs)
+    #expect(jobs[0].steps[2].status == .queued)
+
+    // Released, but not runnable — admissible() is the separate gate.
+    #expect(!Scheduler.admissible(jobs: jobs, running: []).contains(Build.stepID(3)))
+  }
+
   /// Cancelling a `.done` step is a no-op: status and artifact are preserved.
   @Test func cancellingADoneStepLeavesItDone() {
     var step = Build.network(1, .done)
