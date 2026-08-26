@@ -86,7 +86,9 @@ its own `unsharp` filter string rather than forwarding `--sharpening` to the CLI
 
 ## 4. Required component surface
 
-Derived by reading every FFmpeg invocation in `vendor/TwitchDownloader`, not guessed:
+Derived by reading every FFmpeg invocation in `vendor/TwitchDownloader`, plus
+Oxbow's own — the composite step is the first place Oxbow invokes FFmpeg
+directly rather than through the CLI:
 
 | Path | Source | Arguments |
 |---|---|---|
@@ -94,11 +96,14 @@ Derived by reading every FFmpeg invocation in `vendor/TwitchDownloader`, not gue
 | Clip finalize | `ClipDownloader` | `-i in -i meta -map_metadata 1 -y -c copy out` |
 | Chat render in | `ChatRenderArgs` default | `-framerate {fps} -f rawvideo -analyzeduration MAX -probesize MAX -pix_fmt {bgra\|rgba} -video_size {w}x{h} -i -` |
 | Chat mask in | `ChatRenderer.GetFfmpegProcess` | same, with `-pix_fmt gray` |
+| Composite | Oxbow's own `ArgumentBuilder` (`.composite` case) | `-i video.mp4 -i chat.mp4 -filter_complex "…hstack=inputs=2…" -map [out] -map 0:a:0? -c:v h264_videotoolbox -b:v {bitrate} -pix_fmt yuv420p -c:a copy -progress pipe:1 out.mp4` |
 
 This implies: `concat` / `rawvideo` / `mpegts` / `mov` / `ffmetadata` demuxers,
 `mp4` + `mov` muxers, `rawvideo` decoder, `h264_videotoolbox` encoder, `file` +
 `pipe` protocols, and the `aac_adtstoasc` bitstream filter — the last is what makes
-AAC stream-copy from `.ts` into `.mp4` work, and is easy to miss.
+AAC stream-copy from `.ts` into `.mp4` work, and is easy to miss. The composite
+row additionally requires the `hstack` filter, absent from the `MINIMAL=1`
+component list until it was added alongside this row.
 
 Two details worth recording:
 

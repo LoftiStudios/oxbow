@@ -7,9 +7,10 @@ import OxbowKit
 /// the rendering of it.
 ///
 /// **A window, not a sheet.** A sheet cannot be taller than the window that
-/// hosts it, and this form legitimately is: with the render options open it
-/// wants most of a screen. As a sheet that meant either a clipped, scrolling
-/// form or a queue window whose minimum size was dictated by its own modal —
+/// hosts it, and this form legitimately grew past that with the old render
+/// options open — since deleted (docs/design/compositing.md §3, §8), but the
+/// shape earned here is kept: a sheet meant either a clipped, scrolling form
+/// or a queue window whose minimum size was dictated by its own modal —
 /// both of which were tried, and both of which are the tail wagging the dog.
 /// A window sizes itself, remembers what the user dragged it to, and closes
 /// with ⌘W. This is the shape Transmission uses for the same job.
@@ -50,7 +51,6 @@ struct IntakeWindow: View {
           naming
           outputs
           if model.showsTrimOptions { trim }
-          if model.isRenderingChat { RenderOptionsView(options: $model.renderOptions) }
         }
       }
       .formStyle(.grouped)
@@ -123,37 +123,57 @@ struct IntakeWindow: View {
     }
   }
 
+  /// Two choices, not three independent toggles: a chat render in isolation
+  /// has little use, and the composite is what makes it worth producing at
+  /// all (design doc §3). `IntakeModel.Output` already narrowed to this pair;
+  /// this is just its rendering.
   private var outputs: some View {
     Section("Download") {
-      Toggle(isClip ? "Clip" : "Video", isOn: $model.isDownloadingMedia)
-      // Directly under the toggle it qualifies, rather than in a row of its
-      // own below every toggle: the quality is a property of the video
+      Picker("Output", selection: $model.output) {
+        Text(isClip ? "Clip" : "Video").tag(IntakeModel.Output.video)
+        Text(isClip ? "Clip + chat" : "Video + chat").tag(IntakeModel.Output.videoWithChat)
+      }
+      .pickerStyle(.radioGroup)
+      .labelsHidden()
+
+      // Directly under the picker: the quality is a property of the media
       // download, and nothing else on this sheet reads it.
-      if model.isDownloadingMedia {
-        Picker("Quality", selection: $model.quality) {
-          Text("Best available").tag("")
-          ForEach(model.qualities, id: \.name) { quality in
-            Text(model.label(for: quality)).tag(quality.name)
-          }
+      Picker("Quality", selection: $model.quality) {
+        Text("Best available").tag("")
+        ForEach(model.qualities, id: \.name) { quality in
+          Text(model.label(for: quality)).tag(quality.name)
         }
       }
 
-      Toggle("Chat", isOn: $model.isDownloadingChat)
-      // Hidden under Render, which forces the download to JSON whatever the
-      // picker says — see `IntakeModel.deliveredChatFormat`.
-      if model.isDownloadingChat && !model.isRenderingChat {
-        Picker("Chat format", selection: $model.chatFormat) {
-          Text("JSON").tag(ChatFormat.json)
-          Text("Text").tag(ChatFormat.text)
-          Text("HTML").tag(ChatFormat.html)
+      if model.output == .videoWithChat {
+        // The one control the deleted render-options form left behind (see
+        // docs/design/compositing.md §4, §8): a fixed size cannot serve both
+        // a laptop window and a TV across the room. "Small"/"Medium"/"Large"
+        // does not explain itself the way "Video"/"Video + chat" does above,
+        // so — unlike that picker — this one keeps its label on screen.
+        Picker("Chat text size", selection: $model.chatSize) {
+          Text("Small").tag(ChatSize.small)
+          Text("Medium").tag(ChatSize.medium)
+          Text("Large").tag(ChatSize.large)
         }
-      }
+        .pickerStyle(.segmented)
 
-      Toggle("Render chat", isOn: $model.isRenderingChat)
-      if model.isRenderingChat && !model.isDownloadingChat {
-        Text("The chat file is downloaded to render and then discarded.")
+        // Not decoration: a six-hour stream is roughly 75 minutes of
+        // encoding, and a user who is not told that reads a busy queue as a
+        // hang.
+        Text("Chat is rendered in a column beside the video and encoded into "
+          + "one file. This takes roughly as long as the stream itself.")
           .font(.caption)
           .foregroundStyle(.secondary)
+      }
+
+      // Only reachable for a clip whose selected rendition Twitch never
+      // recorded pixel dimensions for — see `IntakeModel.compositeProblem`.
+      // Shown the same way the trim section shows its own refusal reason.
+      if let compositeProblem = model.compositeProblem {
+        Label(compositeProblem, systemImage: "exclamationmark.triangle")
+          .font(.caption)
+          .foregroundStyle(.red)
       }
     }
   }
@@ -300,14 +320,12 @@ struct IntakeWindow: View {
   }
 
   /// What this job will actually write, so the name field is not a guess.
+  ///
+  /// One line always: `.video` and `.videoWithChat` both produce exactly one
+  /// file, sharing the same suffix — a composite replaces the video it
+  /// stacks rather than accompanying it.
   private var exampleFilenames: String {
-    var names: [String] = []
-    if model.isDownloadingMedia { names.append(model.outputBaseName + OutputSuffix.video) }
-    if model.isDownloadingChat {
-      names.append(model.outputBaseName + OutputSuffix.chat(model.deliveredChatFormat))
-    }
-    if model.isRenderingChat { names.append(model.outputBaseName + OutputSuffix.render) }
-    return names.isEmpty ? "No outputs selected." : names.joined(separator: "\n")
+    model.outputBaseName + OutputSuffix.video
   }
 
 }
@@ -381,10 +399,40 @@ extension VideoInfo {
   IntakeWindow(model: previewModel())
 }
 
-#Preview("Chat + render") {
+#Preview("Video + chat") {
   let model = previewModel()
-  model.isDownloadingChat = true
-  model.isRenderingChat = true
+  model.output = .videoWithChat
+  return IntakeWindow(model: model)
+}
+
+/// Exercises the chat text size picker away from its `.medium` default, so a
+/// glance at this preview catches the segmented control rendering wrong as
+/// readily as the "Video + chat" one above catches everything else in the
+/// section.
+#Preview("Video + chat - large text") {
+  let model = previewModel()
+  model.output = .videoWithChat
+  model.chatSize = .large
+  return IntakeWindow(model: model)
+}
+
+/// A clip old enough that Twitch never backfilled pixel dimensions onto its
+/// only rendition, explicitly chosen for a composite. Exercises
+/// `IntakeModel.compositeProblem`, the one conditional row nothing else here
+/// renders.
+#Preview("Video + chat - composite problem") {
+  let clipInfo = VideoInfo(
+    streamer: "LeighXP",
+    title: "an old clip with no recorded dimensions",
+    createdAt: .now,
+    duration: .seconds(45),
+    qualities: [
+      StreamQuality(name: "720p0-1", resolution: "", bitsPerSecond: 0),
+    ],
+    thumbnailURL: nil)
+  let model = previewModel(link: "https://clips.twitch.tv/TangibleGiantPancakeKappa", info: clipInfo)
+  model.output = .videoWithChat
+  model.quality = "720p0-1"
   return IntakeWindow(model: model)
 }
 

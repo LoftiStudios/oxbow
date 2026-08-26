@@ -6,6 +6,9 @@ SwiftUI app that drives a bundled `TwitchDownloaderCLI` helper as a subprocess.
 **Read `docs/architecture.md` first.** It holds the architecture decisions and their
 rationale. This file holds the rules and commands.
 `docs/ffmpeg.md` and `docs/signing.md` hold the two resolved spikes.
+`docs/twitch-metadata.md` records which of Twitch's metadata fields can be
+trusted and which are measurably wrong — read it before writing anything that
+reasons about a video before downloading it.
 
 **Current state:** the app works end to end. It downloads a VOD or clip, its
 chat, and a rendered chat video, into files named from the stream's own
@@ -85,6 +88,7 @@ oxbow/
   vendor/TwitchDownloader/   # git submodule, upstream C# — DO NOT EDIT
   scripts/                   # build-ffmpeg.sh, sign.sh, embed-helpers.sh, entitlements/
   docs/architecture.md       # decisions + rationale
+  docs/twitch-metadata.md    # which Twitch metadata to trust, and why
   docs/design/               # per-subsystem design docs (task-queue.md)
   .github/workflows/
 ```
@@ -208,6 +212,19 @@ Run the OxbowKit test suite (needs only Xcode — no .NET or FFmpeg toolchain):
 
 ```bash
 swift test
+```
+
+**`swift test` is not enough on its own if you touched anything public in
+`Sources/OxbowKit`.** It builds only the SwiftPM package — `Sources/OxbowKit`
+plus `Tests/OxbowKitTests` — and never the Xcode app target. So a change to a
+public type can leave `Oxbow/` and `OxbowTests/` failing to compile while
+`swift test` stays green. That is not hypothetical: adding one `StepKind` case
+left the app un-buildable across four consecutive changes, through two
+non-exhaustive switches and eleven type errors, with every package run passing.
+Run both:
+
+```bash
+xcodebuild test -project Oxbow.xcodeproj -scheme Oxbow -only-testing:OxbowTests CODE_SIGNING_ALLOWED=NO
 ```
 
 Build the bundled FFmpeg (LGPL, arm64, verified):

@@ -53,6 +53,13 @@ public enum FailureInterpreter {
     let lines = standardError
       .split(separator: "\n", omittingEmptySubsequences: true)
       .map { $0.trimmingCharacters(in: .whitespaces) }
+      // FFmpeg prefixes every diagnostic with its component and a heap
+      // address. The sentence after it is the useful part; the prefix is
+      // noise in a one-line summary. Stripped here, before the `--->` check
+      // below runs, so that selection sees the readable sentence.
+      .map { line in
+        line.replacing(/^\[[^\]]+ @ 0x[0-9a-f]+\]\s*/, with: "")
+      }
 
     // .NET nests inner exceptions as `---> Type: message`. The last one is the
     // root cause and carries the most specific message. Strip the marker
@@ -70,6 +77,6 @@ public enum FailureInterpreter {
       return first
     }
 
-    return "The download tool failed without reporting a reason."
+    return "The tool failed without reporting a reason."
   }
 }

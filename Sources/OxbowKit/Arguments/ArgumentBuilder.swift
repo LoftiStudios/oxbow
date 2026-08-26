@@ -61,7 +61,7 @@ public enum ArgumentBuilder {
 
     case .renderChat(let request):
       var args = ["chatrender", "--banner=false"] + collision
-      args += ["-i", context.inputArtifact?.path ?? ""]
+      args += ["-i", context.inputArtifacts.first?.path ?? ""]
       args += ["-o", context.outputFile.path]
       args += ["--temp-path", context.stepTempDirectory.path]
       args += ["--ffmpeg-path", context.ffmpegPath.path]
@@ -72,24 +72,37 @@ public enum ArgumentBuilder {
       args += ["-f", request.font]
       args += ["--background-color", request.backgroundColor]
       args += ["--alt-background-color", request.alternateBackgroundColor]
-      // Without this, --alt-background-color is documented by the CLI as
-      // inert.
-      args += ["--alternate-backgrounds=\(request.hasAlternateBackgrounds)"]
       args += ["--message-color", request.messageColor]
       args += ["--outline-size", String(request.outlineSize)]
 
-      // Booleans follow the same single-token `--flag=value` shape already
-      // proven by `--banner=false` above, rather than a second, untested form.
-      args += ["--badges=\(request.hasBadges)"]
-      args += ["--timestamp=\(request.hasTimestamps)"]
-      args += ["--sub-messages=\(request.hasSubMessages)"]
-      args += ["--outline=\(request.hasOutline)"]
-      // The emote switches are surfaced deliberately: 7TV resolution is why
-      // the submodule is pinned past 1.56.5 (CLAUDE.md), not left invisible.
-      args += ["--bttv=\(request.isBTTVEnabled)"]
-      args += ["--ffz=\(request.isFFZEnabled)"]
-      args += ["--stv=\(request.isSTVEnabled)"]
-      args += ["--allow-unlisted-emotes=\(request.allowsUnlistedEmotes)"]
+      // Upstream declares these nine options as switches, not as
+      // `--flag=value` options: the parser reads mere *presence* as true and
+      // ignores any value that follows, so both `--timestamp=false` and
+      // `--timestamp false` turn timestamps ON. Verified against the bundled
+      // 1.56.5 helper on 2026-08-25 by extracting frames from paired
+      // `=false`/`=true` renders and hashing them: `--timestamp=false` and
+      // `--timestamp=true` produced byte-identical frames (sha256
+      // `d9b7fea7be2a10be…`), differing only from omitting the flag entirely
+      // (`6a2b525002429b03…`); same result for `--outline` (`735d58632d7ada2c…`
+      // identical, `53952cd96edf2289…` when omitted). There is no way to pass
+      // `false` through this CLI — omitting the flag is the only way to get
+      // it. `--banner` is a genuine exception: it is declared differently
+      // upstream and its `=false` form really does suppress the banner
+      // (verified separately) — that flag is untouched, above.
+      //
+      // Three of the nine default to false and are therefore fully
+      // expressible: emit the bare flag when true, omit it when false.
+      // Without `--alternate-backgrounds`, `--alt-background-color` is
+      // documented by the CLI as inert.
+      if request.hasAlternateBackgrounds { args += ["--alternate-backgrounds"] }
+      if request.hasTimestamps { args += ["--timestamp"] }
+      if request.hasOutline { args += ["--outline"] }
+
+      // The other six (`--badges`, `--sub-messages`, `--bttv`, `--ffz`,
+      // `--stv`, `--allow-unlisted-emotes`) default to true and, per the
+      // above, cannot be turned off through this CLI at all — so
+      // `RenderRequest` carries no fields for them and nothing is emitted
+      // here. A settable field that can never take effect is a lie.
 
       // The CLI's default is `-c:v libx264`, which is GPL and absent from our
       // LGPL FFmpeg. VideoToolbox is bitrate-targeted; there is no CRF.
@@ -112,6 +125,44 @@ public enum ArgumentBuilder {
           + "-filter_complex \"unsharp=5:5:1.0\""]
       }
       return args
+
+    case .composite(let request):
+      // FFmpeg's own argv, not the CLI's: no verb, no --banner, and the
+      // executable is `ffmpegPath` rather than the helper (QueueEngine.launch).
+      //
+      // Input order is positional and comes from `Step.dependsOn`: [0] is the
+      // video, [1] is the chat render.
+      let video = request.inputPath(context, at: 0)
+      let chat = request.inputPath(context, at: 1)
+      return [
+        "-nostdin", "-y", "-hide_banner",
+        "-i", video,
+        "-i", chat,
+        "-filter_complex",
+        // setpts precedes fps so the rate conversion runs on a zero-based
+        // timeline. No `scale` on either input: the chat is rendered at the
+        // right size and the video is already native.
+        //
+        // No `shortest`: chat renders end at the last message, so a quiet
+        // final stretch would truncate the VIDEO. hstack's default
+        // eof_action=repeat holds the last chat frame instead. Verified.
+        "[0:v]setpts=PTS-STARTPTS[v];"
+          + "[1:v]setpts=PTS-STARTPTS,fps=\(request.framerate)[c];"
+          + "[v][c]hstack=inputs=2[out]",
+        "-map", "[out]",
+        // The `?` makes the audio map optional so a silent VOD does not fail.
+        "-map", "0:a:0?",
+        "-c:v", "h264_videotoolbox",
+        "-b:v", "\(request.bitrateMbps)M",
+        "-pix_fmt", "yuv420p",
+        // VOD audio is already AAC in MP4. Re-encoding it buys nothing.
+        "-c:a", "copy",
+        "-progress", "pipe:1", "-nostats", "-loglevel", "error",
+        // No -movflags +faststart: it rewrites the whole file to relocate the
+        // moov atom, which on a 22 GB output is minutes of disk churn for
+        // HTTP progressive streaming a local file does not need.
+        context.outputFile.path,
+      ]
     }
   }
 

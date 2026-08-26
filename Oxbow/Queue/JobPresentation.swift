@@ -31,6 +31,7 @@ nonisolated enum JobPresentation {
     case .downloadClip: "Download clip"
     case .downloadChat: "Download chat"
     case .renderChat: "Render chat"
+    case .composite: "Combine video and chat"
     }
   }
 

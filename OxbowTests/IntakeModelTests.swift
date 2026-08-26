@@ -87,8 +87,8 @@ struct IntakeModelTests {
       calendar: Self.pacific)
   }
 
-  /// A model with metadata settled, a folder chosen, and only the video
-  /// toggled on — the minimum state in which Add is legal.
+  /// A model with metadata settled, a folder chosen, and `.video` as its
+  /// output — the minimum state in which Add is legal.
   private func loadedModel(
     link: String = IntakeModelTests.videoLink,
     info: VideoInfo = IntakeModelTests.info(),
@@ -102,19 +102,53 @@ struct IntakeModelTests {
     return model
   }
 
+  /// A VOD with settled metadata offering exactly one quality, so a
+  /// composite's geometry is easy to predict. `quality` also becomes the
+  /// model's own selection when it is non-empty; left empty, the model keeps
+  /// its default of "best available" and the fixture still needs a rendition
+  /// on offer for `compositeQuality`'s fallback to resolve.
+  ///
+  /// Reuses `loadedModel` rather than inventing a second way to settle
+  /// metadata — the only difference is the single, resolution-bearing quality
+  /// a composite needs.
+  private func loaded(
+    quality: String,
+    resolution: String,
+    bitsPerSecond: Int = 6_000_000)
+    async
+    -> IntakeModel
+  {
+    let name = quality.isEmpty ? "source" : quality
+    let model = await loadedModel(
+      info: Self.info(qualities: [
+        StreamQuality(name: name, resolution: resolution, bitsPerSecond: bitsPerSecond),
+      ]))
+    model.quality = quality
+    return model
+  }
+
+  /// The clip equivalent of `loaded(quality:resolution:)` — same fixture
+  /// mechanism, a clip link instead of a VOD one.
+  private func loadedClip(
+    quality: String,
+    resolution: String,
+    bitsPerSecond: Int = 6_000_000)
+    async
+    -> IntakeModel
+  {
+    let name = quality.isEmpty ? "source" : quality
+    let model = await loadedModel(
+      link: Self.clipLink,
+      info: Self.info(qualities: [
+        StreamQuality(name: name, resolution: resolution, bitsPerSecond: bitsPerSecond),
+      ]))
+    model.quality = quality
+    return model
+  }
+
   private func videoRequest(of template: JobTemplate) -> VideoRequest? {
     guard case .video(let request) = template.media else { return nil }
     return request
-  }
-
-  /// The byte length of whichever output suffix `filename` ends with, so a
-  /// test can recover the base name every output shares.
-  private func suffixBytes(of filename: String) -> Int {
-    let suffixes = [
-      OutputSuffix.render, OutputSuffix.chat(.json), OutputSuffix.chat(.text),
-      OutputSuffix.chat(.html), OutputSuffix.video,
-    ]
-    return suffixes.first { filename.hasSuffix($0) }?.utf8.count ?? 0
   }
 
   private func clipRequest(of template: JobTemplate) -> ClipRequest? {
@@ -141,16 +175,6 @@ struct IntakeModelTests {
 
     await model.load()
     #expect(model.canAdd)
-  }
-
-  @Test func addIsDisabledWithNoOutputSelected() async {
-    let model = await loadedModel()
-    model.isDownloadingMedia = false
-    model.isDownloadingChat = false
-    model.isRenderingChat = false
-
-    #expect(!model.canAdd)
-    #expect(model.composedTemplate() == nil)
   }
 
   @Test func addIsDisabledWithNoFolderChosen() async {
@@ -197,49 +221,32 @@ struct IntakeModelTests {
     #expect(!model.name.contains("2026-08-24"))
   }
 
-  /// The base name reserves room for the LONGEST suffix any output can take —
-  /// `" - chat.json"`, 12 bytes — whatever the toggles currently say, so the
-  /// video and its chat sibling can never disagree about their shared base.
-  @Test func aLongTitleLeavesRoomForTheLongestSuffix() async throws {
+  /// The base name reserves room for the only suffix an output can take —
+  /// `".mp4"`, 4 bytes — whether the job produces a plain video or a
+  /// composite, since both share that same suffix (a composite replaces the
+  /// video it stacks rather than accompanying it).
+  @Test func aLongTitleLeavesRoomForTheOnlySuffix() async throws {
     let model = await loadedModel(info: Self.info(title: String(repeating: "a", count: 400)))
-    #expect(model.name.utf8.count == 255 - 12, "reserved for \" - chat.json\"")
+    #expect(model.name.utf8.count == 255 - 4, "reserved for \".mp4\"")
 
-    model.isDownloadingChat = true
-    model.isRenderingChat = true
     let template = try #require(model.composedTemplate())
-    let names = [
-      try #require(videoRequest(of: template)?.destination.lastPathComponent),
-      try #require(template.chat?.destination?.lastPathComponent),
-      try #require(template.render?.destination.lastPathComponent),
-    ]
-    for name in names {
-      #expect(name.utf8.count <= 255, "\(name) is \(name.utf8.count) bytes")
-    }
+    let name = try #require(videoRequest(of: template)?.destination?.lastPathComponent)
+    #expect(name.utf8.count <= 255, "\(name) is \(name.utf8.count) bytes")
   }
 
   /// The name field is the user's, and it is the seam the prefilled-name test
   /// above cannot reach: that name arrives from `load()` already reserved, so
   /// re-sanitizing it with any budget at all leaves it unchanged. A name the
   /// user edited or pasted has had no reservation applied, and `outputBaseName`
-  /// is the only thing standing between it and a chat sibling that does not
-  /// fit while its video does — the §4 disagreement itself.
-  @Test func aLongEditedNameStillLeavesRoomForTheLongestSuffix() async throws {
+  /// is the only thing standing between it and a path over the filesystem's
+  /// 255-byte limit.
+  @Test func aLongEditedNameStillFitsInAFilename() async throws {
     let model = await loadedModel()
-    model.isDownloadingChat = true
-    model.isRenderingChat = true
     model.name = String(repeating: "b", count: 250)
 
     let template = try #require(model.composedTemplate())
-    let names = [
-      try #require(videoRequest(of: template)?.destination.lastPathComponent),
-      try #require(template.chat?.destination?.lastPathComponent),
-      try #require(template.render?.destination.lastPathComponent),
-    ]
-    for name in names {
-      #expect(name.utf8.count <= 255, "\(name.utf8.count) bytes: \(name)")
-    }
-    // One base name, whatever suffix follows it — the point of reserving.
-    #expect(Set(names.map { $0.utf8.count - suffixBytes(of: $0) }).count == 1)
+    let name = try #require(videoRequest(of: template)?.destination?.lastPathComponent)
+    #expect(name.utf8.count <= 255, "\(name.utf8.count) bytes: \(name)")
   }
 
   /// The name field is the user's, and a user can type a `/`. Left alone it
@@ -261,120 +268,283 @@ struct IntakeModelTests {
     model.name = "   "
 
     let template = try #require(model.composedTemplate())
-    #expect(videoRequest(of: template)?.destination.lastPathComponent == "untitled.mp4")
+    #expect(videoRequest(of: template)?.destination?.lastPathComponent == "untitled.mp4")
   }
 
-  // MARK: - Destinations
+  // MARK: - Output (design doc §3)
 
-  @Test func everySelectedOutputSharesOneBaseNameAndItsOwnSuffix() async throws {
-    let model = await loadedModel()
-    model.isDownloadingChat = true
-    model.isRenderingChat = true
-
+  @Test func videoOnlyProducesNoChatAndNoComposite() async throws {
+    let model = await loaded(quality: "1080p60", resolution: "1920x1080")
+    model.output = .video
     let template = try #require(model.composedTemplate())
-    let base = "leighxp - 2026-08-23 - A Stream"
-
-    #expect(videoRequest(of: template)?.destination == Self.folder.appending(path: "\(base).mp4"))
-    #expect(template.chat?.destination == Self.folder.appending(path: "\(base) - chat.json"))
-    #expect(template.render?.destination == Self.folder.appending(path: "\(base) - chat.mp4"))
-  }
-
-  @Test func theChatSuffixFollowsTheChosenFormat() async throws {
-    let model = await loadedModel()
-    model.isDownloadingChat = true
-    model.chatFormat = .html
-
-    let template = try #require(model.composedTemplate())
-    #expect(
-      template.chat?.destination?.lastPathComponent
-        == "leighxp - 2026-08-23 - A Stream - chat.html")
-    #expect(template.chat?.format == .html)
-  }
-
-  /// A render pairing forces the chat download to JSON
-  /// (`JobTemplate.renderInput`), so the delivered file cannot be named
-  /// `.html`: that name would promise something the queue does not write.
-  @Test func aRenderPairingNamesTheChatFileJSONWhateverTheFormatPickerSays() async throws {
-    let model = await loadedModel()
-    model.isDownloadingChat = true
-    model.chatFormat = .html
-    model.isRenderingChat = true
-
-    let template = try #require(model.composedTemplate())
-    #expect(template.chat?.destination?.pathExtension == "json")
-    #expect(template.chat?.format == .json)
-  }
-
-  // MARK: - The chat/render pairing (task-queue.md §10)
-
-  /// Render on, Chat off: the chat file is the render's input and nothing
-  /// more, so it gets no destination and is discarded with the workspace.
-  @Test func renderWithChatOffGivesTheChatRequestNoDestination() async throws {
-    let model = await loadedModel()
-    model.isRenderingChat = true
-    model.isDownloadingChat = false
-
-    let template = try #require(model.composedTemplate())
-    let chat = try #require(template.chat, "a render still needs its chat download")
-
-    #expect(chat.destination == nil)
-    // Not merely present: `JobTemplate`'s implied chat request seeds its id
-    // from the media, so leaving this to the template would produce an empty
-    // id the moment the media toggle is off — a job that runs and downloads
-    // nothing.
-    #expect(chat.videoID == Self.videoID)
-    #expect(template.render != nil)
-  }
-
-  @Test func renderWithChatOnDeliversTheChatFileToo() async throws {
-    let model = await loadedModel()
-    model.isRenderingChat = true
-    model.isDownloadingChat = true
-
-    let template = try #require(model.composedTemplate())
-    #expect(template.chat?.destination != nil)
-  }
-
-  /// The combination that survives with the media toggle off: no video, no
-  /// delivered chat, just the rendered chat video.
-  @Test func renderAloneStillCarriesTheVideoIDIntoItsChatDownload() async throws {
-    let model = await loadedModel()
-    model.isDownloadingMedia = false
-    model.isDownloadingChat = false
-    model.isRenderingChat = true
-
-    let template = try #require(model.composedTemplate())
-    #expect(template.media == nil)
-    #expect(template.chat?.videoID == Self.videoID)
-    #expect(template.chat?.destination == nil)
-    #expect(template.render != nil)
-  }
-
-  @Test func chatOnItsOwnAsksForNoRender() async throws {
-    let model = await loadedModel()
-    model.isDownloadingMedia = false
-    model.isDownloadingChat = true
-
-    let template = try #require(model.composedTemplate())
+    #expect(template.chat == nil)
     #expect(template.render == nil)
-    #expect(template.media == nil)
-    #expect(template.chat?.destination != nil)
+    #expect(template.composite == nil)
+    #expect(template.media != nil)
   }
 
-  /// Task 9 binds its form to `renderOptions`; composition has to carry those
-  /// edits into the job rather than build a fresh default request.
-  @Test func theRenderFormsOwnSettingsSurviveComposition() async throws {
-    let model = await loadedModel()
-    model.isRenderingChat = true
-    model.renderOptions.width = 700
-    model.renderOptions.isSTVEnabled = false
+  @Test func videoWithChatKeepsOnlyTheCompositeDestination() async throws {
+    let model = await loaded(quality: "1080p60", resolution: "1920x1080")
+    model.output = .videoWithChat
+    let template = try #require(model.composedTemplate())
 
+    let composite = try #require(template.composite)
+    #expect(composite.destination.lastPathComponent.hasSuffix(".mp4"))
+    #expect(composite.framerate == 60)
+
+    // The inputs are intermediates: one file lands in the user's folder.
+    guard case .video(let video)? = template.media else {
+      Issue.record("expected video media"); return
+    }
+    #expect(video.destination == nil)
+    #expect(template.render?.destination == nil)
+    #expect(template.chat?.destination == nil)
+    // Built here rather than left to `JobTemplate`'s implied chat request —
+    // seeding it from an empty id would produce a job that runs and
+    // downloads nothing.
+    #expect(template.chat?.videoID == Self.videoID)
+  }
+
+  /// The composite's `bitrateMbps` and `duration` are its own fields, not
+  /// `framerate`'s neighbours by coincidence — both have to be seeded from
+  /// the chosen quality and the video's own duration, not left at some
+  /// default that happens to compile.
+  ///
+  /// 11 Mbps, not 10: `CompositeGeometry.compositeBitrateMbps(sourceBitsPerSecond:)`
+  /// corrects for the wider composite frame and re-encode headroom (design
+  /// doc §5, measurements there) rather than passing the source's own
+  /// bitrate straight through.
+  @Test func theCompositeSeedsItsBitrateAndDurationFromTheChosenQuality() async throws {
+    let model = await loaded(quality: "1080p60", resolution: "1920x1080", bitsPerSecond: 10_000_000)
+    model.output = .videoWithChat
+    let composite = try #require(model.composedTemplate()?.composite)
+    #expect(composite.bitrateMbps == 18)
+    #expect(composite.duration == .seconds(3600), "the hour-long duration `Self.info()` fixes")
+  }
+
+  @Test func aClipGetsTheSameTwoChoicesAsAVOD() async throws {
+    let model = await loadedClip(quality: "1080p60", resolution: "1920x1080")
+    model.output = .videoWithChat
+    let template = try #require(model.composedTemplate())
+
+    guard case .clip(let clip)? = template.media else {
+      Issue.record("expected clip media"); return
+    }
+    #expect(clip.destination == nil)
+    #expect(template.composite?.destination != nil)
+    // chatdownload --id takes a slug as readily as a VOD id.
+    #expect(template.chat?.videoID == clip.clipSlug)
+  }
+
+  /// "Best available" leaves the resolution unknown, which is fatal when the
+  /// chat's height must equal the video's.
+  @Test func compositingResolvesAnEmptyQualityToAConcreteOne() async throws {
+    let model = await loaded(quality: "", resolution: "1920x1080")
+    model.output = .videoWithChat
+    let template = try #require(model.composedTemplate())
+    guard case .video(let video)? = template.media else {
+      Issue.record("expected video media"); return
+    }
+    #expect(!video.quality.isEmpty)
+  }
+
+  /// Video-only must not have its default changed as a side effect.
+  @Test func videoOnlyLeavesAnEmptyQualityAlone() async throws {
+    let model = await loaded(quality: "", resolution: "1920x1080")
+    model.output = .video
+    let template = try #require(model.composedTemplate())
+    guard case .video(let video)? = template.media else {
+      Issue.record("expected video media"); return
+    }
+    #expect(video.quality.isEmpty)
+  }
+
+  /// The bug this pins: a name upstream disambiguated with a trailing
+  /// `-<digits>` (`480p30-1`, `480p30-2`, …) does not resolve as `-q` at all —
+  /// verified against the real bundled helper, it silently falls back to the
+  /// highest rendition, exit code 0, no warning. `model.quality` keeps the
+  /// picker's exact name (it is matched against `qualities` by name, and the
+  /// picker's own tag), but the request that reaches the CLI must carry
+  /// `StreamQuality.commandLineValue` instead.
+  @Test func theVideoRequestPassesTheStrippedQualityNotThePickerName() async throws {
+    let model = await loaded(quality: "480p30-1", resolution: "852x480")
+    model.output = .video
+    let template = try #require(model.composedTemplate())
+    let video = try #require(videoRequest(of: template))
+    #expect(video.quality == "480p30")
+  }
+
+  @Test func theClipRequestPassesTheStrippedQualityNotThePickerName() async throws {
+    let model = await loadedClip(quality: "480p30-2", resolution: "852x480")
+    model.output = .video
+    let template = try #require(model.composedTemplate())
+    let clip = try #require(clipRequest(of: template))
+    #expect(clip.quality == "480p30")
+  }
+
+  /// The composite path resolves through `compositeQuality` rather than
+  /// `commandLineQuality`, but the same stripping has to happen before the
+  /// name reaches the media request.
+  @Test func theCompositesMediaRequestPassesTheStrippedQualityNotThePickerName() async throws {
+    let model = await loaded(quality: "1080p60-1", resolution: "1920x1080")
+    model.output = .videoWithChat
+    let template = try #require(model.composedTemplate())
+    let video = try #require(videoRequest(of: template))
+    #expect(video.quality == "1080p60")
+  }
+
+  /// `-Portrait` is not affected — measured separately — so a portrait pick
+  /// must reach the CLI unchanged rather than stripped.
+  @Test func aPortraitQualityReachesTheRequestUnchanged() async throws {
+    let model = await loaded(quality: "480p30-Portrait", resolution: "480x853")
+    model.output = .video
+    let template = try #require(model.composedTemplate())
+    let video = try #require(videoRequest(of: template))
+    #expect(video.quality == "480p30-Portrait")
+  }
+
+  @Test func theRenderMatchesTheVideosGeometry() async throws {
+    let model = await loaded(quality: "1080p60", resolution: "1920x1080")
+    model.output = .videoWithChat
     let render = try #require(model.composedTemplate()?.render)
-    #expect(render.width == 700)
-    #expect(!render.isSTVEnabled)
-    #expect(
-      render.destination.lastPathComponent.hasSuffix(" - chat.mp4"),
-      "the destination is the model's to set, not the form's")
+    #expect(render.height == 1080)
+    #expect(render.width == 360)
+    #expect(render.framerate == 30)
+    // A transient input that is immediately re-encoded: 3 Mbps would put two
+    // generations of lossy H.264 over text on flat backgrounds.
+    #expect(render.bitrateMbps >= 12)
+  }
+
+  @Test func chatSizeDefaultsToMedium() {
+    let model = makeModel()
+    #expect(model.chatSize == .medium)
+  }
+
+  /// One row per `ChatSize` case, matching the table in
+  /// `docs/design/compositing.md` §4 for a 1080p (360-wide) chat column.
+  @Test(arguments: [
+    (ChatSize.small, 13.0),
+    (ChatSize.medium, 16.0),
+    (ChatSize.large, 20.0),
+  ])
+  func chatSizeSetsTheRendersFontSize(size: ChatSize, expectedFontSize: Double) async throws {
+    let model = await loaded(quality: "1080p60", resolution: "1920x1080")
+    model.output = .videoWithChat
+    model.chatSize = size
+    let render = try #require(model.composedTemplate()?.render)
+    #expect(render.fontSize == expectedFontSize)
+  }
+
+  /// `.video` has no render at all, so a chosen chat size — meaningless
+  /// without one — must not change what gets composed. `JobTemplate` is not
+  /// itself `Equatable` (its `Media` enum carries no such conformance), so
+  /// this compares the one part that could plausibly have drifted.
+  @Test func chatSizeIsIgnoredWhenNoChatIsRequested() async throws {
+    let model = await loaded(quality: "1080p60", resolution: "1920x1080")
+    model.output = .video
+
+    model.chatSize = .large
+    let large = try #require(model.composedTemplate())
+    model.chatSize = .small
+    let small = try #require(model.composedTemplate())
+
+    #expect(videoRequest(of: large) == videoRequest(of: small))
+    #expect(large.render == nil)
+    #expect(large.chat == nil)
+    #expect(large.composite == nil)
+  }
+
+  /// A clip's rendition list can carry a quality with no pixel dimensions —
+  /// `VideoInfo.clipResolution` has no filter for it, unlike a VOD's
+  /// `parseQualities`, which skips a variant with no `RESOLUTION` attribute
+  /// outright. When *none* of the clip's renditions parse, "best available"
+  /// has nothing to fall back to.
+  @Test func compositingRefusesWhenNoRenditionCanBeComposited() async throws {
+    let qualities = [StreamQuality(name: "720p0-1", resolution: "", bitsPerSecond: 0)]
+    let model = await loadedModel(link: Self.clipLink, info: Self.info(qualities: qualities))
+    model.output = .videoWithChat
+
+    #expect(model.composedTemplate() == nil)
+    #expect(!model.canAdd)
+  }
+
+  /// A failed fetch still settles (`hasSettledMetadata` counts `.failed`),
+  /// but `info` — and so `qualities` and the composite's duration — stays
+  /// nil. A composite needs both, so it refuses rather than crash on a force
+  /// unwrap or compose a job with a guessed duration.
+  @Test func compositingRefusesWithoutMetadata() async throws {
+    let model = makeModel(failure: VideoInfoFetchError.unparseableOutput(snippet: "x"))
+    model.linkText = Self.videoLink
+    await model.load()
+    model.folder = Self.folder
+    model.output = .videoWithChat
+
+    #expect(model.info == nil)
+    #expect(model.composedTemplate() == nil)
+    #expect(!model.canAdd)
+  }
+
+  // MARK: - Composite problem
+
+  /// The positive control: a chosen quality that parses fine has nothing to
+  /// explain.
+  @Test func compositeProblemIsNilWhenTheChosenQualityCanBeComposited() async throws {
+    let model = await loaded(quality: "1080p60", resolution: "1920x1080")
+    model.output = .videoWithChat
+    #expect(model.compositeProblem == nil)
+  }
+
+  /// `.video` never makes a quality decision for compositing, so it can never
+  /// have a composite problem — even sitting on a quality that could not be
+  /// composited.
+  @Test func compositeProblemIsNilForVideoOnly() async throws {
+    let qualities = [StreamQuality(name: "720p0-1", resolution: "", bitsPerSecond: 0)]
+    let model = await loadedModel(link: Self.clipLink, info: Self.info(qualities: qualities))
+    model.quality = "720p0-1"
+
+    #expect(model.output == .video, "the default")
+    #expect(model.compositeProblem == nil)
+  }
+
+  /// The bug the review caught: `compositeQuality` honours an explicit pick
+  /// even when it cannot be composited (see its doc comment — silently
+  /// substituting a different rendition is worse), which used to mean Add
+  /// simply greyed out with nothing on screen explaining why.
+  @Test func choosingAnExplicitQualityWithNoDimensionsExplainsWhyAddIsDisabled() async throws {
+    let qualities = [
+      StreamQuality(name: "1080p60", resolution: "1920x1080", bitsPerSecond: 6_000_000),
+      StreamQuality(name: "720p0-1", resolution: "", bitsPerSecond: 0),
+    ]
+    let model = await loadedModel(link: Self.clipLink, info: Self.info(qualities: qualities))
+    model.output = .videoWithChat
+    model.quality = "720p0-1"
+
+    // Not silently substituted for the 1080p60 that *would* work.
+    #expect(model.composedTemplate() == nil)
+    #expect(!model.canAdd)
+
+    let problem = try #require(model.compositeProblem)
+    #expect(problem.contains("720p0-1"), "names the rendition, not a generic failure")
+    #expect(problem.contains("Pick another quality"), "says what to do, not just what's wrong")
+  }
+
+  /// `480p30-Portrait` is a real rendition whose clip-API metadata claims
+  /// `480x853`, an odd height. The real decoded stream is `480x852` — h264
+  /// 4:2:0 cannot carry an odd coded dimension, so 853 is a rounding
+  /// artifact in Twitch's metadata, not a real frame.
+  /// `CompositeGeometry.init?` rounds it down to the true 852 rather than
+  /// refusing, so this composes rather than disabling Add.
+  @Test func anOddHeightInMetadataComposesAtItsRoundedDownValue() async throws {
+    let qualities = [
+      StreamQuality(name: "480p30-Portrait", resolution: "480x853", bitsPerSecond: 1_000_000),
+    ]
+    let model = await loadedModel(link: Self.clipLink, info: Self.info(qualities: qualities))
+    model.output = .videoWithChat
+    model.quality = "480p30-Portrait"
+
+    #expect(model.compositeProblem == nil)
+    let render = try #require(model.composedTemplate()?.render)
+    #expect(render.height == 852, "rounded down from the metadata's odd 853")
   }
 
   // MARK: - Quality
@@ -474,22 +644,12 @@ struct IntakeModelTests {
     #expect(videoRequest(of: template) == nil)
   }
 
-  /// A clip's chat goes through the same toggle — upstream's `chatdownload
-  /// --id` takes a VOD or a clip — and must carry the slug, not an empty id.
-  @Test func aClipsChatDownloadCarriesTheSlug() async throws {
-    let model = await loadedModel(link: Self.clipLink)
-    model.isDownloadingChat = true
-
-    let template = try #require(model.composedTemplate())
-    #expect(template.chat?.videoID == Self.clipSlug)
-  }
-
   /// Trim text typed while a VOD was in the field must not leak into a clip's
   /// job: clips have no trim, and its chat request would otherwise be
   /// silently narrowed to a window the clip does not have.
   @Test func trimTextIsIgnoredEntirelyForAClip() async throws {
     let model = await loadedModel(link: Self.clipLink)
-    model.isDownloadingChat = true
+    model.output = .videoWithChat
     model.trimStartText = "1:00"
     model.trimEndText = "2:00"
 
@@ -505,7 +665,7 @@ struct IntakeModelTests {
   /// that looks like a success, so both requests get the same window.
   @Test func trimTimesReachBothTheVideoAndItsChat() async throws {
     let model = await loadedModel()
-    model.isDownloadingChat = true
+    model.output = .videoWithChat
     model.trimStartText = "1:00"
     model.trimEndText = "1:02:03"
 
@@ -606,140 +766,6 @@ struct IntakeModelTests {
     #expect(model.hasSettledMetadata)
   }
 
-  // MARK: - Render bounds
-
-  /// The positive control: with Render on and every option left at its
-  /// default, Add is legal. Without this the refusals below would pass
-  /// against a `canAdd` that simply never allows a render.
-  @Test func addIsEnabledWithARenderAtItsDefaults() async {
-    let model = await loadedModel()
-    model.isRenderingChat = true
-
-    #expect(!model.renderIsInvalid)
-    #expect(model.canAdd)
-  }
-
-  /// A zero here becomes `-w 0` / `-b:v 0M`, which FFmpeg rejects — but only
-  /// after the chat download the render depends on has already finished. Add
-  /// refuses first.
-  @Test func aZeroRenderDimensionOrBitrateRefuses() async {
-    for (field, set) in Self.zeroableRenderFields {
-      let model = await loadedModel()
-      model.isRenderingChat = true
-      set(model, 0)
-
-      #expect(model.renderIsInvalid, "\(field) = 0 should refuse")
-      #expect(!model.canAdd, "\(field) = 0 should disable Add")
-      #expect(model.composedTemplate() == nil, "\(field) = 0 should compose nothing")
-    }
-  }
-
-  @Test func aNegativeRenderDimensionOrBitrateRefuses() async {
-    for (field, set) in Self.zeroableRenderFields {
-      let model = await loadedModel()
-      model.isRenderingChat = true
-      set(model, -1)
-
-      #expect(!model.canAdd, "\(field) = -1 should disable Add")
-    }
-  }
-
-  /// The bounds are the encoder's: 4096 is where VideoToolbox's hardware
-  /// H.264 encoder stops, so 4097 is a render that fails at the last step.
-  @Test func anOversizedRenderDimensionRefuses() async {
-    let model = await loadedModel()
-    model.isRenderingChat = true
-
-    model.renderOptions.width = 4096
-    #expect(model.canAdd, "4096 is the last width that encodes")
-
-    model.renderOptions.width = 4097
-    #expect(!model.canAdd)
-  }
-
-  /// H.264 codes in 16x16 macroblocks, so 15 has no whole block in it.
-  @Test func theSmallestLegalDimensionIsOneMacroblock() async {
-    let model = await loadedModel()
-    model.isRenderingChat = true
-
-    model.renderOptions.height = 16
-    #expect(model.canAdd)
-
-    model.renderOptions.height = 15
-    #expect(!model.canAdd)
-  }
-
-  @Test func aZeroFontSizeRefuses() async {
-    let model = await loadedModel()
-    model.isRenderingChat = true
-    model.renderOptions.fontSize = 0
-
-    #expect(!model.canAdd)
-
-    model.renderOptions.fontSize = 12
-    #expect(model.canAdd)
-  }
-
-  /// An outline size only reaches the CLI when the outline is on, and the
-  /// form hides the field otherwise — so refusing Add over it while it is
-  /// hidden would be a dead end with nothing to fix.
-  @Test func anOutlineSizeIsOnlyCheckedWhileTheOutlineIsOn() async {
-    let model = await loadedModel()
-    model.isRenderingChat = true
-    model.renderOptions.outlineSize = 0
-
-    #expect(model.canAdd, "the outline is off, so its size is not emitted")
-
-    model.renderOptions.hasOutline = true
-    #expect(!model.canAdd)
-  }
-
-  /// Render off means the whole form is hidden. Whatever is left in it from
-  /// an earlier session must not block a chat-only job.
-  @Test func renderBoundsAreIgnoredWhileRenderIsOff() async {
-    let model = await loadedModel()
-    model.renderOptions.width = 0
-    model.renderOptions.bitrateMbps = 0
-
-    #expect(!model.renderIsInvalid)
-    #expect(model.canAdd)
-  }
-
-  /// The refusal has to be explicable — a disabled button with no reason is
-  /// the silent failure this path exists to avoid. The message names the
-  /// field and its range, so it cannot be satisfied by a fixed placeholder.
-  @Test func eachOutOfRangeFieldExplainsItself() async {
-    let model = await loadedModel()
-    model.isRenderingChat = true
-    model.renderOptions.width = 0
-    model.renderOptions.bitrateMbps = 999
-
-    let problems = model.renderProblems
-    #expect(problems.count == 2)
-    #expect(problems.contains { $0.contains("Width") && $0.contains("16") && $0.contains("4096") })
-    #expect(problems.contains { $0.contains("Bitrate") && $0.contains("100") })
-  }
-
-  @Test func thereIsNothingToExplainWhileTheRenderIsValid() async {
-    let model = await loadedModel()
-    model.isRenderingChat = true
-    #expect(model.renderProblems.isEmpty)
-
-    model.isRenderingChat = false
-    model.renderOptions.width = 0
-    #expect(model.renderProblems.isEmpty, "the form is hidden, so it has nothing to say")
-  }
-
-  /// Every render field that a `0` would send to FFmpeg as a fatal argument.
-  private static let zeroableRenderFields:
-    [(name: String, set: @MainActor (IntakeModel, Int) -> Void)] = [
-      ("width", { $0.renderOptions.width = $1 }),
-      ("height", { $0.renderOptions.height = $1 }),
-      ("framerate", { $0.renderOptions.framerate = $1 }),
-      ("fontSize", { $0.renderOptions.fontSize = Double($1) }),
-      ("bitrateMbps", { $0.renderOptions.bitrateMbps = $1 }),
-    ]
-
   // MARK: - Metadata failure
 
   @Test func aMetadataFailureIsSurfacedAndTheSheetStaysUsable() async throws {
@@ -759,7 +785,7 @@ struct IntakeModelTests {
     #expect(model.name == Self.videoID)
     #expect(model.canAdd)
     let template = try #require(model.composedTemplate())
-    #expect(videoRequest(of: template)?.destination.lastPathComponent == "2844548319.mp4")
+    #expect(videoRequest(of: template)?.destination?.lastPathComponent == "2844548319.mp4")
     #expect(model.qualities.isEmpty)
     #expect(model.quality == "", "with no quality list, best available is the only honest choice")
   }
@@ -854,16 +880,9 @@ struct IntakeModelTests {
 
   // MARK: - Suffixes
 
-  @Test func theReservedSuffixIsTheLongestOneAnyOutputCanTake() {
-    let all = [
-      OutputSuffix.video,
-      OutputSuffix.render,
-      OutputSuffix.chat(.json),
-      OutputSuffix.chat(.text),
-      OutputSuffix.chat(.html),
-    ]
-    #expect(OutputSuffix.longestBytes == all.map(\.utf8.count).max())
-    #expect(OutputSuffix.longestBytes == 12)
+  @Test func theReservedSuffixIsTheOnlyOneAnyOutputCanTake() {
+    #expect(OutputSuffix.longestBytes == OutputSuffix.video.utf8.count)
+    #expect(OutputSuffix.longestBytes == 4)
   }
 
   // MARK: - Helpers

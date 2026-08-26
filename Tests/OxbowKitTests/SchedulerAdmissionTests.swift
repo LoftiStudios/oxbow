@@ -29,12 +29,12 @@ struct SchedulerAdmissionTests {
   }
 
   @Test func doesNotAdmitAStepWhoseDependencyIsUnfinished() {
-    let jobs = [Build.job(1, Build.network(1), Build.compute(2, dependsOn: Build.stepID(1)))]
+    let jobs = [Build.job(1, Build.network(1), Build.compute(2, dependsOn: [Build.stepID(1)]))]
     #expect(Scheduler.admissible(jobs: jobs, running: []) == [Build.stepID(1)])
   }
 
   @Test func admitsAStepOnceItsDependencyIsDone() {
-    let jobs = [Build.job(1, Build.network(1, .done), Build.compute(2, dependsOn: Build.stepID(1)))]
+    let jobs = [Build.job(1, Build.network(1, .done), Build.compute(2, dependsOn: [Build.stepID(1)]))]
     #expect(Scheduler.admissible(jobs: jobs, running: []) == [Build.stepID(2)])
   }
 
@@ -59,7 +59,7 @@ struct SchedulerAdmissionTests {
     let jobs = [Build.job(1,
       Build.network(1),                                    // video, independent
       chatFailed,                                          // chat, failed
-      Build.compute(3, .blocked, dependsOn: Build.stepID(2)))]
+      Build.compute(3, .blocked, dependsOn: [Build.stepID(2)]))]
 
     #expect(Scheduler.admissible(jobs: jobs, running: []) == [Build.stepID(1)])
   }
@@ -75,5 +75,21 @@ struct SchedulerAdmissionTests {
     // Job 1 has jobID ending in 0001, Job 2 has jobID ending in 0002
     // So Job 1's ID should sort first in string comparison
     #expect(Scheduler.admissible(jobs: jobs, running: []) == [Build.stepID(1)])
+  }
+
+  @Test func doesNotAdmitACompositeUntilBothParentsAreDone() {
+    let jobs = [Build.job(1,
+      Build.network(1, .done),
+      Build.compute(2),
+      Build.composite(3, dependsOn: [Build.stepID(1), Build.stepID(2)]))]
+    #expect(Scheduler.admissible(jobs: jobs, running: []) == [Build.stepID(2)])
+  }
+
+  @Test func admitsACompositeOnceBothParentsAreDone() {
+    let jobs = [Build.job(1,
+      Build.network(1, .done),
+      Build.compute(2, .done),
+      Build.composite(3, dependsOn: [Build.stepID(1), Build.stepID(2)]))]
+    #expect(Scheduler.admissible(jobs: jobs, running: []) == [Build.stepID(3)])
   }
 }

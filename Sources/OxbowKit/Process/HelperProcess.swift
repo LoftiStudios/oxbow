@@ -72,8 +72,8 @@ public actor HelperProcess {
       thread.start()
     }
 
-    let stdoutPump = Task.detached {
-      var parser = StatusLineParser()
+    let stdoutPump = Task.detached { [dialect = launch.dialect] in
+      var parser = DialectParser(dialect)
       for await data in stdoutChunks {
         for line in parser.consume(data) { await onOutput(line) }
       }

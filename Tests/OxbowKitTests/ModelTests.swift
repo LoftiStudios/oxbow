@@ -11,7 +11,7 @@ struct ModelTests {
       kind: .downloadChat(ChatRequest(videoID: "1", format: .json)),
       status: status,
       progress: StepProgress(),
-      dependsOn: nil,
+      dependsOn: [],
       artifact: nil)
   }
 
@@ -83,7 +83,7 @@ struct ModelTests {
         format: .json)),
       status: .done,
       progress: StepProgress(elapsed: .seconds(10), remaining: .seconds(5)),
-      dependsOn: nil,
+      dependsOn: [],
       artifact: URL(filePath: "/tmp/chat.json"))
 
     let videoStep = Step(
@@ -96,7 +96,7 @@ struct ModelTests {
         destination: URL(filePath: "/tmp/video.mp4"))),
       status: .running,
       progress: StepProgress(elapsed: .seconds(15), remaining: .seconds(45)),
-      dependsOn: nil,
+      dependsOn: [],
       artifact: nil)
 
     let original = Job(

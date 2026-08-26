@@ -75,6 +75,12 @@ public struct StepPhases: Sendable, Equatable {
         Phase("Fetching Images", "Images"),
         Phase("Rendering Video", "Render"),
       ])
+
+    case .composite:
+      // FFmpeg emits no phase names — `-progress` reports a real fraction
+      // instead, so there is one segment and it fills smoothly. The label
+      // matches the phase `FFmpegProgressParser` stamps on every update.
+      StepPhases(phases: [Phase("Compositing", "Combine")])
     }
   }
 

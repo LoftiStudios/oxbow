@@ -239,7 +239,7 @@ private struct StepInfoRow: View {
   // read-only body directly against a fake job.
   Form {
     Section("Download") {
-      LabeledContent("Outputs", value: "Video, Chat (JSON), Rendered chat")
+      LabeledContent("Outputs", value: "Video + chat")
       LabeledContent("Quality", value: "1080p60")
       LabeledContent("Trim", value: "Whole video")
     }
@@ -254,14 +254,21 @@ private struct StepInfoRow: View {
 }
 
 enum JobInfoPreviewData {
+  /// A composite job: a render step feeding a composite, the only shape
+  /// `renderSettings` now has anything to say about (see `JobInfo.swift`).
   static let rendered = Job(
     id: JobID(rawValue: UUID()), created: .now, title: "LeighXP - indie horror",
     steps: [
       Step(
         id: StepID(rawValue: UUID()),
         kind: .renderChat(RenderRequest(
-          width: 420, height: 800, framerate: 60,
-          destination: URL(filePath: "/tmp/r.mp4"))),
+          width: 420, height: 1080, framerate: 30, destination: nil)),
+        status: .done),
+      Step(
+        id: StepID(rawValue: UUID()),
+        kind: .composite(CompositeRequest(
+          framerate: 60, bitrateMbps: 6, duration: .seconds(600),
+          destination: URL(filePath: "/tmp/out.mp4"))),
         status: .done),
     ])
 }

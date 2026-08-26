@@ -82,7 +82,7 @@ if [[ -n "${MINIMAL:-}" ]]; then
     --enable-muxer=mp4,mov,matroska,mpegts,rawvideo,image2,null
     --enable-parser=h264,hevc,aac,mpegaudio,png
     --enable-bsf=aac_adtstoasc,h264_mp4toannexb,hevc_mp4toannexb,extract_extradata
-    --enable-filter=format,scale,null,copy,unsharp,setpts,fps,aformat,anull,aresample,atrim,trim,transpose,crop,pad
+    --enable-filter=format,scale,null,copy,unsharp,setpts,fps,hstack,aformat,anull,aresample,atrim,trim,transpose,crop,pad
     --enable-protocol=file,pipe,fd,concat
   )
 fi

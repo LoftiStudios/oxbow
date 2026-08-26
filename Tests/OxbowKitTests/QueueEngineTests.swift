@@ -24,7 +24,9 @@ struct QueueEngineTests {
   {
     QueueEngine.Configuration(
       helperExecutable: URL(filePath: "/usr/bin/true"),
-      ffmpegPath: URL(filePath: "/usr/bin/true"),
+      // Distinct from helperExecutable so a test can tell which binary a step
+      // was launched against. Never executed — FakeHelper stands in for both.
+      ffmpegPath: URL(filePath: "/usr/bin/false"),
       workspace: Workspace(root: root),
       store: QueueStore(fileURL: storeURL(for: root)),
       makeProcess: makeProcess)
@@ -337,6 +339,89 @@ struct QueueEngineTests {
     await engine.flush()
   }
 
+  /// A composite step runs FFmpeg directly rather than the C# helper: both
+  /// the executable and the stdout dialect follow the step kind.
+  @Test func aCompositeStepRunsFFmpegRatherThanTheHelper() async throws {
+    let helper = FakeHelper(.succeeds)
+    let (engine, root) = makeEngine { helper }
+    defer { cleanUp(root) }
+
+    let template = JobTemplate(
+      media: .video(VideoRequest(videoID: "v", quality: "1080p60")),
+      render: RenderRequest(),
+      composite: CompositeRequest(
+        framerate: 60,
+        bitrateMbps: 8,
+        duration: .seconds(60),
+        destination: root.appending(path: "out.mp4")))
+
+    try await engine.start()
+    await engine.enqueue(template, title: "t")
+    try await settle(engine)
+
+    let launches = await helper.launches
+    let composite = try #require(launches.first { $0.dialect != .helper })
+    #expect(composite.executable == URL(filePath: "/usr/bin/false"))
+    #expect(composite.dialect == .ffmpeg(duration: .seconds(60)))
+
+    // Every other step still runs the C# helper.
+    #expect(launches.filter { $0.dialect == .helper }.allSatisfy {
+      $0.executable == URL(filePath: "/usr/bin/true")
+    })
+
+    await engine.flush()
+  }
+
+  /// The "one file out" promise the whole feature rests on: a composite job's
+  /// video and chat render are intermediates shaped exactly like real intake
+  /// output (`destination: nil`) and must never reach the user's chosen
+  /// folder, while the composite itself is delivered to its own destination.
+  @Test func aCompositeJobDeliversExactlyOneFile() async throws {
+    let (engine, root) = makeEngine(.succeeds)
+    defer { cleanUp(root) }
+
+    let destination = root.appending(path: "out.mp4")
+    let template = JobTemplate(
+      media: .video(VideoRequest(videoID: "v", quality: "1080p60")),
+      render: RenderRequest(),
+      composite: CompositeRequest(
+        framerate: 60,
+        bitrateMbps: 8,
+        duration: .seconds(60),
+        destination: destination))
+
+    try await engine.start()
+    await engine.enqueue(template, title: "t")
+    try await settle(engine)
+
+    let job = try #require(await engine.currentJobs.first)
+    #expect(job.status == .done)
+    #expect(job.steps.allSatisfy { $0.status == .done })
+
+    // The video, chat, and render steps carried no destination of their own,
+    // so each is an intermediate: deleted with the job's workspace, its claim
+    // dropped in the same breath. Only the composite was actually moved out.
+    for step in job.steps {
+      switch step.kind {
+      case .composite:
+        #expect(step.artifact == destination)
+      case .downloadVideo, .downloadClip, .downloadChat, .renderChat:
+        #expect(step.artifact == nil, "an intermediate must not be claimed")
+      }
+    }
+
+    #expect(FileManager.default.fileExists(atPath: destination.path))
+
+    // Nothing else reached disk under root: exactly the composite's own
+    // file, nowhere else — the video and render never left the workspace
+    // that was just swept.
+    let enumerator = FileManager.default.enumerator(atPath: root.path)
+    let delivered = (enumerator?.allObjects as? [String] ?? []).filter { $0.hasSuffix(".mp4") }
+    #expect(delivered == ["out.mp4"])
+
+    await engine.flush()
+  }
+
   /// The scenario the whole failure model exists for.
   @Test func aFailedDependencyBlocksItsDependent() async throws {
     let (engine, root) = makeEngine(.failsWithoutArtifact(
@@ -389,7 +474,9 @@ struct QueueEngineTests {
 
     let configuration = QueueEngine.Configuration(
       helperExecutable: URL(filePath: "/usr/bin/true"),
-      ffmpegPath: URL(filePath: "/usr/bin/true"),
+      // Distinct from helperExecutable so a test can tell which binary a step
+      // was launched against. Never executed — FakeHelper stands in for both.
+      ffmpegPath: URL(filePath: "/usr/bin/false"),
       workspace: Workspace(root: root),
       store: QueueStore(fileURL: storeURL),
       makeProcess: { FakeHelper(.succeeds) })
@@ -430,6 +517,36 @@ struct QueueEngineTests {
     #expect(await restarted.isIdle, "there must be nothing left to do")
 
     await restarted.flush()
+  }
+
+  /// A composite job keeps its downloaded video as an intermediate exactly as
+  /// a render already keeps its chat file: `destination: nil` discards it
+  /// with the rest of the workspace once the job finishes, rather than
+  /// delivering a stray file the user never asked for. Mirrors
+  /// `persistsAcrossRestart`'s check on the chat artifact, minus the restart.
+  @Test func aVideoWithNoDestinationStaysInTheWorkspace() async throws {
+    let (engine, root) = makeEngine(.succeeds)
+    defer { cleanUp(root) }
+
+    try await engine.start()
+    await engine.enqueue(
+      JobTemplate(media: .video(VideoRequest(videoID: "1", quality: "", destination: nil))),
+      title: "t")
+    try await settle(engine)
+
+    let job = try #require(await engine.currentJobs.first)
+    #expect(job.status == .done)
+
+    // The video was an intermediate. It was deleted when the job finished,
+    // and the claim on it was dropped in the same breath — so nothing is left
+    // pointing at a file that no longer exists.
+    #expect(job.steps[0].artifact == nil, "the discarded intermediate must not be claimed")
+
+    // Nothing reached the user's folder: nil means "discard with the job,"
+    // exactly as it already does for a chat file.
+    let enumerator = FileManager.default.enumerator(atPath: root.path)
+    let delivered = (enumerator?.allObjects as? [String] ?? []).filter { $0.hasSuffix(".mp4") }
+    #expect(delivered.isEmpty)
   }
 
   @Test func publishesSnapshotsAsWorkProgresses() async throws {
@@ -487,7 +604,7 @@ struct QueueEngineTests {
   /// Critical: `cancel(job:)` must preserve steps that had already finished,
   /// and must not report the ones it kills as `.failed`.
   @Test func cancellingAJobKeepsFinishedStepsAndCancelsTheRest() async throws {
-    let sequenced = SequencedBehaviours([.succeeds, .hangsUntilCancelled])
+    let sequenced = SequencedBehaviours([.succeeds, .hangsUntilCancelled, .hangsUntilCancelled])
     let (engine, root) = makeEngine { FakeHelper(sequenced.next()) }
     defer { cleanUp(root) }
 
@@ -496,22 +613,34 @@ struct QueueEngineTests {
       JobTemplate(
         media: .video(VideoRequest(videoID: "v", quality: "best", destination: root.appending(path: "video.mp4"))),
         chat: ChatRequest(videoID: "2844548319", format: .json),
-        render: RenderRequest(destination: root.appending(path: "render.mp4"))),
+        render: RenderRequest(destination: root.appending(path: "render.mp4")),
+        composite: CompositeRequest(
+          framerate: 60, bitrateMbps: 8, duration: .seconds(60),
+          destination: root.appending(path: "composite.mp4"))),
       title: "test")
 
-    // Video and chat both contend for the `.network` slot, so only video
-    // (first in step order) launches immediately; it succeeds via the fake's
-    // first behaviour, which frees the slot for chat to start running with
-    // the fake's second behaviour (hangs). Wait for exactly that state —
-    // one finished step, one genuinely in flight — before cancelling.
+    // `makeJob` appends chat and render before the media step (see the
+    // load-bearing-order note there and docs/design/compositing.md §6), so
+    // chat — depending on nothing — is the only step admissible at t0 and
+    // launches first; it succeeds via the fake's first behaviour. That frees
+    // `.network`, and with chat now `.done`, render's one dependency is
+    // satisfied: render (`.compute`) and the video download (`.network`)
+    // share no resource class, so both are admitted and launched in the same
+    // tick, hanging via the fake's remaining two behaviours. The composite
+    // depends on both and so is left genuinely still queued. Wait for
+    // exactly that state before cancelling.
     for _ in 0..<200 {
       let steps = await engine.currentJobs.first?.steps
-      if steps?[0].status == .done, steps?[1].status == .running { break }
+      if steps?[0].status == .done, steps?[1].status == .running, steps?[2].status == .running {
+        break
+      }
       try await Task.sleep(for: .milliseconds(10))
     }
     let steps = try #require(await engine.currentJobs.first?.steps)
-    #expect(steps[0].status == .done, "precondition: video must have finished first")
-    #expect(steps[1].status == .running, "precondition: chat must be genuinely in flight")
+    #expect(steps[0].status == .done, "precondition: chat must have finished first")
+    #expect(steps[1].status == .running, "precondition: render must be genuinely in flight")
+    #expect(steps[2].status == .running, "precondition: video must be genuinely in flight")
+    #expect(steps[3].status == .queued, "precondition: composite must still be queued")
 
     let jobID = try #require(await engine.currentJobs.first?.id)
     await engine.cancel(job: jobID)
@@ -519,8 +648,9 @@ struct QueueEngineTests {
 
     let final = try #require(await engine.currentJobs.first?.steps)
     #expect(final[0].status == .done, "the already-finished download must keep its status")
-    #expect(final[1].status == .cancelled, "the running step must be cancelled, not failed")
-    #expect(final[2].status == .cancelled, "the still-queued render must also be cancelled")
+    #expect(final[1].status == .cancelled, "the running render must be cancelled, not failed")
+    #expect(final[2].status == .cancelled, "the running video must be cancelled, not failed")
+    #expect(final[3].status == .cancelled, "the still-queued composite must also be cancelled")
 
     await engine.flush()
   }
@@ -880,7 +1010,9 @@ struct QueueEngineTests {
 
     let engine = QueueEngine(configuration: QueueEngine.Configuration(
       helperExecutable: script,
-      ffmpegPath: URL(filePath: "/usr/bin/true"),
+      // Distinct from helperExecutable so a test can tell which binary a step
+      // was launched against. Never executed — FakeHelper stands in for both.
+      ffmpegPath: URL(filePath: "/usr/bin/false"),
       workspace: Workspace(root: root),
       store: QueueStore(fileURL: storeURL(for: root)),
       makeProcess: { HelperProcess() }))

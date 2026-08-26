@@ -16,6 +16,70 @@ public struct StreamQuality: Sendable, Equatable {
   public func estimatedBytes(over duration: Duration) -> Int {
     Int(Double(bitsPerSecond) * duration.asSeconds / 8)
   }
+
+  /// The value to pass as the CLI's `-q`, as distinct from `name`.
+  ///
+  /// Upstream's `ClipVideoQualities.GetQuality` resolves `-q` by an **exact
+  /// name match** first, only falling back to keywords and a
+  /// `WIDTHxHEIGHTpFPS` regex when that fails — and that fallback can
+  /// silently resolve to the wrong rendition. So the only reliable value to
+  /// send is a name upstream would itself produce, which is not always
+  /// `name`: `clipQualities` disambiguates repeats **across the whole list**,
+  /// while upstream disambiguates **per asset**, so the two can diverge.
+  ///
+  /// **Measured against the real bundled helper (1.56.5)** on a clip whose
+  /// renditions include 1080p60, 720p60 and 480p30: a `-<digits>` suffix
+  /// `clipQualities` invented purely to break a list-wide tie (`480p30-1`,
+  /// `480p30-2`, `720p60-1` — none of these exist as upstream names) does not
+  /// resolve as `-q` at all. It fails silently — exit code 0, no warning —
+  /// and falls back to the highest rendition:
+  ///
+  /// | `-q` argument | resolution actually downloaded |
+  /// |---|---|
+  /// | `480p30-1` | 1920x1080 (wrong) |
+  /// | `480p30-2` | 1920x1080 (wrong) |
+  /// | `720p60-1` | 1920x1080 (wrong) |
+  /// | `480p30`   | 852x480 (correct) |
+  /// | `720p60`   | 1280x720 (correct) |
+  /// | `480p`     | 852x480 (correct) |
+  ///
+  /// Stripping a suffix like that — one we invented — is what makes it
+  /// resolve. But a `-Portrait-<digits>` name is the opposite case: there,
+  /// upstream's own per-asset disambiguation is what produced the `-N`, and
+  /// the full name is the one that resolves correctly:
+  ///
+  /// | `-q` argument | resolution actually downloaded |
+  /// |---|---|
+  /// | `1080p60-Portrait-1` | 1080x1920 (correct, portrait) |
+  /// | `1080p60-Portrait`   | 1920x1080 (wrong — same file as `1080p60-1`) |
+  ///
+  /// Stripping *that* `-1` would hand someone the landscape file and call it
+  /// a success. So the rule cannot be "strip any trailing `-<digits>`" — it
+  /// has to strip one **only when what remains is a bare quality name**,
+  /// i.e. the remainder matches `^\d{3,4}p\d{1,3}$`. A `-Portrait` name never
+  /// matches that (the remainder still has `-Portrait` on it), so it is never
+  /// stripped, whether or not it carries its own upstream `-N`.
+  ///
+  /// **The trap this must not fall into: a trailing digit is not always a
+  /// disambiguation suffix.** `720p0` is one token — `0` is the framerate,
+  /// upstream's placeholder for a clip with no framerate metadata — and
+  /// stripping it would turn `720p0` into `720p`, a different (and possibly
+  /// nonexistent) rendition. Only a *hyphen* followed by digits at the end,
+  /// with a bare quality name left over, counts.
+  ///
+  /// `name` itself is untouched by this: it stays upstream-verbatim because
+  /// it is what the picker displays and what disambiguates two renditions
+  /// that would otherwise collide.
+  public var commandLineValue: String {
+    guard let hyphenIndex = name.lastIndex(of: "-") else { return name }
+    let suffix = name[name.index(after: hyphenIndex)...]
+    guard !suffix.isEmpty, suffix.allSatisfy(\.isNumber) else { return name }
+    let remainder = name[name.startIndex..<hyphenIndex]
+    guard remainder.range(of: #"^\d{3,4}p\d{1,3}$"#, options: .regularExpression) != nil else {
+      return name
+    }
+    return String(remainder)
+  }
 }
 
 /// The video's own metadata plus its available qualities, as parsed from the
@@ -147,7 +211,8 @@ public struct VideoInfo: Sendable, Equatable {
   /// The clip's renditions, named exactly as upstream names them.
   ///
   /// **The names have to match upstream's, character for character**, because
-  /// the name is what the picker later hands back as `-q`. Upstream's
+  /// the name (via `StreamQuality.commandLineValue`, see its doc for the
+  /// exact rule) is what the picker later hands back as `-q`. Upstream's
   /// `ClipVideoQualities.GetQuality` tries an exact-name match first and only
   /// then falls back to keywords and a `WIDTHxHEIGHTpFPS` regex, which cannot
   /// parse a `-Portrait` name at all.

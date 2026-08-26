@@ -39,7 +39,7 @@ struct JobTemplateTests {
   @Test func mediaOnlyProducesOneIndependentStep() {
     let job = makeJob(JobTemplate(media: .video(video)))
     #expect(job.steps.count == 1)
-    #expect(job.steps[0].dependsOn == nil)
+    #expect(job.steps[0].dependsOn.isEmpty)
     guard case .downloadVideo(let request) = job.steps[0].kind else {
       Issue.record("expected a video download step")
       return
@@ -50,7 +50,7 @@ struct JobTemplateTests {
   @Test func clipMediaProducesADownloadClipStep() {
     let job = makeJob(JobTemplate(media: .clip(clip)))
     #expect(job.steps.count == 1)
-    #expect(job.steps[0].dependsOn == nil)
+    #expect(job.steps[0].dependsOn.isEmpty)
     guard case .downloadClip(let request) = job.steps[0].kind else {
       Issue.record("expected a clip download step")
       return
@@ -62,7 +62,7 @@ struct JobTemplateTests {
     let html = ChatRequest(videoID: "2844548319", format: .html)
     let job = makeJob(JobTemplate(chat: html))
     #expect(job.steps.count == 1)
-    #expect(job.steps[0].dependsOn == nil)
+    #expect(job.steps[0].dependsOn.isEmpty)
     guard case .downloadChat(let request) = job.steps[0].kind else {
       Issue.record("expected a chat download step")
       return
@@ -80,14 +80,14 @@ struct JobTemplateTests {
   @Test func renderOnlyImpliesAChatStepForcedToJsonWithNoDestination() {
     let job = makeJob(JobTemplate(render: render))
     #expect(job.steps.count == 2)
-    #expect(job.steps[0].dependsOn == nil)
+    #expect(job.steps[0].dependsOn.isEmpty)
     guard case .downloadChat(let request) = job.steps[0].kind else {
       Issue.record("expected the implied chat download to come first")
       return
     }
     #expect(request.format == .json)
     #expect(request.destination == nil)
-    #expect(job.steps[1].dependsOn == job.steps[0].id)
+    #expect(job.steps[1].dependsOn == [job.steps[0].id])
     guard case .renderChat = job.steps[1].kind else {
       Issue.record("expected the render step to come second")
       return
@@ -97,8 +97,8 @@ struct JobTemplateTests {
   @Test func chatAndRenderMakesTheRenderDependOnTheChatDownload() {
     let job = makeJob(JobTemplate(chat: chat, render: render))
     #expect(job.steps.count == 2)
-    #expect(job.steps[0].dependsOn == nil)
-    #expect(job.steps[1].dependsOn == job.steps[0].id)
+    #expect(job.steps[0].dependsOn.isEmpty)
+    #expect(job.steps[1].dependsOn == [job.steps[0].id])
     guard case .downloadChat(let request) = job.steps[0].kind else {
       Issue.record("expected a chat download step")
       return
@@ -176,18 +176,21 @@ struct JobTemplateTests {
   }
 
   /// The combination the enum could not express at all: video plus chat, but
-  /// no render pairing to force a dependency between them.
+  /// no render pairing to force a dependency between them. Both are still
+  /// `.network`, so nothing here depends on order — but `makeJob` always
+  /// appends chat before media (see the load-bearing-order note in
+  /// `makeJob`), so the chat step comes first regardless.
   @Test func mediaAndChatWithNoRenderAreTwoIndependentSteps() {
     let job = makeJob(JobTemplate(media: .video(video), chat: chat))
     #expect(job.steps.count == 2)
-    #expect(job.steps[0].dependsOn == nil)
-    #expect(job.steps[1].dependsOn == nil)
-    guard case .downloadVideo = job.steps[0].kind else {
-      Issue.record("expected the video download to come first")
+    #expect(job.steps[0].dependsOn.isEmpty)
+    #expect(job.steps[1].dependsOn.isEmpty)
+    guard case .downloadChat(let request) = job.steps[0].kind else {
+      Issue.record("expected the chat download to come first")
       return
     }
-    guard case .downloadChat(let request) = job.steps[1].kind else {
-      Issue.record("expected the chat download to come second")
+    guard case .downloadVideo = job.steps[1].kind else {
+      Issue.record("expected the video download to come second")
       return
     }
     // Unlike the render pairing, a standalone chat delivery keeps the
@@ -208,23 +211,28 @@ struct JobTemplateTests {
   @Test func mediaAndRenderWithNoChatDeliveryMakesTheRenderDependOnTheImpliedChatNotTheMedia() {
     let job = makeJob(JobTemplate(media: .video(video), render: render))
     #expect(job.steps.count == 3)
-    #expect(job.steps[0].dependsOn == nil, "video download is independent")
 
-    guard case .downloadVideo = job.steps[0].kind else {
-      Issue.record("expected the video download first")
+    guard case .downloadChat(let chatRequest) = job.steps[0].kind else {
+      Issue.record("expected the implied chat download first")
       return
     }
-    guard case .downloadChat(let chatRequest) = job.steps[1].kind else {
-      Issue.record("expected the implied chat download second")
-      return
-    }
-    #expect(job.steps[1].dependsOn == nil, "the implied chat download is independent of the video")
+    #expect(job.steps[0].dependsOn.isEmpty, "the implied chat download is independent of the video")
     #expect(chatRequest.videoID == video.videoID, "the implied chat should target the same VOD as the video")
     #expect(chatRequest.format == .json)
     #expect(chatRequest.destination == nil)
 
-    #expect(job.steps[2].dependsOn == job.steps[1].id, "render depends on the chat")
-    #expect(job.steps[2].dependsOn != job.steps[0].id, "render must not depend on the video")
+    guard case .renderChat = job.steps[1].kind else {
+      Issue.record("expected the render second")
+      return
+    }
+    #expect(job.steps[1].dependsOn == [job.steps[0].id], "render depends on the chat")
+
+    guard case .downloadVideo = job.steps[2].kind else {
+      Issue.record("expected the video download third")
+      return
+    }
+    #expect(job.steps[2].dependsOn.isEmpty, "video download is independent")
+    #expect(job.steps[1].dependsOn != [job.steps[2].id], "render must not depend on the video")
   }
 
   /// A trimmed video must not get chat rendered against the full VOD: the
@@ -240,8 +248,8 @@ struct JobTemplateTests {
       destination: URL(filePath: "/tmp/v.mp4"))
 
     let job = makeJob(JobTemplate(media: .video(trimmedVideo), render: render))
-    guard case .downloadChat(let chatRequest) = job.steps[1].kind else {
-      Issue.record("expected the implied chat download second")
+    guard case .downloadChat(let chatRequest) = job.steps[0].kind else {
+      Issue.record("expected the implied chat download first")
       return
     }
     #expect(chatRequest.trimStart == trimmedVideo.trimStart)
@@ -268,8 +276,8 @@ struct JobTemplateTests {
       format: .html)
 
     let job = makeJob(JobTemplate(media: .video(trimmedVideo), chat: trimmedChat, render: render))
-    guard case .downloadChat(let chatRequest) = job.steps[1].kind else {
-      Issue.record("expected the chat download second")
+    guard case .downloadChat(let chatRequest) = job.steps[0].kind else {
+      Issue.record("expected the chat download first")
       return
     }
     #expect(chatRequest.trimStart == trimmedChat.trimStart)
@@ -288,18 +296,22 @@ struct JobTemplateTests {
   @Test func clipMediaAndRenderImpliesAChatSeededWithTheClipSlug() {
     let job = makeJob(JobTemplate(media: .clip(clip), render: render))
     #expect(job.steps.count == 3)
-    guard case .downloadClip = job.steps[0].kind else {
-      Issue.record("expected the clip download first")
-      return
-    }
-    guard case .downloadChat(let chatRequest) = job.steps[1].kind else {
-      Issue.record("expected the implied chat download second")
+    guard case .downloadChat(let chatRequest) = job.steps[0].kind else {
+      Issue.record("expected the implied chat download first")
       return
     }
     #expect(chatRequest.videoID == clip.clipSlug)
     #expect(chatRequest.format == .json)
     #expect(chatRequest.destination == nil)
-    #expect(job.steps[2].dependsOn == job.steps[1].id, "render depends on the chat")
+    guard case .renderChat = job.steps[1].kind else {
+      Issue.record("expected the render second")
+      return
+    }
+    #expect(job.steps[1].dependsOn == [job.steps[0].id], "render depends on the chat")
+    guard case .downloadClip = job.steps[2].kind else {
+      Issue.record("expected the clip download third")
+      return
+    }
   }
 
   /// The clip counterpart to `mediaAndChatWithNoRenderAreTwoIndependentSteps`:
@@ -309,14 +321,14 @@ struct JobTemplateTests {
   @Test func clipMediaAndChatWithNoRenderAreTwoIndependentSteps() {
     let job = makeJob(JobTemplate(media: .clip(clip), chat: chat))
     #expect(job.steps.count == 2)
-    #expect(job.steps[0].dependsOn == nil)
-    #expect(job.steps[1].dependsOn == nil)
-    guard case .downloadClip = job.steps[0].kind else {
-      Issue.record("expected the clip download to come first")
+    #expect(job.steps[0].dependsOn.isEmpty)
+    #expect(job.steps[1].dependsOn.isEmpty)
+    guard case .downloadChat(let request) = job.steps[0].kind else {
+      Issue.record("expected the chat download to come first")
       return
     }
-    guard case .downloadChat(let request) = job.steps[1].kind else {
-      Issue.record("expected the chat download to come second")
+    guard case .downloadClip = job.steps[1].kind else {
+      Issue.record("expected the clip download to come second")
       return
     }
     #expect(request.format == .html)
@@ -345,13 +357,13 @@ struct JobTemplateTests {
   @Test func mediaChatAndRenderShareTheSameDependencyStructure() {
     let job = makeJob(JobTemplate(media: .video(video), chat: chat, render: render))
     #expect(job.steps.count == 3)
-    #expect(job.steps[0].dependsOn == nil, "video download is independent")
-    #expect(job.steps[1].dependsOn == nil, "chat download is independent")
-    #expect(job.steps[2].dependsOn == job.steps[1].id, "render depends on the chat")
-    #expect(job.steps[2].dependsOn != job.steps[0].id)
+    #expect(job.steps[0].dependsOn.isEmpty, "chat download is independent")
+    #expect(job.steps[1].dependsOn == [job.steps[0].id], "render depends on the chat")
+    #expect(job.steps[2].dependsOn.isEmpty, "video download is independent")
+    #expect(job.steps[1].dependsOn != [job.steps[2].id])
 
-    guard case .downloadChat(let request) = job.steps[1].kind else {
-      Issue.record("expected the chat download second")
+    guard case .downloadChat(let request) = job.steps[0].kind else {
+      Issue.record("expected the chat download first")
       return
     }
     // The render pairing forces JSON — `chat`'s fixture format is `.html`, so
@@ -372,5 +384,147 @@ struct JobTemplateTests {
   @Test func everyNewStepStartsQueued() {
     let job = makeJob(JobTemplate(media: .video(video), chat: chat, render: render))
     #expect(job.steps.allSatisfy { $0.status == .queued })
+  }
+
+  @Test func aCompositeDependsOnTheVideoThenTheRender() {
+    let template = JobTemplate(
+      media: .video(VideoRequest(videoID: "v", quality: "1080p60")),
+      render: RenderRequest(),
+      composite: CompositeRequest(
+        framerate: 60, bitrateMbps: 8, duration: .seconds(60),
+        destination: URL(filePath: "/out/x.mp4")))
+
+    var n = 0
+    let job = template.makeJob(id: Build.jobID(1), title: "t", created: .init()) {
+      n += 1
+      return Build.stepID(n)
+    }
+
+    // chat, render, video, composite — chat and render are appended before
+    // the media step so the short chat download claims the network slot
+    // first; see the load-bearing-order note in `makeJob`.
+    #expect(job.steps.count == 4)
+    let composite = job.steps[3]
+    guard case .composite = composite.kind else {
+      Issue.record("last step is not the composite")
+      return
+    }
+    guard let mediaStep = job.steps.first(where: {
+      if case .downloadVideo = $0.kind { return true }
+      return false
+    }) else {
+      Issue.record("expected a video download step")
+      return
+    }
+    guard let renderStep = job.steps.first(where: {
+      if case .renderChat = $0.kind { return true }
+      return false
+    }) else {
+      Issue.record("expected a render step")
+      return
+    }
+    // ORDER IS THE CONTRACT: ArgumentBuilder reads [0] as the video and [1]
+    // as the chat render — identified by kind, not position, since the
+    // reorder above moves media to a later index without changing which
+    // step is which parent.
+    #expect(composite.dependsOn == [mediaStep.id, renderStep.id])
+  }
+
+  /// A composite implies the render it stacks, exactly as a render already
+  /// implies the chat download it reads. Asking for one is enough.
+  @Test func aCompositeImpliesTheRenderItStacks() {
+    let template = JobTemplate(
+      media: .video(VideoRequest(videoID: "v", quality: "1080p60")),
+      composite: CompositeRequest(
+        framerate: 60, bitrateMbps: 8, duration: .seconds(60),
+        destination: URL(filePath: "/out/x.mp4")))
+
+    var n = 0
+    let job = template.makeJob(id: Build.jobID(1), title: "t", created: .init()) {
+      n += 1
+      return Build.stepID(n)
+    }
+
+    #expect(job.steps.count == 4)
+    let composite = job.steps[3]
+    guard case .composite = composite.kind else {
+      Issue.record("last step is not the composite")
+      return
+    }
+    guard let mediaStep = job.steps.first(where: {
+      if case .downloadVideo = $0.kind { return true }
+      return false
+    }) else {
+      Issue.record("expected a video download step")
+      return
+    }
+    guard let renderStep = job.steps.first(where: {
+      if case .renderChat = $0.kind { return true }
+      return false
+    }) else {
+      Issue.record("expected a render step")
+      return
+    }
+    #expect(composite.dependsOn == [mediaStep.id, renderStep.id])
+  }
+
+  /// The one case that genuinely cannot be built: media is the input a
+  /// composite cannot manufacture for itself.
+  @Test func aCompositeWithNoMediaIsNotBuilt() {
+    let template = JobTemplate(
+      composite: CompositeRequest(
+        framerate: 60, bitrateMbps: 8, duration: .seconds(60),
+        destination: URL(filePath: "/out/x.mp4")))
+
+    var n = 0
+    let job = template.makeJob(id: Build.jobID(1), title: "t", created: .init()) {
+      n += 1
+      return Build.stepID(n)
+    }
+
+    #expect(!job.steps.contains { if case .composite = $0.kind { true } else { false } })
+  }
+
+  /// The behaviour the reorder in `makeJob` exists to buy, proved against
+  /// `Scheduler` rather than merely against step indices: once the chat
+  /// download is `.done`, the render (`.compute`) and the media download
+  /// (`.network`) share no resource class, so `Scheduler.admissible` must
+  /// admit both in the same call rather than making one wait behind the
+  /// other. See docs/design/compositing.md §6 for the timeline this buys.
+  @Test func chatDoneMakesRenderAndMediaBothAdmissibleTogether() {
+    let template = JobTemplate(
+      media: .video(video),
+      render: render,
+      composite: CompositeRequest(
+        framerate: 60, bitrateMbps: 8, duration: .seconds(60),
+        destination: URL(filePath: "/out/x.mp4")))
+    var job = makeJob(template)
+
+    guard let chatIndex = job.steps.firstIndex(where: {
+      if case .downloadChat = $0.kind { return true }
+      return false
+    }) else {
+      Issue.record("expected a chat download step")
+      return
+    }
+    job.steps[chatIndex].status = .done
+
+    guard let renderStep = job.steps.first(where: {
+      if case .renderChat = $0.kind { return true }
+      return false
+    }) else {
+      Issue.record("expected a render step")
+      return
+    }
+    guard let mediaStep = job.steps.first(where: {
+      if case .downloadVideo = $0.kind { return true }
+      return false
+    }) else {
+      Issue.record("expected a video download step")
+      return
+    }
+
+    let admitted = Scheduler.admissible(jobs: [job], running: [])
+    #expect(Set(admitted) == Set([renderStep.id, mediaStep.id]))
   }
 }

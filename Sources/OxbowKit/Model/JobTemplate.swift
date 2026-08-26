@@ -5,9 +5,12 @@ import Foundation
 /// Templates exist only at construction time. Once expanded, the runtime model
 /// is uniform and nothing needs to know which template produced a job.
 ///
-/// The three parts are independent toggles, not a fixed list of combinations:
-/// any subset may be present, and `makeJob` wires only the dependency a render
-/// actually needs (on its chat download), never one between media and chat.
+/// Four parts, not a fixed list of combinations — but not four independent
+/// toggles either: `composite` implies `render` exactly as `render` implies
+/// `chat`, so setting it alone still produces a chat-download, render, and
+/// composite step. `makeJob` wires only the dependencies each implication
+/// actually needs: a render depends on its chat download, and a composite
+/// depends on both its media and its render.
 public struct JobTemplate: Sendable {
   public enum Media: Sendable {
     case video(VideoRequest)
@@ -19,11 +22,26 @@ public struct JobTemplate: Sendable {
   ///   whatever `ChatRequest.format` says — see `renderInput(_:)`.
   public var chat: ChatRequest?
   public var render: RenderRequest?
+  /// Stacks the finished media and the finished render into one file. Implies
+  /// a render exactly as `render` implies a chat download — asking for a
+  /// composite without one is enough to get all four steps. An implied
+  /// `RenderRequest()` carries default geometry (350x600 at 30fps), which
+  /// will not match a real video's height; `hstack` then fails immediately
+  /// and loudly, which is the designed behaviour, but a library caller
+  /// composing a template directly should set the render's geometry itself.
+  /// The intake always does.
+  public var composite: CompositeRequest?
 
-  public init(media: Media? = nil, chat: ChatRequest? = nil, render: RenderRequest? = nil) {
+  public init(
+    media: Media? = nil,
+    chat: ChatRequest? = nil,
+    render: RenderRequest? = nil,
+    composite: CompositeRequest? = nil)
+  {
     self.media = media
     self.chat = chat
     self.render = render
+    self.composite = composite
   }
 
   /// `nextStepID` is injected rather than calling `UUID()` directly so that
@@ -40,21 +58,34 @@ public struct JobTemplate: Sendable {
     // Independent of the chat/render steps below: a failed video or clip
     // download must not block the render, and vice versa. Never give this
     // step a `dependsOn`.
+    //
+    // Its `nextStepID()` is drawn here, before chat/render, but it is not
+    // *appended* until after them, below — see the note there for why the
+    // append order is load-bearing.
+    var mediaStep: Step?
     if let media {
       switch media {
       case .video(let request):
-        steps.append(Step(id: nextStepID(), kind: .downloadVideo(request)))
+        mediaStep = Step(id: nextStepID(), kind: .downloadVideo(request))
       case .clip(let request):
-        steps.append(Step(id: nextStepID(), kind: .downloadClip(request)))
+        mediaStep = Step(id: nextStepID(), kind: .downloadClip(request))
       }
     }
 
     var chatStep: Step?
-    if render != nil {
+    if render != nil || composite != nil {
       // A render implies a chat step even when the caller supplied no chat
       // request of its own, so that render-without-chat is never silently
       // dropped. The implied request has `destination: nil` so the chat file
       // stays an intermediate and is discarded with the workspace.
+      //
+      // A composite implies a render exactly the same way, one level up: a
+      // caller who sets `composite` without `render` still wants a stacked
+      // file, not a silently discarded request, and `makeJob` has no error
+      // channel to refuse with (see `renderInput`'s note on the same
+      // problem). The implied render carries default geometry, which will
+      // fail loudly in `hstack` if it does not match the video — see the
+      // note on `composite` above.
       let request = Self.renderInput(chat ?? Self.impliedChatRequest(for: media))
       chatStep = Step(id: nextStepID(), kind: .downloadChat(request))
     } else if let chat {
@@ -64,8 +95,47 @@ public struct JobTemplate: Sendable {
       steps.append(chatStep)
     }
 
-    if let render, let chatStep {
-      steps.append(Step(id: nextStepID(), kind: .renderChat(render), dependsOn: chatStep.id))
+    var renderStep: Step?
+    if let chatStep, render != nil || composite != nil {
+      renderStep = Step(
+        id: nextStepID(),
+        kind: .renderChat(render ?? RenderRequest()),
+        dependsOn: [chatStep.id])
+      steps.append(renderStep!)
+    }
+
+    // LOAD-BEARING ORDER, not cosmetic: appended after chat and render, even
+    // though `mediaStep` was built first, above. `Scheduler.admissible` caps
+    // running steps at one per `ResourceClass` and walks `job.steps` in
+    // array order, so whichever `.network` step appears first claims that
+    // slot. Both this step and the chat download are `.network` (see
+    // `StepKind.resource`) — appending media first would let the (long)
+    // video download claim the slot and make the (short) chat wait behind
+    // it, then the render wait on the chat, the fully-serial timeline
+    // docs/design/compositing.md §6 rejected. Appending chat first instead
+    // lets the render (`.compute`) and this step (`.network`) become
+    // admissible together, in the same call, once the chat finishes. Do not
+    // "tidy" this back above chat/render.
+    if let mediaStep {
+      steps.append(mediaStep)
+    }
+
+    // Only when there is genuinely something to stack. Unlike `renderStep`
+    // (which `composite` itself implies, above), media is the one input a
+    // composite cannot manufacture for itself — there is nothing to stack
+    // the chat against — so a composite requested with no media is
+    // genuinely left unbuilt.
+    if let composite, let mediaStep, let renderStep {
+      steps.append(Step(
+        id: nextStepID(),
+        kind: .composite(composite),
+        // ORDER IS THE CONTRACT: ArgumentBuilder reads input 0 as the video
+        // and input 1 as the chat render. Swapping these does not resize
+        // anything — `hstack` does not scale its inputs — so the frame comes
+        // out chat-on-the-left at full size, and worse, silently loses audio:
+        // `-map 0:a:0?` would then point at input 0, which is the chat
+        // render, and a chat render has no audio track.
+        dependsOn: [mediaStep.id, renderStep.id]))
     }
 
     return Job(id: id, created: created, title: title, steps: steps)
@@ -117,10 +187,11 @@ public struct JobTemplate: Sendable {
   /// delivered JSON bytes inside a file called `… - chat.html`, which is
   /// worse than either honest outcome: the extension is the only thing that
   /// tells the user — or Finder, or the next program to open it — what is
-  /// actually in there. Intake never hit this because it derives the
-  /// extension from `deliveredChatFormat` after the same override, but
-  /// `JobTemplate` is public library surface and a caller composing its own
-  /// template gets no such protection.
+  /// actually in there. Intake never hits this: `IntakeModel` gives a
+  /// composite's chat request no destination at all, since the composite is
+  /// its only output, so there is nothing here for this to rewrite.
+  /// `JobTemplate` is public library surface, though, and a caller composing
+  /// its own template gets no such protection.
   private static func renderInput(_ request: ChatRequest) -> ChatRequest {
     var request = request
     request.format = .json

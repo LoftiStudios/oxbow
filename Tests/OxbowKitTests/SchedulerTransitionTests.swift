@@ -12,7 +12,7 @@ struct SchedulerTransitionTests {
   private var chatThenRender: [Job] {
     [Build.job(1,
       Build.network(1, .running),
-      Build.compute(2, .queued, dependsOn: Build.stepID(1)))]
+      Build.compute(2, .queued, dependsOn: [Build.stepID(1)]))]
   }
 
   @Test func successMarksTheStepDoneAndRecordsItsArtifact() {
@@ -95,8 +95,8 @@ struct SchedulerTransitionTests {
   @Test func blockingPropagatesTransitively() {
     var jobs = [Build.job(1,
       Build.network(1, .running),
-      Build.compute(2, .queued, dependsOn: Build.stepID(1)),
-      Build.compute(3, .queued, dependsOn: Build.stepID(2)))]
+      Build.compute(2, .queued, dependsOn: [Build.stepID(1)]),
+      Build.compute(3, .queued, dependsOn: [Build.stepID(2)]))]
 
     Scheduler.complete(Build.stepID(1), with: .cancelled, in: &jobs)
 
@@ -110,7 +110,7 @@ struct SchedulerTransitionTests {
     var jobs = [Build.job(1,
       Build.network(9, .done),                                    // succeeded sibling
       Build.network(1, .failed(StepFailure(kind: .noArtifact, summary: "x"))),
-      Build.compute(2, .blocked, dependsOn: Build.stepID(1)))]
+      Build.compute(2, .blocked, dependsOn: [Build.stepID(1)]))]
 
     Scheduler.retry(Build.stepID(1), in: &jobs)
 
@@ -136,7 +136,7 @@ struct SchedulerTransitionTests {
   @Test func admissionResumesOnIndependentWorkAfterAFailure() {
     var jobs = [Build.job(1,
       Build.network(1, .running),
-      Build.compute(2, .queued, dependsOn: Build.stepID(1)),
+      Build.compute(2, .queued, dependsOn: [Build.stepID(1)]),
       Build.compute(3, .queued))]                                  // independent render
 
     Scheduler.complete(Build.stepID(1), with: .failed(
@@ -169,7 +169,7 @@ struct SchedulerTransitionTests {
   @Test func retryingACancelledStepRequeuesIt() {
     var jobs = [Build.job(1,
       Build.network(1, .cancelled),
-      Build.compute(2, .blocked, dependsOn: Build.stepID(1)))]
+      Build.compute(2, .blocked, dependsOn: [Build.stepID(1)]))]
 
     Scheduler.retry(Build.stepID(1), in: &jobs)
 
@@ -181,12 +181,92 @@ struct SchedulerTransitionTests {
   @Test func cancellingARunningStepCancelsIt() {
     var jobs = [Build.job(1,
       Build.network(1, .running),
-      Build.compute(2, .queued, dependsOn: Build.stepID(1)))]
+      Build.compute(2, .queued, dependsOn: [Build.stepID(1)]))]
 
     Scheduler.cancel(Build.stepID(1), in: &jobs)
 
     #expect(status(jobs, 1) == .cancelled)
     #expect(status(jobs, 2) == .blocked)
+  }
+
+  /// The multi-parent branch of `unblockDependents`, which every other test
+  /// leaves vacuous: with one parent the guard can only ever see the parent
+  /// that was just retried.
+  @Test func aStepStaysBlockedUntilNoParentIsStillFailed() {
+    let failure = StepFailure(kind: .noArtifact, summary: "x")
+    var jobs = [Build.job(1,
+      Build.network(1, .failed(failure)),
+      Build.network(2, .failed(failure)),
+      Build.compute(3, .blocked, dependsOn: [Build.stepID(1), Build.stepID(2)]))]
+
+    Scheduler.retry(Build.stepID(1), in: &jobs)
+    #expect(jobs[0].steps[2].status == .blocked)
+
+    Scheduler.retry(Build.stepID(2), in: &jobs)
+    #expect(jobs[0].steps[2].status == .queued)
+
+    // Released, but not runnable — admissible() is the separate gate.
+    #expect(!Scheduler.admissible(jobs: jobs, running: []).contains(Build.stepID(3)))
+  }
+
+  @Test func failingEitherParentBlocksTheComposite() {
+    for failedIndex in 0...1 {
+      var jobs = [Build.job(1,
+        Build.network(1),
+        Build.compute(2),
+        Build.composite(3, dependsOn: [Build.stepID(1), Build.stepID(2)]))]
+      let failure = StepFailure(kind: .noArtifact, summary: "x")
+      Scheduler.complete(Build.stepID(failedIndex + 1), with: .failed(failure), in: &jobs)
+      #expect(jobs[0].steps[2].status == .blocked)
+    }
+  }
+
+  /// The rule with no single-parent equivalent: retrying one failed parent
+  /// must not release a child whose OTHER parent is still failed — that other
+  /// parent still needs its own retry.
+  @Test func retryingOneParentLeavesTheCompositeBlockedWhileTheOtherIsFailed() {
+    let failure = StepFailure(kind: .noArtifact, summary: "x")
+    var jobs = [Build.job(1,
+      Build.network(1, .failed(failure)),
+      Build.compute(2, .failed(failure)),
+      Build.composite(3, .blocked, dependsOn: [Build.stepID(1), Build.stepID(2)]))]
+
+    Scheduler.retry(Build.stepID(1), in: &jobs)
+    #expect(jobs[0].steps[2].status == .blocked)
+  }
+
+  /// The counterpart, and the one that pins the .blocked-vs-.queued split:
+  /// once no parent is in a failure state the composite is RELEASED to
+  /// .queued — because .blocked means "an upstream failed", and that has
+  /// stopped being true. It is still not runnable, which admissible() enforces
+  /// separately.
+  @Test func retryingTheLastFailedParentReleasesTheCompositeToQueued() {
+    let failure = StepFailure(kind: .noArtifact, summary: "x")
+    var jobs = [Build.job(1,
+      Build.network(1, .done),
+      Build.compute(2, .failed(failure)),
+      Build.composite(3, .blocked, dependsOn: [Build.stepID(1), Build.stepID(2)]))]
+
+    Scheduler.retry(Build.stepID(2), in: &jobs)
+    #expect(jobs[0].steps[2].status == .queued)
+
+    // Released, but not runnable: step 2 is queued again, not done.
+    #expect(!Scheduler.admissible(jobs: jobs, running: []).contains(Build.stepID(3)))
+  }
+
+  /// retry(job:) retries every unfinished step at once, which is the path a
+  /// user actually takes from the queue UI.
+  @Test func retryingTheWholeJobReleasesTheComposite() {
+    let failure = StepFailure(kind: .noArtifact, summary: "x")
+    var jobs = [Build.job(1,
+      Build.network(1, .failed(failure)),
+      Build.compute(2, .failed(failure)),
+      Build.composite(3, .blocked, dependsOn: [Build.stepID(1), Build.stepID(2)]))]
+
+    Scheduler.retry(job: Build.jobID(1), in: &jobs)
+    #expect(jobs[0].steps[0].status == .queued)
+    #expect(jobs[0].steps[1].status == .queued)
+    #expect(jobs[0].steps[2].status == .queued)
   }
 
   /// Cancelling a `.done` step is a no-op: status and artifact are preserved.

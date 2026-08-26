@@ -10,14 +10,44 @@ and §6 anticipated:
   `data.clip` — no moments line, no m3u8 section, and no trailing newline —
   with its renditions inline at `clip.assets[].videoQualities`.
   `VideoInfo.parse` handles both and produces the same `VideoInfo` either way.
-- **A clip's quality names come from upstream, verbatim.** `{quality}p{fps}`,
-  `-Portrait` for a vertical asset, `-1`/`-2` for the repeats Twitch always
-  returns. The name is what the picker hands back as `-q`, and upstream's
-  fallback regex cannot parse a `-Portrait` name — verified against the real
-  CLI, `-q 1080p60-Portrait` silently downloads the *landscape* rendition,
-  exit code 0 and no warning, so a prettier name of our own would hand people
-  the wrong video and call it a success. Identical duplicates are collapsed;
-  the survivor keeps upstream's name.
+- **A clip's quality names come from upstream, verbatim — but the name is not
+  what reaches `-q`.** `{quality}p{fps}`, `-Portrait` for a vertical asset,
+  `-1`/`-2` for the repeats Twitch always returns. `name` stays exactly this,
+  because it is what the picker displays and what disambiguates two
+  renditions that would otherwise collide — a prettier name of our own would
+  hand people the wrong video (see below) and call it a success.
+
+  What changed since this was first written, twice: **the `-<digits>` suffix
+  was never the problem.** It was measured as one on 2026-08-25 against the
+  bundled helper (1.56.5), and the measurement was real — `-q 480p30-1`
+  decoded as `1920x1080 [...] 6128 kb/s`, the 1080p60 rendition — but the
+  diagnosis was wrong. `info` had listed that name 16 minutes earlier; by
+  download time Twitch was returning a different asset set for the same clip,
+  with no duplicates and so no `-1` names at all. The CLI resolves its own
+  `-1`/`-2` names correctly whenever they currently exist:
+  `VideoQualities.TryGetQuality` matches the full name before anything else,
+  confirmed by a unit test against that source. See
+  `docs/twitch-metadata.md` §5 for the three measurements and their
+  timestamps.
+
+  What is true, and what actually bit us: **a rendition name is only valid
+  against the response it came from.** An unresolvable `-q` falls back to the
+  best rendition, exit 0, no warning — documented (`-q` is the quality the
+  CLI will *attempt* to download) but silent enough that a stale name reads
+  as a parser bug.
+
+  `StreamQuality.commandLineValue` still strips a trailing `-<digits>` when
+  what is left is a bare quality name (`^\d{3,4}p\d{1,3}$`). That rule now
+  rests on a premise known to be false, and when the duplicates are genuine
+  it silently swaps a `-1` pick for whichever of the pair sorts first. It is
+  harmless today only because the duplicated renditions are byte-identical.
+  Removing it is an open decision, not a settled design.
+
+  The `-Portrait` carve-out in that rule was itself fallout: `1080p60-Portrait`
+  is upstream's own per-asset name and resolves as-is, so stripping it
+  produced a landscape download — same shape of failure, opposite direction.
+  The `720p0` trap is unrelated and still real: the `0` there is a framerate,
+  not a suffix, and there is no hyphen before it to match.
 - **The render options are bounds-checked**, the way §5's trim already is. A
   render is the second step of its job, so a `0` width reaches FFmpeg only
   after the chat download has finished.
@@ -55,13 +85,14 @@ proven rather than assumed.
 
 ## 2. Intake
 
-> **Note added 2026-08-24, after implementation.** The three-toggle intake
-> described here is built and working, but whether it should stay this general
-> is under review — see `docs/architecture.md` §7, "Narrowing the intake". The
-> leaning is that a chat render in isolation has little value, and that the app
-> should offer roughly *VOD* and *VOD + chat* instead. Nothing here is wrong;
-> it may simply become more opinionated. Read that note before building on the
-> toggles.
+> **Note added 2026-08-24, after implementation; superseded 2026-08-25.** The
+> three-toggle intake described here is what shipped first, but it has since
+> been replaced: the intake now offers two choices, *video* or *video + chat*,
+> with the standalone chat render removed. See `docs/design/compositing.md` §3
+> for the current intake and `docs/architecture.md` §7, "Narrowing the intake",
+> for the decision. Nothing below is wrong — it is the historical record of why
+> the three toggles existed — it just no longer describes what is built. Read
+> `compositing.md` §3 before building on the intake.
 
 
 
@@ -222,19 +253,51 @@ Clips carry their own quality list from the same `info` call.
 |---|---|
 | Size | width, height, framerate, fontSize, font |
 | Colour | backgroundColor, alternateBackgroundColor, messageColor |
-| Elements | badges, timestamps, subMessages, outline, outlineSize |
-| Emotes | bttv, ffz, stv, allowUnlistedEmotes |
+| Elements | timestamps, outline, outlineSize |
+| Backgrounds | alternateBackgrounds |
 | Encoding | bitrateMbps, isSharpened |
 
 Colours are stored as hex strings because that is what the CLI takes
 (`#111111`, and `#C8FF0059` with alpha); the form uses a colour well and
-converts. The emote switches are surfaced deliberately: 7TV resolution is why
-the submodule is pinned past `1.56.5` (`docs/development.md`), so it should be
-visible and switchable rather than an invisible default.
+converts.
 
-Every new option is emitted by `ArgumentBuilder` and asserted in its tests. The
-two GPL-avoidance rules are unchanged and non-negotiable: always
-`--output-args` with `h264_videotoolbox`, never `--sharpening`.
+**`chatrender`'s boolean options are switches, not `--flag=value` options —
+verified empirically, not asserted from the `--help` text.** Upstream's
+parser reads mere *presence* of a boolean flag as true and ignores any value
+that follows it: `--timestamp=false` and `--timestamp false` both turn
+timestamps ON, identically to `--timestamp` on its own. Verified against the
+bundled 1.56.5 helper on 2026-08-25 by rendering the same chat file with
+`--timestamp=false` and `--timestamp=true`, extracting frames from both
+outputs, and hashing them: the two renders were byte-identical (sha256
+`d9b7fea7be2a10be…`), and both differed from a render that omitted the flag
+entirely (`6a2b525002429b03…`). The same check on `--outline` gave the same
+shape: `=false` and `=true` identical (`735d58632d7ada2c…`), omission
+different (`53952cd96edf2289…`). **There is no way to pass `false` through
+this CLI for these options; omitting the flag is the only way to get it.**
+
+`--banner` is a genuine, verified exception: it is declared differently
+upstream, and `--banner=false` really does suppress the banner. It is the
+one flag in `ArgumentBuilder` that keeps the `=value` shape.
+
+Given that, only the three options whose CLI default is `false` — timestamps,
+outline, and alternate backgrounds — are expressible through this CLI at all:
+`ArgumentBuilder` emits them bare (`--timestamp`, not `--timestamp=true`) when
+the user wants them on, and omits them otherwise. The other six upstream
+switches this design originally meant to expose — badges, sub-messages, and
+the four emote toggles (bttv, ffz, stv, allow-unlisted-emotes) — all default
+to `true` and **cannot be turned off through this CLI at all**. `RenderRequest`
+carries no fields for them; a settable field that can never take effect is a
+lie. They stay on, at the CLI's own default — the emote switches in
+particular were meant to be surfaced deliberately (7TV resolution is why the
+submodule is pinned past `1.56.5`, `docs/development.md`), but "on by
+upstream default, not user-controllable" is what that surfacing amounts to
+until an upstream fix changes the parsing.
+
+Every option above is emitted by `ArgumentBuilder` and asserted in its tests,
+including the empirically-derived contract itself — see the comment above
+`ArgumentBuilderTests`'s boolean-flag suite. The two GPL-avoidance rules are
+unchanged and non-negotiable: always `--output-args` with
+`h264_videotoolbox`, never `--sharpening`.
 
 ## 8. Clips
 

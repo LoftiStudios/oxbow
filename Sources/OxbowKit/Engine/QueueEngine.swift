@@ -335,6 +335,11 @@ public actor QueueEngine {
     let context: StepContext
     do {
       context = try makeContext(job: job, step: step)
+    } catch let error as StepWiringError {
+      completeStep(id, outcome: .failed(StepFailure(
+        kind: .launchFailed("\(error)"),
+        summary: "Wiring bug: this step's inputs did not match its dependencies.")))
+      return
     } catch {
       completeStep(id, outcome: .failed(StepFailure(
         kind: .launchFailed("\(error)"),
@@ -348,10 +353,25 @@ public actor QueueEngine {
     // its `isCancelled` flag never resets, so reusing one across steps would
     // have every step after the first killed immediately.
     let process = configuration.makeProcess()
+
+    // A composite runs FFmpeg directly rather than the C# helper, so both the
+    // executable and the stdout dialect follow the step kind.
+    let executable: URL
+    let dialect: OutputDialect
+    switch step.kind {
+    case .composite(let request):
+      executable = configuration.ffmpegPath
+      dialect = .ffmpeg(duration: request.duration)
+    case .downloadVideo, .downloadClip, .downloadChat, .renderChat:
+      executable = configuration.helperExecutable
+      dialect = .helper
+    }
+
     let launch = Launch(
-      executable: configuration.helperExecutable,
+      executable: executable,
       arguments: ArgumentBuilder.arguments(for: step.kind, context: context),
-      workingDirectory: context.stepTempDirectory)
+      workingDirectory: context.stepTempDirectory,
+      dialect: dialect)
 
     running[id] = process
     Task { [weak self] in
@@ -403,7 +423,7 @@ public actor QueueEngine {
       }
       completeStep(id, outcome: .failed(StepFailure(
         kind: .launchFailed("\(error)"),
-        summary: "The download tool failed to start.",
+        summary: "The tool failed to start.",
         detail: "\(error)")))
     }
   }
@@ -659,22 +679,34 @@ public actor QueueEngine {
     case .downloadClip: "clip.mp4"
     case .downloadChat(let request): "chat.\(request.format.rawValue)"
     case .renderChat: "render.mp4"
+    case .composite: "composite.mp4"
     }
 
-    // Guaranteed non-nil when a render runs: `Scheduler.admissible` only
-    // admits a step whose `dependsOn` is `.done`, and `.done` is only
-    // reachable via `.succeeded(artifact:)`. No defensive branch here — the
-    // `?? ""` fallback in `ArgumentBuilder` is what covers a wiring bug, not
-    // this.
-    let input = step.dependsOn.flatMap { dependency in
+    // Order-preserving: `Step.dependsOn` is ordered and the argument builder
+    // reads these positionally.
+    let inputs = step.dependsOn.compactMap { dependency in
       job.steps.first { $0.id == dependency }?.artifact
+    }
+
+    // `compactMap` silently drops a missing artifact, which would otherwise
+    // shift every later positional input down by one — a composite reading
+    // its chat render as `input 0` because the video's artifact went missing.
+    // That surfaces as a baffling FFmpeg error (wrong stream mapped, or a
+    // filter given too few inputs) far from its real cause: a step ran with a
+    // parent that was not actually `.done`, which should never happen given
+    // `Scheduler.admissible`'s guard, but a future regression there should be
+    // loud here rather than silently mis-wired.
+    guard inputs.count == step.dependsOn.count else {
+      throw StepWiringError(
+        "step \(step.id) expected \(step.dependsOn.count) input artifact(s) "
+          + "but only \(inputs.count) parent(s) had one")
     }
 
     return StepContext(
       stepTempDirectory: stepDirectory,
       outputFile: artifacts.appending(path: name),
       ffmpegPath: configuration.ffmpegPath,
-      inputArtifact: input,
+      inputArtifacts: inputs,
       log: StepLog(fileURL: configuration.workspace.logFile(job: job.id, step: step.id)))
   }
 
@@ -682,15 +714,18 @@ public actor QueueEngine {
   ///
   /// Distinguishes "this kind has no destination, keep it as an intermediate"
   /// from "the move itself failed" — collapsing those (e.g. via `?? file`)
-  /// would report a move failure as success. `ChatRequest.destination` is the
-  /// only optional one of the four; every other kind's destination is
-  /// required, so `.failed` is the only way `nil` can mean anything there.
+  /// would report a move failure as success. Four of the five kinds carry an
+  /// optional destination — chat, video, clip, and render — because a
+  /// composite job delivers one file and keeps its inputs as intermediates.
+  /// `.failed` remains the only way `nil` can mean a problem, so the two cases
+  /// must stay distinguishable.
   private func move(_ file: URL, toDestinationFor kind: StepKind) -> MoveOutcome {
     let destination: URL? = switch kind {
     case .downloadVideo(let request): request.destination
     case .downloadClip(let request): request.destination
     case .downloadChat(let request): request.destination
     case .renderChat(let request): request.destination
+    case .composite(let request): request.destination
     }
     guard let destination else { return .notApplicable }
 
@@ -707,5 +742,16 @@ public actor QueueEngine {
     } catch {
       return .failed("\(error)")
     }
+  }
+}
+
+/// Thrown by `QueueEngine.makeContext` when a step's resolved input artifacts
+/// are shorter than its `dependsOn`, so `launch` can report a wiring bug
+/// distinctly from an ordinary working-directory failure.
+private struct StepWiringError: Error, CustomStringConvertible {
+  let description: String
+
+  init(_ description: String) {
+    self.description = description
   }
 }

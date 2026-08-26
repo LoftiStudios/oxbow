@@ -10,8 +10,9 @@ public struct StepContext: Sendable {
   /// the Swift parent moves the finished file out on success.
   public var outputFile: URL
   public var ffmpegPath: URL
-  /// The artifact of `dependsOn`, if this step consumes one.
-  public var inputArtifact: URL?
+  /// The artifacts of `dependsOn`, in the same order. A render consumes one;
+  /// a composite consumes two, `[video, render]`.
+  public var inputArtifacts: [URL]
   /// Where the helper's narrative output is kept. Optional because the
   /// argument builder — this type's other consumer — has no use for it and
   /// its tests construct contexts without one.
@@ -21,13 +22,13 @@ public struct StepContext: Sendable {
     stepTempDirectory: URL,
     outputFile: URL,
     ffmpegPath: URL,
-    inputArtifact: URL? = nil,
+    inputArtifacts: [URL] = [],
     log: StepLog? = nil)
   {
     self.stepTempDirectory = stepTempDirectory
     self.outputFile = outputFile
     self.ffmpegPath = ffmpegPath
-    self.inputArtifact = inputArtifact
+    self.inputArtifacts = inputArtifacts
     self.log = log
   }
 }

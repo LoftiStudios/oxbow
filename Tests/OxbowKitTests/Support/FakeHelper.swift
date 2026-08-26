@@ -21,6 +21,10 @@ actor FakeHelper: HelperProcessing {
   private var isCancelled = false
   private var cancelContinuation: CheckedContinuation<Void, Never>?
 
+  /// Every `Launch` this helper was handed. The only way to observe which
+  /// binary the engine chose for a step, and which output dialect it expected.
+  private(set) var launches: [Launch] = []
+
   init(_ behaviour: Behaviour) { self.behaviour = behaviour }
 
   /// Whether `cancel()` was ever called — i.e. whether a real helper would
@@ -34,6 +38,7 @@ actor FakeHelper: HelperProcessing {
     onOutput: @escaping @Sendable (ParsedLine) async -> Void)
     async throws -> RunResult
   {
+    launches.append(launch)
     await onOutput(.status(StepProgress(phase: "Working", fraction: 0.5)))
     // The narrative output a real helper interleaves with its status lines.
     await onOutput(.log(level: .info, message: "Fetching video info"))
@@ -73,12 +78,22 @@ actor FakeHelper: HelperProcessing {
   }
 
   private nonisolated func write(_ contents: Data, for launch: Launch) {
-    guard let output = Self.outputPath(in: launch.arguments) else { return }
+    guard let output = Self.outputPath(in: launch) else { return }
     FileManager.default.createFile(atPath: output, contents: contents)
   }
 
-  private static func outputPath(in arguments: [String]) -> String? {
-    guard let index = arguments.firstIndex(of: "-o"), index + 1 < arguments.count else { return nil }
-    return arguments[index + 1]
+  /// Where the launched tool would write. The two dialects disagree: the CLI
+  /// takes `-o <path>`, while FFmpeg takes its output as a trailing positional
+  /// argument with no flag at all.
+  private static func outputPath(in launch: Launch) -> String? {
+    switch launch.dialect {
+    case .helper:
+      guard let index = launch.arguments.firstIndex(of: "-o"),
+            index + 1 < launch.arguments.count
+      else { return nil }
+      return launch.arguments[index + 1]
+    case .ffmpeg:
+      return launch.arguments.last
+    }
   }
 }

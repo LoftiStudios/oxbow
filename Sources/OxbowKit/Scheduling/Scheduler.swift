@@ -35,9 +35,8 @@ public enum Scheduler {
       for step in job.steps {
         guard step.status == .queued else { continue }
 
-        if let dependency = step.dependsOn {
-          guard statusByID[dependency] == .done else { continue }
-        }
+        // admissible(): every parent must be finished, not just one.
+        guard step.dependsOn.allSatisfy({ statusByID[$0] == .done }) else { continue }
 
         let resource = step.kind.resource
         guard !occupied.contains(resource) else { continue }
@@ -151,8 +150,8 @@ public enum Scheduler {
     return nil
   }
 
-  /// Walks forward to a fixed point. Steps have at most one parent, so a single
-  /// pass per newly-blocked step terminates.
+  /// Walks forward to a fixed point. `JobTemplate` never builds a cycle, so
+  /// even with a composite's two parents this still terminates.
   private static func blockDependents(of id: StepID, inJobAt jobIndex: Int, in jobs: inout [Job]) {
     var frontier: Set<StepID> = [id]
 
@@ -160,7 +159,8 @@ public enum Scheduler {
       var next: Set<StepID> = []
       for stepIndex in jobs[jobIndex].steps.indices {
         let step = jobs[jobIndex].steps[stepIndex]
-        guard let parent = step.dependsOn, frontier.contains(parent) else { continue }
+        // blockDependents(): any parent entering the frontier blocks the child.
+        guard step.dependsOn.contains(where: { frontier.contains($0) }) else { continue }
         guard step.status == .queued || step.status == .running else { continue }
         jobs[jobIndex].steps[stepIndex].status = .blocked
         next.insert(step.id)
@@ -176,8 +176,25 @@ public enum Scheduler {
       var next: Set<StepID> = []
       for stepIndex in jobs[jobIndex].steps.indices {
         let step = jobs[jobIndex].steps[stepIndex]
-        guard let parent = step.dependsOn, frontier.contains(parent) else { continue }
+        // unblockDependents(): releasing to `.queued` here is provisional, not
+        // a claim the step can run now — `admissible()` re-checks every
+        // parent is actually `.done` before ever launching it, so this can
+        // never admit a step against a missing artifact. What this guard
+        // against is a *display* wrong: a parent this retry did not touch
+        // and that is still `.failed`/`.cancelled`/`.blocked` needs its own
+        // retry, so the child must stay `.blocked` rather than read as
+        // "about to run" while still waiting on it. Requiring literal
+        // `.done` here instead would never release anything — this same
+        // call runs the instant a parent is retried, while that parent is
+        // still `.queued` or `.running`, not yet `.done`.
+        guard step.dependsOn.contains(where: { frontier.contains($0) }) else { continue }
         guard step.status == .blocked else { continue }
+        guard step.dependsOn.allSatisfy({ id in
+          switch jobs[jobIndex].steps.first(where: { $0.id == id })?.status {
+          case .failed, .cancelled, .blocked: false
+          case .queued, .running, .done, nil: true
+          }
+        }) else { continue }
         jobs[jobIndex].steps[stepIndex].status = .queued
         next.insert(step.id)
       }
