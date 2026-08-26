@@ -5,7 +5,10 @@ SwiftUI app that drives a bundled `TwitchDownloaderCLI` helper as a subprocess.
 
 **Read `docs/architecture.md` first.** It holds the architecture decisions and their
 rationale. This file holds the rules and commands.
-`docs/ffmpeg.md` and `docs/signing.md` hold the two resolved spikes.
+`docs/ffmpeg.md`, `docs/signing.md`, and `docs/composite-performance.md` hold the
+resolved spikes. Read the last one before proposing anything that claims to make
+compositing faster — the step is bound by the hardware H.264 encoder, and six
+plausible optimisations have already been measured at zero.
 `docs/twitch-metadata.md` records which of Twitch's metadata fields can be
 trusted and which are measurably wrong — read it before writing anything that
 reasons about a video before downloading it.

@@ -564,6 +564,15 @@ in the cost analysis elsewhere in this document:
 
 ## 10. Known and unbuilt
 
+**The two speed items in this section were measured on 2026-08-26 and neither
+survived. See `docs/composite-performance.md`** for the full spike: the composite
+is bound
+by `h264_videotoolbox`'s throughput at ~800 Mpx/s of output pixels, a single
+FFmpeg process already extracts 94% of that, and everything else in the step runs
+in the encoder's shadow. Read that document before proposing anything here — it
+carries a formula (§5) that predicts any job's composite time in one line, and
+six approaches that are now closed on evidence rather than instinct.
+
 ### A disk-space preflight
 
 The most valuable unbuilt thing, and the one with a live failure mode: nothing
@@ -593,37 +602,62 @@ would need ~28 GB" is actionable; "insufficient disk space" is not.
 
 **Piping the chat render's raw frames into the composite.** The CLI already
 pipes raw BGRA to its own FFmpeg, and we control `--output-args`, so
-`{save_path}` could point at a FIFO carrying `-f nut -c:v rawvideo` that the
-composite reads as its second input, concurrently. This eliminates an H.264
-encode, a decode, and a multi-GB intermediate, and overlaps the render with the
-composite: **~1.7x faster wall clock**, and the chat column would be encoded
-exactly once from pristine frames rather than twice.
+`{save_path}` could point at a FIFO carrying raw frames that the composite reads
+as its second input, concurrently, eliminating an H.264 encode, a decode, and a
+multi-GB intermediate.
 
-It is not built because it is the riskiest thing considered: 350x1080@60 BGRA is
-~90 MB/s through a pipe, the two processes become hard-coupled so a stall in
-either blocks the other, FIFO cleanup on cancellation is nasty, and it requires
-two `.compute` steps running simultaneously — which breaks `Scheduler`'s
+**An earlier version of this bullet claimed ~1.7x faster wall clock and called
+this the most valuable unbuilt thing here. Both were wrong.** Simulated exactly —
+a producer process emitting raw frames into a pipe — the composite took **48.4s
+against the baseline's 48.4s** in `yuv420p` and 48.5s in BGRA. The 12.6s of chat
+decode it removes was never on the critical path; it runs inside the encoder's
+shadow. The 1.7x was not arithmetically available either: §6's realised timeline
+is `chat + max(video 9, render 14) + composite 74`, and the FIFO makes it
+`chat + video 9 + composite 74` — **1.06x, about five minutes**, because the
+render was already hidden behind the video download.
+
+It remains worth something, just not speed: **10.2 GB off the 55–120 GB peak
+above**, and a chat column encoded once from pristine frames rather than twice.
+Weigh that against what it costs — the two processes become hard-coupled so a
+stall in either blocks the other, FIFO cleanup on cancellation is nasty, and it
+requires two `.compute` steps running simultaneously, which breaks `Scheduler`'s
 one-per-class rule and trips the warning `ResourceClass` already carries about
-blocking syscalls pinned on the cooperative pool.
-
-It is a **pure optimisation of this design**: same deliverable, same filter
-graph, same user-facing behaviour. It can land later on evidence. Given that
-wall-clock time is the binding constraint (§6), it is the most valuable
-unbuilt thing here.
+blocking syscalls pinned on the cooperative pool. Five minutes and a quality
+improvement do not buy that.
 
 **`hevc_videotoolbox`** is present in our build and would roughly halve the
-22 GB at equal quality and essentially equal speed on Apple Silicon's media
-engine. It does not help the binding constraint and it costs playback
-compatibility off-Apple, so it is recorded rather than shipped.
+output at equal quality and essentially equal speed on Apple Silicon's media
+engine — **measured, 49.9s against h264's 48.1s**, so "essentially equal" is
+confirmed rather than assumed. It does not help the binding constraint and it
+costs playback compatibility off-Apple, so it is recorded rather than shipped.
 
-**An AVFoundation composition** was considered as an alternative to FFmpeg.
-`AVMutableVideoComposition` with two layer instructions and a translation
-transform needs no custom compositor and would keep frames as `CVPixelBuffer`s
-on the GPU — FFmpeg on macOS has no VideoToolbox filter family, so `hstack`
-forces a decode -> CPU -> encode round trip on every frame. It was rejected
-because `QueueEngine` assumes every step is a subprocess, so a step that is not
-one is a deeper change than a step that spawns a different binary, and because
-4.79x realtime is measured while AVFoundation's advantage is theoretical.
+**An AVFoundation composition** was considered as an alternative to FFmpeg, on
+the reasoning that `AVMutableVideoComposition` would keep frames as
+`CVPixelBuffer`s on the GPU where `hstack` forces a decode -> CPU -> encode round
+trip on every frame. **That reasoning was backwards, and is now closed by
+measurement.** Benchmarked directly against pre-decoded frames in RAM,
+`AVAssetWriter` encodes at ~612 Mpx/s to FFmpeg's ~755 — **19% slower** — and two
+concurrent sessions reach only 804 Mpx/s, a 1.31x that a single FFmpeg process
+already comes within 7% of. The CPU round trip AVFoundation would avoid is the
+part that was already free. `QueueEngine`'s subprocess assumption stands as a
+second reason, but it is no longer the load-bearing one.
+
+**Two video tracks in one QuickTime movie, both stream-copied**, was the spike's
+own idea and is the one worth knowing about: the mux takes **0.80s against 48.4**
+and is losslessly better, but AVFoundation composites a translated `tkhd` matrix
+only through an explicit `AVVideoComposition`, so QuickTime Player and Quick Look
+show the 342-pixel chat column alone and VLC opens two windows. Dead until
+`AVPlayerItem.presentationSize` on such a movie stops reporting the chat track's
+size — a one-line test, worth re-running on a future macOS, because the payoff is
+60x. See `docs/composite-performance.md` §4.5.
+
+**Segmenting the composite** is the only non-destructive thing left, and it is a
+concession rather than an optimisation: segmenting is measured free (47.4s against
+48.4s, concat included), and each finished segment is an ordinary MP4, so
+time-to-first-watchable-frame falls from ~88 minutes to ~11 in one file under the
+final name. It also buys retry granularity and a lower disk peak. It is
+undesigned; `docs/composite-performance.md` §7 records the two questions that
+would have to be settled first.
 
 ## 11. Not in scope
 
