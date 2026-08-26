@@ -538,11 +538,24 @@ Run against a real 16:31 VOD at 1080p60. Extrapolated to a six-hour stream:
 Two things the numbers above don't capture, worth recording because neither is
 in the cost analysis elsewhere in this document:
 
-- **Peak disk for a six-hour job is ~44 GB, not ~22 GB.** The composite step
+- **Peak disk for a six-hour job is 55-120 GB, not ~22 GB.** The composite step
   reads the downloaded video and the intermediate chat render while writing the
-  output, so all three exist on disk simultaneously: ~16 GB video + ~10 GB
-  intermediate render + ~17 GB composite. Someone who starts a six-hour job with
-  30 GB free fails late, not at intake.
+  output, so all three exist on disk simultaneously. Recomputed after §7's
+  bitrate correction, which raised the output and therefore the peak:
+
+  | six-hour VOD | video | render | output | peak |
+  |---|---|---|---|---|
+  | 6.2 Mbps source | 16.3 GB | 10.2 GB | 29.0 GB | **55.5 GB** |
+  | 9.7 Mbps source | 25.5 GB | 10.2 GB | 44.8 GB | **80.5 GB** |
+  | at the bitrate cap | 52.7 GB | 10.2 GB | 58.0 GB | **120.9 GB** |
+
+  An earlier draft of this section said ~44 GB. That was measured before the
+  bitrate correction and is wrong; fixing the artifacts made the feature
+  hungrier, not leaner, and the honest number is the one above.
+
+  **Nothing checks this.** Someone who starts a six-hour job with 45 GB free
+  fails roughly seventy minutes into the encode, with tens of gigabytes of
+  unusable intermediates left in the workspace and a full disk. See §10.
 - **Streamers who already burn a chat overlay into their broadcast get chat
   twice.** Observed in the test VOD: the streamer's own overlay is baked into
   the video, and our column repeats the same messages beside it. Not a defect,
@@ -550,6 +563,33 @@ in the cost analysis elsewhere in this document:
   worth stating so it is a known trade-off rather than a surprise.
 
 ## 10. Known and unbuilt
+
+### A disk-space preflight
+
+The most valuable unbuilt thing, and the one with a live failure mode: nothing
+predicts the peak above before committing to a job.
+
+**Trigger on predicted bytes, not on duration.** Duration is a poor proxy — a
+thirty-minute 1080p60 clip at a high source bitrate needs more than a
+three-hour 480p VOD. Everything needed is known at intake: `VideoInfo.duration`,
+`StreamQuality.bitsPerSecond`, and `CompositeGeometry.compositeBitrateMbps`.
+The intermediate render measures ~3.85 Mbps in practice (text on a flat
+background compresses far below its 12 Mbps ceiling).
+
+**Two volumes, not one.** `Workspace` lives in the app's cache directory on the
+system volume; the destination is the user's chosen folder and may be an
+external drive. `QueueEngine.move` uses `moveItem`, which across volumes is a
+copy-then-delete — so the finished composite briefly exists on both. When they
+are the same volume, everything stacks.
+
+**Check twice.** At intake, where refusing is cheap and the user can still pick
+720p and more than halve the requirement. And again immediately before the
+composite step, because free space changes between queueing and running, and
+failing before a seventy-minute encode is a different thing from failing during
+it.
+
+**Offer the remedy, not just the refusal.** "Needs ~80 GB, 45 GB free — 720p
+would need ~28 GB" is actionable; "insufficient disk space" is not.
 
 **Piping the chat render's raw frames into the composite.** The CLI already
 pipes raw BGRA to its own FFmpeg, and we control `--output-args`, so
