@@ -277,6 +277,16 @@ final class IntakeModel {
 
   // MARK: - Composing the job
 
+  /// `quality` translated to what `-q` actually needs — see
+  /// `StreamQuality.commandLineValue`. `quality` itself stays the picker's
+  /// name (matched against `qualities` by `compositeQuality` and used to
+  /// look the row back up for its label), so this is resolved only where a
+  /// request is actually built. Falls back to `quality` unchanged — which is
+  /// only ever `""`, "best available" — when it names no known rendition.
+  private var commandLineQuality: String {
+    qualities.first(where: { $0.name == quality })?.commandLineValue ?? quality
+  }
+
   /// The quality a composite will actually download. "Best available" leaves
   /// the resolution unknown, which is fatal when the chat's height must equal
   /// the video's — so a composite resolves it to a concrete rendition and
@@ -299,16 +309,6 @@ final class IntakeModel {
   /// with no pixel width — see `compositeProblem`) is returned as-is;
   /// `composedTemplate()` then refuses rather than substituting, and
   /// `compositeProblem` is what says why.
-  /// `quality` translated to what `-q` actually needs — see
-  /// `StreamQuality.commandLineValue`. `quality` itself stays the picker's
-  /// name (matched against `qualities` by `compositeQuality` and used to
-  /// look the row back up for its label), so this is resolved only where a
-  /// request is actually built. Falls back to `quality` unchanged — which is
-  /// only ever `""`, "best available" — when it names no known rendition.
-  private var commandLineQuality: String {
-    qualities.first(where: { $0.name == quality })?.commandLineValue ?? quality
-  }
-
   private var compositeQuality: StreamQuality? {
     if !quality.isEmpty, let named = qualities.first(where: { $0.name == quality }) {
       return named

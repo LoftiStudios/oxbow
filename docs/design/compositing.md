@@ -1,10 +1,9 @@
 # Compositing the VOD and chat into one video — design
 
-**Status:** approved 2026-08-25. Phases 1-3 (the engine, scheduler, geometry,
-parser, and argv) implemented on branch `compositing`. Phase 4 — narrowing the
-intake to the two-choice UI in §3, deleting the standalone render UI, and the
-font-size calibration — is still outstanding; nothing in the app constructs a
-composite yet.
+**Status:** approved 2026-08-25. All four phases (the engine, scheduler,
+geometry, parser, and argv; then narrowing the intake to the two-choice UI in
+§3, deleting the standalone render UI, and the font-size calibration)
+implemented on branch `compositing`.
 
 Prerequisites: `docs/design/task-queue.md` (the engine and its templates),
 `docs/design/chat-and-render.md` (the intake this narrows), and
@@ -88,7 +87,7 @@ Everything geometric is known at intake, before a byte is downloaded, from
 |---|---|---|---|---|
 | Chat width | video width x 3/16, forced even | 360 | 240 | 160 |
 | Chat height | = video height, after metadata is rounded down to even — see below | 1080 | 720 | 480 |
-| Output width | video width + chat width | 2280 | 1520 | 1014 |
+| Output width | video width + chat width | 2280 | 1520 | 1012 |
 | Chat framerate | the video's, halved when it is 60 | 30 | 30 | 30 |
 | Font size | user's Small/Medium/Large, scaled to chat width — see below | 13 / 16 / 20 | 9 / 11 / 13 | 6 / 7 / 9 |
 | Render bitrate | flat 12 Mbps at every quality — see below | 12M | 12M | 12M |
@@ -465,7 +464,7 @@ for the CLI's grandchild FFmpeg; correct unchanged for a direct one.
 
 | File | Lines | Why |
 |---|---|---|
-| `Oxbow/Intake/RenderOptionsView.swift` | 157 | Colours, font, badges, emotes, and bitrate all become fixed defaults |
+| `Oxbow/Intake/RenderOptionsView.swift` | 192 | Colours, font, badges, emotes, and bitrate all become fixed defaults |
 | `Oxbow/Intake/HexColor.swift` | 60 | Its only consumer was that view's colour wells |
 | `OxbowTests/HexColorTests.swift` | 103 | With it |
 
@@ -479,15 +478,16 @@ where the same column reads at very different physical sizes. So this is not
 form's controls deleted down to the one dimension a fixed default cannot
 answer for everyone.
 
-From `IntakeModel`: `isDownloadingChat`, `isRenderingChat`, `chatFormat`,
-`renderOptions`, `renderIsInvalid`, `renderProblems`, `deliveredChatFormat`, and
-`hasSelectedOutput`, replaced by one two-case enum plus `chatSize`.
+From `IntakeModel`: `isDownloadingMedia`, `isDownloadingChat`, `isRenderingChat`,
+`chatFormat`, `renderOptions`, `renderIsInvalid`, `renderProblems`,
+`deliveredChatFormat`, and `hasSelectedOutput`, replaced by one two-case enum
+plus `chatSize`.
 `IntakeSheet`'s three toggles become a picker, alongside the new Small /
 Medium / Large one. `IntakeModelTests` (882 lines) is pruned heavily.
 
 **`OutputSuffix` loses `.chat` and `.render`**, dropping `longestBytes` from 12
 to 4. This *loosens* `OutputNaming`'s truncation reserve — titles may now be
-eight bytes longer — and `IntakeModelTests` asserts `longestBytes == 12`
+eight bytes longer — and `IntakeModelTests` asserts `longestBytes == 4`
 explicitly.
 
 **`ChatFormat` and `JobTemplate.renderInput` survive**, though intake no longer
@@ -495,6 +495,15 @@ exercises them. `JobTemplate` is public library surface, and a caller composing 
 template directly still needs the guard that a render's chat input is JSON.
 Deleting it saves nothing at runtime and removes a safety net that landed one
 day earlier.
+
+**`RenderRequest` also keeps every field the deleted form used to set**:
+`isSharpened`, `hasOutline`, `hasTimestamps`, `hasAlternateBackgrounds`, the
+colours, and `font`. This is deliberate, not leftover — `RenderRequest` is
+`OxbowKit` library surface, not app UI, and `ArgumentBuilder` still needs
+somewhere to read these from when a caller (or a future form) wants them.
+Intake now always constructs one at its `init` defaults, so in practice every
+composite and render this app builds runs with the same fixed values; nothing
+prunes the fields themselves, only the UI that used to vary them.
 
 ## 9. Testing
 

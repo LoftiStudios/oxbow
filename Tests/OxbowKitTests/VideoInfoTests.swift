@@ -392,6 +392,20 @@ struct StreamQualityCommandLineValueTests {
     #expect(quality("1080p0-Portrait").commandLineValue == "1080p0-Portrait")
   }
 
+  /// The regression this suite exists to catch: `-Portrait-1` is not our
+  /// invented tie-break, it's upstream's own per-asset disambiguation, and it
+  /// is the name that actually resolves to the portrait rendition. Stripping
+  /// it (as a rule that strips any trailing `-<digits>` would) hands back
+  /// `1080p60-Portrait`, which resolves to the landscape file instead — see
+  /// the doc comment on `commandLineValue` for the measurement.
+  @Test func leavesAPortraitNameWithItsOwnDisambiguatingSuffixUnchanged() {
+    #expect(quality("1080p60-Portrait-1").commandLineValue == "1080p60-Portrait-1")
+  }
+
+  @Test func leavesAPortraitNameWithAMultiDigitDisambiguatingSuffixUnchanged() {
+    #expect(quality("480p30-Portrait-2").commandLineValue == "480p30-Portrait-2")
+  }
+
   /// The trap: `0` here is the framerate, upstream's placeholder for a clip
   /// with no framerate metadata — not a disambiguation suffix. Stripping it
   /// would turn `720p0` into `720p`, a different (and possibly nonexistent)

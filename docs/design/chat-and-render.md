@@ -36,15 +36,20 @@ and §6 anticipated:
   highest rendition rather than failing loudly. Stripping the trailing
   `-<digits>` before it reaches `-q` is what makes it resolve.
 
-  **`-Portrait` is not affected — this is narrower than the original note
-  claimed.** `1080p0-Portrait` and `480p30-Portrait` both resolved to the
-  correct rendition, unstripped. So `StreamQuality.commandLineValue` strips
-  only a trailing hyphen-then-digits, never `-Portrait`, and leaves a name
-  with neither untouched. The trap in that rule is `720p0`: the `0` there is
-  the framerate, not a suffix, and there is no hyphen before it to match —
-  stripping it would turn `720p0` into `720p`, a different (and possibly
-  nonexistent) rendition. Identical duplicates are collapsed; the survivor
-  keeps upstream's name.
+  **A bare `-Portrait` name is not affected — but `-Portrait-<digits>` is a
+  second, opposite trap, not just an exception.** `1080p0-Portrait` and
+  `480p30-Portrait` both resolved to the correct rendition, unstripped. But a
+  clip can also emit `1080p60-Portrait-1` — upstream's own per-asset
+  disambiguation, not ours — and *that* name resolves correctly too, while
+  the tidier `1080p60-Portrait` silently downloads the landscape file
+  instead (byte-for-byte the same as `1080p60-1`). So `commandLineValue`
+  cannot strip "any trailing hyphen-then-digits": it strips one only when
+  what is left over is a bare quality name (`^\d{3,4}p\d{1,3}$`), which
+  `-Portrait` and `-Portrait-<digits>` alike never are. The trap in that rule
+  is `720p0`: the `0` there is the framerate, not a suffix, and there is no
+  hyphen before it to match — stripping it would turn `720p0` into `720p`, a
+  different (and possibly nonexistent) rendition. Identical duplicates are
+  collapsed; the survivor keeps upstream's name.
 - **The render options are bounds-checked**, the way §5's trim already is. A
   render is the second step of its job, so a `0` width reaches FFmpeg only
   after the chat download has finished.
