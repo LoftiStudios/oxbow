@@ -87,13 +87,14 @@ proven rather than assumed.
 
 ## 2. Intake
 
-> **Note added 2026-08-24, after implementation.** The three-toggle intake
-> described here is built and working, but whether it should stay this general
-> is under review — see `docs/architecture.md` §7, "Narrowing the intake". The
-> leaning is that a chat render in isolation has little value, and that the app
-> should offer roughly *VOD* and *VOD + chat* instead. Nothing here is wrong;
-> it may simply become more opinionated. Read that note before building on the
-> toggles.
+> **Note added 2026-08-24, after implementation; superseded 2026-08-25.** The
+> three-toggle intake described here is what shipped first, but it has since
+> been replaced: the intake now offers two choices, *video* or *video + chat*,
+> with the standalone chat render removed. See `docs/design/compositing.md` §3
+> for the current intake and `docs/architecture.md` §7, "Narrowing the intake",
+> for the decision. Nothing below is wrong — it is the historical record of why
+> the three toggles existed — it just no longer describes what is built. Read
+> `compositing.md` §3 before building on the intake.
 
 
 

@@ -127,6 +127,16 @@ struct CompositeGeometryTests {
     #expect(geometry.compositeBitrateMbps(sourceBitsPerSecond: 100_000) == 6)
   }
 
+  /// `StreamQuality.bitsPerSecond` for a VOD is the m3u8's `BANDWIDTH`
+  /// attribute — a peak, not an average. A 1080p60 source advertising a
+  /// realistic ~20 Mbps peak would otherwise yield ~36 Mbps uncapped
+  /// (pixel ratio x headroom); the per-pixel ceiling caps it at
+  /// 2280x1080x60x0.15 bpp ≈ 22 Mbps instead.
+  @Test func capsTheCompositeBitrateByPixelRate() throws {
+    let geometry = try #require(CompositeGeometry(quality: quality("1080p60", "1920x1080")))
+    #expect(geometry.compositeBitrateMbps(sourceBitsPerSecond: 20_000_000) == 22)
+  }
+
   // MARK: - Chat font size
 
   /// The full nine-cell table from `docs/design/compositing.md` §4: three

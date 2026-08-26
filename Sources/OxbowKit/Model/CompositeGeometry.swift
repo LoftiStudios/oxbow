@@ -105,17 +105,40 @@ public struct CompositeGeometry: Sendable, Equatable {
   /// floor the old flat seed used.
   static let minimumBitrateMbps = 6
 
+  /// The ceiling on bits spent per pixel per frame, independent of
+  /// resolution or framerate.
+  ///
+  /// Exists because `sourceBitsPerSecond` (`StreamQuality.bitsPerSecond`,
+  /// read from the m3u8's `BANDWIDTH` attribute) is a **peak**, not an
+  /// average — a 1080p60 VOD advertising ~20 Mbps peak otherwise yields
+  /// ~36 Mbps here (pixel ratio x headroom), which is ~97 GB for a six-hour
+  /// stream against the ~22 GB the cost analysis in
+  /// `docs/design/compositing.md` reasons about.
+  ///
+  /// Measured bits-per-pixel-per-frame at the same 2280x1080@60 points as
+  /// the table above: 11 Mbps is ≈0.075 bpp, 16 Mbps (already diminishing
+  /// returns — +2.4 dB for 45% more bytes over 11) is ≈0.108 bpp. `0.15`
+  /// sits comfortably past that knee while still bounding the worst case:
+  /// for 2280x1080@60 it caps at ~22 Mbps rather than ~36.
+  private static let maxBitsPerPixel = 0.15
+
   /// The composite's bitrate, in Mbps, for a source encoded at
   /// `sourceBitsPerSecond`.
   ///
   /// `outputWidth / videoWidth` corrects for the extra pixels the composite
   /// frame carries over the source; `reencodeHeadroom` accounts for
   /// re-encoding material that is already lossy. See the constants above for
-  /// the measurements behind both factors.
+  /// the measurements behind both factors. The result is then capped by
+  /// `maxBitsPerPixel` applied to the composite frame's own pixel rate, so
+  /// the cap scales correctly across resolutions and framerates instead of
+  /// being a single magic number.
   public func compositeBitrateMbps(sourceBitsPerSecond: Int) -> Int {
     let pixelRatio = Double(outputWidth) / Double(videoWidth)
     let mbps = Double(sourceBitsPerSecond) * pixelRatio * Self.reencodeHeadroom / 1_000_000
-    return max(Self.minimumBitrateMbps, Int(mbps.rounded()))
+    let ceilingMbps =
+      Double(outputWidth) * Double(videoHeight) * Double(videoFramerate) * Self.maxBitsPerPixel
+      / 1_000_000
+    return max(Self.minimumBitrateMbps, Int(min(mbps, ceilingMbps).rounded()))
   }
 
   // MARK: - Chat font size

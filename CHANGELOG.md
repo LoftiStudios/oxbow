@@ -35,8 +35,13 @@ Pre-alpha. Nothing released yet.
   `{streamer} - {date} - {title}`, with the local date, editable before the
   job is added.
 - A quality picker with estimated sizes, for VODs and clips alike.
-- One intake sheet for the whole job: paste a link, toggle video, chat, and
-  render independently, and choose one destination folder for all of them.
+- One intake sheet for the whole job: paste a link, choose the video or the
+  video with its chat composited beside it, and pick a destination folder.
+  (An earlier draft of this sheet toggled video, chat, and render
+  independently; narrowed to these two choices once compositing made a
+  standalone chat render pointless, and the render options form that used to
+  configure it — colours, font, badges, emotes, bitrate — went with it. Chat
+  text size is the one control that survived, see below.)
 - An About window, replacing the stock About panel, which has no room for what
   we are obliged to show: the "not affiliated with Twitch Interactive, Inc."
   disclaimer, attribution for TwitchDownloaderCLI (MIT) and FFmpeg (LGPL
@@ -49,10 +54,12 @@ Pre-alpha. Nothing released yet.
   `scripts/stamp-version.sh` so a local build and a CI build agree.
 - Compositing: a `.composite` step that stacks a finished video beside its
   finished chat render into one file, via `hstack` on the bundled FFmpeg
-  (`docs/design/compositing.md`). The engine, scheduler, geometry derivation,
-  argument builder, and progress parsing all exist and are tested, but the
-  feature is **not reachable from the UI yet** — no intake constructs a
-  composite. That is Phase 4, tracked separately.
+  (`docs/design/compositing.md`), reachable from intake as the "video + chat"
+  choice above.
+- Chat text size: a Small / Medium / Large picker for the video + chat intake,
+  scaling with the video's own resolution (`CompositeGeometry.fontSize(for:)`)
+  rather than a fixed point size, so the same column reads correctly at 480p
+  and 1080p alike.
 
 ### Changed
 
@@ -74,3 +81,31 @@ Pre-alpha. Nothing released yet.
   video plus chat without a render, and the clip equivalents — now are.
   `composite` is not independent of the other three: asking for one implies a
   render exactly as a render implies a chat download.
+
+### Fixed
+
+Behaviour that shipped wrong on this branch before anything was released, not
+regressions in a prior version:
+
+- Render options that default to on — timestamps and the message outline —
+  kept rendering even when the intake had them switched off. The CLI reads
+  these flags as bare switches: mere presence means true, and it ignores
+  `=false` entirely. `ArgumentBuilder` now omits a false-defaulting flag
+  instead of passing `--flag=false`.
+- Clip quality names with a trailing disambiguation suffix (`480p30-1`,
+  `720p60-1`) silently failed to resolve against the CLI's `-q` and fell back
+  to downloading the highest available rendition instead, with no error
+  reported.
+- The composite's bitrate was seeded from the source's own rate, which
+  under-budgets the wider composite frame (video plus chat column) and
+  produces visible artifacts — most noticeably mosquito noise on the chat
+  text — on visually noisy sources. Corrected for the extra pixels and for
+  re-encoding already-lossy material, and capped to a ceiling derived from the
+  frame's own pixel rate, since a VOD's advertised bitrate is a peak rather
+  than an average and would otherwise inflate a six-hour composite's file
+  size unboundedly.
+- Metadata dimensions Twitch reports are sometimes odd (a clip's API metadata
+  can claim `480x853`), which no h264 4:2:0 stream can actually be — the real
+  decoded frame is `480x852`. Every metadata dimension is now rounded down to
+  even before anything derives from it, which is what a real chat/video
+  height mismatch traced back to.

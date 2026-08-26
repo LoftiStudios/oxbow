@@ -525,6 +525,30 @@ prunes the fields themselves, only the UI that used to vary them.
 Plus one end-to-end run against a real VOD before this is called done — the same
 bar `chat-and-render.md` §2 set for itself.
 
+### Measured on that run
+
+Run against a real 16:31 VOD at 1080p60. Extrapolated to a six-hour stream:
+
+| Step | Time |
+|---|---|
+| Download | ~9 min |
+| Chat render | ~14 min |
+| Composite | ~74 min (4.86x realtime measured, against the 4.79x §6 predicted) |
+
+Two things the numbers above don't capture, worth recording because neither is
+in the cost analysis elsewhere in this document:
+
+- **Peak disk for a six-hour job is ~44 GB, not ~22 GB.** The composite step
+  reads the downloaded video and the intermediate chat render while writing the
+  output, so all three exist on disk simultaneously: ~16 GB video + ~10 GB
+  intermediate render + ~17 GB composite. Someone who starts a six-hour job with
+  30 GB free fails late, not at intake.
+- **Streamers who already burn a chat overlay into their broadcast get chat
+  twice.** Observed in the test VOD: the streamer's own overlay is baked into
+  the video, and our column repeats the same messages beside it. Not a defect,
+  and not something we can fix — but a real limit on who this feature serves,
+  worth stating so it is a known trade-off rather than a surprise.
+
 ## 10. Known and unbuilt
 
 **Piping the chat render's raw frames into the composite.** The CLI already
