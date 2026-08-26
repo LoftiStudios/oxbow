@@ -651,13 +651,20 @@ show the 342-pixel chat column alone and VLC opens two windows. Dead until
 size — a one-line test, worth re-running on a future macOS, because the payoff is
 60x. See `docs/composite-performance.md` §4.5.
 
-**Segmenting the composite** is the only non-destructive thing left, and it is a
-concession rather than an optimisation: segmenting is measured free (47.4s against
-48.4s, concat included), and each finished segment is an ordinary MP4, so
+**Fragmenting the composite's output** is the non-destructive thing left, and it
+is a concession rather than an optimisation — nothing makes the encode faster.
+Writing the output as a fragmented MP4 costs 0.3s of wall clock and 123 bytes,
+and makes the in-progress file readable to within ~0.4s of the live edge, so
 time-to-first-watchable-frame falls from ~88 minutes to ~11 in one file under the
-final name. It also buys retry granularity and a lower disk peak. It is
-undesigned; `docs/composite-performance.md` §7 records the two questions that
-would have to be settled first.
+final name. More importantly it gives the step *valid partial state*, which is
+what a resume would need. **Designed: `docs/design/fragmented-output.md`.**
+
+An earlier version of this bullet proposed *segmenting* the composite into N
+steps for the same purpose and claimed it would also lower the disk peak. Both
+were wrong. Segments cannot be joined into a playable growing file — AVFoundation
+will not cross the seam between two encoders' outputs — and the concat into the
+delivered file means ~29 GB of segments and a ~29 GB result coexist, a peak of
+~58 GB against today's ~55.5. See `docs/composite-performance.md` §7.
 
 ## 11. Not in scope
 

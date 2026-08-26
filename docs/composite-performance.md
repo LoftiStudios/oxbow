@@ -320,27 +320,34 @@ framerate on exactly the reasoning that would justify it. It is a deliverable
 change, not an optimisation, and should be decided as one.
 
 **The one non-destructive option is to stop making the user wait for the whole
-thing.** §4.3 measured segmenting as free (47.4s against 48.4s, concat included),
-and each finished segment is an ordinary MP4 that can be concatenated on demand
-in about a second. That does not make the composite faster — nothing does — but
-it changes time-to-first-watchable-frame from 88 minutes to roughly 11, in one
-file under the final name, growing while it is watched. It also buys retry
-granularity (a failure at minute 70 currently costs 74 minutes of re-encoding)
-and a much lower disk peak, since each segment's inputs can be discarded once
-composited.
+thing — but not by segmenting.** An earlier version of this section proposed
+segmenting the composite for that, and claimed it would also lower the disk
+peak. Both were wrong, and a follow-up spike on 2026-08-26 corrected them; see
+`docs/design/fragmented-output.md`.
 
-`videodownload` and `chatrender` both accept `-b`/`-e`, and `ArgumentBuilder`
-already has the `trim(start:end:)` helper wired, so the pieces exist. Two things
-would have to be established first: whether the CLI's trim is **frame-exact**, or
-segment boundaries drift; and how to handle the **AAC seam**, since concatenating
-per-segment audio risks priming gaps. The spike sidestepped the second by
-compositing segments video-only and muxing the full audio once at the end with
-`-c copy` — which works, but presumes a complete download and so gives up most of
-the pipelining.
+**Early playback needs no segmentation at all.** It needs one muxer option.
+Writing the composite as a fragmented MP4 (`-movflags
++frag_keyframe+empty_moov+default_base_moof`) makes the in-progress file
+readable while FFmpeg is still writing it, to within ~0.4s of the live edge —
+at a measured cost of 0.3s of wall clock and 123 bytes. No new steps, no DAG
+change, no concat.
 
-None of that is designed. It restructures one composite step into N plus a
-concat, which `compositing.md` §6's DAG and its §7 failure handling both have
-opinions about.
+**Segmenting would actively cost that.** AVFoundation reads a growing file
+written by one encoder perfectly, and refuses to cross the seam between two
+encoders' outputs — 305 samples where FFmpeg reads 901, on linear decode as
+well as seeking, even with every `tfdt` hand-patched onto the right timeline.
+So N segments and a playable partial file are mutually exclusive.
+
+**And it would not lower the disk peak.** Independently encoded segments must
+be concatenated into the delivered file, so ~29 GB of segments and a ~29 GB
+result exist at the same moment: a peak of ~58 GB against today's ~55.5. Lower
+in the middle of the run, no better at the peak.
+
+What remains for segmentation is retry granularity alone — a failure at minute
+70 currently costs 74 minutes of re-encoding. A fragmented output offers a
+cheaper route to that too, since a valid partial file can be truncated at a
+fragment boundary and continued rather than restarted. That is undesigned;
+`fragmented-output.md` §8 records the shape.
 
 ## 8. Reproducing this
 
