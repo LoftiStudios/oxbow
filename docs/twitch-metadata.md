@@ -32,7 +32,7 @@ defensively or verified after decode.
 | `FRAME-RATE` (VOD m3u8) | Twitch | **Do not use** | A measured average, not the container rate. |
 | `frameRate` (clip API) | Twitch | Low | Non-integer; `0` on older clips. |
 | quality *name* | CLI, derived | High for framerate | `1080p60` -> 60. The only reliable framerate source. |
-| quality *name* | CLI, derived | **Unusable as `-q`** when it ends `-<digits>`. |
+| quality *name* | CLI, derived | **Valid only against the response it came from** | Renditions change between calls; a `-<digits>` suffix resolves fine while it exists. |
 | `lengthSeconds` | Twitch | High | Matches the decoded duration. |
 
 ## 3. Pixel dimensions can be odd, and the stream cannot
@@ -89,28 +89,47 @@ The clip API is no better — it reports `60.03107452392578` and
 `30.01553726196289` — and returns `0` for older clips, which is why names like
 `720p0` and `1080p0-Portrait` exist. A name yielding 0 must fall back to 30.
 
-## 5. Quality names with a numeric suffix do not resolve
+## 5. A clip's rendition list is not stable between calls
 
-Twitch returns duplicate identical renditions, so the CLI disambiguates them by
-appending `-1`, `-2`. Those names then fail to resolve as `-q`, and the CLI
-silently falls back to the **best** rendition:
+**Corrected 2026-08-25.** This section previously claimed the CLI generates
+`-1`/`-2` names it cannot itself consume, and prescribed stripping the suffix.
+That diagnosis was wrong. The measurements were real; the conclusion drawn from
+them was not, because they were taken 29 minutes apart against a payload that
+changed in between.
 
-| `-q` | downloaded |
-|---|---|
-| `480p30-1` | 1920x1080 |
-| `480p30-2` | 1920x1080 |
-| `720p60-1` | 1920x1080 |
-| `480p30` | 852x480 |
-| `720p60` | 1280x720 |
+What was actually measured, all on clip
+`BitterPoorLadiesNerfRedBlaster-MBUzt9WrmWvpraw3`:
 
-Exit 0, no warning. `-Portrait` suffixes are unaffected and resolve correctly.
+| When | What | Result |
+|---|---|---|
+| 23:12 | `info --format Table` | `1080p60-1/-2`, `720p60-1/-2`, `480p30-1/-2` — six rows, three duplicated pairs |
+| 23:28 | `clipdownload -q 480p30-1` | decoded `1920x1080 [...] 6128 kb/s` — the 1080p60 rendition |
+| 23:41 | `info --format Raw` | eight renditions, **no duplicates**: 1080/720/480/360 landscape + 1296/720/480/360 portrait |
 
-**The rule: strip a trailing `-<digits>` before passing a name as `-q`.** Strip
-only a hyphen followed by digits — never a bare trailing digit, or `720p0`
-becomes `720p` and every clip missing framerate metadata breaks.
+So by the time the download ran, `480p30-1` was not a name the CLI was
+generating any more. Twitch had stopped returning the duplicated landscape
+asset and started returning a landscape/portrait pair instead. The name was
+captured from one response and spent against a different one.
 
-Keep the unstripped name for display: it is what distinguishes duplicate
-renditions in a picker.
+Verified against the CLI's own source: `VideoQualities.TryGetQuality` matches
+the full name first, so a `-1`/`-2` name that currently exists **does** resolve.
+A unit test on that code confirms it — the round trip is not broken.
+
+**The rule: a rendition name is only valid against the response it came from.**
+Re-fetch and re-match rather than caching a name across calls, and treat a
+`-q` that no longer exists as a real possibility. Do not strip the suffix — when
+the duplicates are genuine, stripping silently swaps the user's `-1` pick for
+whichever of the pair sorts first.
+
+Two things make this invisible rather than loud, and both are worth knowing:
+
+- The CLI falls back to the **best** rendition for any unresolvable `-q`, exit
+  0, no warning. Documented behaviour (`-q` is "the quality the program will
+  *attempt* to download"), but it is why a stale name reads as a parser bug.
+- The CLI disambiguates duplicate names **per asset**, then concatenates across
+  assets. Two same-orientation assets therefore produce identical names with no
+  suffix at all, and the second of each pair is unreachable via `-q`. Not
+  observed in the wild, but it is the shape this failure would really take.
 
 ## 6. Whose bug is whose
 
@@ -123,9 +142,9 @@ video before fetching it. We can only defend against them, which is what
 sections 3-5 are.
 
 **The CLI's** — see [[twitch-downloader-cli-upstream-prs]] in the maintainer's
-notes for the full list. The two strongest: `--flag=false` being parsed as true
-on `chatrender` booleans, and the `-q` round-trip failure above, where the CLI
-generates names it cannot itself consume.
+notes for the full list. The strongest by far: `--flag=false` being parsed as
+true on `chatrender` booleans. The `-q` round-trip failure that used to be
+listed here was ours, not the CLI's — see §5.
 
 **Ours** — trusting any of the above without defending. Every rule in this
 document exists because we did, once.
