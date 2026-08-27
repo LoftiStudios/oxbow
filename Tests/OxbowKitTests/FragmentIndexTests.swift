@@ -65,4 +65,18 @@ struct FragmentIndexTests {
     #expect(index.frameCount == 30)
     #expect(size == index.completeBytes)
   }
+
+  /// The hand-built fixtures above prove the parser reads what it was told to.
+  /// This proves it reads what FFmpeg actually writes, which is the claim that
+  /// matters. Regenerate with the command in `task-3-report.md` if FFmpeg changes.
+  @Test func readsARealFFmpegFragmentedFile() throws {
+    let url = try Fixture.url(named: "fragmented-3-frames.mp4")
+
+    let index = try FragmentedMP4.index(of: url)
+    let size = try FileManager.default
+      .attributesOfItem(atPath: url.path)[.size] as? Int
+
+    #expect(index.frameCount == 3)
+    #expect(index.completeBytes == size)
+  }
 }
