@@ -1,6 +1,14 @@
 # Fragmenting the composite's output — design
 
-**Status:** approved 2026-08-26. Not yet implemented.
+**Status:** approved 2026-08-26. **§3 implemented** — the `-movflags`
+fragmentation flags, added during the resume branch's Task 6 because resume is
+impossible without them — and verified end to end (`resume.md` §2). **§5's
+failure invariant already holds**, unchanged, in the pre-existing
+`FailureInterpreter` (a non-zero exit is rejected regardless of whether an
+artifact exists), but has no dedicated test pinning it down for a fragmented,
+now-playable partial file specifically, which §9 calls for. **§6, the buried
+Finder-reveal affordance for the in-progress file, is not built** — nothing in
+the app reveals a composite step's own working file today.
 
 Prerequisites: `docs/design/compositing.md` (the step this changes) and
 `docs/composite-performance.md` (why the composite takes as long as it does, and
@@ -122,7 +130,7 @@ before the output path:
 - **`default_base_moof`** makes each fragment's data offsets relative to its own
   `moof` rather than to the file, so a fragment is self-contained.
 
-`+faststart` remains forbidden. `compositing.md` §7's reasoning is unchanged —
+`+faststart` remains forbidden. `compositing.md` §5's reasoning is unchanged —
 it rewrites the whole file to relocate the `moov` — and fragmentation makes it
 meaningless anyway, since there is no monolithic `moov` to relocate.
 

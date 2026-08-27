@@ -216,7 +216,7 @@ public enum ArgumentBuilder {
         "-map", "1:a:0?",
         "-c", "copy",
         "-nostats", "-loglevel", "error",
-        // No +faststart, for the reason in compositing.md §7.
+        // No +faststart, for the reason in compositing.md §5.
         context.outputFile.path,
       ]
     }

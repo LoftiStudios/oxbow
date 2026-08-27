@@ -1,6 +1,8 @@
 # Resuming an interrupted composite — design
 
-**Status:** approved 2026-08-26. Not yet implemented.
+**Status:** approved 2026-08-26. Implemented and verified end to end against a
+real VOD (§2) — with one known gap found by that verification and not yet
+fixed: the audio sidecar is not crash-safe the way the piece is (§2, §4).
 
 Prerequisites: `docs/design/fragmented-output.md` (the container change this
 depends on entirely), `docs/design/compositing.md` (the step being resumed), and
@@ -110,6 +112,47 @@ resets every third frame. An earlier draft blamed the misalignment on it; there
 was no misalignment. Do not re-adopt this explanation, and do not "fix" the
 grids to match — nothing depends on them matching.
 
+### Verified end to end
+
+Task 11, 2026-08-27. Headless — `QueueEngine.makeContext` and `ArgumentBuilder`
+driven directly against `build/helper/TwitchDownloaderCLI` and
+`build/ffmpeg/ffmpeg`, against a real 120s slice of the same VOD, with a
+genuine `SIGKILL` (not `HelperProcess.cancel()`'s `SIGTERM`) fired at 60% of
+the encode by content position. `Tests/OxbowKitTests/ResumeEndToEndTests.swift`,
+gated behind `OXBOW_RESUME_E2E=1` — not part of the default `swift test` run.
+
+| Question | Answer |
+|---|---|
+| Does the killed piece survive the launch sweep? | **Yes.** 2280 complete frames repaired and readable; `jobs/` gone, `resume/` intact. |
+| Does the second attempt seek rather than restart? | **Yes.** `-ss 76.0`, wall clock 4.6s against the killed attempt's 7.1s. |
+| Is the seam correct, by timestamp? | **Yes.** MAD 1.74 at the seam, 12.27 one frame off — the same clean separation the design spike measured. |
+| Does the delivered frame count match a straight-through encode? | **Within a few frames, not exactly.** Delivered 3603, reference 3601. Chased down, not waved away: `video2` decoded alone splits perfectly at the seek point (2262 + 1310 = 3572, matching one continuous decode), so this is not a seek-accuracy bug. The composite's CFR gap-fill (this section, above) is computed from each piece's own `setpts=PTS-STARTPTS` zero point independently, so splitting the timeline can shift where a fill decision lands relative to one continuous pass — the same way splitting a sum changes floating-point rounding. Bounded at a few frames (a fraction of a second) on this run; the seam MAD is what actually rules out lost or duplicated *content*. Worth knowing, not urgent: this means a resumed delivery is not always bit-for-bit frame-identical to a from-scratch encode of the same range, which nothing above previously said. |
+
+**A real defect, found by this run, not yet fixed:** the audio sidecar
+(§4's `audio.m4a`) has none of the fragmentation that makes a piece survive a
+crash. It is an ordinary MP4, written by the *same* FFmpeg invocation as
+piece 0, and a conventional MP4's index is written once, at the very end — so
+`SIGKILL`ing that invocation, at any point before it finishes naturally,
+leaves `audio.m4a` with no `moov` atom at all. Confirmed at 93% through the
+encode, not just early: still corrupt. A graceful `SIGTERM` (what
+`HelperProcess.cancel()` and an app quit actually send) does **not** trigger
+this — FFmpeg finalises both outputs cleanly on `SIGTERM`, which is resume.md
+§2's own "easy case." Only a genuine crash or power loss does, which is
+exactly the case fragmentation exists for (§1: "app quit, crash, closing the
+laptop, reboot") — and only the piece got that protection, not the sidecar.
+
+Because the sidecar is written once, on the first attempt only, and never
+rewritten by a resumed one, this is not self-healing: every subsequent retry
+re-encodes the tail successfully and then fails at `.assemble` on the same
+corrupt file, until the piece cap (§7) forces a restart from scratch. No wrong
+file is ever delivered — `.assemble`'s non-zero exit is caught the same as any
+other step failure — but a crash during the single longest attempt of the
+composite, arguably the likeliest moment for one to land, currently loses the
+recovery this feature exists to provide, for exactly the class of interruption
+§1 leads with. The fix is the same one already applied to the piece —
+`-movflags +frag_keyframe+empty_moov+default_base_moof` on the sidecar's own
+output — but it is unbuilt as of this commit.
+
 ## 3. The retention area
 
 Partial composites live in **`root/resume/<jobid>/`**, not in the job workspace.
@@ -152,6 +195,12 @@ it is a copy. This is what lets §5 delete the re-fetched video before
 assembling: without it the 16.3 GB source would have to survive until delivery
 purely to supply its audio, and the recovery peak would be ~74 GB rather than
 ~58. Resumed attempts do not re-extract it; they only hold the tail.
+
+**Unlike the piece, this output is not fragmented, and that is a real gap —
+see §2, "Verified end to end."** A hard kill during the first attempt (not a
+graceful `SIGTERM`) leaves it with no `moov` atom, permanently, since nothing
+ever rewrites it. `.assemble` then fails on every subsequent retry until the
+piece cap restarts the job from scratch. Unfixed as of this commit.
 
 `StepContext` gains:
 
@@ -241,6 +290,16 @@ wrong. Refusing is the same instinct as `hstack` declining mismatched heights
 rather than producing a subtly wrong 22 GB file (`compositing.md` §5). Geometry
 drift already fails loudly on its own; byte length is the cheapest signal that
 catches the same-geometry, different-content case.
+
+**Verified 2026-08-26 (Task 7): re-downloads are byte-stable.** Downloading
+the same VOD twice gave byte length 419,847,127 both times and duration
+00:09:07.01 both times — identical — while **the files themselves differ
+byte-for-byte.** So the chosen signal is safe: it will not spuriously refuse a
+valid resume. This also settles a fallback that might otherwise look more
+rigorous — a content hash of the downloaded video cannot be the signal,
+because a hash would differ on every re-download and refuse every valid
+resume; byte length is not just cheaper than a hash here, it is the only one
+of the two that actually works.
 
 **Piece count is capped at 4.** Past that, a retry restarts from scratch. Each
 seam is an encode boundary, and more importantly a job that has failed four
