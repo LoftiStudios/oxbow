@@ -16,6 +16,12 @@ A bundle containing the real helper (CoreCLR, SkiaSharp, 17 native Mach-Os and
 stapled, packaged as a DMG, notarized and stapled again, then quarantined and
 launched as a real download:
 
+> The managed-assembly count is 64, not 183, since the helper began publishing
+> trimmed on 2026-08-27 (§5). The 17 native Mach-Os are unchanged, and so is
+> everything this section proves — the numbers below were recorded on the
+> untrimmed tree and the signing run has not been repeated end to end through
+> notarization since.
+
 | Check | Result |
 |---|---|
 | `codesign --verify --deep --strict` | valid on disk, satisfies its Designated Requirement |
@@ -45,7 +51,10 @@ In subcomponent: .../Contents/MacOS/helper/COPYRIGHT.txt
 ```
 
 Signing only the Mach-O files is the intuitive approach and it is wrong. For
-this bundle that is **205 files**, not 19.
+this bundle that is **86 files**, not 19. (It was 205 until the helper was
+published trimmed on 2026-08-27; trimming removed 119 unreachable managed
+assemblies and no native code, so the rule is unchanged and only the count
+moved — see `docs/design/cli-dependency.md` §8.)
 
 `scripts/sign.sh` therefore signs everything under `Contents/MacOS`, deepest
 first, and re-checks each file individually afterwards rather than trusting
@@ -64,7 +73,9 @@ So `allow-jit` is genuinely required — and it is also **sufficient**. Neither
 `allow-unsigned-executable-memory` nor `disable-library-validation` was needed.
 That is precisely the payoff for refusing `PublishSingleFile`: every Mach-O is
 signed with one Team ID, so library validation is satisfied without weakening
-it. If you ever find yourself reaching for `disable-library-validation`,
+it. Publishing **trimmed** does not disturb this — ILLink touches only managed
+code, the native Mach-O set is identical (17 files in the helper either way),
+and this table was re-verified unchanged after the switch. If you ever find yourself reaching for `disable-library-validation`,
 something is signed wrong — fix the signing, don't add the entitlement.
 
 Entitlements are **per-process** and do not propagate from parent to child, so
@@ -82,31 +93,36 @@ Oxbow.app/Contents/
   MacOS/
     Oxbow                    <- SwiftUI app
     ffmpeg                   <- our LGPL build, one Mach-O, no entitlements
-    helper/                  <- .NET publish tree, 205 files
+    helper/                  <- .NET publish tree, 85 files (trimmed)
       TwitchDownloaderCLI    <- apphost, allow-jit
       createdump             <- ships with self-contained .NET, must be signed
       libSkiaSharp.dylib     <- universal (x86_64 + arm64)
       libHarfBuzzSharp.dylib <- universal
       lib*.dylib             <- CoreCLR runtime
-      *.dll                  <- 183 managed assemblies
+      *.dll                  <- 64 managed assemblies (183 before trimming)
   Resources/
     ...                      <- NO executable code, ever
 ```
 
-Native Mach-O count: 19 (17 helper + ffmpeg + app). Bundle ~147 MB, DMG ~77 MB.
+Native Mach-O count: 19 (17 helper + ffmpeg + app) — unchanged by trimming.
+Bundle ~94 MB (measured on a Debug build, 2026-08-27; was ~147 MB untrimmed).
+The DMG has not been re-measured since the switch; it was ~77 MB untrimmed.
 
 ## 5. Publishing the helper
 
 Upstream's own `MacOSArm64.pubxml` sets `PublishSingleFile=True`,
 `IncludeNativeLibrariesForSelfExtract=true` and `PublishTrimmed=True` — the
-first two are exactly what handoff §3.3 forbids. **Never publish with
-`-p:PublishProfile=MacOSArm64`.** Override explicitly:
+first two are exactly what handoff §3.3 forbids. The third is independent of
+them and is one we now set ourselves. **Never publish with
+`-p:PublishProfile=MacOSArm64`** — inheriting the profile would bring the
+single-file settings along with it. Override explicitly:
 
 ```bash
 dotnet publish vendor/TwitchDownloader/TwitchDownloaderCLI \
   -c Release -r osx-arm64 --self-contained true \
   -p:PublishSingleFile=false \
-  -p:PublishTrimmed=false \
+  -p:PublishTrimmed=true -p:TrimMode=partial \
+  -p:JsonSerializerIsReflectionEnabledByDefault=true \
   -p:PublishReadyToRun=false \
   -p:DebugType=none \
   -o build/helper
@@ -116,9 +132,18 @@ dotnet publish vendor/TwitchDownloader/TwitchDownloaderCLI \
 that would otherwise land under `Contents/MacOS` and have to be signed for no
 benefit. `sign.sh` deletes any it finds as a backstop.
 
-Trimming is off deliberately: the stack is reflection-heavy (SkiaSharp,
-CommandLineParser, `System.Text.Json` with reflection re-enabled), and trimming
-buys size at the cost of failures that only appear on specific code paths.
+Trimming is **on**, as of 2026-08-27, and takes the tree from 126 MB / 204
+files to 67 MB / 85 files. The concern that kept it off was real, and it is why
+`JsonSerializerIsReflectionEnabledByDefault=true` is in that command: the stack
+is reflection-heavy (SkiaSharp, CommandLineParser, `System.Text.Json`), ILLink
+cannot see reflection, and the resulting failures appear at runtime on specific
+code paths rather than in CI. That flag is upstream's own mitigation and is
+load-bearing — never drop it while trimming.
+
+Because a green exit code cannot prove the absence of such a failure
+(`docs/twitch-metadata.md` §7), the switch was gated on decoded-output
+comparison of every verb against an untrimmed build, not on exit status. See
+`docs/design/cli-dependency.md` §8 for the evidence.
 
 ## 6. App Translocation
 
@@ -139,7 +164,7 @@ write next to the app would fail on first run for every user who launches from
 ./scripts/build-ffmpeg.sh                     # LGPL FFmpeg
 dotnet publish ...                            # helper (see §5)
 # assemble bundle
-./scripts/sign.sh build/Oxbow.app             # inside-out, 205 files
+./scripts/sign.sh build/Oxbow.app             # inside-out, 86 files
 ditto -c -k --keepParent build/Oxbow.app build/Oxbow.zip
 xcrun notarytool submit build/Oxbow.zip --keychain-profile oxbow-notary --wait
 xcrun stapler staple build/Oxbow.app
@@ -160,7 +185,7 @@ signatures stored in extended attributes, and a plain `zip` drops xattrs.
   signs them inside-out. The "Code Sign On Copy" trap is sidestepped entirely
   by not using a Copy Files phase at all — the script both copies and signs,
   so sign-after-embed is guaranteed, and Xcode's own signing of the bundle
-  runs after all phases, preserving the inside-out order. Verified: 205 files
+  runs after all phases, preserving the inside-out order. Verified: 86 files
   signed, `--deep --strict` passes, the helper carries `allow-jit` and boots
   CoreCLR, FFmpeg executes. Dev builds sign with the Apple Development
   identity and no timestamp; distribution still goes through `sign.sh`.
@@ -173,7 +198,7 @@ signatures stored in extended attributes, and a plain `zip` drops xattrs.
   `scripts/build-ffmpeg.sh`), and the app built with **ad-hoc** signing so
   `embed-helpers.sh` runs its real `codesign` calls with the real entitlements.
   It then asserts §2–§4 the way `sign.sh` does locally: helper and ffmpeg
-  present under `Contents/MacOS`, ~205 embedded files, every file individually
+  present under `Contents/MacOS`, ~86 embedded files, every file individually
   signed, `--deep --strict` clean, `allow-jit` on the helper's own signature
   and absent from ffmpeg's.
 - **Release: resolved (2026-08-25).** `.github/workflows/release.yml` runs that

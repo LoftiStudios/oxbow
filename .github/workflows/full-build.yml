@@ -121,12 +121,21 @@ jobs:
 
       - name: Publish the helper
         # Verbatim from docs/development.md. Never -p:PublishProfile=MacOSArm64
-        # (upstream's profile sets PublishSingleFile and PublishTrimmed, both
-        # forbidden), and never re-enable either of them here.
+        # (upstream's profile sets PublishSingleFile, which is forbidden
+        # permanently — docs/architecture.md §3.3). PublishSingleFile must stay
+        # false here forever. PublishTrimmed is a DIFFERENT flag and is
+        # deliberately true: it deletes unreachable managed code only, leaving
+        # the native dylibs and the signing model untouched
+        # (docs/design/cli-dependency.md §8).
+        # JsonSerializerIsReflectionEnabledByDefault is upstream's own
+        # mitigation for reflection-based JSON and is load-bearing whenever
+        # trimming — do not drop it.
         run: >
           dotnet publish vendor/TwitchDownloader/TwitchDownloaderCLI
           -c Release -r osx-arm64 --self-contained true
-          -p:PublishSingleFile=false -p:PublishTrimmed=false
+          -p:PublishSingleFile=false
+          -p:PublishTrimmed=true -p:TrimMode=partial
+          -p:JsonSerializerIsReflectionEnabledByDefault=true
           -p:PublishReadyToRun=false -p:DebugType=none
           -o build/helper
 
@@ -153,12 +162,14 @@ jobs:
           APP="build/DerivedData/Build/Products/Debug/Oxbow.app"
           MACOS="${APP}/Contents/MacOS"
 
-          # helper tree + ffmpeg. docs/signing.md §2: 205 files, not 19.
+          # helper tree + ffmpeg. docs/signing.md §2: 86 files, not 19.
+          # (Was 205 before the helper was published trimmed; the trim removed
+          # 119 unreachable managed assemblies and no native code.)
           # A tolerance rather than an exact match because the .NET runtime's
           # file set can shift by one or two across SDK servicing releases,
           # and setup-dotnet floats within 10.0.x. A real regression — the
-          # embed phase warning and continuing — is off by 205, not by two.
-          EXPECTED_EMBEDDED=205
+          # embed phase warning and continuing — is off by 86, not by two.
+          EXPECTED_EMBEDDED=86
           TOLERANCE=5
 
           fail() { echo "::error::$*"; exit 1; }
