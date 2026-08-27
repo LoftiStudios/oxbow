@@ -727,11 +727,18 @@ public actor QueueEngine {
       + failed.map(\.path).joined(separator: ", ") + "\n"
     guard let data = line.data(using: .utf8) else { return }
 
+    // `FileHandle.write(_:)` (no `contentsOf:`) can raise an uncaught
+    // Objective-C exception on a genuine write failure rather than
+    // returning a Swift error — exactly the kind of failure a full disk
+    // would produce, which is also a plausible companion to a teardown
+    // failure. `write(contentsOf:)` is the throwing form, so a failure here
+    // is just another swallowed `try?` rather than a crash compounding the
+    // problem this method exists to report.
     let log = configuration.workspace.teardownFailureLog
     if let handle = try? FileHandle(forWritingTo: log) {
       defer { try? handle.close() }
-      handle.seekToEndOfFile()
-      handle.write(data)
+      _ = try? handle.seekToEnd()
+      try? handle.write(contentsOf: data)
     } else {
       try? FileManager.default.createDirectory(
         at: log.deletingLastPathComponent(), withIntermediateDirectories: true)
