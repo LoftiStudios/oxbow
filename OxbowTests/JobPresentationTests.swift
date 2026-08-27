@@ -52,4 +52,20 @@ struct JobPresentationTests {
   @Test func aJobWithNoStepsHasNoRepresentativeStep() {
     #expect(JobPresentation.representativeStep(of: job([])) == nil)
   }
+
+  /// The whole enablement rule for the composite row's Finder-reveal item
+  /// (docs/design/fragmented-output.md §6): running, or settled in any way,
+  /// counts as started; still queued or blocked behind something upstream
+  /// does not.
+  @Test(arguments: [
+    (StepStatus.queued, false),
+    (.blocked, false),
+    (.running, true),
+    (.done, true),
+    (.failed(StepFailure(kind: .noArtifact, summary: "no artifact")), true),
+    (.cancelled, true),
+  ])
+  func hasStartedMatchesWhetherAStepHasEverRun(status: StepStatus, expected: Bool) {
+    #expect(JobPresentation.hasStarted(status) == expected)
+  }
 }

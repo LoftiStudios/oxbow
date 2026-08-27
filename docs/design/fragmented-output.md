@@ -6,9 +6,23 @@ impossible without them — and verified end to end (`resume.md` §2). **§5's
 failure invariant already holds**, unchanged, in the pre-existing
 `FailureInterpreter` (a non-zero exit is rejected regardless of whether an
 artifact exists), but has no dedicated test pinning it down for a fragmented,
-now-playable partial file specifically, which §9 calls for. **§6, the buried
-Finder-reveal affordance for the in-progress file, is not built** — nothing in
-the app reveals a composite step's own working file today.
+now-playable partial file specifically, which §9 calls for. **§6's affordance
+is built, in a narrower shape than designed here.** A context menu on the
+composite step's own row (`StepRow`, one item, "Show in Finder") reveals the
+job's **retained pieces** (`QueueEngine.retainedFileURLs(forJob:)`, wired
+through `QueueController`) — not the in-progress *file* this section
+describes, since resume (§8, since built) is what turned that working file
+into a directory of numbered pieces rather than one growing file. It selects
+the pieces themselves, falling back to the (always-created once the step has
+started) retention directory when there are none yet — so the first of §6's
+two rough edges no longer applies: the retention area holds only the
+composite's own pieces, never the video, the chat JSON, or the chat render.
+The second rough edge (the overstated duration) is unaffected — still true of
+whichever piece a player is pointed at. Enablement is also simpler than §6
+sketched: not "is the file at a revealable stage" but the flat boolean
+`JobPresentation.hasStarted(step.status)` — running or settled by any means,
+as opposed to still queued or blocked — with the item present and disabled
+rather than hidden below that.
 
 Prerequisites: `docs/design/compositing.md` (the step this changes) and
 `docs/composite-performance.md` (why the composite takes as long as it does, and

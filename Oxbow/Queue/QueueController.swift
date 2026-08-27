@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Observation
 import OxbowKit
@@ -85,6 +86,19 @@ final class QueueController {
   /// this on demand rather than carrying it in `Job` — it is a filesystem
   /// fact, not queue state, and stale for exactly as long as a snapshot is.
   func retainedBytes(for job: JobID) async -> Int { await engine.retainedBytes(forJob: job) }
+
+  /// Reveals the composite step's retained pieces in Finder — never the job
+  /// workspace, which also holds the download and the chat render.
+  /// docs/design/fragmented-output.md §6.
+  ///
+  /// Selects the pieces themselves where there are any, so Finder opens on
+  /// them; falls back to the (always-created, per `retainedFileURLs`)
+  /// retention directory itself for the moment between the composite
+  /// starting and its first fragment landing on disk.
+  func revealRetainedFiles(for job: JobID) async {
+    let (directory, pieces) = await engine.retainedFileURLs(forJob: job)
+    NSWorkspace.shared.activateFileViewerSelecting(pieces.isEmpty ? [directory] : pieces)
+  }
 
   /// Forgets these jobs: out of the queue, off disk, helpers killed first if
   /// any were running. Delivered files are never touched — see

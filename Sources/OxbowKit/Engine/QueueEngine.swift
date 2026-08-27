@@ -772,6 +772,22 @@ public actor QueueEngine {
     }
   }
 
+  /// Where the composite step's own Finder-reveal item points, and what to
+  /// select there. docs/design/fragmented-output.md §6.
+  ///
+  /// Always the retention area, never the job workspace: the workspace also
+  /// holds the downloaded video, the chat JSON, and the chat render, and
+  /// revealing those alongside the composite's own working file is the bug
+  /// this affordance exists to avoid. `directory` is `resumeDirectory(id)`
+  /// itself, `prepareResume` creates it the moment the composite step starts,
+  /// so it exists for every case the caller's enablement rule (§6: the combine
+  /// has started) would ever call this for — used as the fallback selection
+  /// when `pieces` is empty, e.g. the gap between the step starting and its
+  /// first fragment landing on disk.
+  public func retainedFileURLs(forJob id: JobID) -> (directory: URL, pieces: [URL]) {
+    (configuration.workspace.resumeDirectory(id), pieces(of: id))
+  }
+
   /// Repairs the last piece, counts what survived, and says where to resume.
   ///
   /// Returns `nil` for a first attempt and when the piece cap is hit — in the

@@ -11,6 +11,12 @@ import OxbowKit
 struct StepRow: View {
   let step: Step
   let onRetry: () -> Void
+  /// Reveals the composite step's retained pieces in Finder. Job-scoped by
+  /// the time it reaches this view — `JobRow` already closes over the job's
+  /// `JobID`, since the retention area belongs to the job, not the step
+  /// (`QueueEngine.retainedFileURLs(forJob:)`) — so this row only has to
+  /// decide whether to offer the item at all, never which job it is for.
+  let onRevealRetainedFiles: () -> Void
 
   var body: some View {
     VStack(alignment: .leading, spacing: 4) {
@@ -32,6 +38,24 @@ struct StepRow: View {
         .padding(.leading, QueueMetrics.contentIndent)
     }
     .padding(.vertical, 2)
+    // Composite only — nothing else has a retention area to reveal.
+    // Deliberately just this one item (docs/design/fragmented-output.md §6):
+    // present but disabled before the combine has started, so the affordance
+    // is discoverable ahead of being usable, per the design's buried-but-not-
+    // hidden intent.
+    .contextMenu {
+      if case .composite = step.kind {
+        // Same wording and icon as `QueueActionButtons`' "Show in Finder" —
+        // this reads as the same action, just scoped to the retention area
+        // instead of a job's delivered files.
+        Button {
+          onRevealRetainedFiles()
+        } label: {
+          Label("Show in Finder", systemImage: "folder")
+        }
+        .disabled(!JobPresentation.hasStarted(step.status))
+      }
+    }
   }
 
   private var icon: (name: String, tone: JobPresentation.Tone) {
@@ -196,7 +220,8 @@ struct ProgressLine: View {
           videoID: "1", quality: "", destination: URL(filePath: "/tmp/a.mp4"))),
         status: .running,
         progress: StepProgress(phase: "Downloading", fraction: 0.42, index: 2, total: 5)),
-      onRetry: {})
+      onRetry: {},
+      onRevealRetainedFiles: {})
   }
   .frame(width: 520, height: 200)
 }
@@ -211,7 +236,45 @@ struct ProgressLine: View {
           kind: .exited(code: 1),
           summary: "The chat renderer exited with code 1.",
           detail: "Unrecognized option 'crf'."))),
-      onRetry: {})
+      onRetry: {},
+      onRevealRetainedFiles: {})
+  }
+  .frame(width: 520, height: 200)
+}
+
+/// The composite step's own "Show in Finder" item — the one row that carries
+/// it at all — before the combine has started. Right-click to see the item
+/// present but disabled, per docs/design/fragmented-output.md §6.
+#Preview("Composite, not started — Show in Finder disabled") {
+  List {
+    StepRow(
+      step: Step(
+        id: StepID(rawValue: UUID()),
+        kind: .composite(CompositeRequest(
+          framerate: 30, bitrateMbps: 8, duration: .seconds(60),
+          destination: URL(filePath: "/tmp/out.mp4"))),
+        status: .queued),
+      onRetry: {},
+      onRevealRetainedFiles: {})
+  }
+  .frame(width: 520, height: 200)
+}
+
+/// The same row once the combine has started — running here, but `.done`,
+/// `.failed`, and `.cancelled` all enable the item the same way
+/// (`JobPresentation.hasStarted`). Right-click to see it enabled.
+#Preview("Composite, started — Show in Finder enabled") {
+  List {
+    StepRow(
+      step: Step(
+        id: StepID(rawValue: UUID()),
+        kind: .composite(CompositeRequest(
+          framerate: 30, bitrateMbps: 8, duration: .seconds(3600),
+          destination: URL(filePath: "/tmp/out.mp4"))),
+        status: .running,
+        progress: StepProgress(phase: "Combining", fraction: 0.63)),
+      onRetry: {},
+      onRevealRetainedFiles: {})
   }
   .frame(width: 520, height: 200)
 }

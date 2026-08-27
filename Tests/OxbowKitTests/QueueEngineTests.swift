@@ -1523,6 +1523,35 @@ struct QueueEngineTests {
     #expect(await harness.engine.retainedBytes(forJob: harness.job.id) == 0)
   }
 
+  /// What the composite step's Finder-reveal item points at
+  /// (docs/design/fragmented-output.md §6): the retention directory, and the
+  /// pieces inside it, in order — never anything under the job workspace.
+  @Test func retainedFileURLsReportTheDirectoryAndItsPiecesInOrder() async throws {
+    let harness = try makeHarness()
+    defer { harness.tearDown() }
+    try harness.writePiece(index: 1, frames: 30)
+    try harness.writePiece(index: 0, frames: 30)
+
+    let (directory, pieces) = await harness.engine.retainedFileURLs(forJob: harness.job.id)
+
+    #expect(directory == harness.workspace.resumeDirectory(harness.job.id))
+    #expect(pieces.map(\.lastPathComponent) == ["piece-0.mp4", "piece-1.mp4"])
+  }
+
+  /// The fallback the reveal action needs: a composite that has started but
+  /// has not yet finished its first fragment still has a real, existing
+  /// directory to point Finder at — `prepareResume` creates it the moment the
+  /// step starts, before any `piece-*.mp4` exists.
+  @Test func retainedFileURLsReportTheDirectoryEvenWithNoPiecesYet() async throws {
+    let harness = try makeHarness()
+    defer { harness.tearDown() }
+
+    let (directory, pieces) = await harness.engine.retainedFileURLs(forJob: harness.job.id)
+
+    #expect(directory == harness.workspace.resumeDirectory(harness.job.id))
+    #expect(pieces.isEmpty)
+  }
+
   /// The invariant resume.md §8 exists to protect, and the one no existing
   /// test pinned: cancellation is the one ending where retention is
   /// deliberately *kept*. `removeJobWorkspace`'s not-done branch has two

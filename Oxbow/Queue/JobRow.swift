@@ -21,6 +21,12 @@ struct JobRow: View {
   let onRetryJob: () -> Void
   /// Restarts one step, from the expanded step list.
   let onRetryStep: (StepID) -> Void
+  /// Reveals the composite step's retained pieces in Finder, from that step's
+  /// own context menu. Job-scoped, not step-scoped — the retention area
+  /// belongs to the job (`QueueEngine.retainedFileURLs(forJob:)`) — so this
+  /// closure takes the `JobID` this row already has, the same shape as
+  /// `retainedBytes` below.
+  let onRevealRetainedFiles: (JobID) -> Void
   /// Bytes held in this job's retention area. An async closure rather than a
   /// plain value, matching `StepLogDisclosure.log` — it is a filesystem
   /// lookup the row makes on demand rather than state `Job` carries, so a row
@@ -70,7 +76,10 @@ struct JobRow: View {
 
         if isExpanded {
           ForEach(job.steps) { step in
-            StepRow(step: step) { onRetryStep(step.id) }
+            StepRow(
+              step: step,
+              onRetry: { onRetryStep(step.id) },
+              onRevealRetainedFiles: { onRevealRetainedFiles(job.id) })
               .padding(.leading, QueueMetrics.contentIndent)
           }
         }
@@ -184,7 +193,7 @@ struct JobRow: View {
     ForEach(JobRowPreviewData.jobs) { job in
       JobRow(
         job: job, onCancel: {}, onRetryJob: {}, onRetryStep: { _ in },
-        retainedBytes: { _ in 0 })
+        onRevealRetainedFiles: { _ in }, retainedBytes: { _ in 0 })
     }
   }
   .frame(width: 560, height: 320)
@@ -197,6 +206,7 @@ struct JobRow: View {
       onCancel: {},
       onRetryJob: {},
       onRetryStep: { _ in },
+      onRevealRetainedFiles: { _ in },
       retainedBytes: { _ in 0 })
   }
   .frame(width: 560, height: 260)
@@ -209,6 +219,7 @@ struct JobRow: View {
       onCancel: {},
       onRetryJob: {},
       onRetryStep: { _ in },
+      onRevealRetainedFiles: { _ in },
       // A six-hour stream's worth of retained pieces — resume.md §8's own
       // example, so the row and the doc agree on what "non-trivial" means.
       retainedBytes: { _ in 26_000_000_000 })
