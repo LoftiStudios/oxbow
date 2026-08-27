@@ -30,25 +30,16 @@ struct QueueActions {
     jobs.filter { ids.contains($0.id) }
   }
 
-  /// The files these jobs actually delivered.
-  ///
-  /// `Step.artifact` is the delivered path — `Reconciler` clears it for
-  /// anything still sitting inside our own workspace — but a retained
-  /// composite piece lives under `Workspace.resumeRoot`, deliberately
-  /// *outside* the workspace (docs/design/resume.md §3), so `Reconciler`
-  /// never reaches it, and retention only ever persists on a job that is
-  /// *not* `.done` — exactly the case `Reconciler` short-circuits for. A
-  /// failed or cancelled composite job can therefore still have its step
-  /// pointing at `resume/<jobid>/piece-N.mp4` here. Pieces are never
-  /// delivered — only `.assemble`'s output is (§7) — so the composite step's
-  /// artifact is excluded outright rather than trusted to already be gone.
+  /// The files these jobs actually delivered — `Job.deliveredFiles`, the one
+  /// definition of "delivered" shared with `JobInfo` (Get Info reads the
+  /// same property). A step's `artifact` is not enough on its own: it is set
+  /// the moment the step succeeds, whatever its destination — including a
+  /// step that only feeds a later one, like a composite job's video, chat,
+  /// and render inputs, whose `artifact` still points inside the job
+  /// workspace even once `.done` (`JobTemplate.makeJob`). `Job.deliveredFiles`
+  /// is what tells those apart from a real delivery.
   func deliveredFiles(in ids: Set<JobID>) -> [URL] {
-    jobs(in: ids).flatMap { job in
-      job.steps.compactMap { step in
-        if case .composite = step.kind { return nil }
-        return step.artifact
-      }
-    }
+    jobs(in: ids).flatMap(\.deliveredFiles)
   }
 
   /// Jobs there is anything to restart in.

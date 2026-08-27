@@ -29,4 +29,16 @@ public struct Job: Identifiable, Codable, Sendable, Equatable {
     if steps.allSatisfy({ $0.status == .done }) { return .done }
     return .queued
   }
+
+  /// The files this job actually delivered — one entry per step whose kind
+  /// carries a real destination and that has succeeded, in step order.
+  ///
+  /// The single definition both the app layer's "what does Show in Finder
+  /// reveal" and "what did Get Info list as delivered" answer from, so the
+  /// two can never compute it two different ways. See
+  /// `Step.deliveredArtifact` for what excludes a job workspace intermediate
+  /// even once its step is `.done`.
+  public var deliveredFiles: [URL] {
+    steps.compactMap(\.deliveredArtifact)
+  }
 }

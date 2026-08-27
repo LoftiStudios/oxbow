@@ -124,24 +124,15 @@ nonisolated struct JobInfo {
     destinations.first?.deletingLastPathComponent()
   }
 
-  /// Only the files that actually landed. `Step.artifact` is nil until a step
-  /// succeeds, and `Reconciler` clears it again for anything still sitting
-  /// inside our own workspace — but a retained composite piece lives under
-  /// `Workspace.resumeRoot`, deliberately *outside* the workspace
-  /// (docs/design/resume.md §3), so `Reconciler` never reaches it: retention
-  /// only ever persists on a job that is *not* `.done`, which is exactly a
-  /// job `Reconciler` does not stop and reconsider. A failed or cancelled
-  /// composite job can therefore still have its step pointing at
-  /// `resume/<jobid>/piece-N.mp4` here. Pieces are never delivered — only
-  /// `.assemble`'s output is (§7) — so the composite step's artifact is
-  /// excluded outright, the one step whose artifact can ever live in the
-  /// retention area rather than a real destination.
-  var deliveredFiles: [URL] {
-    job.steps.compactMap { step in
-      if case .composite = step.kind { return nil }
-      return step.artifact
-    }
-  }
+  /// Only the files that actually landed — `Job.deliveredFiles`, the one
+  /// definition of "delivered" shared with `QueueActions` (Show in Finder
+  /// reads the same property). `Step.artifact` alone is not enough: it is
+  /// set the moment a step succeeds, whatever its destination — including a
+  /// step that only feeds a later one, like a composite job's video, chat,
+  /// and render inputs, whose `artifact` still points inside the job
+  /// workspace even once `.done` (`JobTemplate.makeJob`). `Job.deliveredFiles`
+  /// is what excludes those rather than trusting they are already gone.
+  var deliveredFiles: [URL] { job.deliveredFiles }
 
   private var destinations: [URL] {
     job.steps.compactMap { step in

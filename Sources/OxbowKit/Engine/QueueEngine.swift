@@ -975,27 +975,13 @@ public actor QueueEngine {
   ///
   /// Distinguishes "this kind has no destination, keep it as an intermediate"
   /// from "the move itself failed" — collapsing those (e.g. via `?? file`)
-  /// would report a move failure as success. Five of the six kinds carry an
-  /// optional destination — chat, video, clip, render, and composite — but
-  /// `.composite` is deliberately treated as though it had none: its output
-  /// is a piece in the retention area, not the finished file, and a resumed
-  /// job can produce several. Only `assemble`, which joins them, ever
-  /// delivers under the name the user chose. `CompositeRequest.destination`
-  /// still exists — `JobTemplate` reads it to build the `AssembleRequest`
-  /// that actually delivers — it is simply never consulted here. `.failed`
-  /// remains the only way `nil` can mean a problem, so the two cases must
-  /// stay distinguishable.
+  /// would report a move failure as success. `.failed` remains the only way
+  /// `nil` can mean a problem, so the two cases must stay distinguishable.
+  /// The destination itself is `StepKind.deliveryDestination` — see its doc
+  /// comment for why `.composite` counts as having none despite
+  /// `CompositeRequest` carrying its own `destination` field.
   private func move(_ file: URL, toDestinationFor kind: StepKind) -> MoveOutcome {
-    let destination: URL? = switch kind {
-    case .downloadVideo(let request): request.destination
-    case .downloadClip(let request): request.destination
-    case .downloadChat(let request): request.destination
-    case .renderChat(let request): request.destination
-    // Never this step's own destination — see the doc comment above.
-    case .composite: nil
-    case .assemble(let request): request.destination
-    }
-    guard let destination else { return .notApplicable }
+    guard let destination = kind.deliveryDestination else { return .notApplicable }
 
     do {
       try FileManager.default.createDirectory(
