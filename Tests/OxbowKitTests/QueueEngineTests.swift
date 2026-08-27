@@ -1455,4 +1455,23 @@ struct QueueEngineTests {
     #expect(!FileManager.default.fileExists(
       atPath: harness.workspace.resumeDirectory(harness.job.id).path))
   }
+
+  /// The number the failed row shows, so user-cleared retention stays honest.
+  /// resume.md §8.
+  @Test func retainedBytesAreReportedForAFailedJob() async throws {
+    let harness = try makeHarness()
+    defer { harness.tearDown() }
+    try harness.writePiece(index: 0, frames: 30)
+
+    let bytes = await harness.engine.retainedBytes(forJob: harness.job.id)
+
+    #expect(bytes > 0)
+  }
+
+  @Test func aJobWithNoPiecesReportsNothingRetained() async throws {
+    let harness = try makeHarness()
+    defer { harness.tearDown() }
+
+    #expect(await harness.engine.retainedBytes(forJob: harness.job.id) == 0)
+  }
 }

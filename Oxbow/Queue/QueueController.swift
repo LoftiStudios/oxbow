@@ -80,6 +80,12 @@ final class QueueController {
   /// The tail of a step's captured helper output, for the detail disclosure.
   func log(for step: StepID) async -> String? { await engine.log(for: step) }
 
+  /// Bytes held in a job's retention area, for the failed-row disclosure.
+  /// Retention is user-cleared (docs/design/resume.md §8), so the row reads
+  /// this on demand rather than carrying it in `Job` — it is a filesystem
+  /// fact, not queue state, and stale for exactly as long as a snapshot is.
+  func retainedBytes(for job: JobID) async -> Int { await engine.retainedBytes(forJob: job) }
+
   /// Forgets these jobs: out of the queue, off disk, helpers killed first if
   /// any were running. Delivered files are never touched — see
   /// `QueueEngine.remove(jobs:)`.

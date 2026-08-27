@@ -21,8 +21,14 @@ struct JobRow: View {
   let onRetryJob: () -> Void
   /// Restarts one step, from the expanded step list.
   let onRetryStep: (StepID) -> Void
+  /// Bytes held in this job's retention area. An async closure rather than a
+  /// plain value, matching `StepLogDisclosure.log` — it is a filesystem
+  /// lookup the row makes on demand rather than state `Job` carries, so a row
+  /// that is never failed never pays for it.
+  let retainedBytes: (JobID) async -> Int
 
   @State private var isExpanded = false
+  @State private var bytesRetained: Int?
 
   private var isMultiStep: Bool { job.steps.count > 1 }
 
@@ -57,9 +63,30 @@ struct JobRow: View {
               .padding(.leading, QueueMetrics.contentIndent)
           }
         }
+
+        // Job-level, not step-level: the retention area belongs to the job as
+        // a whole (it is what a resumed composite continues from), so this
+        // sits under the header once regardless of which step is shown or
+        // expanded — never duplicated per step.
+        if job.status == .failed, let bytesRetained, bytesRetained > 0 {
+          Text("\(ByteCountFormatter.string(fromByteCount: Int64(bytesRetained), countStyle: .file)) held — dismiss to reclaim")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .padding(.leading, QueueMetrics.contentIndent)
+        }
       }
     }
     .padding(.vertical, 4)
+    // Keyed on status: a retry moves the job off `.failed` and the read is
+    // no longer meaningful, so the stale byte count is dropped rather than
+    // left showing on a row that is running again.
+    .task(id: job.status) {
+      guard job.status == .failed else {
+        bytesRetained = nil
+        return
+      }
+      bytesRetained = await retainedBytes(job.id)
+    }
   }
 
   /// A disclosure control only where there is something to disclose — but the
@@ -139,7 +166,9 @@ struct JobRow: View {
 #Preview("Mixed states") {
   List {
     ForEach(JobRowPreviewData.jobs) { job in
-      JobRow(job: job, onCancel: {}, onRetryJob: {}, onRetryStep: { _ in })
+      JobRow(
+        job: job, onCancel: {}, onRetryJob: {}, onRetryStep: { _ in },
+        retainedBytes: { _ in 0 })
     }
   }
   .frame(width: 560, height: 320)
@@ -151,9 +180,24 @@ struct JobRow: View {
       job: JobRowPreviewData.multiStep,
       onCancel: {},
       onRetryJob: {},
-      onRetryStep: { _ in })
+      onRetryStep: { _ in },
+      retainedBytes: { _ in 0 })
   }
   .frame(width: 560, height: 260)
+}
+
+#Preview("Failed, holding retained bytes") {
+  List {
+    JobRow(
+      job: JobRowPreviewData.failedWithRetention,
+      onCancel: {},
+      onRetryJob: {},
+      onRetryStep: { _ in },
+      // A six-hour stream's worth of retained pieces — resume.md §8's own
+      // example, so the row and the doc agree on what "non-trivial" means.
+      retainedBytes: { _ in 26_000_000_000 })
+  }
+  .frame(width: 560, height: 140)
 }
 
 /// Fake jobs for the previews above. Every state the row can be in, in one
@@ -184,6 +228,12 @@ enum JobRowPreviewData {
       [.failed(StepFailure(kind: .interrupted, summary: "Interrupted"))]),
     job("Video 2844548319", [.cancelled]),
   ]
+
+  static let failedWithRetention = job(
+    "LeighXP - 2026-08-19 - twelve-hour marathon",
+    [.failed(StepFailure(
+      kind: .exited(code: 1),
+      summary: "The chat renderer exited with code 1."))])
 
   static let multiStep = Job(
     id: JobID(rawValue: UUID()), created: .now,

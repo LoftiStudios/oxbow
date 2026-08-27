@@ -77,7 +77,8 @@ struct QueueView: View {
             job: job,
             onCancel: { Task { await controller.cancel(job: job.id) } },
             onRetryJob: { Task { await controller.retry(job: job.id) } },
-            onRetryStep: { step in Task { await controller.retry(step: step) } })
+            onRetryStep: { step in Task { await controller.retry(step: step) } },
+            retainedBytes: { id in await controller.retainedBytes(for: id) })
           .tag(job.id)
         }
       }

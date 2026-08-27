@@ -729,6 +729,18 @@ public actor QueueEngine {
         $1.lastPathComponent, options: .numeric) == .orderedAscending }
   }
 
+  /// Bytes held in the retention area for a job.
+  ///
+  /// Surfaced on the row because retention is user-cleared: the space is
+  /// reclaimed by dismissing the job, and a user who cannot see the cost will
+  /// never connect the two. docs/design/resume.md §8.
+  public func retainedBytes(forJob id: JobID) -> Int {
+    pieces(of: id).reduce(0) { total, piece in
+      total + (((try? FileManager.default
+        .attributesOfItem(atPath: piece.path))?[.size] as? NSNumber)?.intValue ?? 0)
+    }
+  }
+
   /// Repairs the last piece, counts what survived, and says where to resume.
   ///
   /// Returns `nil` for a first attempt and when the piece cap is hit — in the
