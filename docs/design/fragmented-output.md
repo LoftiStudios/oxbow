@@ -18,11 +18,15 @@ started) retention directory when there are none yet — so the first of §6's
 two rough edges no longer applies: the retention area holds only the
 composite's own pieces, never the video, the chat JSON, or the chat render.
 The second rough edge (the overstated duration) is unaffected — still true of
-whichever piece a player is pointed at. Enablement is also simpler than §6
-sketched: not "is the file at a revealable stage" but the flat boolean
-`JobPresentation.hasStarted(step.status)` — running or settled by any means,
-as opposed to still queued or blocked — with the item present and disabled
-rather than hidden below that.
+whichever piece a player is pointed at. Enablement started as the flat boolean
+`JobPresentation.hasStarted(step.status)` — running or settled by any means —
+but that broke once a job could fully deliver and have its retention area
+deleted out from under a `.done` composite step: the item stayed enabled,
+pointing at a directory that no longer existed. `QueueEngine.revealTarget(forJob:)`
+replaced it with a filesystem-backed answer: the retention area if it is
+still on disk, the delivered file (the `.assemble` step's artifact) once
+that area is gone because the job succeeded, otherwise nothing — with the
+item present and disabled only in that last case.
 
 Prerequisites: `docs/design/compositing.md` (the step this changes) and
 `docs/composite-performance.md` (why the composite takes as long as it does, and

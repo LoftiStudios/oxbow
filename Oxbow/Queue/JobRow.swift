@@ -27,6 +27,11 @@ struct JobRow: View {
   /// closure takes the `JobID` this row already has, the same shape as
   /// `retainedBytes` below.
   let onRevealRetainedFiles: (JobID) -> Void
+  /// What the composite step's Finder-reveal item should currently show, for
+  /// `StepRow` to decide whether that item is enabled. Async and filesystem-
+  /// backed like `retainedBytes` below, for the same reason: existence checks
+  /// do not belong on a view body.
+  let checkRevealTarget: (JobID) async -> RevealTarget?
   /// Bytes held in this job's retention area. An async closure rather than a
   /// plain value, matching `StepLogDisclosure.log` — it is a filesystem
   /// lookup the row makes on demand rather than state `Job` carries, so a row
@@ -78,8 +83,10 @@ struct JobRow: View {
           ForEach(job.steps) { step in
             StepRow(
               step: step,
+              jobStatus: job.status,
               onRetry: { onRetryStep(step.id) },
-              onRevealRetainedFiles: { onRevealRetainedFiles(job.id) })
+              onRevealRetainedFiles: { onRevealRetainedFiles(job.id) },
+              checkRevealTarget: { await checkRevealTarget(job.id) })
               .padding(.leading, QueueMetrics.contentIndent)
           }
         }
@@ -193,7 +200,8 @@ struct JobRow: View {
     ForEach(JobRowPreviewData.jobs) { job in
       JobRow(
         job: job, onCancel: {}, onRetryJob: {}, onRetryStep: { _ in },
-        onRevealRetainedFiles: { _ in }, retainedBytes: { _ in 0 })
+        onRevealRetainedFiles: { _ in }, checkRevealTarget: { _ in nil },
+        retainedBytes: { _ in 0 })
     }
   }
   .frame(width: 560, height: 320)
@@ -207,6 +215,7 @@ struct JobRow: View {
       onRetryJob: {},
       onRetryStep: { _ in },
       onRevealRetainedFiles: { _ in },
+      checkRevealTarget: { _ in nil },
       retainedBytes: { _ in 0 })
   }
   .frame(width: 560, height: 260)
@@ -220,6 +229,7 @@ struct JobRow: View {
       onRetryJob: {},
       onRetryStep: { _ in },
       onRevealRetainedFiles: { _ in },
+      checkRevealTarget: { _ in nil },
       // A six-hour stream's worth of retained pieces — resume.md §8's own
       // example, so the row and the doc agree on what "non-trivial" means.
       retainedBytes: { _ in 26_000_000_000 })

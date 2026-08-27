@@ -87,20 +87,6 @@ nonisolated enum JobPresentation {
     }
   }
 
-  /// Whether a step has begun — running, or settled in any way (done, failed,
-  /// cancelled) — as opposed to still queued or blocked behind something
-  /// upstream. This is deliberately the whole rule for the composite row's
-  /// Finder-reveal item (docs/design/fragmented-output.md §6): simpler than
-  /// the design doc's original sketch, because there is nothing to reveal
-  /// before a step has ever run and the retention directory is created the
-  /// moment it does.
-  static func hasStarted(_ status: StepStatus) -> Bool {
-    switch status {
-    case .queued, .blocked: false
-    case .running, .done, .failed, .cancelled: true
-    }
-  }
-
   /// The meaning behind a status icon's colour. Named here and coloured in the
   /// view layer, so this type stays free of SwiftUI.
   enum Tone: Sendable {

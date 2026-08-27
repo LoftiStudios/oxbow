@@ -1,5 +1,18 @@
 import Foundation
 
+/// What the composite step's Finder-reveal item should show. See
+/// `QueueEngine.revealTarget(forJob:)` for how this is decided.
+public enum RevealTarget: Equatable, Sendable {
+  /// Select the pieces themselves where there are any; fall back to the
+  /// (always-created once the composite step starts) retention directory for
+  /// the gap between the step starting and its first fragment landing on
+  /// disk.
+  case retained(directory: URL, pieces: [URL])
+  /// The retention area is gone and the job delivered — reveal what it
+  /// actually produced instead of a directory that no longer exists.
+  case delivered(URL)
+}
+
 /// Owns queue state and performs every side effect.
 ///
 /// The scheduling rules live in `Scheduler` as pure functions, so this type is
@@ -786,6 +799,34 @@ public actor QueueEngine {
   /// first fragment landing on disk.
   public func retainedFileURLs(forJob id: JobID) -> (directory: URL, pieces: [URL]) {
     (configuration.workspace.resumeDirectory(id), pieces(of: id))
+  }
+
+  /// What the composite step's Finder-reveal item should show right now, in
+  /// the order these are tried:
+  ///
+  /// 1. The retention area is still on disk — the ordinary case whenever a
+  ///    composite has started and the job has not yet fully delivered
+  ///    (`.retained`, exactly what `retainedFileURLs` already returns).
+  /// 2. It is gone precisely *because* the job delivered — `removeJobWorkspace`
+  ///    deletes it the moment the job reaches `.done` (docs/design/resume.md
+  ///    §8) — so the useful answer is the file it actually delivered, the
+  ///    `.assemble` step's own artifact, not a directory that no longer
+  ///    exists (`.delivered`).
+  /// 3. Neither: the composite has not started yet. There is nothing to
+  ///    reveal, and the caller (`StepRow`) disables the item rather than
+  ///    inventing something to select.
+  ///
+  /// One definition rather than two, because a caller checking whether the
+  /// item should be enabled and the click that actually reveals something
+  /// must never disagree about what "there is something here" means.
+  public func revealTarget(forJob id: JobID) -> RevealTarget? {
+    let (directory, pieces) = retainedFileURLs(forJob: id)
+    if !pieces.isEmpty || FileManager.default.fileExists(atPath: directory.path) {
+      return .retained(directory: directory, pieces: pieces)
+    }
+    guard let job = jobs.first(where: { $0.id == id }), let delivered = job.deliveredFiles.first
+    else { return nil }
+    return .delivered(delivered)
   }
 
   /// Repairs the last piece, counts what survived, and says where to resume.

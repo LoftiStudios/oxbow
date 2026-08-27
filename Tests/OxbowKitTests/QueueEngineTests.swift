@@ -437,6 +437,35 @@ struct QueueEngineTests {
     await engine.flush()
   }
 
+  /// The composite step's Finder-reveal item, rule 2: once a job has fully
+  /// delivered, `removeJobWorkspace` has already deleted its retention area
+  /// (verified just above), so pointing at it would be a dead directory. The
+  /// item must fall back to what the job actually produced — the `.assemble`
+  /// step's own artifact — rather than leaving the user staring at nothing.
+  @Test func revealTargetPointsAtTheDeliveredFileOnceRetentionIsGone() async throws {
+    let (engine, root) = makeEngine(.succeeds)
+    defer { cleanUp(root) }
+
+    let destination = root.appending(path: "out.mp4")
+    let template = JobTemplate(
+      media: .video(VideoRequest(videoID: "v", quality: "1080p60")),
+      render: RenderRequest(),
+      composite: CompositeRequest(
+        framerate: 60,
+        bitrateMbps: 8,
+        duration: .seconds(60),
+        destination: destination))
+
+    try await engine.start()
+    await engine.enqueue(template, title: "t")
+    try await settle(engine)
+
+    let job = try #require(await engine.currentJobs.first)
+    #expect(await engine.revealTarget(forJob: job.id) == .delivered(destination))
+
+    await engine.flush()
+  }
+
   /// `removeJobWorkspace`'s `.done` branch nils a step's claim on any
   /// artifact `Workspace.contains` recognises, then separately deletes the
   /// whole retained directory. The composite step's own artifact lives
@@ -1550,6 +1579,37 @@ struct QueueEngineTests {
 
     #expect(directory == harness.workspace.resumeDirectory(harness.job.id))
     #expect(pieces.isEmpty)
+  }
+
+  /// The composite step's Finder-reveal item, rule 1: the retention area is
+  /// still on disk, so it reveals what is actually there — the same answer
+  /// `retainedFileURLs` already gives, wrapped so a caller does not have to
+  /// separately decide whether that answer applies.
+  @Test func revealTargetReportsRetainedPiecesWhileTheyAreOnDisk() async throws {
+    let harness = try makeHarness()
+    defer { harness.tearDown() }
+    try harness.writePiece(index: 0, frames: 30)
+
+    let target = await harness.engine.revealTarget(forJob: harness.job.id)
+
+    // Built from the same call `revealTarget` itself makes, not from
+    // `resumeDirectory` directly — `contentsOfDirectory` resolves `/var` to
+    // `/private/var` on a real filesystem, and a hand-built expectation
+    // would fail on that alone rather than on anything this test is
+    // actually about.
+    let (directory, pieces) = await harness.engine.retainedFileURLs(forJob: harness.job.id)
+    #expect(target == .retained(directory: directory, pieces: pieces))
+    #expect(pieces.map(\.lastPathComponent) == ["piece-0.mp4"])
+  }
+
+  /// Rule 3: a composite that has never started has neither a retention area
+  /// nor anything delivered — there is genuinely nothing to reveal, and the
+  /// item must disable rather than invent something to select.
+  @Test func revealTargetIsNilBeforeTheCompositeHasEverStarted() async throws {
+    let harness = try makeHarness()
+    defer { harness.tearDown() }
+
+    #expect(await harness.engine.revealTarget(forJob: harness.job.id) == nil)
   }
 
   /// The invariant resume.md §8 exists to protect, and the one no existing
