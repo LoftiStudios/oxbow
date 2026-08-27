@@ -209,6 +209,12 @@ public actor QueueEngine {
   /// Delete key acts on however many rows are selected, and doing that as N
   /// separate calls would publish N snapshots and re-save N times.
   public func remove(jobs ids: Set<JobID>) async {
+    // Dismissing a job is how a user reclaims retained pieces — retention is
+    // user-cleared for now, docs/design/resume.md §8 — so this runs
+    // unconditionally, ahead of the `doomed` lookup below, rather than only
+    // for a job still tracked here.
+    for id in ids { configuration.workspace.removeResumable(id) }
+
     let doomed = jobs.filter { ids.contains($0.id) }
     guard !doomed.isEmpty else { return }
 
@@ -339,6 +345,11 @@ public actor QueueEngine {
       completeStep(id, outcome: .failed(StepFailure(
         kind: .launchFailed("\(error)"),
         summary: "Wiring bug: this step's inputs did not match its dependencies.")))
+      return
+    } catch is SourceChangedError {
+      completeStep(id, outcome: .failed(StepFailure(
+        kind: .noArtifact,
+        summary: "The source changed since this download started. Start it again.")))
       return
     } catch {
       completeStep(id, outcome: .failed(StepFailure(
@@ -651,6 +662,14 @@ public actor QueueEngine {
       jobs[index].steps[stepIndex].artifact = nil
     }
     configuration.workspace.removeJob(id)
+
+    // Reached only on the genuinely-`.done` path above, never from the
+    // not-done branch that can return early to preserve a cancelled job's
+    // intermediates for a retry. A retained piece is exactly what that retry
+    // would continue from, so clearing it there would defeat resume before
+    // it ever got used. Delivered means done: the retained bytes have no
+    // further use. docs/design/resume.md §8.
+    configuration.workspace.removeResumable(id)
   }
 
   /// Spec §1.5: a step succeeded iff its artifact exists **and is non-empty**.
@@ -770,6 +789,29 @@ public actor QueueEngine {
       // that no longer exists once the cap resets it.
       let resume = resumePoint(job: job.id, framerate: request.framerate)
       let directory = try configuration.workspace.prepareResume(job: job.id)
+
+      // A resumed job re-downloads its source, and Twitch does not guarantee
+      // it comes back the same: sections get muted for DMCA after the fact,
+      // renditions get re-encoded, VODs get trimmed. Half a composite from
+      // before such a change and half from after produces a file with a
+      // discontinuity and no error anywhere — the encode succeeds, the join
+      // succeeds, and the video is quietly wrong. Byte length plus duration
+      // catches that: two real downloads of the same VOD were measured
+      // byte-for-byte different but identical in both of these, so a mismatch
+      // here means the source itself changed, not just re-encoding noise. See
+      // docs/design/resume.md §7.
+      let fingerprintFile = directory.appending(path: "source.json")
+      let sourceVideo = inputs.first
+      if let sourceVideo {
+        let fresh = try SourceFingerprint.of(sourceVideo, duration: request.duration)
+        if resume.from == nil {
+          try? fresh.write(to: fingerprintFile)
+        } else if let recorded = try? SourceFingerprint.read(from: fingerprintFile),
+                  !recorded.matches(fresh) {
+          throw SourceChangedError()
+        }
+      }
+
       return StepContext(
         stepTempDirectory: stepDirectory,
         outputFile: directory.appending(path: "piece-\(resume.index).mp4"),
@@ -787,6 +829,20 @@ public actor QueueEngine {
         .joined(separator: "\n") + "\n"
       try list.write(
         to: stepDirectory.appending(path: "pieces.txt"), atomically: true, encoding: .utf8)
+
+      // The re-fetched video and chat render are both dead once the pieces
+      // and the sidecar audio exist. Dropping them here rather than at job
+      // end is what keeps the recovery peak near a normal run's — resume.md
+      // §5. Scoped to this job's workspace so nothing outside it can be hit.
+      let spent = job.steps.compactMap { step -> URL? in
+        switch step.kind {
+        case .downloadVideo, .downloadClip, .renderChat: step.artifact
+        case .downloadChat, .composite, .assemble: nil
+        }
+      }
+      for file in spent where configuration.workspace.contains(file, ofJob: job.id) {
+        try? FileManager.default.removeItem(at: file)
+      }
 
       // Assemble's single input artifact is the sidecar audio, not a parent's
       // output — everything else it needs is in the retention area and named
@@ -849,6 +905,10 @@ public actor QueueEngine {
     }
   }
 }
+
+/// Thrown when a resumed job's re-downloaded source no longer matches what
+/// piece 0 was built from. See docs/design/resume.md §7.
+struct SourceChangedError: Error {}
 
 /// Thrown by `QueueEngine.makeContext` when a step's resolved input artifacts
 /// are shorter than its `dependsOn`, so `launch` can report a wiring bug

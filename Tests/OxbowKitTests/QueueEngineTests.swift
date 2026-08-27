@@ -403,12 +403,13 @@ struct QueueEngineTests {
     // The video, chat, and render steps carried no destination of their own,
     // so each is an intermediate: deleted with the job's workspace, its claim
     // dropped in the same breath. The composite's own output is a piece in
-    // the retention area, not the delivered file — but unlike the others it
-    // is *not* cleared here: `Workspace.contains` deliberately excludes the
-    // retention area (see its doc comment), so a done job's workspace sweep
-    // cannot touch it, and its artifact keeps pointing at the retained piece
-    // until delivery-time cleanup runs. That cleanup is a separate concern
-    // (docs/design/resume.md §8) not yet wired in.
+    // the retention area, not the delivered file — `Workspace.contains`
+    // deliberately excludes that area (see its doc comment), so the done
+    // job's workspace sweep never touches it directly, and its artifact field
+    // keeps pointing at the now-deleted piece rather than being cleared to
+    // nil. What actually removes the bytes is delivery-time retention
+    // cleanup (docs/design/resume.md §8): a delivered job has nothing left to
+    // resume, so `removeJobWorkspace` drops the whole retained directory.
     let workspace = Workspace(root: root)
     for step in job.steps {
       switch step.kind {
@@ -416,20 +417,23 @@ struct QueueEngineTests {
         #expect(step.artifact == destination)
       case .composite:
         #expect(step.artifact == workspace.resumeDirectory(job.id).appending(path: "piece-0.mp4"),
-                "the retained piece is not cleared until delivery-time cleanup")
+                "the artifact field still names the piece even though delivery cleared the file")
       case .downloadVideo, .downloadClip, .downloadChat, .renderChat:
         #expect(step.artifact == nil, "an intermediate must not be claimed")
       }
     }
 
     #expect(FileManager.default.fileExists(atPath: destination.path))
+    #expect(!FileManager.default.fileExists(
+      atPath: workspace.resumeDirectory(job.id).path),
+      "a delivered job's retained pieces have no further use")
 
-    // Nothing else reached disk under root except the assembled file and the
-    // still-retained composite piece — the video and render never left the
-    // workspace that was just swept.
+    // Nothing else reached disk under root except the assembled file — the
+    // video, render, and retained composite piece were all cleared once the
+    // job delivered.
     let enumerator = FileManager.default.enumerator(atPath: root.path)
     let delivered = (enumerator?.allObjects as? [String] ?? []).filter { $0.hasSuffix(".mp4") }
-    #expect(Set(delivered) == ["out.mp4", "resume/\(job.id.rawValue.uuidString)/piece-0.mp4"])
+    #expect(Set(delivered) == ["out.mp4"])
 
     await engine.flush()
   }
@@ -1130,12 +1134,17 @@ struct QueueEngineTests {
     let engine: QueueEngine
     let workspace: Workspace
     let job: Job
+    let store: QueueStore
     private let cleanup: () -> Void
 
-    init(engine: QueueEngine, workspace: Workspace, job: Job, cleanup: @escaping () -> Void) {
+    init(
+      engine: QueueEngine, workspace: Workspace, job: Job, store: QueueStore,
+      cleanup: @escaping () -> Void)
+    {
       self.engine = engine
       self.workspace = workspace
       self.job = job
+      self.store = store
       self.cleanup = cleanup
     }
 
@@ -1154,6 +1163,120 @@ struct QueueEngineTests {
       let data = FragmentBuilder.fragmentedFile([UInt32(frames)])
       try data.write(
         to: workspace.resumeDirectory(job.id).appending(path: "piece-\(index).mp4"))
+    }
+
+    /// What piece 0 was (supposedly) built from — written here rather than
+    /// produced by a real first attempt, so a test can dial in a mismatch
+    /// directly instead of running two composites to provoke one.
+    func writeFingerprint(byteCount: Int, duration: Duration) throws {
+      try FileManager.default.createDirectory(
+        at: workspace.resumeDirectory(job.id), withIntermediateDirectories: true)
+      try SourceFingerprint(byteCount: byteCount, duration: duration)
+        .write(to: workspace.resumeDirectory(job.id).appending(path: "source.json"))
+    }
+
+    /// A video file of an exact size, standing in for a re-downloaded source —
+    /// written directly rather than run through a helper, so a test can dial
+    /// in the precise byte count `SourceFingerprint` compares against. The
+    /// return value only matters to callers that need to assert on the path
+    /// afterward — `aChangedSourceRefusesToResume` only needs the file on
+    /// disk, not the URL back.
+    @discardableResult
+    func writeVideoArtifact(byteCount: Int) throws -> URL {
+      let url = try workspace.prepareArtifacts(job: job.id).appending(path: "video.mp4")
+      try Data(count: byteCount).write(to: url)
+      return url
+    }
+
+    /// The chat render's stand-in, same reasoning as `writeVideoArtifact`.
+    @discardableResult
+    func writeRenderArtifact(byteCount: Int) throws -> URL {
+      let url = try workspace.prepareArtifacts(job: job.id).appending(path: "render.mp4")
+      try Data(count: byteCount).write(to: url)
+      return url
+    }
+
+    /// Exercises the composite branch of `makeContext` directly, wired to a
+    /// video dependency so the source-fingerprint check has something to
+    /// compare — and translates a thrown `SourceChangedError` the way
+    /// `launch(_:)` does, since that translation is what a caller actually
+    /// sees.
+    func runComposite() async -> StepOutcome {
+      let videoStep = Step(
+        id: StepID(rawValue: UUID()),
+        kind: .downloadVideo(VideoRequest(videoID: "v", quality: "best")),
+        status: .done,
+        artifact: workspace.artifactsDirectory(job.id).appending(path: "video.mp4"))
+      let compositeStep = Step(
+        id: StepID(rawValue: UUID()),
+        kind: .composite(CompositeRequest(
+          framerate: 30, bitrateMbps: 8, duration: .seconds(547),
+          destination: workspace.root.appending(path: "out.mp4"))),
+        dependsOn: [videoStep.id])
+      let wired = Job(id: job.id, created: job.created, title: job.title,
+                       steps: [videoStep, compositeStep])
+
+      do {
+        let context = try engine.makeContext(job: wired, step: compositeStep)
+        return .succeeded(artifact: context.outputFile)
+      } catch is SourceChangedError {
+        return .failed(StepFailure(
+          kind: .noArtifact,
+          summary: "The source changed since this download started. Start it again."))
+      } catch {
+        return .failed(StepFailure(kind: .launchFailed("\(error)"), summary: "\(error)"))
+      }
+    }
+
+    /// Exercises the assemble branch of `makeContext` directly, wired to a
+    /// video and a render dependency so there is something for it to drop.
+    /// The deletion is a plain filesystem side effect of building the
+    /// context, so there is nothing further to run.
+    func runAssemble() async {
+      let videoStep = Step(
+        id: StepID(rawValue: UUID()),
+        kind: .downloadVideo(VideoRequest(videoID: "v", quality: "best")),
+        status: .done,
+        artifact: workspace.artifactsDirectory(job.id).appending(path: "video.mp4"))
+      let renderStep = Step(
+        id: StepID(rawValue: UUID()),
+        kind: .renderChat(RenderRequest()),
+        status: .done,
+        artifact: workspace.artifactsDirectory(job.id).appending(path: "render.mp4"))
+      let compositeStep = Step(
+        id: StepID(rawValue: UUID()),
+        kind: .composite(CompositeRequest(
+          framerate: 30, bitrateMbps: 8, duration: .seconds(60),
+          destination: workspace.root.appending(path: "out.mp4"))),
+        status: .done,
+        dependsOn: [videoStep.id, renderStep.id],
+        // Never read by the assemble branch — it hardcodes the sidecar path
+        // instead — but `makeContext`'s wiring guard still counts it, so a
+        // nil here would misreport this as a wiring bug rather than
+        // exercising the deletion this test is actually after.
+        artifact: workspace.resumeDirectory(job.id).appending(path: "piece-0.mp4"))
+      let assembleStep = Step(
+        id: StepID(rawValue: UUID()),
+        kind: .assemble(AssembleRequest(destination: workspace.root.appending(path: "out.mp4"))),
+        dependsOn: [compositeStep.id])
+      let wired = Job(id: job.id, created: job.created, title: job.title,
+                       steps: [videoStep, renderStep, compositeStep, assembleStep])
+
+      _ = try? engine.makeContext(job: wired, step: assembleStep)
+    }
+
+    /// Runs `job` to real completion through the engine's own pipeline,
+    /// rather than through `makeContext` directly — clearing the resume area
+    /// on delivery is `QueueEngine.removeJobWorkspace`'s doing, and that only
+    /// fires from inside the actor once the job's own steps are genuinely
+    /// `.done`.
+    func completeJobSuccessfully() async {
+      try? store.save([job])
+      try? await engine.start()
+      for _ in 0..<200 {
+        if await engine.isIdle { return }
+        try? await Task.sleep(for: .milliseconds(25))
+      }
     }
 
     func tearDown() {
@@ -1178,7 +1301,10 @@ struct QueueEngineTests {
           framerate: 30, bitrateMbps: 8, duration: .seconds(60),
           destination: root.appending(path: "out.mp4"))))])
 
-    return ResumeHarness(engine: engine, workspace: workspace, job: job) { self.cleanUp(root) }
+    return ResumeHarness(
+      engine: engine, workspace: workspace, job: job,
+      store: QueueStore(fileURL: storeURL(for: root))
+    ) { self.cleanUp(root) }
   }
 
   /// A first attempt writes piece-0 into the retention area, not the workspace
@@ -1225,10 +1351,71 @@ struct QueueEngineTests {
 
     #expect(context.outputFile.lastPathComponent == "piece-0.mp4")
     #expect(context.resumeFrom == nil)
-    // The cap reset drops the whole retained directory (`removeResumable`),
-    // so this pins that it comes back empty rather than leaving `outputFile`
-    // pointing into a directory that no longer exists on disk.
-    #expect(FileManager.default.fileExists(
+    // The cap reset drops the whole retained directory (`removeResumable`)
+    // and `prepareResume` recreates it empty right after — so this pins that
+    // it comes back genuinely empty, not merely present. If `removeResumable`
+    // ever silently failed, `piece-1` through `piece-3` would survive here,
+    // the fresh run would overwrite only `piece-0`, and assemble would splice
+    // three stale pieces onto one fresh one — a silently wrong video.
+    let contents = try FileManager.default.contentsOfDirectory(
+      atPath: harness.workspace.resumeDirectory(harness.job.id).path)
+    #expect(contents.isEmpty)
+  }
+
+  /// A changed source must refuse rather than splice two different videos
+  /// together. resume.md §7.
+  @Test func aChangedSourceRefusesToResume() async throws {
+    let harness = try makeHarness()
+    defer { harness.tearDown() }
+    try harness.writePiece(index: 0, frames: 30)
+    try harness.writeFingerprint(byteCount: 1000, duration: .seconds(547))
+    try harness.writeVideoArtifact(byteCount: 2000)
+
+    let outcome = await harness.runComposite()
+
+    guard case .failed(let failure) = outcome else {
+      Issue.record("expected refusal, got \(outcome)")
+      return
+    }
+    #expect(failure.summary.contains("source changed"))
+  }
+
+  /// Deleting the re-fetched inputs before assembling is what keeps the disk
+  /// peak at ~58 GB rather than ~84 on a six-hour job. resume.md §5.
+  @Test func assembleDropsTheRefetchedInputsFirst() async throws {
+    let harness = try makeHarness()
+    defer { harness.tearDown() }
+    let video = try harness.writeVideoArtifact(byteCount: 10)
+    let render = try harness.writeRenderArtifact(byteCount: 10)
+
+    await harness.runAssemble()
+
+    #expect(!FileManager.default.fileExists(atPath: video.path))
+    #expect(!FileManager.default.fileExists(atPath: render.path))
+  }
+
+  /// Delivered means done: the retained bytes have no further use.
+  @Test func aDeliveredJobClearsItsResumeArea() async throws {
+    let harness = try makeHarness()
+    defer { harness.tearDown() }
+    try harness.writePiece(index: 0, frames: 30)
+
+    await harness.completeJobSuccessfully()
+
+    #expect(!FileManager.default.fileExists(
+      atPath: harness.workspace.resumeDirectory(harness.job.id).path))
+  }
+
+  /// Dismissing a failed job is how a user reclaims the space, since retention
+  /// is user-cleared for now. resume.md §8.
+  @Test func removingAJobClearsItsResumeArea() async throws {
+    let harness = try makeHarness()
+    defer { harness.tearDown() }
+    try harness.writePiece(index: 0, frames: 30)
+
+    await harness.engine.remove(jobs: [harness.job.id])
+
+    #expect(!FileManager.default.fileExists(
       atPath: harness.workspace.resumeDirectory(harness.job.id).path))
   }
 }
