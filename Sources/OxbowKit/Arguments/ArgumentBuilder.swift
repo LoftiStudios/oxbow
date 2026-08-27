@@ -173,13 +173,15 @@ public enum ArgumentBuilder {
           + "[1:v]setpts=PTS-STARTPTS,fps=\(request.framerate)[c];"
           + "[v][c]hstack=inputs=2[out]",
         "-map", "[out]",
-        // The `?` makes the audio map optional so a silent VOD does not fail.
-        "-map", "0:a:0?",
+        // Video-only. Audio is mapped once, from the sidecar copied out
+        // above — not here, and not again at assemble. A piece carrying its
+        // own audio track would double it up for nothing: `.assemble` never
+        // reads it (it maps `1:a:0?` from the sidecar), so the copy would
+        // just be dead weight in every piece. resume.md §2.
+        "-an",
         "-c:v", "h264_videotoolbox",
         "-b:v", "\(request.bitrateMbps)M",
         "-pix_fmt", "yuv420p",
-        // VOD audio is already AAC in MP4. Re-encoding it buys nothing.
-        "-c:a", "copy",
         "-progress", "pipe:1", "-nostats", "-loglevel", "error",
         // empty_moov writes the track declarations with no sample table, so
         // the file is structurally valid from byte 0 — the precondition for

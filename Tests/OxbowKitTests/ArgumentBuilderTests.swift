@@ -443,11 +443,10 @@ struct ArgumentBuilderTests {
         + "[1:v]setpts=PTS-STARTPTS,fps=60[c];"
         + "[v][c]hstack=inputs=2[out]",
       "-map", "[out]",
-      "-map", "0:a:0?",
+      "-an",
       "-c:v", "h264_videotoolbox",
       "-b:v", "8M",
       "-pix_fmt", "yuv420p",
-      "-c:a", "copy",
       "-progress", "pipe:1",
       "-nostats",
       "-loglevel", "error",
