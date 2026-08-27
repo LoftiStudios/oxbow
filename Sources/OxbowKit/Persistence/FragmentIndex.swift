@@ -46,8 +46,8 @@ public enum FragmentedMP4 {
                         as: UTF8.self)
 
       if boxSize == 1 {
-        guard let ext = try handle.read(upToCount: 8), ext.count == 8 else { break }
-        boxSize = Int(ext.reduce(0) { $0 << 8 | UInt64($1) })
+        guard let extended = try largesize(handle: handle) else { break }
+        boxSize = extended
       } else if boxSize == 0 {
         boxSize = size - offset
       }
@@ -93,6 +93,13 @@ public enum FragmentedMP4 {
   /// tell "finished writing" from "interrupted", used for the composite's
   /// audio sidecar, which — unlike a piece — has none of the fragmentation
   /// that makes a partial write recoverable. See docs/design/resume.md §4.
+  ///
+  /// **Only means "finished writing" for a non-fragmented file like the
+  /// sidecar.** A `+empty_moov` piece places `moov` at the very head, before
+  /// any sample data, by design (`fragmented-output.md` §3) — so this would
+  /// read `true` on a piece that is still being written and torn mid-fragment.
+  /// This type's other half, `index(of:)`, is what pieces are checked with;
+  /// do not call this one on a fragmented file.
   public static func hasCompleteMoov(at url: URL) throws -> Bool {
     let handle = try FileHandle(forReadingFrom: url)
     defer { try? handle.close() }
@@ -109,8 +116,8 @@ public enum FragmentedMP4 {
                         as: UTF8.self)
 
       if boxSize == 1 {
-        guard let ext = try handle.read(upToCount: 8), ext.count == 8 else { break }
-        boxSize = Int(ext.reduce(0) { $0 << 8 | UInt64($1) })
+        guard let extended = try largesize(handle: handle) else { break }
+        boxSize = extended
       } else if boxSize == 0 {
         boxSize = size - offset
       }
@@ -120,6 +127,20 @@ public enum FragmentedMP4 {
       offset += boxSize
     }
     return false
+  }
+
+  /// The 64-bit `largesize` that follows a box header declaring `size == 1`.
+  /// `Int(exactly:)`, not a bare `Int(...)`: a `largesize` past `Int.max`
+  /// would otherwise trap, and a trap is not something the `try?` at every
+  /// call site of `index(of:)`/`hasCompleteMoov` can catch — same class of
+  /// bug as the `FileHandle.write` crash fixed earlier on this branch. A
+  /// `largesize` this codebase will never actually see in a legitimate file
+  /// just reads as "not a valid box" instead, the same as any other
+  /// malformed header.
+  private static func largesize(handle: FileHandle) throws -> Int? {
+    guard let ext = try handle.read(upToCount: 8), ext.count == 8 else { return nil }
+    let raw = ext.reduce(UInt64(0)) { $0 << 8 | UInt64($1) }
+    return Int(exactly: raw)
   }
 
   /// Descends `moof` → `traf` → `trun` and reads `sample_count`, which sits

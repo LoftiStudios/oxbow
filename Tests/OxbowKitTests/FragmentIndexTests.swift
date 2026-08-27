@@ -117,4 +117,59 @@ struct FragmentIndexTests {
     #expect(index.frameCount == 3)
     #expect(index.completeBytes == size)
   }
+
+  /// A `largesize` past `Int.max` used to trap inside a bare `Int(...)`
+  /// conversion — not catchable by the `try?` at every call site of
+  /// `hasCompleteMoov`, so it took the whole process down instead of failing
+  /// the one call. Confirms the box now reads as malformed instead.
+  @Test func aLargesizeBeyondIntMaxDoesNotTrap() throws {
+    var data = FragmentBuilder.box("ftyp", Data(repeating: 0, count: 8))
+    data.append(FragmentBuilder.oversizedBox("moov"))
+    let url = try FragmentBuilder.write(data)
+    defer { try? FileManager.default.removeItem(at: url) }
+
+    #expect(try !FragmentedMP4.hasCompleteMoov(at: url))
+  }
+
+  /// Same trap, exercised through `index(of:)` — the half that pieces
+  /// (rather than the sidecar) are actually checked with.
+  @Test func indexToleratesALargesizeBeyondIntMax() throws {
+    var data = FragmentBuilder.box("ftyp", Data(repeating: 0, count: 8))
+    let beforeTheOversizedBox = data.count
+    data.append(FragmentBuilder.oversizedBox("mdat"))
+    let url = try FragmentBuilder.write(data)
+    defer { try? FileManager.default.removeItem(at: url) }
+
+    let index = try FragmentedMP4.index(of: url)
+
+    #expect(index.frameCount == 0)
+    #expect(index.completeBytes == beforeTheOversizedBox)
+  }
+
+  /// The hand-built fixtures above prove the parser's `moov`-detection logic
+  /// against boxes we told it to have. This proves the specific case that
+  /// matters for the sidecar and was previously untested against real
+  /// output: what a genuinely `SIGKILL`ed FFmpeg audio write actually leaves
+  /// on disk. A killed-early write never gets past the `mdat` header — the
+  /// muxer writes a placeholder `size == 0` there (spec meaning: "extends to
+  /// EOF") and patches it to the real size only when it finalises — so this
+  /// exercises the `boxSize == 0` branch in `FragmentedMP4`, which no other
+  /// test reaches. The verdict is `false` either way (there is no `moov`,
+  /// complete or not), so this is not a live bug — but nothing checked in
+  /// previously demonstrated it against a real file.
+  ///
+  /// Regenerated with (deterministic across repeated runs — the kill lands
+  /// before the encoder has written its first frame, well before the
+  /// pipeline is warm enough for scheduling jitter to matter):
+  /// ```
+  /// build/ffmpeg/ffmpeg -nostdin -y -hide_banner -loglevel error \
+  ///   -f s16le -ar 44100 -ac 1 -i /dev/zero -t 60 -c:a aac -b:a 64k \
+  ///   sigkilled-audio-sidecar.m4a &
+  /// PID=$!; sleep 0.02; kill -KILL $PID
+  /// ```
+  @Test func aRealSigkilledAudioWriteHasNoMoov() throws {
+    let url = try Fixture.url(named: "sigkilled-audio-sidecar.m4a")
+
+    #expect(try !FragmentedMP4.hasCompleteMoov(at: url))
+  }
 }

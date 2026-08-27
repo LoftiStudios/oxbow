@@ -1,16 +1,35 @@
 # Resuming an interrupted composite — design
 
-**Status:** approved 2026-08-26. Implemented and verified end to end against a
-real VOD (§2), including the sidecar fix (§2, §4): the audio sidecar is not
-crash-safe the way the piece is, so instead of trying to make it so, a
-resumed composite now rewrites it outright whenever it isn't usable. Argv-
-and unit-level coverage of that fix is complete and green; the live
-end-to-end confirmation is partial — see §2's "Verified end to end" — because
-a Twitch platform outage on 2026-08-27 (independently confirmed via
-status.twitch.com and public outage trackers, affecting video/chat/login
-broadly) cut the run short right after it had already reproduced the defect
-for real. Re-run `ResumeEndToEndTests` once Twitch is stable to get the
-remaining confirmation.
+**Status:** approved 2026-08-26. Implemented, with argv- and unit-level
+coverage complete and green throughout, including the sidecar fix (§4): the
+audio sidecar is not crash-safe the way the piece is, so instead of trying to
+make it so, a resumed composite now rewrites it outright whenever it isn't
+usable.
+
+**Live confirmation against a real VOD is partial, not complete — read this
+plainly rather than as "verified end to end."** The core resume mechanism
+(§2 "Verified end to end") is fully confirmed live: piece survival, the
+resumed seek, the seam, and the delivered frame count. The sidecar fix is
+confirmed live on its **defect** half only: a genuine `SIGKILL` reproduced
+the corruption for real — piece 0 survived and repaired at 4452 complete
+frames, and the audio sidecar came back with no complete `moov`, exactly as
+predicted. Its **recovery** half — that a resumed attempt notices and
+rewrites the sidecar, and `.assemble` then delivers a file with correct,
+synced audio — was **not** confirmed live. A Twitch platform outage on
+2026-08-27 (independently confirmed via status.twitch.com and public outage
+trackers, affecting video/chat/login broadly) cut the run short right after
+it had reproduced the defect, before the resumed attempt could run. Re-run
+`ResumeEndToEndTests` once Twitch is stable to get that remaining
+confirmation.
+
+Separately, and without depending on Twitch or the network at all,
+`SidecarRewriteFFmpegTests` (§11) runs the real, `ArgumentBuilder`-generated
+resume argv through the real bundled FFmpeg against a synthetic source and
+confirms the specific mechanism the fix relies on: the rewritten sidecar
+spans the **whole source**, not the tail. That is real-FFmpeg confirmation of
+the fix's own claim, independent of the still-open live-VOD recovery
+confirmation above — the two are not the same evidence, and neither
+substitutes for the other.
 
 Prerequisites: `docs/design/fragmented-output.md` (the container change this
 depends on entirely), `docs/design/compositing.md` (the step being resumed), and
@@ -232,10 +251,20 @@ is deliberately outside the job workspace and why.
 **`audio.m4a` is written whenever no usable one exists yet — not only on a
 first attempt.** FFmpeg accepts several outputs in one invocation, so the same
 command that encodes a piece stream-copies the source's audio track beside
-it — no extra process and no measurable time, since it is a copy. This is
-what lets §5 delete the re-fetched video before assembling: without it the
-16.3 GB source would have to survive until delivery purely to supply its
-audio, and the recovery peak would be ~74 GB rather than ~58.
+it — no extra process, and on a **first** attempt no measurable time either,
+since it is a copy and input 0 is already the un-seeked source the copy needs.
+This is what lets §5 delete the re-fetched video before assembling: without
+it the 16.3 GB source would have to survive until delivery purely to supply
+its audio, and the recovery peak would be ~74 GB rather than ~58.
+
+On a **resumed** attempt that needs the rewrite, this is not quite free: the
+two composited inputs are seeked and FFmpeg's demuxer can skip straight to
+their start, but the third, un-seeked input (below) reads the source from
+byte 0 — a full sequential re-read of the 16.3 GB file that the seeked inputs
+never pay for. Cheap next to a 74-minute encode running in the same
+invocation, and bounded (it is I/O, not compute, and runs alongside the
+encode rather than blocking it), but it is a real cost the "no measurable
+time" framing above only holds for a first attempt.
 
 **Unlike the piece, this output is not itself fragmented — that was a real
 gap, found by §2's "Verified end to end," and it is fixed differently from
@@ -264,6 +293,20 @@ On a first attempt input 0 is already un-seeked, so no third input is added —
 the sidecar maps from `0:a:0?` exactly as before. `.assemble` then reads
 whatever sidecar is on disk once the composite step has finished, whichever
 attempt actually produced a usable one.
+
+**Known quirk, not a bug: progress can read 100% before a resumed composite
+actually finishes.** `FFmpegProgressParser` reports `out_time_us` as FFmpeg
+itself reports it, which is the maximum across every output in the
+invocation — not just the piece. On a resumed rewrite the sidecar output
+spans the whole content window while the piece spans only the tail, so the
+sidecar's own timestamps can momentarily lead the piece's, and the reported
+fraction can approach or touch 1 while the video encode is still running.
+FFmpeg's own dts balancing between outputs bounds how far this lead can run,
+so it is a cosmetic tail effect on the progress bar, not a stall or a stuck
+job — nothing here is out of sync, only the number that describes how close
+to done it is. **Do not restructure progress reporting to fix this**; it is
+recorded so a future reader recognises it as this, not as a regression. See
+`Sources/OxbowKit/Parsing/FFmpegProgressParser.swift`.
 
 `StepContext` gains:
 
@@ -432,8 +475,10 @@ is not in the queue at all — it is the presence of pieces in a directory**, an
 | Resume point | `totalFrames ÷ framerate` across one piece and several; the §2 invariant that it is a timestamp and survives CFR fill |
 | `ArgumentBuilder` `.composite` | `-ss` present with a resume point and absent without; the `-movflags` from `fragmented-output.md` §3 unchanged; the two GPL rules still hold |
 | `ArgumentBuilder` `.assemble` | one piece → rename; several → concat plus `-c copy` and the audio mapped from the source |
-| `FragmentedMP4.hasCompleteMoov` | a finalised `ftyp`+`mdat`+`moov` file reads complete; a file killed before `moov` was ever written reads incomplete; a torn `moov` header with no room for its body reads incomplete |
+| `FragmentedMP4.hasCompleteMoov` | a finalised `ftyp`+`mdat`+`moov` file reads complete; a file killed before `moov` was ever written reads incomplete; a torn `moov` header with no room for its body reads incomplete; a `largesize` extended box past `Int.max` reads as malformed rather than trapping (`aLargesizeBeyondIntMaxDoesNotTrap`, and `index(of:)`'s own `indexToleratesALargesizeBeyondIntMax`) |
+| `FragmentedMP4` against real FFmpeg output, not hand-built boxes | `readsARealFFmpegFragmentedFile` against a real fragmented piece; `aRealSigkilledAudioWriteHasNoMoov` (`FragmentIndexTests`) against `Fixtures/sigkilled-audio-sidecar.m4a`, a genuinely `SIGKILL`ed FFmpeg audio write whose `mdat` is left with the `size == 0` EOF-extension placeholder — the one branch of `FragmentedMP4` no hand-built fixture had exercised. The verdict is `false` either way, so this was not a live bug, only an untested branch |
 | Sidecar usability gate | a first attempt (no sidecar yet) and a resumed attempt with a corrupt sidecar both write it, mapped from `0:a:0?` and a third un-seeked input respectively; a resumed attempt with an already-usable sidecar writes nothing; `QueueEngine` computes `hasUsableSidecar` from the real file on disk, corrupt or intact |
+| The sidecar rewrite against real FFmpeg | `SidecarRewriteFFmpegTests` (network-free, default suite, skips cleanly if `build/ffmpeg/ffmpeg` is absent): the real `ArgumentBuilder`-generated resume argv, run through the real bundled FFmpeg against a synthetic rawvideo+PCM source built from `/dev/zero`, confirms the rewritten sidecar spans the whole source rather than the tail — the claim §4's argv-shape tests alone cannot make, since they never run FFmpeg |
 | Source verification | matching length and duration resumes; either mismatched refuses with the §7 message |
 | Piece cap | a fifth attempt restarts from scratch and clears the directory |
 | `Workspace` | `removeAll()` does not touch `resume/`; `removeResumable` does; `contains(_:ofJob:)` reports `false` for a resume-area file |
