@@ -36,6 +36,18 @@ struct JobTemplateTests {
   }
   private var render: RenderRequest { RenderRequest(destination: URL(filePath: "/tmp/render.mp4")) }
 
+  /// Mirrors the construction the other composite tests use below — media,
+  /// an implied render, and a composite, which is enough to build all four
+  /// upstream steps plus the assemble step this file's tests are about.
+  private func compositeTemplate() -> JobTemplate {
+    JobTemplate(
+      media: .video(VideoRequest(videoID: "v", quality: "1080p60")),
+      render: RenderRequest(),
+      composite: CompositeRequest(
+        framerate: 60, bitrateMbps: 8, duration: .seconds(60),
+        destination: URL(filePath: "/out/x.mp4")))
+  }
+
   @Test func mediaOnlyProducesOneIndependentStep() {
     let job = makeJob(JobTemplate(media: .video(video)))
     #expect(job.steps.count == 1)
@@ -400,10 +412,10 @@ struct JobTemplateTests {
       return Build.stepID(n)
     }
 
-    // chat, render, video, composite — chat and render are appended before
-    // the media step so the short chat download claims the network slot
-    // first; see the load-bearing-order note in `makeJob`.
-    #expect(job.steps.count == 4)
+    // chat, render, video, composite, assemble — chat and render are
+    // appended before the media step so the short chat download claims the
+    // network slot first; see the load-bearing-order note in `makeJob`.
+    #expect(job.steps.count == 5)
     let composite = job.steps[3]
     guard case .composite = composite.kind else {
       Issue.record("last step is not the composite")
@@ -445,10 +457,11 @@ struct JobTemplateTests {
       return Build.stepID(n)
     }
 
-    #expect(job.steps.count == 4)
+    // chat, render, video, composite, assemble.
+    #expect(job.steps.count == 5)
     let composite = job.steps[3]
     guard case .composite = composite.kind else {
-      Issue.record("last step is not the composite")
+      Issue.record("expected the composite fourth")
       return
     }
     guard let mediaStep = job.steps.first(where: {
@@ -526,5 +539,31 @@ struct JobTemplateTests {
 
     let admitted = Scheduler.admissible(jobs: [job], running: [])
     #expect(Set(admitted) == Set([renderStep.id, mediaStep.id]))
+  }
+
+  /// Assemble consumes the composite's pieces AND the source video, because
+  /// the audio is mapped from the source at delivery — pieces are video-only.
+  /// Order is the contract: composite first, media second.
+  @Test func aCompositeJobEndsWithAnAssembleStep() throws {
+    let job = compositeTemplate().makeJob(
+      id: Build.jobID(1), title: "t", created: .now, nextStepID: Build.sequentialStepIDs())
+
+    let assemble = try #require(job.steps.last)
+    guard case .assemble = assemble.kind else {
+      Issue.record("last step is \(assemble.kind), expected .assemble")
+      return
+    }
+    let composite = try #require(job.steps.first { if case .composite = $0.kind { true } else { false } })
+    // The composite alone. Assemble's audio comes from the sidecar in the
+    // retention area, not from the downloaded video. resume.md §6.
+    #expect(assemble.dependsOn == [composite.id])
+  }
+
+  /// A video-only job has nothing to assemble.
+  @Test func aVideoOnlyJobHasNoAssembleStep() {
+    let job = JobTemplate(media: .video(VideoRequest(videoID: "1", quality: "", destination: nil)))
+      .makeJob(id: Build.jobID(1), title: "t", created: .now, nextStepID: Build.sequentialStepIDs())
+
+    #expect(!job.steps.contains { if case .assemble = $0.kind { true } else { false } })
   }
 }

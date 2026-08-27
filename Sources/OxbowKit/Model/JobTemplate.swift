@@ -138,6 +138,21 @@ public struct JobTemplate: Sendable {
         dependsOn: [mediaStep.id, renderStep.id]))
     }
 
+    // Delivery is its own step because joining pieces is a second FFmpeg
+    // invocation and `QueueEngine.launch` runs one process per step. On the
+    // ordinary path there is exactly one piece and this is a cheap copy; on
+    // a resumed job it is a real concat. See docs/design/resume.md §6.
+    //
+    // Depends on the composite alone. The audio it maps was copied out by
+    // the composite's first attempt into the retention area, so the
+    // downloaded video is not an input and can be deleted before this runs.
+    if let composite, mediaStep != nil, let compositeStep = steps.last {
+      steps.append(Step(
+        id: nextStepID(),
+        kind: .assemble(AssembleRequest(destination: composite.destination)),
+        dependsOn: [compositeStep.id]))
+    }
+
     return Job(id: id, created: created, title: title, steps: steps)
   }
 

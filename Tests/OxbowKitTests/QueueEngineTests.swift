@@ -373,9 +373,11 @@ struct QueueEngineTests {
   }
 
   /// The "one file out" promise the whole feature rests on: a composite job's
-  /// video and chat render are intermediates shaped exactly like real intake
-  /// output (`destination: nil`) and must never reach the user's chosen
-  /// folder, while the composite itself is delivered to its own destination.
+  /// video, chat render, AND composite are all intermediates shaped exactly
+  /// like real intake output (`destination: nil`, or in the composite's case
+  /// a destination `move` deliberately ignores) and must never reach the
+  /// user's chosen folder — only the assemble step, which joins the
+  /// composite's pieces, is delivered.
   @Test func aCompositeJobDeliversExactlyOneFile() async throws {
     let (engine, root) = makeEngine(.succeeds)
     defer { cleanUp(root) }
@@ -400,27 +402,77 @@ struct QueueEngineTests {
 
     // The video, chat, and render steps carried no destination of their own,
     // so each is an intermediate: deleted with the job's workspace, its claim
-    // dropped in the same breath. Only the composite was actually moved out.
+    // dropped in the same breath. The composite's own output is a piece in
+    // the retention area, not the delivered file, so it is an intermediate
+    // too — only the assemble step, which joins the pieces, was moved out.
     for step in job.steps {
       switch step.kind {
-      case .composite:
-        #expect(step.artifact == destination)
-      case .downloadVideo, .downloadClip, .downloadChat, .renderChat:
-        #expect(step.artifact == nil, "an intermediate must not be claimed")
       case .assemble:
-        Issue.record("this job template does not produce an assemble step")
+        #expect(step.artifact == destination)
+      case .downloadVideo, .downloadClip, .downloadChat, .renderChat, .composite:
+        #expect(step.artifact == nil, "an intermediate must not be claimed")
       }
     }
 
     #expect(FileManager.default.fileExists(atPath: destination.path))
 
-    // Nothing else reached disk under root: exactly the composite's own
-    // file, nowhere else — the video and render never left the workspace
-    // that was just swept.
+    // Nothing else reached disk under root: exactly the assembled file,
+    // nowhere else — the video, render, and composite piece never left the
+    // workspace that was just swept.
     let enumerator = FileManager.default.enumerator(atPath: root.path)
     let delivered = (enumerator?.allObjects as? [String] ?? []).filter { $0.hasSuffix(".mp4") }
     #expect(delivered == ["out.mp4"])
 
+    await engine.flush()
+  }
+
+  /// The failure mode `move`'s `.composite` case exists to prevent: composite
+  /// and assemble carry the *same* destination (`JobTemplate` builds the
+  /// `AssembleRequest` from `CompositeRequest.destination`), so if `move`
+  /// ever let `.composite` deliver again, this would pass by coincidence —
+  /// the file would land at the right path just one step early, with fewer
+  /// pieces joined than a resumed job actually produced. Caught mid-flight,
+  /// with assemble deliberately held `.running` so the moment the composite
+  /// alone could have delivered is directly observable: the destination must
+  /// not exist while composite is `.done` and assemble has not finished.
+  @Test func aCompositeStepNeverDeliversToItsOwnDestination() async throws {
+    let sequenced = SequencedBehaviours(
+      [.succeeds, .succeeds, .succeeds, .succeeds, .hangsUntilCancelled])
+    let (engine, root) = makeEngine { FakeHelper(sequenced.next()) }
+    defer { cleanUp(root) }
+
+    let destination = root.appending(path: "out.mp4")
+    try await engine.start()
+    await engine.enqueue(
+      JobTemplate(
+        media: .video(VideoRequest(videoID: "v", quality: "1080p60")),
+        render: RenderRequest(),
+        composite: CompositeRequest(
+          framerate: 60, bitrateMbps: 8, duration: .seconds(60),
+          destination: destination)),
+      title: "t")
+
+    // Step order is chat, render, video, composite, assemble (`JobTemplate`'s
+    // load-bearing append order). Wait for the composite to finish and the
+    // assemble step — which shares the composite's destination — to be
+    // genuinely in flight, held there by the fake's last behaviour.
+    for _ in 0..<200 {
+      let steps = await engine.currentJobs.first?.steps
+      if steps?[3].status == .done, steps?[4].status == .running {
+        break
+      }
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    let steps = try #require(await engine.currentJobs.first?.steps)
+    #expect(steps[3].status == .done, "precondition: composite must have finished")
+    #expect(steps[4].status == .running, "precondition: assemble must be genuinely in flight")
+
+    #expect(!FileManager.default.fileExists(atPath: destination.path),
+            "the composite must not have delivered its own destination")
+
+    let jobID = try #require(await engine.currentJobs.first?.id)
+    await engine.cancel(job: jobID)
+    try await settle(engine)
     await engine.flush()
   }
 
