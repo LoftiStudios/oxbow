@@ -403,25 +403,33 @@ struct QueueEngineTests {
     // The video, chat, and render steps carried no destination of their own,
     // so each is an intermediate: deleted with the job's workspace, its claim
     // dropped in the same breath. The composite's own output is a piece in
-    // the retention area, not the delivered file, so it is an intermediate
-    // too — only the assemble step, which joins the pieces, was moved out.
+    // the retention area, not the delivered file — but unlike the others it
+    // is *not* cleared here: `Workspace.contains` deliberately excludes the
+    // retention area (see its doc comment), so a done job's workspace sweep
+    // cannot touch it, and its artifact keeps pointing at the retained piece
+    // until delivery-time cleanup runs. That cleanup is a separate concern
+    // (docs/design/resume.md §8) not yet wired in.
+    let workspace = Workspace(root: root)
     for step in job.steps {
       switch step.kind {
       case .assemble:
         #expect(step.artifact == destination)
-      case .downloadVideo, .downloadClip, .downloadChat, .renderChat, .composite:
+      case .composite:
+        #expect(step.artifact == workspace.resumeDirectory(job.id).appending(path: "piece-0.mp4"),
+                "the retained piece is not cleared until delivery-time cleanup")
+      case .downloadVideo, .downloadClip, .downloadChat, .renderChat:
         #expect(step.artifact == nil, "an intermediate must not be claimed")
       }
     }
 
     #expect(FileManager.default.fileExists(atPath: destination.path))
 
-    // Nothing else reached disk under root: exactly the assembled file,
-    // nowhere else — the video, render, and composite piece never left the
+    // Nothing else reached disk under root except the assembled file and the
+    // still-retained composite piece — the video and render never left the
     // workspace that was just swept.
     let enumerator = FileManager.default.enumerator(atPath: root.path)
     let delivered = (enumerator?.allObjects as? [String] ?? []).filter { $0.hasSuffix(".mp4") }
-    #expect(delivered == ["out.mp4"])
+    #expect(Set(delivered) == ["out.mp4", "resume/\(job.id.rawValue.uuidString)/piece-0.mp4"])
 
     await engine.flush()
   }
@@ -1109,5 +1117,118 @@ struct QueueEngineTests {
       }
       #expect(gone, "pid \(pid) outlived the app; it is an orphan")
     }
+  }
+
+  // MARK: - Resume
+
+  /// Everything the resume tests need: an engine wired to a real workspace,
+  /// and a job whose only step is a composite. `dependsOn` is left empty —
+  /// `makeContext`'s wiring guard only checks that inputs and `dependsOn`
+  /// agree in count, and these tests are aimed at the resume machinery, not
+  /// at wiring a full multi-step job.
+  private struct ResumeHarness {
+    let engine: QueueEngine
+    let workspace: Workspace
+    let job: Job
+    private let cleanup: () -> Void
+
+    init(engine: QueueEngine, workspace: Workspace, job: Job, cleanup: @escaping () -> Void) {
+      self.engine = engine
+      self.workspace = workspace
+      self.job = job
+      self.cleanup = cleanup
+    }
+
+    /// Exercises `QueueEngine.makeContext` directly for the composite step —
+    /// the same call `launch(_:)` makes, without actually running a job.
+    func engineContext(forCompositeOf job: Job) throws -> StepContext {
+      try engine.makeContext(job: job, step: job.steps[0])
+    }
+
+    /// A piece already on disk, built from the same box layouts
+    /// `FragmentIndexTests` uses — a single fragment declaring `frames`
+    /// samples is all `resumePoint` ever reads.
+    func writePiece(index: Int, frames: Int) throws {
+      try FileManager.default.createDirectory(
+        at: workspace.resumeDirectory(job.id), withIntermediateDirectories: true)
+      let data = FragmentBuilder.fragmentedFile([UInt32(frames)])
+      try data.write(
+        to: workspace.resumeDirectory(job.id).appending(path: "piece-\(index).mp4"))
+    }
+
+    func tearDown() {
+      cleanup()
+    }
+  }
+
+  private func makeHarness() throws -> ResumeHarness {
+    let root = makeRoot()
+    let workspace = Workspace(root: root)
+    let engine = QueueEngine(configuration: makeConfiguration(root: root) { FakeHelper(.succeeds) })
+
+    // 30fps so a piece's frame count converts to seconds by simple division —
+    // see aSecondAttemptResumesAfterTheSurvivingFrames.
+    let job = Job(
+      id: JobID(rawValue: UUID()),
+      created: Date(),
+      title: "resume",
+      steps: [Step(
+        id: StepID(rawValue: UUID()),
+        kind: .composite(CompositeRequest(
+          framerate: 30, bitrateMbps: 8, duration: .seconds(60),
+          destination: root.appending(path: "out.mp4"))))])
+
+    return ResumeHarness(engine: engine, workspace: workspace, job: job) { self.cleanUp(root) }
+  }
+
+  /// A first attempt writes piece-0 into the retention area, not the workspace
+  /// — the workspace is swept at launch and the whole point is surviving that.
+  @Test func aCompositeWritesItsFirstPieceIntoTheResumeArea() async throws {
+    let harness = try makeHarness()
+    defer { harness.tearDown() }
+
+    let context = try harness.engineContext(forCompositeOf: harness.job)
+
+    #expect(context.outputFile.lastPathComponent == "piece-0.mp4")
+    // `.path`, not `==`, on the URLs themselves: `deletingLastPathComponent()`
+    // always returns a directory-flavoured URL (trailing slash), which never
+    // compares equal via `==` to the file-flavoured URL `resumeDirectory`
+    // returns even for the identical path — the same reason `WorkspaceTests`
+    // compares `.path` rather than the URLs directly.
+    #expect(context.outputFile.deletingLastPathComponent().path
+      == harness.workspace.resumeDirectory(harness.job.id).path)
+    #expect(context.resumeFrom == nil)
+  }
+
+  /// With a piece already on disk, the next attempt continues rather than
+  /// restarting: a new piece, and a seek derived from the frames that survived.
+  @Test func aSecondAttemptResumesAfterTheSurvivingFrames() async throws {
+    let harness = try makeHarness()
+    defer { harness.tearDown() }
+    // 90 frames at 30 fps == 3.0 seconds.
+    try harness.writePiece(index: 0, frames: 90)
+
+    let context = try harness.engineContext(forCompositeOf: harness.job)
+
+    #expect(context.outputFile.lastPathComponent == "piece-1.mp4")
+    #expect(context.resumeFrom == .seconds(3))
+  }
+
+  /// Past the cap, a retry starts over: a job that has failed this many times
+  /// is reporting something resuming will not fix. resume.md §7.
+  @Test func theFifthAttemptStartsOver() async throws {
+    let harness = try makeHarness()
+    defer { harness.tearDown() }
+    for index in 0 ..< 4 { try harness.writePiece(index: index, frames: 30) }
+
+    let context = try harness.engineContext(forCompositeOf: harness.job)
+
+    #expect(context.outputFile.lastPathComponent == "piece-0.mp4")
+    #expect(context.resumeFrom == nil)
+    // The cap reset drops the whole retained directory (`removeResumable`),
+    // so this pins that it comes back empty rather than leaving `outputFile`
+    // pointing into a directory that no longer exists on disk.
+    #expect(FileManager.default.fileExists(
+      atPath: harness.workspace.resumeDirectory(harness.job.id).path))
   }
 }

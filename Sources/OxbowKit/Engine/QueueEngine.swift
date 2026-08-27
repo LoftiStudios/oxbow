@@ -672,7 +672,63 @@ public actor QueueEngine {
     return size > 0
   }
 
-  private func makeContext(job: Job, step: Step) throws -> StepContext {
+  /// How many times a composite may be continued before a retry starts over.
+  ///
+  /// Each resume adds an encode boundary, and a job that has failed this many
+  /// times is reporting something that continuing will not fix. Accumulating
+  /// pieces turns a persistent fault into a slowly degrading file instead of
+  /// a clear failure. docs/design/resume.md §7.
+  private static let maximumPieces = 4
+
+  /// The pieces already on disk for a job, in order.
+  private nonisolated func pieces(of job: JobID) -> [URL] {
+    let directory = configuration.workspace.resumeDirectory(job)
+    let contents = (try? FileManager.default.contentsOfDirectory(
+      at: directory, includingPropertiesForKeys: nil)) ?? []
+    return contents
+      .filter { $0.lastPathComponent.hasPrefix("piece-") }
+      .sorted { $0.lastPathComponent.compare(
+        $1.lastPathComponent, options: .numeric) == .orderedAscending }
+  }
+
+  /// Repairs the last piece, counts what survived, and says where to resume.
+  ///
+  /// Returns `nil` for a first attempt and when the piece cap is hit — in the
+  /// latter case the retained pieces are dropped first, so the caller starts
+  /// from `piece-0` with a clean directory.
+  private nonisolated func resumePoint(
+    job: JobID, framerate: Int)
+    -> (index: Int, from: Duration?)
+  {
+    let existing = pieces(of: job)
+    guard !existing.isEmpty else { return (0, nil) }
+    guard existing.count < Self.maximumPieces else {
+      configuration.workspace.removeResumable(job)
+      return (0, nil)
+    }
+
+    // Only the last piece can be torn — earlier ones were completed before
+    // the next began. Repair is a no-op on an untorn file.
+    if let last = existing.last { _ = try? FragmentedMP4.repair(last) }
+
+    let frames = existing.reduce(0) { total, piece in
+      total + ((try? FragmentedMP4.index(of: piece))?.frameCount ?? 0)
+    }
+    guard frames > 0 else {
+      configuration.workspace.removeResumable(job)
+      return (0, nil)
+    }
+    return (existing.count, .seconds(Double(frames) / Double(framerate)))
+  }
+
+  /// Builds a step's `StepContext`: where it works, where it writes, and
+  /// (for a composite) where it resumes from.
+  ///
+  /// `nonisolated` — and callable with no `await` — because it touches
+  /// nothing but `configuration`, which is immutable and `Sendable`. That
+  /// also happens to be what lets tests exercise it directly without hopping
+  /// onto the actor.
+  nonisolated func makeContext(job: Job, step: Step) throws -> StepContext {
     let stepDirectory = try configuration.workspace.prepareStep(job: job.id, step: step.id)
     let artifacts = try configuration.workspace.prepareArtifacts(job: job.id)
 
@@ -704,6 +760,44 @@ public actor QueueEngine {
       throw StepWiringError(
         "step \(step.id) expected \(step.dependsOn.count) input artifact(s) "
           + "but only \(inputs.count) parent(s) had one")
+    }
+
+    if case .composite(let request) = step.kind {
+      // `resumePoint` first: past the cap it removes the retained directory
+      // entirely, and `prepareResume` recreates it — empty — right after, so
+      // `directory` names a real, empty directory either way. Calling these
+      // in the other order would hand back a piece path inside a directory
+      // that no longer exists once the cap resets it.
+      let resume = resumePoint(job: job.id, framerate: request.framerate)
+      let directory = try configuration.workspace.prepareResume(job: job.id)
+      return StepContext(
+        stepTempDirectory: stepDirectory,
+        outputFile: directory.appending(path: "piece-\(resume.index).mp4"),
+        ffmpegPath: configuration.ffmpegPath,
+        inputArtifacts: inputs,
+        resumeFrom: resume.from,
+        log: StepLog(fileURL: configuration.workspace.logFile(job: job.id, step: step.id)))
+    }
+
+    if case .assemble = step.kind {
+      // The concat demuxer reads a list file. Written here rather than in
+      // ArgumentBuilder because that type is pure and does no I/O.
+      let list = pieces(of: job.id)
+        .map { "file '\($0.path)'" }
+        .joined(separator: "\n") + "\n"
+      try list.write(
+        to: stepDirectory.appending(path: "pieces.txt"), atomically: true, encoding: .utf8)
+
+      // Assemble's single input artifact is the sidecar audio, not a parent's
+      // output — everything else it needs is in the retention area and named
+      // by convention. `ArgumentBuilder` stays pure by being handed the path.
+      return StepContext(
+        stepTempDirectory: stepDirectory,
+        outputFile: artifacts.appending(path: name),
+        ffmpegPath: configuration.ffmpegPath,
+        inputArtifacts: [configuration.workspace
+          .resumeDirectory(job.id).appending(path: "audio.m4a")],
+        log: StepLog(fileURL: configuration.workspace.logFile(job: job.id, step: step.id)))
     }
 
     return StepContext(
