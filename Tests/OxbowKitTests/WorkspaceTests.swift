@@ -264,4 +264,84 @@ struct WorkspaceTests {
 
     #expect(workspace.removeJob(job).isEmpty)
   }
+
+  /// A symlink inside a job's workspace pointing at a directory outside it
+  /// must be unlinked as a leaf, never followed — following it would delete
+  /// the target's own contents, widening deletion beyond this job's own
+  /// workspace, which nothing we or the helper write there is ever meant to
+  /// do. Nothing currently creates such a link; this pins the invariant
+  /// anyway, since `removeTree` must not depend on that staying true forever.
+  @Test func removeJobUnlinksASymlinkToADirectoryWithoutTouchingItsTarget() throws {
+    let workspace = makeWorkspace()
+    defer { tearDown(workspace) }
+    let job = Build.jobID(1)
+
+    let jobDirectory = workspace.jobDirectory(job)
+    try FileManager.default.createDirectory(at: jobDirectory, withIntermediateDirectories: true)
+
+    // Deliberately outside the job's own workspace — the thing `removeJob`
+    // must never be able to reach through.
+    let outside = workspace.root.appending(path: "outside-the-job")
+    try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
+    let canary = outside.appending(path: "canary.txt")
+    FileManager.default.createFile(atPath: canary.path, contents: Data("do not delete me".utf8))
+
+    let link = jobDirectory.appending(path: "linked-out")
+    try FileManager.default.createSymbolicLink(at: link, withDestinationURL: outside)
+
+    let failed = workspace.removeJob(job)
+
+    #expect(failed.isEmpty)
+    #expect(!FileManager.default.fileExists(atPath: jobDirectory.path))
+    #expect(
+      FileManager.default.fileExists(atPath: canary.path),
+      "the symlink's target must survive — only the link itself may be removed")
+    #expect(
+      FileManager.default.fileExists(atPath: outside.path),
+      "the symlink's target directory itself must survive")
+  }
+
+  /// A dangling symlink fails `fileExists` (stat semantics — it follows the
+  /// link to a target that is not there) even though the link itself is a
+  /// real filesystem entry that needs cleaning up. Without checking for a
+  /// symlink ahead of `fileExists`, this would report the removal as clean —
+  /// nothing failed — while leaving the broken link behind.
+  @Test func removeStepUnlinksADanglingSymlink() throws {
+    let workspace = makeWorkspace()
+    defer { tearDown(workspace) }
+    let job = Build.jobID(1)
+    let step = Build.stepID(1)
+
+    let directory = try workspace.prepareStep(job: job, step: step)
+    let link = directory.appending(path: "dangling")
+    try FileManager.default.createSymbolicLink(
+      at: link, withDestinationURL: directory.appending(path: "nonexistent-target"))
+
+    let failed = workspace.removeStep(job: job, step: step)
+
+    #expect(failed.isEmpty)
+    #expect(!FileManager.default.fileExists(atPath: directory.path))
+  }
+
+  /// `directory` itself can be a plain regular file rather than a directory —
+  /// `contentsOfDirectory` fails on that the same way it would for a genuine
+  /// listing problem, but this case has an obvious right answer: remove the
+  /// file, rather than reporting a directory-listing failure for something
+  /// that was never a directory.
+  @Test func removeStepRemovesAPlainFileFoundWhereADirectoryWasExpected() throws {
+    let workspace = makeWorkspace()
+    defer { tearDown(workspace) }
+    let job = Build.jobID(1)
+    let step = Build.stepID(1)
+
+    let directory = workspace.stepDirectory(job: job, step: step)
+    try FileManager.default.createDirectory(
+      at: directory.deletingLastPathComponent(), withIntermediateDirectories: true)
+    FileManager.default.createFile(atPath: directory.path, contents: Data("not a directory".utf8))
+
+    let failed = workspace.removeStep(job: job, step: step)
+
+    #expect(failed.isEmpty)
+    #expect(!FileManager.default.fileExists(atPath: directory.path))
+  }
 }

@@ -151,21 +151,52 @@ public struct Workspace: Sendable {
   /// An empty result means `directory` is genuinely gone. `directory` never
   /// having existed counts as that, not as a failure — there is nothing
   /// there to fail to remove.
+  ///
+  /// A symlink anywhere in the tree — including at `directory` itself — is
+  /// always a leaf: unlinked, never followed. Nothing we or the helper write
+  /// into a job's workspace ever creates one, but deletion here must never be
+  /// able to widen beyond a job's own workspace by walking out through a
+  /// link, so this does not lean on `isDirectoryKey` alone to keep that true.
   private func removeTree(at directory: URL) -> [URL] {
+    // `destinationOfSymbolicLink` inspects `directory` itself (lstat), unlike
+    // `fileExists`, which follows a symlink to its target (stat) — so a
+    // dangling symlink here would fail `fileExists` and read as "nothing to
+    // remove" while the broken link itself was left behind. Checking this
+    // first catches that case too, before the `fileExists` guard below ever
+    // runs.
+    if (try? FileManager.default.destinationOfSymbolicLink(atPath: directory.path)) != nil {
+      do {
+        try FileManager.default.removeItem(at: directory)
+        return []
+      } catch {
+        return [directory]
+      }
+    }
+
     guard FileManager.default.fileExists(atPath: directory.path) else { return [] }
 
     guard let entries = try? FileManager.default.contentsOfDirectory(
-      at: directory, includingPropertiesForKeys: [.isDirectoryKey])
+      at: directory, includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey])
     else {
-      // Can't even list it — most likely a permissions problem on
-      // `directory` itself. Report it rather than pretending nothing was
-      // there.
+      // Listing can fail for a permissions problem on a genuine directory,
+      // but also whenever `directory` is not a directory at all — most often
+      // a regular file. Removing it directly resolves the second case
+      // instead of misreporting "could not list" for something that was
+      // never a directory to begin with; a real permissions problem fails
+      // `removeItem` the same way it failed `contentsOfDirectory`, so this
+      // does not paper over that one.
+      if (try? FileManager.default.removeItem(at: directory)) != nil { return [] }
       return [directory]
     }
 
     var failures: [URL] = []
     for entry in entries {
-      let isDirectory = (try? entry.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true
+      let values = try? entry.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
+      // Checked ahead of `isDirectoryKey` and short-circuits it: a symlink is
+      // a leaf even when it points at a directory, so this must never fall
+      // into the recursive branch below for one.
+      let isSymlink = values?.isSymbolicLink == true
+      let isDirectory = !isSymlink && values?.isDirectory == true
       if isDirectory {
         let childFailures = removeTree(at: entry)
         guard childFailures.isEmpty else {
@@ -201,9 +232,12 @@ public struct Workspace: Sendable {
   /// so there is no case to reason about and no way for a power loss to leak
   /// tens of gigabytes.
   ///
-  /// - Important: scoped to `jobs/`, never `root`. `root` is
-  ///   `~/Library/Caches/<bundle-id>` — everything else the app caches there
-  ///   belongs to somebody else and must survive launch.
+  /// - Important: scoped to `jobs/`, never `root`. `root` is a `workspace`
+  ///   directory under `~/Library/Application Support/<bundle-id>`
+  ///   (`Oxbow/AppComposition.swift`) — Application Support, not Caches. That
+  ///   distinction matters: unlike a cache, it is backed up and never purged
+  ///   by the OS on its own, so everything else the app keeps there belongs
+  ///   to somebody else and must survive launch regardless.
   public func removeAll() {
     try? FileManager.default.removeItem(at: jobsRoot)
   }
