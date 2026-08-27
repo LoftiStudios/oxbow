@@ -130,6 +130,15 @@ machines. They are not style preferences.
 **Building the helper**
 - Never `-p:PublishSingleFile=true`. It extracts unsigned native libs at runtime
   and forces `disable-library-validation`. Publish a directory and sign each file.
+- `-p:PublishTrimmed=true` is a **separate flag and is on.** It is not
+  single-file and carries none of its problems: ILLink deletes unreachable
+  managed code only, so the output is still a directory of individually signed
+  files and nothing native is touched. Verified end to end against all four
+  verbs on 2026-08-27; see `docs/design/cli-dependency.md` §8.
+- Keep `-p:JsonSerializerIsReflectionEnabledByDefault=true` whenever trimming.
+  It is upstream's own mitigation for reflection-based JSON (their #1561), and
+  it is load-bearing — dropping it breaks deserialization at runtime, not at
+  build time.
 - arm64 only for v1. Do not add x64 or lipo a universal binary without discussion.
 
 **FFmpeg**
@@ -237,12 +246,17 @@ Build the bundled FFmpeg (LGPL, arm64, verified):
 ```
 
 Build the helper (upstream targets **.NET 10**). Never use
-`-p:PublishProfile=MacOSArm64` — upstream's own profile sets `PublishSingleFile`
-and `PublishTrimmed`, both of which we forbid. Override explicitly:
+`-p:PublishProfile=MacOSArm64` — upstream's own profile sets `PublishSingleFile`,
+which we forbid permanently (`docs/architecture.md` §3.3). It also sets
+`PublishTrimmed`, which is a different flag and one we now want; the two are
+independent. Override explicitly rather than inheriting the profile:
 
 ```bash
-dotnet publish vendor/TwitchDownloader/TwitchDownloaderCLI -c Release -r osx-arm64 --self-contained true -p:PublishSingleFile=false -p:PublishTrimmed=false -p:PublishReadyToRun=false -p:DebugType=none -o build/helper
+dotnet publish vendor/TwitchDownloader/TwitchDownloaderCLI -c Release -r osx-arm64 --self-contained true -p:PublishSingleFile=false -p:PublishTrimmed=true -p:TrimMode=partial -p:JsonSerializerIsReflectionEnabledByDefault=true -p:PublishReadyToRun=false -p:DebugType=none -o build/helper
 ```
+
+Trimming takes the helper from 126 MB / 204 files to **67 MB / 85 files**. The
+native dylibs and the signing model are unchanged.
 
 Sign a built bundle (inside-out; helper first, bundle last):
 

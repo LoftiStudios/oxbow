@@ -12,6 +12,9 @@ Everything here was measured on 2026-08-27 against the vendored submodule at
 `d4122d8` (upstream 1.56.5) and the real helper. Where something is unverified
 it says so.
 
+§8's trimmed publish was still unverified when this was first written; it was
+verified and adopted later the same day, and §8 now carries the evidence.
+
 ---
 
 ## 1. The question, and why it was reopened
@@ -253,19 +256,57 @@ any of this — single-file extracts native libraries to a temp directory at
 runtime, producing unsigned copies of executable code. Trim is the win; single
 file is still the trap.
 
-**Verified so far:** the trimmed helper launches, reports
-`1.56.5+d4122d80214b08b3c7078003aae43088e601a435`, and `info --banner=false --id
-1480816483 --format Raw` returns correct JSON at exit 0 — which exercises the
-reflection-heavy `ReadFromJsonAsync` path that ILLink warns about (IL2026).
+### Verified, and adopted (2026-08-27)
 
-**NOT verified:** `chatdownload`, `chatrender`, `videodownload` on a trimmed
-build. ILLink emits IL2026 warnings across all three, including
-`ChatJson.SerializeAsync`, `RefreshOrLoadProviderMetadata`,
-`M3U8Extensions.WithUnavailableMedia` and
-`JsonElementExtensions.DeserializeFirstAndLastFromList`. Trim warnings are not
-trim failures, but per `twitch-metadata.md` §7 this needs a full job run against
-decoded output before it goes near `full-build.yml`. **Do not adopt on the
-strength of this table alone.**
+Every verb was run against the real trimmed binary using the exact argv
+`ArgumentBuilder` produces, and compared against an untrimmed build of the same
+submodule pin published in the same session. `--temp-path` differs per build, so
+neither could read the other's provider cache.
+
+| Verb | Result |
+|---|---|
+| `info` (VOD `1480816483`) | exit 0; identical once per-request `requestID`, `durationMilliseconds` and the m3u8 `SERVING-ID` are normalised |
+| `info` (clip) | exit 0; identical once the per-request `playbackAccessToken` signature is normalised |
+| `chatdownload` | exit 0; **byte-identical** apart from the `CreatedAt` stamp (7 bytes). 33 comments, 5 carrying emotes, 28 carrying badges |
+| `chatrender` | exit 0; `h264_videotoolbox`, 350x600 @ 30 fps, 3:00.00, decodes clean. Provider cache tree **byte-identical** (`diff -r` clean: 4066 files, 76 badges, 3985 emojis, and the three `emotes_*.json.gz` metadata blobs) |
+| `videodownload` (`-b 0s -e 60s`) | exit 0; **byte-identical**, sha256 `5883b50e…`, 1824x1026 |
+| `clipdownload` | exit 0; **byte-identical**, sha256 `bb10f179…`, 1920x1080 |
+
+**The render needed a control, and this is the part worth keeping.** Rendered
+pixels are *not* reproducible: rendering the same chat file twice with the
+**same untrimmed** binary produces different output, because animated emotes
+land on different frame phases. So "trimmed differs from untrimmed" proves
+nothing on its own, and a naive byte comparison would have failed the trimmed
+build for a property the untrimmed build does not have either.
+
+Re-rendered losslessly (`-c:v ffv1`) to take the hardware encoder out of the
+comparison, then measured per frame over 5400 frames:
+
+| | untrimmed vs itself (control) | trimmed vs untrimmed (test) |
+|---|---|---|
+| SSIM, all planes | 0.997916 | 0.997378 |
+| Frames bit-identical | 3660 (67.8%) | 3660 (67.8%) |
+| Frames below 0.99 | 810 (15.0%) | 810 (15.0%) |
+
+The distributions are the same to three figures. The trimmed renderer deviates
+from the untrimmed one by exactly as much as the untrimmed one deviates from
+itself, which is the answer: no emote, badge or emoji is missing — the identical
+cache tree independently confirms the same asset set was fetched and drawn.
+
+**Signing, re-verified end to end.** Bundle built and signed with the real
+Developer ID identity: 86 embedded files (85 helper + ffmpeg), `sign.sh` signed
+88 nested files, `codesign --verify --deep --strict` reports valid on disk and
+satisfies its Designated Requirement. The helper carries
+`com.apple.security.cs.allow-jit` and nothing else; an entitlement dump across
+every Mach-O in `Contents/MacOS` found no `disable-library-validation`. The
+signed trimmed helper executes from inside the bundle under the hardened
+runtime. Native Mach-O count in the helper is **17, trimmed or not**.
+
+**Adopted.** `docs/development.md`, `docs/signing.md`,
+`.github/workflows/full-build.yml` and `.github/workflows/release.yml` now
+publish trimmed; `EXPECTED_EMBEDDED` moved 205 → 86.
+
+`PublishSingleFile` remains forbidden, unchanged and unaffected by any of this.
 
 ## 9. The decision
 
@@ -301,9 +342,11 @@ depending on a published binary.
 
 1. `architecture.md` §8 — correct the "median ~1 day" PR claim (§2 above).
 2. `development.md` — stop conflating `PublishTrimmed` with `PublishSingleFile`
-   (§8 above).
+   (§8 above). **Done 2026-08-27.**
 3. Try `--dispersion` and `--avatars` before touching anything structural (§7).
 4. Trim the publish once §8's untested verbs are verified end to end.
+   **Done 2026-08-27** — all verbs verified against decoded output, signing
+   re-verified, `full-build.yml` and `release.yml` switched over (§8).
 
 ## 10. Reproducing this
 
@@ -317,7 +360,8 @@ git -C vendor/TwitchDownloader log --since=2025-06-01 --oneline -- \
   'TwitchDownloaderCore/Models/M3U8*.cs'
 ```
 
-The trimmed publish. Note `PublishSingleFile=false` — it is the point:
+The trimmed publish — now what `docs/development.md` ships. Note
+`PublishSingleFile=false`; it is the point, and it stays false permanently:
 
 ```bash
 dotnet publish vendor/TwitchDownloader/TwitchDownloaderCLI -c Release -r osx-arm64 \

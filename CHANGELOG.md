@@ -63,6 +63,17 @@ Pre-alpha. Nothing released yet.
 
 ### Changed
 
+- The bundled TwitchDownloaderCLI helper is now published trimmed
+  (`-p:PublishTrimmed=true -p:TrimMode=partial`), taking it from **126 MB /
+  204 files to 67 MB / 85 files** and the app bundle from ~147 MB to ~94 MB.
+  ILLink removes unreachable managed code only: the 17 native Mach-Os, the
+  entitlement set (`allow-jit`, still no `disable-library-validation`), and the
+  sign-every-file model are all unchanged. `PublishSingleFile` remains
+  forbidden permanently — it is a separate flag and trimming does not soften
+  that. Adopted only after every verb (`info`, `chatdownload`, `chatrender`,
+  `videodownload`, `clipdownload`) was compared against an untrimmed build on
+  decoded output rather than exit status.
+
 - `Step.dependsOn` is `[StepID]` rather than a single optional `StepID`, since
   a composite step depends on two finished steps (its media and its render)
   rather than one. A queue persisted by an older build still loads: the
