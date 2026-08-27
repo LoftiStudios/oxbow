@@ -737,13 +737,66 @@ public actor QueueEngine {
     let log = configuration.workspace.teardownFailureLog
     if let handle = try? FileHandle(forWritingTo: log) {
       defer { try? handle.close() }
-      _ = try? handle.seekToEnd()
+      // A failed seek must not fall through to the write below: opening for
+      // writing does not itself seek, so that write would land at offset 0
+      // and overwrite every entry already accumulated here — destroying the
+      // history this file exists to keep, in exchange for recording the one
+      // failure that triggered it.
+      guard (try? handle.seekToEnd()) != nil else { return }
       try? handle.write(contentsOf: data)
-    } else {
+    } else if !FileManager.default.fileExists(atPath: log.path) {
+      // Reached only when the file genuinely does not exist yet.
+      // `FileHandle(forWritingTo:)` can also fail to open a file that *does*
+      // exist — a permissions problem, say — and `createFile(atPath:contents:)`
+      // truncates, so falling through to it unconditionally would silently
+      // wipe an existing log the moment opening it started failing for any
+      // reason, not only the reason this branch is for.
       try? FileManager.default.createDirectory(
         at: log.deletingLastPathComponent(), withIntermediateDirectories: true)
       FileManager.default.createFile(atPath: log.path, contents: data)
+      return
+    } else {
+      return
     }
+
+    compactTeardownFailureLogIfNeeded()
+  }
+
+  /// Bounds `teardownFailureLog` the way `StepLog` bounds its own file — see
+  /// its doc comment — because this file has the same problem and no
+  /// dedicated owner to solve it a different way: it sits outside the launch
+  /// sweep (`Workspace.removeAll()` is scoped to `jobsRoot`) and nothing else
+  /// reads or rotates it, so an unbounded accumulation across launches is not
+  /// a policy, just an oversight.
+  ///
+  /// Unlike `StepLog`, there is no persistent actor here to track a running
+  /// byte count between writes — this is a plain nonisolated function called
+  /// once per failure — so this checks the file's actual size instead. A
+  /// failed teardown is rare enough that re-reading a capped-size file on
+  /// each one costs nothing that matters.
+  private nonisolated func compactTeardownFailureLogIfNeeded() {
+    let log = configuration.workspace.teardownFailureLog
+    let cap = StepLog.defaultMaxBytes
+
+    // Compact only when meaningfully over, not the instant the cap is
+    // crossed — same reasoning as `StepLog.append`: rewriting the file on
+    // every single write would be needless O(n^2) I/O for what is meant to
+    // be an occasional, low-volume file.
+    guard
+      let data = try? Data(contentsOf: log),
+      data.count > cap + cap / 2
+    else { return }
+
+    // Drops whole lines, never a byte offset, for the same reason
+    // `StepLog.compact()` does: a byte cut could leave a mangled first entry
+    // that reads as corruption rather than as "the older history was
+    // trimmed".
+    let text = String(decoding: data, as: UTF8.self)
+    var kept = Substring(text)
+    while kept.utf8.count > cap, let newline = kept.firstIndex(of: "\n") {
+      kept = kept[kept.index(after: newline)...]
+    }
+    try? Data(kept.utf8).write(to: log, options: .atomic)
   }
 
   /// Removes a job's workspace once nothing belonging to it is still
@@ -928,7 +981,25 @@ public actor QueueEngine {
     if !pieces.isEmpty || FileManager.default.fileExists(atPath: directory.path) {
       return .retained(directory: directory, pieces: pieces)
     }
-    guard let job = jobs.first(where: { $0.id == id }), let delivered = job.deliveredFiles.first
+    // Pinned to the `.assemble` step specifically, not `job.deliveredFiles.first`
+    // — today the two coincide only because the intake gives media, chat and
+    // render steps no destination of their own and step order puts them
+    // ahead of assemble in a composite job. The day a composite job also
+    // delivers, say, its chat JSON, `.first` would silently start pointing
+    // this row's "Show in Finder" at the wrong file.
+    guard
+      let job = jobs.first(where: { $0.id == id }),
+      let assemble = job.steps.first(where: {
+        if case .assemble = $0.kind { return true }
+        return false
+      }),
+      let delivered = assemble.deliveredArtifact,
+      // Rule 1 above checks the retention directory still exists before
+      // trusting it; this rule owes the delivered file the same check —
+      // moved or deleted after delivery, `assemble.artifact` still names it,
+      // and without this the item would stay enabled pointing at nothing,
+      // the defect `e61278f` fixed on the retention branch surviving here.
+      FileManager.default.fileExists(atPath: delivered.path)
     else { return nil }
     return .delivered(delivered)
   }

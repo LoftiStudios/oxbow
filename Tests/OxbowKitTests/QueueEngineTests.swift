@@ -466,6 +466,80 @@ struct QueueEngineTests {
     await engine.flush()
   }
 
+  /// The composite step's Finder-reveal item, rule 2 continued: pinned to the
+  /// `.assemble` step specifically, never `job.deliveredFiles.first`. Those
+  /// two coincide today only because the intake gives chat, video, and render
+  /// steps `destination: nil` on a composite job — nothing in `JobTemplate`
+  /// stops a caller from setting one anyway, and step order puts chat ahead
+  /// of assemble. Without the pin, this would reveal the chat JSON instead of
+  /// the finished video the moment both deliver — exactly the drift the
+  /// review that produced this test called out.
+  @Test func revealTargetPrefersTheAssembleStepOverAnEarlierDeliveringStep() async throws {
+    let (engine, root) = makeEngine(.succeeds)
+    defer { cleanUp(root) }
+
+    let chatDestination = root.appending(path: "out.json")
+    let videoDestination = root.appending(path: "out.mp4")
+    let template = JobTemplate(
+      media: .video(VideoRequest(videoID: "v", quality: "1080p60")),
+      chat: ChatRequest(videoID: "v", format: .json, destination: chatDestination),
+      render: RenderRequest(),
+      composite: CompositeRequest(
+        framerate: 60,
+        bitrateMbps: 8,
+        duration: .seconds(60),
+        destination: videoDestination))
+
+    try await engine.start()
+    await engine.enqueue(template, title: "t")
+    try await settle(engine)
+
+    let job = try #require(await engine.currentJobs.first)
+    // Both the chat step and the assemble step delivered — chat earlier in
+    // step order — which is what makes this pin down "follows assemble
+    // specifically" rather than "follows whichever delivering step is first".
+    #expect(job.deliveredFiles.count == 2)
+    #expect(await engine.revealTarget(forJob: job.id) == .delivered(videoDestination))
+
+    await engine.flush()
+  }
+
+  /// The composite step's Finder-reveal item, rule 2's other half: rule 1
+  /// checks the retention directory still exists before trusting it, and the
+  /// delivered branch owes its own file the same check. Moved or deleted
+  /// after delivery, `assemble.artifact` still names it — the exact defect
+  /// `e61278f` fixed on the retention branch, reproduced here on the
+  /// delivered one.
+  @Test func revealTargetIsNilWhenTheDeliveredFileNoLongerExists() async throws {
+    let (engine, root) = makeEngine(.succeeds)
+    defer { cleanUp(root) }
+
+    let destination = root.appending(path: "out.mp4")
+    let template = JobTemplate(
+      media: .video(VideoRequest(videoID: "v", quality: "1080p60")),
+      render: RenderRequest(),
+      composite: CompositeRequest(
+        framerate: 60,
+        bitrateMbps: 8,
+        duration: .seconds(60),
+        destination: destination))
+
+    try await engine.start()
+    await engine.enqueue(template, title: "t")
+    try await settle(engine)
+
+    let job = try #require(await engine.currentJobs.first)
+    #expect(await engine.revealTarget(forJob: job.id) == .delivered(destination))
+
+    try FileManager.default.removeItem(at: destination)
+
+    #expect(
+      await engine.revealTarget(forJob: job.id) == nil,
+      "an enabled item pointing at a moved-or-deleted file is the bug this exists to avoid")
+
+    await engine.flush()
+  }
+
   /// `removeJobWorkspace`'s `.done` branch nils a step's claim on any
   /// artifact `Workspace.contains` recognises, then separately deletes the
   /// whole retained directory. The composite step's own artifact lives
