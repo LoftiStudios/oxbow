@@ -60,8 +60,11 @@ public struct Workspace: Sendable {
 
   /// Cleared on successful delivery, on job removal, and when the piece cap
   /// is hit. Never at launch — that is the point.
-  public func removeResumable(_ job: JobID) {
-    try? FileManager.default.removeItem(at: resumeDirectory(job))
+  ///
+  /// Returns whatever could not be removed — see `removeTree`.
+  @discardableResult
+  public func removeResumable(_ job: JobID) -> [URL] {
+    removeTree(at: resumeDirectory(job))
   }
 
   /// Where a step's captured helper output lives.
@@ -88,12 +91,20 @@ public struct Workspace: Sendable {
   }
 
   /// Correct however the process died — graceful exit, cancellation, or crash.
-  public func removeStep(job: JobID, step: StepID) {
-    try? FileManager.default.removeItem(at: stepDirectory(job: job, step: step))
+  ///
+  /// Returns whatever could not be removed. Empty means the directory is
+  /// genuinely gone (or was never there, which is not a failure).
+  @discardableResult
+  public func removeStep(job: JobID, step: StepID) -> [URL] {
+    removeTree(at: stepDirectory(job: job, step: step))
   }
 
-  public func removeJob(_ job: JobID) {
-    try? FileManager.default.removeItem(at: jobDirectory(job))
+  /// Returns whatever could not be removed — see `removeTree`'s doc comment
+  /// for why a single stubborn file no longer costs the rest of the job's
+  /// workspace, and why this reports rather than staying silent about it.
+  @discardableResult
+  public func removeJob(_ job: JobID) -> [URL] {
+    removeTree(at: jobDirectory(job))
   }
 
   /// True when `url` names a file inside this job's workspace — i.e. an
@@ -111,6 +122,79 @@ public struct Workspace: Sendable {
     var directory = jobDirectory(job).standardizedFileURL.path
     if !directory.hasSuffix("/") { directory += "/" }
     return url.standardizedFileURL.path.hasPrefix(directory)
+  }
+
+  /// Where a job- or resumable-level teardown failure gets recorded once
+  /// `QueueEngine` sees one — see its use of this.
+  ///
+  /// A sibling of `jobsRoot` and `resumeRoot`, deliberately never inside
+  /// either. `removeJob` deletes a job's own `logs/` directory as part of
+  /// what it tears down, so nothing under `jobsRoot` can be where a
+  /// job-level failure survives being reported — and `removeAll()`'s launch
+  /// sweep is scoped to `jobsRoot` alone, so this file outlives that sweep
+  /// too. It is meant to accumulate: one entry might be a fluke, but a file
+  /// that keeps growing is evidence of a real, reproducible fault.
+  public var teardownFailureLog: URL {
+    root.appending(path: "teardown-failures.log")
+  }
+
+  /// Removes `directory` and everything under it, one item at a time, and
+  /// returns whatever survived instead of throwing away that information.
+  ///
+  /// A single recursive `FileManager.removeItem` deletes depth-first and
+  /// aborts at the very first failure it hits — which is exactly how an
+  /// 8.66 GB video once survived a job's teardown while everything after it
+  /// silently vanished: the removal reached that one undeletable file,
+  /// threw, and stopped, with no record that it had. Doing it one entry at
+  /// a time means a stubborn file only costs itself.
+  ///
+  /// An empty result means `directory` is genuinely gone. `directory` never
+  /// having existed counts as that, not as a failure — there is nothing
+  /// there to fail to remove.
+  private func removeTree(at directory: URL) -> [URL] {
+    guard FileManager.default.fileExists(atPath: directory.path) else { return [] }
+
+    guard let entries = try? FileManager.default.contentsOfDirectory(
+      at: directory, includingPropertiesForKeys: [.isDirectoryKey])
+    else {
+      // Can't even list it — most likely a permissions problem on
+      // `directory` itself. Report it rather than pretending nothing was
+      // there.
+      return [directory]
+    }
+
+    var failures: [URL] = []
+    for entry in entries {
+      let isDirectory = (try? entry.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true
+      if isDirectory {
+        let childFailures = removeTree(at: entry)
+        guard childFailures.isEmpty else {
+          // `entry` is a non-empty directory because something inside it
+          // failed; the failure already in hand names the real cause, so
+          // attempting `removeItem` on `entry` itself would just report the
+          // same underlying problem a second time under a different path.
+          failures += childFailures
+          continue
+        }
+        // Everything inside was removed; the recursive call above already
+        // took `entry` itself with it, so there is nothing left to do here.
+        continue
+      }
+      do {
+        try FileManager.default.removeItem(at: entry)
+      } catch {
+        failures.append(entry)
+      }
+    }
+
+    guard failures.isEmpty else { return failures }
+
+    do {
+      try FileManager.default.removeItem(at: directory)
+      return []
+    } catch {
+      return [directory]
+    }
   }
 
   /// Launch sweep of the `jobs/` temp root. Nothing in it can ever be reused,

@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import Testing
 @testable import OxbowKit
@@ -162,5 +163,105 @@ struct WorkspaceTests {
     let piece = workspace.resumeDirectory(job).appending(path: "piece-0.mp4")
 
     #expect(!workspace.contains(piece, ofJob: job))
+  }
+
+  /// Forces a genuine `FileManager.removeItem` failure via the filesystem's
+  /// `uchg` (user-immutable) flag — set with `chflags`, cleared the same
+  /// way. Neither an open file handle (does not stop `unlink` on APFS) nor a
+  /// merely read-only file (still removable by the owner of a writable
+  /// directory) forces a real failure; `uchg` does, and it is the one
+  /// portable way found to do it in a test.
+  private func makeUndeletable(_ url: URL) throws {
+    FileManager.default.createFile(atPath: url.path, contents: Data("stuck".utf8))
+    let result = chflags(url.path, UInt32(UF_IMMUTABLE))
+    try #require(result == 0, "precondition: chflags must succeed to force the failure this test is after")
+  }
+
+  private func makeDeletableAgain(_ url: URL) {
+    chflags(url.path, 0)
+  }
+
+  /// Reproduces the incident this whole change exists for: an 8.66 GB video
+  /// that survived a job's teardown while `chat.json`, `render.mp4`, and the
+  /// whole `logs/` directory were correctly removed. A single recursive
+  /// `FileManager.removeItem` deletes depth-first and aborts at the first
+  /// failure — this is what proves `removeJob` no longer does that, and no
+  /// longer swallows the fact that it happened.
+  @Test func removeJobReportsAnUndeletableFileWithoutStrandingItsSiblings() throws {
+    let workspace = makeWorkspace()
+    defer { tearDown(workspace) }
+    let job = Build.jobID(1)
+
+    let artifacts = try workspace.prepareArtifacts(job: job)
+    let chat = artifacts.appending(path: "chat.json")
+    let render = artifacts.appending(path: "render.mp4")
+    let video = artifacts.appending(path: "video.mp4")
+    FileManager.default.createFile(atPath: chat.path, contents: Data("chat".utf8))
+    FileManager.default.createFile(atPath: render.path, contents: Data("render".utf8))
+    try makeUndeletable(video)
+    defer { makeDeletableAgain(video) }
+
+    let log = workspace.logFile(job: job, step: Build.stepID(1))
+    try FileManager.default.createDirectory(
+      at: log.deletingLastPathComponent(), withIntermediateDirectories: true)
+    FileManager.default.createFile(atPath: log.path, contents: Data("hello".utf8))
+
+    let failed = workspace.removeJob(job)
+
+    #expect(
+      failed.map(\.standardizedFileURL.path) == [video.standardizedFileURL.path],
+      "should report exactly the one file it could not remove, got \(failed)")
+    #expect(!FileManager.default.fileExists(atPath: chat.path), "a removable sibling must not be stranded")
+    #expect(!FileManager.default.fileExists(atPath: render.path), "a removable sibling must not be stranded")
+    #expect(!FileManager.default.fileExists(atPath: log.path), "an unrelated sibling directory must not be stranded")
+    #expect(FileManager.default.fileExists(atPath: video.path), "the undeletable file itself must still be there")
+  }
+
+  @Test func removeStepReportsAnUndeletableFileWithoutStrandingItsSiblings() throws {
+    let workspace = makeWorkspace()
+    defer { tearDown(workspace) }
+    let job = Build.jobID(1)
+    let step = Build.stepID(1)
+
+    let directory = try workspace.prepareStep(job: job, step: step)
+    let keep = directory.appending(path: "removable.tmp")
+    let stuck = directory.appending(path: "stuck.tmp")
+    FileManager.default.createFile(atPath: keep.path, contents: Data("x".utf8))
+    try makeUndeletable(stuck)
+    defer { makeDeletableAgain(stuck) }
+
+    let failed = workspace.removeStep(job: job, step: step)
+
+    #expect(failed.map(\.standardizedFileURL.path) == [stuck.standardizedFileURL.path])
+    #expect(!FileManager.default.fileExists(atPath: keep.path))
+    #expect(FileManager.default.fileExists(atPath: stuck.path))
+  }
+
+  @Test func removeResumableReportsAnUndeletableFileWithoutStrandingItsSiblings() throws {
+    let workspace = makeWorkspace()
+    defer { tearDown(workspace) }
+    let job = Build.jobID(1)
+
+    let directory = try workspace.prepareResume(job: job)
+    let keep = directory.appending(path: "piece-0.mp4")
+    let stuck = directory.appending(path: "piece-1.mp4")
+    FileManager.default.createFile(atPath: keep.path, contents: Data("x".utf8))
+    try makeUndeletable(stuck)
+    defer { makeDeletableAgain(stuck) }
+
+    let failed = workspace.removeResumable(job)
+
+    #expect(failed.map(\.standardizedFileURL.path) == [stuck.standardizedFileURL.path])
+    #expect(!FileManager.default.fileExists(atPath: keep.path))
+    #expect(FileManager.default.fileExists(atPath: stuck.path))
+  }
+
+  /// A directory that was never there in the first place is not a failure —
+  /// there is nothing to report a problem about.
+  @Test func removingAJobThatNeverExistedReportsNoFailure() {
+    let workspace = makeWorkspace()
+    let job = Build.jobID(1)
+
+    #expect(workspace.removeJob(job).isEmpty)
   }
 }

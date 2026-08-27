@@ -733,6 +733,121 @@ struct QueueEngineTests {
     await engine.flush()
   }
 
+  /// A stubborn file inside a step's own working directory must not vanish
+  /// into the same silence a whole-job teardown failure used to: found on a
+  /// real machine as an 8.66 GB video that survived its job's teardown with
+  /// nothing anywhere recording that the removal had failed.
+  ///
+  /// `chflags`'s user-immutable flag is used to force a genuine
+  /// `FileManager.removeItem` failure — unlike an open file handle, which
+  /// does not stop `unlink` on APFS, or a read-only file, which is still
+  /// removable by the owner of a writable directory. `uchg` is the one
+  /// portable way to make deletion itself fail.
+  ///
+  /// `removeStep` only ever touches a step's own working directory, never
+  /// `logs/` — so unlike a job-level failure (see
+  /// `aJobTeardownFailureIsRecordedInTheWorkspaceLevelLog` below), this one
+  /// has an obvious, still-standing home: the step's own `StepLog`.
+  @Test func aStepTeardownFailureIsRecordedInThatStepsOwnLog() async throws {
+    let (engine, root) = makeEngine(.hangsUntilCancelled)
+    defer { cleanUp(root) }
+    let workspace = Workspace(root: root)
+
+    try await engine.start()
+    await engine.enqueue(
+      JobTemplate(chat: ChatRequest(videoID: "2844548319", format: .json)), title: "test")
+
+    // `enqueue` runs `tick()` — and so `makeContext`'s `prepareStep` — to
+    // completion synchronously before returning, so the step's working
+    // directory already exists here; no polling needed.
+    let jobID = try #require(await engine.currentJobs.first?.id)
+    let stepID = try #require(await engine.currentJobs.first?.steps.first?.id)
+
+    let stuck = workspace.stepDirectory(job: jobID, step: stepID).appending(path: "stuck.tmp")
+    FileManager.default.createFile(atPath: stuck.path, contents: Data("x".utf8))
+    try #require(
+      chflags(stuck.path, UInt32(UF_IMMUTABLE)) == 0,
+      "precondition: chflags must succeed to force the failure this test is after")
+    defer { chflags(stuck.path, 0) }
+
+    await engine.cancel(step: stepID)
+    try await settle(engine)
+
+    // The teardown failure is written by a fire-and-forget `Task` (see
+    // `recordStepTeardownFailure`), so it may still be in flight the moment
+    // `isIdle` goes true — poll rather than reading the log exactly once.
+    let logFile = workspace.logFile(job: jobID, step: stepID)
+    var contents = ""
+    for _ in 0..<80 {
+      contents = (try? String(contentsOf: logFile, encoding: .utf8)) ?? ""
+      if contents.contains("stuck.tmp") { break }
+      try await Task.sleep(for: .milliseconds(25))
+    }
+
+    #expect(contents.contains("teardown"), "step log should record the teardown failure; log was: \(contents)")
+    #expect(
+      contents.contains("stuck.tmp"),
+      "step log should name the file that survived removal; log was: \(contents)")
+    #expect(
+      FileManager.default.fileExists(atPath: stuck.path),
+      "the file the failure names must actually still be there")
+
+    await engine.flush()
+  }
+
+  /// The job-level counterpart of the test above. `removeJob` deletes a
+  /// job's own `logs/` directory as part of what it tears down, so a
+  /// job-level failure has nowhere per-job to land — this is what confirms
+  /// it lands in `Workspace.teardownFailureLog` instead, and that the file
+  /// naming the failure survives it.
+  @Test func aJobTeardownFailureIsRecordedInTheWorkspaceLevelLog() async throws {
+    let (engine, root) = makeEngine(.hangsUntilCancelled)
+    defer { cleanUp(root) }
+    let workspace = Workspace(root: root)
+
+    try await engine.start()
+    await engine.enqueue(
+      JobTemplate(chat: ChatRequest(videoID: "2844548319", format: .json)), title: "test")
+
+    let jobID = try #require(await engine.currentJobs.first?.id)
+
+    // A stray file directly in the job's own directory — a sibling of
+    // `artifacts/` and `logs/` — so its removal failing aborts nothing
+    // upstream of it and this test is purely about where the failure is
+    // *reported*, not whether siblings survive (that is `WorkspaceTests`'
+    // job, at the `Workspace` level where it can be asserted without an
+    // engine's timing in the way).
+    let stuck = workspace.jobDirectory(jobID).appending(path: "stuck.tmp")
+    FileManager.default.createFile(atPath: stuck.path, contents: Data("x".utf8))
+    try #require(
+      chflags(stuck.path, UInt32(UF_IMMUTABLE)) == 0,
+      "precondition: chflags must succeed to force the failure this test is after")
+    defer { chflags(stuck.path, 0) }
+
+    await engine.cancel(job: jobID)
+    try await settle(engine)
+
+    let logFile = workspace.teardownFailureLog
+    var contents = ""
+    for _ in 0..<80 {
+      contents = (try? String(contentsOf: logFile, encoding: .utf8)) ?? ""
+      if contents.contains("stuck.tmp") { break }
+      try await Task.sleep(for: .milliseconds(25))
+    }
+
+    #expect(
+      contents.contains(jobID.rawValue.uuidString),
+      "the workspace-level log should name the job it happened to; log was: \(contents)")
+    #expect(
+      contents.contains("stuck.tmp"),
+      "the workspace-level log should name the file that survived removal; log was: \(contents)")
+    #expect(
+      FileManager.default.fileExists(atPath: stuck.path),
+      "the file the failure names must actually still be there")
+
+    await engine.flush()
+  }
+
   /// Critical: `cancel(job:)` must preserve steps that had already finished,
   /// and must not report the ones it kills as `.failed`.
   @Test func cancellingAJobKeepsFinishedStepsAndCancelsTheRest() async throws {
