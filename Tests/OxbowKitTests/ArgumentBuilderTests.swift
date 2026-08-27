@@ -30,6 +30,12 @@ struct ArgumentBuilderTests {
       ])
   }
 
+  private var composite: StepKind {
+    .composite(CompositeRequest(
+      framerate: 30, bitrateMbps: 6, duration: .seconds(60),
+      destination: URL(filePath: "/out/x.mp4")))
+  }
+
   private var video: StepKind {
     .downloadVideo(VideoRequest(
       videoID: "2844548319",
@@ -429,6 +435,9 @@ struct ArgumentBuilderTests {
       "-nostdin", "-y", "-hide_banner",
       "-i", "/tmp/job/video.mp4",
       "-i", "/tmp/job/render.mp4",
+      "-map", "0:a:0?",
+      "-c:a", "copy",
+      "/tmp/job/audio.m4a",
       "-filter_complex",
       "[0:v]setpts=PTS-STARTPTS[v];"
         + "[1:v]setpts=PTS-STARTPTS,fps=60[c];"
@@ -442,6 +451,7 @@ struct ArgumentBuilderTests {
       "-progress", "pipe:1",
       "-nostats",
       "-loglevel", "error",
+      "-movflags", "+frag_keyframe+empty_moov+default_base_moof",
       "/tmp/job/composite.mp4",
     ])
   }
@@ -471,6 +481,58 @@ struct ArgumentBuilderTests {
       framerate: 30, bitrateMbps: 6, duration: .seconds(60),
       destination: URL(filePath: "/out/x.mp4"))
     #expect(StepKind.composite(request).resource == .compute)
+  }
+
+  /// Seeking by time, never by frame index. On Twitch sources those two
+  /// disagree — docs/design/resume.md §2.1 has the measurements.
+  ///
+  /// Both inputs are seeked: the video and the chat render must start at the
+  /// same moment or the stack is offset.
+  @Test func aResumingCompositeSeeksBothInputs() {
+    var context = compositeContext
+    context.resumeFrom = .seconds(74.4)
+    let args = ArgumentBuilder.arguments(for: composite, context: context)
+
+    let seeks = args.indices.filter { args[$0] == "-ss" }
+    #expect(seeks.count == 2)
+    for index in seeks { #expect(args[index + 1] == "74.400000") }
+    // -ss must precede the -i it applies to, or it seeks the wrong thing.
+    for index in seeks { #expect(args[index + 2] == "-i") }
+  }
+
+  @Test func aFirstAttemptDoesNotSeek() {
+    #expect(!ArgumentBuilder.arguments(for: composite, context: compositeContext).contains("-ss"))
+  }
+
+  /// The fragmentation flags from fragmented-output.md §3 are what make resume
+  /// possible at all; they must survive on both paths.
+  /// The first attempt copies the source's audio out beside piece 0, in the
+  /// same invocation — it is a stream copy, so it costs nothing, and it is what
+  /// lets §5 delete the 16.3 GB source before assembling. resume.md §4.
+  @Test func aFirstAttemptAlsoWritesTheSidecarAudio() {
+    let args = ArgumentBuilder.arguments(for: composite, context: compositeContext)
+
+    #expect(args.contains { $0.hasSuffix("audio.m4a") })
+    #expect(args.contains("0:a:0?"))
+  }
+
+  /// A resumed attempt holds only the tail, so re-extracting would truncate the
+  /// sidecar to it. The first attempt's copy is the whole track; leave it alone.
+  @Test func aResumingCompositeDoesNotRewriteTheAudio() {
+    var context = compositeContext
+    context.resumeFrom = .seconds(10)
+    let args = ArgumentBuilder.arguments(for: composite, context: context)
+
+    #expect(!args.contains { $0.hasSuffix("audio.m4a") })
+  }
+
+  @Test func aResumingCompositeKeepsTheFragmentFlags() {
+    var context = compositeContext
+    context.resumeFrom = .seconds(10)
+    let args = ArgumentBuilder.arguments(for: composite, context: context)
+
+    #expect(args.contains("+frag_keyframe+empty_moov+default_base_moof"))
+    #expect(!args.contains("+faststart"))
   }
 
   /// One piece is the ordinary case — every job that never failed. Concat of a

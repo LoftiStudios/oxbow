@@ -134,10 +134,33 @@ public enum ArgumentBuilder {
       // video, [1] is the chat render.
       let video = request.inputPath(context, at: 0)
       let chat = request.inputPath(context, at: 1)
+
+      // Seconds with six decimals. `frames ÷ framerate` is always ≤ the
+      // source's own timestamp for that frame, because Twitch rounds frame
+      // times up to whole milliseconds — so the seek lands on the intended
+      // frame and never overshoots to the next one. resume.md §2.
+      let seek = request.resumeSeek(context.resumeFrom)
+
+      // A second output on the first attempt only. FFmpeg takes any number of
+      // outputs per invocation, so the audio copy is free — and it is what
+      // lets the downloaded video be deleted before assemble runs, keeping
+      // recovery near a normal run's disk peak. A resumed attempt holds only
+      // the tail, so re-extracting here would truncate the sidecar to it.
+      // resume.md §4.
+      //
+      // Placed as its own complete output — `-map`/`-c:a`/path — right after
+      // both inputs, before the composite's own output options. FFmpeg reads
+      // multiple outputs in sequence, each terminated by its path, so this
+      // keeps the composite's own file as the argv's final element.
+      let sidecar: [String] = context.resumeFrom == nil
+        ? ["-map", "0:a:0?", "-c:a", "copy",
+           context.outputFile.deletingLastPathComponent()
+             .appending(path: "audio.m4a").path]
+        : []
+
       return [
         "-nostdin", "-y", "-hide_banner",
-        "-i", video,
-        "-i", chat,
+      ] + seek + ["-i", video] + seek + ["-i", chat] + sidecar + [
         "-filter_complex",
         // setpts precedes fps so the rate conversion runs on a zero-based
         // timeline. No `scale` on either input: the chat is rendered at the
@@ -158,9 +181,16 @@ public enum ArgumentBuilder {
         // VOD audio is already AAC in MP4. Re-encoding it buys nothing.
         "-c:a", "copy",
         "-progress", "pipe:1", "-nostats", "-loglevel", "error",
-        // No -movflags +faststart: it rewrites the whole file to relocate the
-        // moov atom, which on a 22 GB output is minutes of disk churn for
-        // HTTP progressive streaming a local file does not need.
+        // empty_moov writes the track declarations with no sample table, so
+        // the file is structurally valid from byte 0 — the precondition for
+        // resuming at all. frag_keyframe starts a fragment at each keyframe;
+        // default_base_moof makes each fragment self-contained. Never
+        // +faststart: it rewrites the whole file to relocate the moov atom,
+        // which on a 22 GB output is minutes of disk churn for HTTP
+        // progressive streaming a local file does not need — and
+        // fragmentation makes it meaningless anyway, since there is no
+        // monolithic moov to relocate. fragmented-output.md §3.
+        "-movflags", "+frag_keyframe+empty_moov+default_base_moof",
         context.outputFile.path,
       ]
 
