@@ -656,9 +656,21 @@ public actor QueueEngine {
       return
     }
 
+    // A retained piece (the composite step's own artifact) lives under
+    // `resumeDirectory`, not `jobDirectory` — `Workspace.contains` deliberately
+    // does not recognise it (see its doc comment: a retained piece outlives
+    // the job workspace by design), so the loop below cannot rely on
+    // `contains` alone to find it. Checked here, in the caller, rather than
+    // by widening `contains` itself, which would blur the one thing that
+    // doc comment exists to keep separate.
+    var retained = configuration.workspace.resumeDirectory(id).standardizedFileURL.path
+    if !retained.hasSuffix("/") { retained += "/" }
+
     for stepIndex in jobs[index].steps.indices {
       guard let artifact = jobs[index].steps[stepIndex].artifact else { continue }
-      guard configuration.workspace.contains(artifact, ofJob: id) else { continue }
+      guard configuration.workspace.contains(artifact, ofJob: id)
+              || artifact.standardizedFileURL.path.hasPrefix(retained)
+      else { continue }
       jobs[index].steps[stepIndex].artifact = nil
     }
     configuration.workspace.removeJob(id)
@@ -669,6 +681,13 @@ public actor QueueEngine {
     // would continue from, so clearing it there would defeat resume before
     // it ever got used. Delivered means done: the retained bytes have no
     // further use. docs/design/resume.md §8.
+    //
+    // Comes after the claim-clearing loop above, in the same actor turn:
+    // the composite step's artifact is nilled there because it will be gone
+    // the instant this runs, not because the file happens to be gone yet.
+    // Reconciler will not get a second chance to notice — it short-circuits
+    // for a `.done` job — so nothing here may leave a step pointing at a
+    // piece this call is about to delete.
     configuration.workspace.removeResumable(id)
   }
 

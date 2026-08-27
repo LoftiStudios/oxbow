@@ -405,20 +405,19 @@ struct QueueEngineTests {
     // dropped in the same breath. The composite's own output is a piece in
     // the retention area, not the delivered file — `Workspace.contains`
     // deliberately excludes that area (see its doc comment), so the done
-    // job's workspace sweep never touches it directly, and its artifact field
-    // keeps pointing at the now-deleted piece rather than being cleared to
-    // nil. What actually removes the bytes is delivery-time retention
-    // cleanup (docs/design/resume.md §8): a delivered job has nothing left to
-    // resume, so `removeJobWorkspace` drops the whole retained directory.
+    // job's workspace sweep never touches it directly. What actually removes
+    // the bytes is delivery-time retention cleanup (docs/design/resume.md
+    // §8): a delivered job has nothing left to resume, so `removeJobWorkspace`
+    // drops the whole retained directory — and, in the same actor turn, nils
+    // the composite step's claim on it, so nothing is left pointing at a
+    // piece that no longer exists (`Reconciler` short-circuits for a `.done`
+    // job, so there is no later chance to notice a stale one).
     let workspace = Workspace(root: root)
     for step in job.steps {
       switch step.kind {
       case .assemble:
         #expect(step.artifact == destination)
-      case .composite:
-        #expect(step.artifact == workspace.resumeDirectory(job.id).appending(path: "piece-0.mp4"),
-                "the artifact field still names the piece even though delivery cleared the file")
-      case .downloadVideo, .downloadClip, .downloadChat, .renderChat:
+      case .composite, .downloadVideo, .downloadClip, .downloadChat, .renderChat:
         #expect(step.artifact == nil, "an intermediate must not be claimed")
       }
     }
@@ -434,6 +433,44 @@ struct QueueEngineTests {
     let enumerator = FileManager.default.enumerator(atPath: root.path)
     let delivered = (enumerator?.allObjects as? [String] ?? []).filter { $0.hasSuffix(".mp4") }
     #expect(Set(delivered) == ["out.mp4"])
+
+    await engine.flush()
+  }
+
+  /// `removeJobWorkspace`'s `.done` branch nils a step's claim on any
+  /// artifact `Workspace.contains` recognises, then separately deletes the
+  /// whole retained directory. The composite step's own artifact lives
+  /// *inside* that retained directory, which `contains` deliberately does not
+  /// recognise (see its doc comment) — so without an explicit fix, the nilling
+  /// loop skips it and the deletion removes the file out from under a claim
+  /// that survives. That dangling reference is user-visible:
+  /// `JobInfo.deliveredFiles` and "Show in Finder" (`QueueActions.swift`)
+  /// both read a step's `artifact`, so a delivered job would list, and offer
+  /// to reveal, a `piece-0.mp4` this same delivery just deleted.
+  @Test func aDeliveredCompositeJobDoesNotClaimItsRemovedPiece() async throws {
+    let (engine, root) = makeEngine(.succeeds)
+    defer { cleanUp(root) }
+
+    let template = JobTemplate(
+      media: .video(VideoRequest(videoID: "v", quality: "1080p60")),
+      render: RenderRequest(),
+      composite: CompositeRequest(
+        framerate: 60, bitrateMbps: 8, duration: .seconds(60),
+        destination: root.appending(path: "out.mp4")))
+
+    try await engine.start()
+    await engine.enqueue(template, title: "t")
+    try await settle(engine)
+
+    let job = try #require(await engine.currentJobs.first)
+    #expect(job.status == .done, "precondition")
+    let composite = try #require(job.steps.first {
+      if case .composite = $0.kind { return true }
+      return false
+    })
+
+    #expect(composite.artifact == nil,
+            "the composite step must not claim a piece that delivery just removed")
 
     await engine.flush()
   }
