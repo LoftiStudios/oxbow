@@ -35,6 +35,34 @@ public struct Workspace: Sendable {
     jobDirectory(job).appending(path: "artifacts")
   }
 
+  /// Partial composites, retained across launches so a failed encode can be
+  /// continued rather than restarted.
+  ///
+  /// Deliberately a sibling of `jobsRoot`, never inside it. `removeAll()` is
+  /// unconditional and its value is that it *cannot be wrong*; putting
+  /// resumable state inside `jobs/` would force it to become a rule that can
+  /// be. See docs/design/resume.md §3.
+  public var resumeRoot: URL {
+    root.appending(path: "resume")
+  }
+
+  public func resumeDirectory(_ job: JobID) -> URL {
+    resumeRoot.appending(path: job.rawValue.uuidString)
+  }
+
+  @discardableResult
+  public func prepareResume(job: JobID) throws -> URL {
+    let directory = resumeDirectory(job)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    return directory
+  }
+
+  /// Cleared on successful delivery, on job removal, and when the piece cap
+  /// is hit. Never at launch — that is the point.
+  public func removeResumable(_ job: JobID) {
+    try? FileManager.default.removeItem(at: resumeDirectory(job))
+  }
+
   /// Where a step's captured helper output lives.
   ///
   /// Under the job, not the step: `removeStep` deletes a step's directory the
@@ -73,6 +101,11 @@ public struct Workspace: Sendable {
   ///
   /// This is what lets a caller tell "deleting this directory destroys an
   /// artifact a step still claims" from "deleting it is free".
+  ///
+  /// - Important: a file in `resumeRoot` reports `false` here, and that is
+  ///   deliberate rather than incidental. `contains` means "an intermediate
+  ///   that dies with the job workspace"; a retained piece outlives it by
+  ///   design. Do not "fix" this to include the resume area.
   public func contains(_ url: URL, ofJob job: JobID) -> Bool {
     var directory = jobDirectory(job).standardizedFileURL.path
     if !directory.hasSuffix("/") { directory += "/" }

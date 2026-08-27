@@ -118,4 +118,49 @@ struct WorkspaceTests {
       !workspace.contains(intermediate, ofJob: Build.jobID(2)),
       "another job's workspace is not this one's")
   }
+
+  /// The launch sweep must never touch retained pieces. That is the entire
+  /// point of putting them outside `jobs/` — see docs/design/resume.md §3.
+  @Test func removeAllSparesTheResumeArea() throws {
+    let workspace = makeWorkspace()
+    defer { tearDown(workspace) }
+    let job = Build.jobID(1)
+
+    _ = try workspace.prepareStep(job: job, step: Build.stepID(1))
+    let resume = try workspace.prepareResume(job: job)
+    let piece = resume.appending(path: "piece-0.mp4")
+    try Data([0x01]).write(to: piece)
+
+    workspace.removeAll()
+
+    #expect(!FileManager.default.fileExists(atPath: workspace.jobsRoot.path))
+    #expect(FileManager.default.fileExists(atPath: piece.path))
+  }
+
+  @Test func removeResumableDeletesOnlyThatJob() throws {
+    let workspace = makeWorkspace()
+    defer { tearDown(workspace) }
+    let kept = Build.jobID(1)
+    let dropped = Build.jobID(2)
+
+    for job in [kept, dropped] {
+      let dir = try workspace.prepareResume(job: job)
+      try Data([0x01]).write(to: dir.appending(path: "piece-0.mp4"))
+    }
+
+    workspace.removeResumable(dropped)
+
+    #expect(FileManager.default.fileExists(atPath: workspace.resumeDirectory(kept).path))
+    #expect(!FileManager.default.fileExists(atPath: workspace.resumeDirectory(dropped).path))
+  }
+
+  /// `contains` answers "is this an intermediate that dies with the job
+  /// workspace". A retained piece is deliberately not one.
+  @Test func containsIsFalseForARetainedPiece() {
+    let workspace = makeWorkspace()
+    let job = Build.jobID(1)
+    let piece = workspace.resumeDirectory(job).appending(path: "piece-0.mp4")
+
+    #expect(!workspace.contains(piece, ofJob: job))
+  }
 }
