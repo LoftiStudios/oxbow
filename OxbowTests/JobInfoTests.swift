@@ -163,6 +163,28 @@ struct JobInfoTests {
     #expect(JobInfo(job: subject).deliveredFiles == [delivered])
   }
 
+  /// Retention only ever persists on a job that is *not* `.done`
+  /// (docs/design/resume.md §8), so `Reconciler`'s workspace-membership
+  /// check never gets a second look at a failed or cancelled composite job —
+  /// it short-circuits on `.done`. A piece therefore can still be sitting on
+  /// a claimed `.composite` step here, pointing into `Workspace.resumeRoot`,
+  /// which is deliberately *outside* the workspace. Pieces are never
+  /// delivered (§7); only `.assemble`'s output is.
+  @Test func excludesARetainedPieceEvenWhenTheCompositeStepStillClaimsOne() {
+    let piece = URL(filePath: "/Caches/studio.lofti.Oxbow/resume/abc/piece-0.mp4")
+    let composite = CompositeRequest(
+      framerate: 60, bitrateMbps: 6, duration: .seconds(60),
+      destination: Self.folder.appending(path: "out.mp4"))
+    let subject = job(
+      step(
+        .composite(composite),
+        .failed(StepFailure(kind: .noArtifact, summary: "boom")),
+        artifact: piece),
+      step(.assemble(AssembleRequest(destination: Self.folder.appending(path: "out.mp4"))), .queued))
+
+    #expect(JobInfo(job: subject).deliveredFiles.isEmpty)
+  }
+
   // MARK: - Render settings
 
   /// The only thing left to report about a composite's render step: the chat

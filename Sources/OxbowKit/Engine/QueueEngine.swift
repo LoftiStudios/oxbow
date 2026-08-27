@@ -109,7 +109,38 @@ public actor QueueEngine {
     let loaded = try configuration.store.load()
     jobs = Reconciler.reconcile(loaded) { Self.isUsableArtifact($0) }
 
+    removeOrphanedResumeDirectories()
+
     tick()
+  }
+
+  /// Sweeps `resumeRoot` for a retention directory that names no job the
+  /// queue just loaded — the one way one can exist, since every path that
+  /// creates one (`prepareResume`, reached only from `makeContext` for a job
+  /// already in `jobs`) is tied to a real job id. A lost or corrupted queue
+  /// store is the only route to an orphan: without this, that directory
+  /// would be both unreachable (nothing in the UI names it) and unshowable
+  /// (`retainedBytes(forJob:)` needs a `JobID` nothing has any more) forever,
+  /// since `removeAll()` deliberately does not reach `resumeRoot`.
+  ///
+  /// **Not the same sweep as `removeAll()`.** That one is unconditional
+  /// because `jobs/` can never hold anything reusable; this one is
+  /// conditional on purpose — a cancelled job still in the queue keeps its
+  /// retained pieces (docs/design/resume.md §8), so only a directory whose
+  /// name matches *no* loaded job, whatever that job's status, is removed.
+  private func removeOrphanedResumeDirectories() {
+    let known = Set(jobs.map { $0.id.rawValue.uuidString })
+    let resumeRoot = configuration.workspace.resumeRoot
+    guard let contents = try? FileManager.default.contentsOfDirectory(
+      at: resumeRoot, includingPropertiesForKeys: [.isDirectoryKey])
+    else { return }
+
+    for url in contents {
+      guard (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true
+      else { continue }
+      guard !known.contains(url.lastPathComponent) else { continue }
+      try? FileManager.default.removeItem(at: url)
+    }
   }
 
   /// The tail of a step's captured helper output, or nil if it has none.
@@ -346,10 +377,10 @@ public actor QueueEngine {
         kind: .launchFailed("\(error)"),
         summary: "Wiring bug: this step's inputs did not match its dependencies.")))
       return
-    } catch is SourceChangedError {
+    } catch let error as SourceChangedError {
       completeStep(id, outcome: .failed(StepFailure(
         kind: .noArtifact,
-        summary: "The source changed since this download started. Start it again.")))
+        summary: error.reason ?? "The source changed since this download started. Start it again.")))
       return
     } catch {
       completeStep(id, outcome: .failed(StepFailure(
@@ -761,14 +792,29 @@ public actor QueueEngine {
     // the next began. Repair is a no-op on an untorn file.
     if let last = existing.last { _ = try? FragmentedMP4.repair(last) }
 
-    let frames = existing.reduce(0) { total, piece in
-      total + ((try? FragmentedMP4.index(of: piece))?.frameCount ?? 0)
+    // A piece that contributed zero frames is one FFmpeg opened (`ftyp` +
+    // `moov`) but was killed before finishing a single fragment for — there
+    // is nothing in it to resume from. Left on disk it would still count as
+    // a real attempt: it burns a slot against `maximumPieces`, and
+    // `.assemble`'s `pieces.txt` would list it as an empty segment in the
+    // concat. Discarded outright rather than repaired — repair only fixes a
+    // torn trailing fragment, and an absent one is not that.
+    var survivors: [URL] = []
+    var frames = 0
+    for piece in existing {
+      let count = (try? FragmentedMP4.index(of: piece))?.frameCount ?? 0
+      if count > 0 {
+        survivors.append(piece)
+        frames += count
+      } else {
+        try? FileManager.default.removeItem(at: piece)
+      }
     }
     guard frames > 0 else {
       configuration.workspace.removeResumable(job)
       return (0, nil)
     }
-    return (existing.count, .seconds(Double(frames) / Double(framerate)))
+    return (survivors.count, .seconds(Double(frames) / Double(framerate)))
   }
 
   /// Builds a step's `StepContext`: where it works, where it writes, and
@@ -837,9 +883,23 @@ public actor QueueEngine {
         let fresh = try SourceFingerprint.of(sourceVideo, duration: request.duration)
         if resume.from == nil {
           try? fresh.write(to: fingerprintFile)
-        } else if let recorded = try? SourceFingerprint.read(from: fingerprintFile),
-                  !recorded.matches(fresh) {
-          throw SourceChangedError()
+        } else {
+          // Fail closed, not open. A full disk is the likeliest reason the
+          // composite failed at all, and also the likeliest reason
+          // `source.json` itself failed to write on the first attempt or
+          // fails to read back now — so "cannot verify" must refuse exactly
+          // like "verified, and it disagrees" (§7: refuses rather than
+          // repairs). Treating a missing or unreadable fingerprint as an
+          // implicit match would resume unverified in precisely the
+          // situation this check exists to catch.
+          guard let recorded = try? SourceFingerprint.read(from: fingerprintFile) else {
+            throw SourceChangedError(reason:
+              "This download's earlier attempt could not be verified — its "
+                + "recorded source fingerprint is missing or unreadable. Start it again.")
+          }
+          guard recorded.matches(fresh) else {
+            throw SourceChangedError()
+          }
         }
       }
 
@@ -938,8 +998,20 @@ public actor QueueEngine {
 }
 
 /// Thrown when a resumed job's re-downloaded source no longer matches what
-/// piece 0 was built from. See docs/design/resume.md §7.
-struct SourceChangedError: Error {}
+/// piece 0 was built from — or when that comparison could not be made at
+/// all. See docs/design/resume.md §7.
+struct SourceChangedError: Error {
+  /// Set only when refusing because the fingerprint could not be read back,
+  /// rather than because it was read and disagreed with the fresh one. The
+  /// two need different words: "the source changed" overstates what is
+  /// actually known when the fingerprint itself is the thing missing. `nil`
+  /// falls back to the ordinary mismatch message at the catch site.
+  let reason: String?
+
+  init(reason: String? = nil) {
+    self.reason = reason
+  }
+}
 
 /// Thrown by `QueueEngine.makeContext` when a step's resolved input artifacts
 /// are shorter than its `dependsOn`, so `launch` can report a wiring bug

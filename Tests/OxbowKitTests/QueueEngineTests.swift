@@ -1256,10 +1256,10 @@ struct QueueEngineTests {
       do {
         let context = try engine.makeContext(job: wired, step: compositeStep)
         return .succeeded(artifact: context.outputFile)
-      } catch is SourceChangedError {
+      } catch let error as SourceChangedError {
         return .failed(StepFailure(
           kind: .noArtifact,
-          summary: "The source changed since this download started. Start it again."))
+          summary: error.reason ?? "The source changed since this download started. Start it again."))
       } catch {
         return .failed(StepFailure(kind: .launchFailed("\(error)"), summary: "\(error)"))
       }
@@ -1399,6 +1399,29 @@ struct QueueEngineTests {
     #expect(contents.isEmpty)
   }
 
+  /// A piece that reached only `ftyp`+`moov` before the crash — killed before
+  /// a single fragment finished — has nothing to resume from and must not be
+  /// treated as a real attempt: left in place it would burn a slot against
+  /// the piece cap and hand `.assemble` an empty segment in `pieces.txt`.
+  /// resume.md §7.
+  @Test func aZeroFramePieceIsDiscardedRatherThanCounted() async throws {
+    let harness = try makeHarness()
+    defer { harness.tearDown() }
+    try harness.writePiece(index: 0, frames: 90)
+    try harness.writePiece(index: 1, frames: 0)
+
+    let context = try harness.engineContext(forCompositeOf: harness.job)
+
+    // The zero-frame piece must not have claimed an index of its own — the
+    // next attempt reuses it rather than continuing past it.
+    #expect(context.outputFile.lastPathComponent == "piece-1.mp4")
+    // 90 frames at 30 fps == 3.0s, from the real piece alone.
+    #expect(context.resumeFrom == .seconds(3))
+    #expect(!FileManager.default.fileExists(
+      atPath: harness.workspace.resumeDirectory(harness.job.id).appending(path: "piece-1.mp4").path),
+      "a zero-frame piece must be removed outright, not left to reach .assemble's pieces.txt")
+  }
+
   /// A changed source must refuse rather than splice two different videos
   /// together. resume.md §7.
   @Test func aChangedSourceRefusesToResume() async throws {
@@ -1415,6 +1438,31 @@ struct QueueEngineTests {
       return
     }
     #expect(failure.summary.contains("source changed"))
+  }
+
+  /// The fail-open twin of `aChangedSourceRefusesToResume`: no `source.json`
+  /// at all, as if the first attempt's own `try?` write had failed — a full
+  /// disk is the likeliest reason a composite failed in the first place, and
+  /// also the likeliest reason the fingerprint write failed alongside it. A
+  /// resume that cannot verify its source must refuse the same as one that
+  /// verifies and finds a mismatch, not silently treat "unreadable" as
+  /// "matches". resume.md §7.
+  @Test func aMissingFingerprintRefusesToResume() async throws {
+    let harness = try makeHarness()
+    defer { harness.tearDown() }
+    try harness.writePiece(index: 0, frames: 30)
+    // Deliberately no `writeFingerprint` call — `source.json` is absent.
+    try harness.writeVideoArtifact(byteCount: 2000)
+
+    let outcome = await harness.runComposite()
+
+    guard case .failed(let failure) = outcome else {
+      Issue.record("expected refusal, got \(outcome)")
+      return
+    }
+    // Not the mismatch wording: nothing was compared, so nothing "changed".
+    #expect(!failure.summary.contains("source changed"))
+    #expect(failure.summary.contains("could not be verified"))
   }
 
   /// Deleting the re-fetched inputs before assembling is what keeps the disk
@@ -1473,5 +1521,109 @@ struct QueueEngineTests {
     defer { harness.tearDown() }
 
     #expect(await harness.engine.retainedBytes(forJob: harness.job.id) == 0)
+  }
+
+  /// The invariant resume.md §8 exists to protect, and the one no existing
+  /// test pinned: cancellation is the one ending where retention is
+  /// deliberately *kept*. `removeJobWorkspace`'s not-done branch has two
+  /// early returns, and adding a stray `removeResumable` call to either
+  /// would pass every other test in this file while quietly breaking this.
+  @Test func cancellingAJobWithARetainedPieceKeepsIt() async throws {
+    let root = makeRoot()
+    let workspace = Workspace(root: root)
+    let engine = QueueEngine(
+      configuration: makeConfiguration(root: root) { FakeHelper(.hangsUntilCancelled) })
+    defer { cleanUp(root) }
+
+    let jobID = JobID(rawValue: UUID())
+    let job = Job(
+      id: jobID,
+      created: Date(),
+      title: "resume",
+      steps: [Step(
+        id: StepID(rawValue: UUID()),
+        kind: .composite(CompositeRequest(
+          framerate: 30, bitrateMbps: 8, duration: .seconds(60),
+          destination: root.appending(path: "out.mp4"))))])
+
+    // A piece retained from an earlier interrupted attempt — what a resumed
+    // composite continues from, and what cancelling a *new* attempt must
+    // not touch.
+    try FileManager.default.createDirectory(
+      at: workspace.resumeDirectory(jobID), withIntermediateDirectories: true)
+    try FragmentBuilder.fragmentedFile([UInt32(30)])
+      .write(to: workspace.resumeDirectory(jobID).appending(path: "piece-0.mp4"))
+
+    try QueueStore(fileURL: storeURL(for: root)).save([job])
+    try await engine.start()
+
+    for _ in 0..<200 {
+      if await engine.currentJobs.first?.steps.first?.status == .running { break }
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(
+      await engine.currentJobs.first?.steps.first?.status == .running,
+      "precondition: the composite must be genuinely in flight")
+
+    await engine.cancel(job: jobID)
+    try await settle(engine)
+
+    #expect(await engine.currentJobs.first?.status == .cancelled)
+    #expect(
+      FileManager.default.fileExists(
+        atPath: workspace.resumeDirectory(jobID).appending(path: "piece-0.mp4").path),
+      "resume.md §8: cancellation is the one ending where retention is deliberately kept")
+
+    await engine.flush()
+  }
+
+  /// A retention directory naming no job the queue just loaded — the
+  /// signature of a lost or corrupted queue store — is otherwise both
+  /// unreachable (nothing in the UI names it) and unshowable
+  /// (`retainedBytes(forJob:)` needs a `JobID` nothing has any more)
+  /// forever, since `removeAll()` deliberately never reaches `resumeRoot`.
+  /// `start()` must sweep exactly that case, and nothing else: a job still
+  /// in the queue is not an orphan, whatever its status.
+  @Test func startSweepsAnOrphanedResumeDirectoryButKeepsAKnownJobs() async throws {
+    let root = makeRoot()
+    let workspace = Workspace(root: root)
+    let engine = QueueEngine(configuration: makeConfiguration(root: root) { FakeHelper(.succeeds) })
+    defer { cleanUp(root) }
+
+    // A cancelled job still tracked by the queue — its retained piece must
+    // survive the sweep.
+    let knownJobID = JobID(rawValue: UUID())
+    let knownJob = Job(
+      id: knownJobID, created: Date(), title: "resume",
+      steps: [Step(
+        id: StepID(rawValue: UUID()),
+        kind: .composite(CompositeRequest(
+          framerate: 30, bitrateMbps: 8, duration: .seconds(60),
+          destination: root.appending(path: "out.mp4"))),
+        status: .cancelled)])
+    try FileManager.default.createDirectory(
+      at: workspace.resumeDirectory(knownJobID), withIntermediateDirectories: true)
+    try Data("x".utf8).write(
+      to: workspace.resumeDirectory(knownJobID).appending(path: "piece-0.mp4"))
+
+    // An orphan: a resume directory naming a job id the store never heard
+    // of — what a lost or corrupted queue store leaves behind.
+    let orphanJobID = JobID(rawValue: UUID())
+    try FileManager.default.createDirectory(
+      at: workspace.resumeDirectory(orphanJobID), withIntermediateDirectories: true)
+    try Data("x".utf8).write(
+      to: workspace.resumeDirectory(orphanJobID).appending(path: "piece-0.mp4"))
+
+    try QueueStore(fileURL: storeURL(for: root)).save([knownJob])
+    try await engine.start()
+
+    #expect(
+      FileManager.default.fileExists(atPath: workspace.resumeDirectory(knownJobID).path),
+      "a job still in the queue is not an orphan, whatever its status")
+    #expect(
+      !FileManager.default.fileExists(atPath: workspace.resumeDirectory(orphanJobID).path),
+      "a directory naming no loaded job must not survive forever")
+
+    await engine.flush()
   }
 }

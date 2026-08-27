@@ -541,9 +541,11 @@ struct JobTemplateTests {
     #expect(Set(admitted) == Set([renderStep.id, mediaStep.id]))
   }
 
-  /// Assemble consumes the composite's pieces AND the source video, because
-  /// the audio is mapped from the source at delivery — pieces are video-only.
-  /// Order is the contract: composite first, media second.
+  /// Assemble depends on the composite step alone. The audio it maps comes
+  /// from the sidecar the composite's first attempt copies into the
+  /// retention area, not from the downloaded video — so by the time assemble
+  /// runs, the media step's own output has already been deleted (§5) and
+  /// cannot be a dependency. docs/design/resume.md §6.
   @Test func aCompositeJobEndsWithAnAssembleStep() throws {
     let job = compositeTemplate().makeJob(
       id: Build.jobID(1), title: "t", created: .now, nextStepID: Build.sequentialStepIDs())

@@ -126,9 +126,21 @@ nonisolated struct JobInfo {
 
   /// Only the files that actually landed. `Step.artifact` is nil until a step
   /// succeeds, and `Reconciler` clears it again for anything still sitting
-  /// inside our own workspace, so what is left is what the user can open.
+  /// inside our own workspace — but a retained composite piece lives under
+  /// `Workspace.resumeRoot`, deliberately *outside* the workspace
+  /// (docs/design/resume.md §3), so `Reconciler` never reaches it: retention
+  /// only ever persists on a job that is *not* `.done`, which is exactly a
+  /// job `Reconciler` does not stop and reconsider. A failed or cancelled
+  /// composite job can therefore still have its step pointing at
+  /// `resume/<jobid>/piece-N.mp4` here. Pieces are never delivered — only
+  /// `.assemble`'s output is (§7) — so the composite step's artifact is
+  /// excluded outright, the one step whose artifact can ever live in the
+  /// retention area rather than a real destination.
   var deliveredFiles: [URL] {
-    job.steps.compactMap(\.artifact)
+    job.steps.compactMap { step in
+      if case .composite = step.kind { return nil }
+      return step.artifact
+    }
   }
 
   private var destinations: [URL] {

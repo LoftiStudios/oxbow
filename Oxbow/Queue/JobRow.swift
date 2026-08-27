@@ -43,6 +43,17 @@ struct JobRow: View {
   /// whatever is expanded, and a step row's Retry restarts that one step.
   private var summarisesRepresentativeStep: Bool { !(isMultiStep && isExpanded) }
 
+  /// Whether this row is a case retention might have something to show for.
+  ///
+  /// Both terminal-with-leftovers endings, not `.failed` alone: retention is
+  /// user-cleared and is deliberately *never* dropped on cancellation
+  /// (docs/design/resume.md §8) — cancelling mid-composite is the one ending
+  /// this disclosure most needs to cover, since it is exactly where retained
+  /// bytes are guaranteed to still be sitting there.
+  private var isRetentionVisible: Bool {
+    job.status == .failed || job.status == .cancelled
+  }
+
   var body: some View {
     let representative = JobPresentation.representativeStep(of: job)
 
@@ -68,7 +79,12 @@ struct JobRow: View {
         // a whole (it is what a resumed composite continues from), so this
         // sits under the header once regardless of which step is shown or
         // expanded — never duplicated per step.
-        if job.status == .failed, let bytesRetained, bytesRetained > 0 {
+        //
+        // `.failed` and `.cancelled` both, not `.failed` alone: retention is
+        // never cleared on cancellation (docs/design/resume.md §8) — it is
+        // the one ending this disclosure exists for — so gating on `.failed`
+        // only hid the exact bytes it was built to surface.
+        if isRetentionVisible, let bytesRetained, bytesRetained > 0 {
           Text("\(ByteCountFormatter.string(fromByteCount: Int64(bytesRetained), countStyle: .file)) held — dismiss to reclaim")
             .font(.caption)
             .foregroundStyle(.secondary)
@@ -77,11 +93,11 @@ struct JobRow: View {
       }
     }
     .padding(.vertical, 4)
-    // Keyed on status: a retry moves the job off `.failed` and the read is
-    // no longer meaningful, so the stale byte count is dropped rather than
-    // left showing on a row that is running again.
+    // Keyed on status: a retry moves the job off `.failed`/`.cancelled` and
+    // the read is no longer meaningful, so the stale byte count is dropped
+    // rather than left showing on a row that is running again.
     .task(id: job.status) {
-      guard job.status == .failed else {
+      guard isRetentionVisible else {
         bytesRetained = nil
         return
       }
