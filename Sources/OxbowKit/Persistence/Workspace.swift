@@ -14,9 +14,10 @@ public struct Workspace: Sendable {
     self.root = root
   }
 
-  /// The only subtree of `root` this type creates. Scoped deliberately: `root`
-  /// is the app's whole cache directory, and the launch sweep must not take
-  /// anything else in it with it.
+  /// The only subtree of `root` the launch sweep may reclaim. Scoped
+  /// deliberately: `root` is the app's whole cache directory, so the sweep
+  /// is confined here and cannot touch `resumeRoot`, where partial composites
+  /// are retained across launches.
   public var jobsRoot: URL {
     root.appending(path: "jobs")
   }
