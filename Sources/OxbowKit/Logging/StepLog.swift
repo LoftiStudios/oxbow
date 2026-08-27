@@ -35,7 +35,16 @@ public actor StepLog {
     guard let data = "\(line)\n".data(using: .utf8) else { return }
 
     guard let handle = openHandle() else { return }
-    handle.write(data)
+    // `write(_:)` (no `contentsOf:`) can raise an uncaught Objective-C
+    // exception on a genuine write failure rather than returning a Swift
+    // error — the job-level teardown-failure log had the same hazard and was
+    // switched to the throwing `write(contentsOf:)` for it. It matters more
+    // here: `QueueEngine.recordStepTeardownFailure` calls into this from an
+    // unstructured `Task`, on a path whose likeliest cause is a full disk, so
+    // an uncatchable exception there would crash the app while it was trying
+    // to report a cleanup failure. `try?` swallows it the same way the
+    // job-level path does — a dropped log line, not a crash.
+    guard (try? handle.write(contentsOf: data)) != nil else { return }
     writtenBytes += data.count
 
     // Compact only when meaningfully over, not on every line past the cap:
