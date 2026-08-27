@@ -66,6 +66,44 @@ struct FragmentIndexTests {
     #expect(size == index.completeBytes)
   }
 
+  /// A finalised, ordinary (non-fragmented) MP4: `ftyp`, `mdat`, then `moov`
+  /// written last — the layout a stream copy without `+faststart` produces.
+  @Test func recognisesACompleteTopLevelMoov() throws {
+    var data = FragmentBuilder.box("ftyp", Data(repeating: 0, count: 8))
+    data.append(FragmentBuilder.box("mdat", Data(repeating: 0xAB, count: 32)))
+    data.append(FragmentBuilder.box("moov", Data(repeating: 0, count: 16)))
+    let url = try FragmentBuilder.write(data)
+    defer { try? FileManager.default.removeItem(at: url) }
+
+    #expect(try FragmentedMP4.hasCompleteMoov(at: url))
+  }
+
+  /// What a `SIGKILL` mid-write actually leaves: the encoder writes `moov`
+  /// last, so a kill during the `mdat` write never gets there at all — there
+  /// is no partial `moov` box on disk to find, just an absence.
+  @Test func aFileKilledBeforeMoovHasNone() throws {
+    var data = FragmentBuilder.box("ftyp", Data(repeating: 0, count: 8))
+    data.append(FragmentBuilder.box("mdat", Data(repeating: 0xAB, count: 32)))
+    let url = try FragmentBuilder.write(data)
+    defer { try? FileManager.default.removeItem(at: url) }
+
+    #expect(try !FragmentedMP4.hasCompleteMoov(at: url))
+  }
+
+  /// The rarer case: the kill lands while `moov` itself is mid-write, so its
+  /// header is on disk but its declared size runs past the end of the file.
+  /// A header alone is not a usable box.
+  @Test func aTornMoovIsNotComplete() throws {
+    var data = FragmentBuilder.box("ftyp", Data(repeating: 0, count: 8))
+    data.append(FragmentBuilder.box("mdat", Data(repeating: 0xAB, count: 32)))
+    let whole = FragmentBuilder.box("moov", Data(repeating: 0, count: 64))
+    data.append(whole.prefix(20)) // header + a few bytes, not the full box
+    let url = try FragmentBuilder.write(data)
+    defer { try? FileManager.default.removeItem(at: url) }
+
+    #expect(try !FragmentedMP4.hasCompleteMoov(at: url))
+  }
+
   /// The hand-built fixtures above prove the parser reads what it was told to.
   /// This proves it reads what FFmpeg actually writes, which is the claim that
   /// matters. Regenerate with the command in `task-3-report.md` if FFmpeg changes.

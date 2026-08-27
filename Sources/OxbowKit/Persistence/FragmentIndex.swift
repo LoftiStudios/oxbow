@@ -84,6 +84,44 @@ public enum FragmentedMP4 {
     return index
   }
 
+  /// Whether `url` has a complete top-level `moov` box.
+  ///
+  /// An encoder writes `moov` last, after every sample — that is exactly
+  /// why an ordinary (non-fragmented) MP4 is not crash-safe: a process
+  /// killed mid-write never reaches it, and nothing after the fact can
+  /// rebuild it without re-encoding. This is the cheap, no-decode way to
+  /// tell "finished writing" from "interrupted", used for the composite's
+  /// audio sidecar, which — unlike a piece — has none of the fragmentation
+  /// that makes a partial write recoverable. See docs/design/resume.md §4.
+  public static func hasCompleteMoov(at url: URL) throws -> Bool {
+    let handle = try FileHandle(forReadingFrom: url)
+    defer { try? handle.close() }
+    let size = Int(try handle.seekToEnd())
+
+    var offset = 0
+    while offset + 8 <= size {
+      try handle.seek(toOffset: UInt64(offset))
+      guard let header = try handle.read(upToCount: 8), header.count == 8 else { break }
+
+      var boxSize = Int(header[header.startIndex ..< header.startIndex + 4]
+        .reduce(0) { $0 << 8 | UInt32($1) })
+      let type = String(decoding: header[header.startIndex + 4 ..< header.startIndex + 8],
+                        as: UTF8.self)
+
+      if boxSize == 1 {
+        guard let ext = try handle.read(upToCount: 8), ext.count == 8 else { break }
+        boxSize = Int(ext.reduce(0) { $0 << 8 | UInt64($1) })
+      } else if boxSize == 0 {
+        boxSize = size - offset
+      }
+
+      guard boxSize >= 8, offset + boxSize <= size else { break }
+      if type == "moov" { return true }
+      offset += boxSize
+    }
+    return false
+  }
+
   /// Descends `moof` → `traf` → `trun` and reads `sample_count`, which sits
   /// immediately after the version/flags word.
   private static func sampleCount(handle: FileHandle, start: Int, end: Int) throws -> Int? {

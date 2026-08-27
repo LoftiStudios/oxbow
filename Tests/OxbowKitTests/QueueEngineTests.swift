@@ -1451,6 +1451,28 @@ struct QueueEngineTests {
       return url
     }
 
+    /// A finalised sidecar: `ftyp` + `mdat` + a complete trailing `moov` — the
+    /// layout a first attempt's `-c:a copy` produces when it runs to
+    /// completion. Same box-building helper `FragmentIndexTests` uses.
+    func writeUsableSidecar() throws {
+      try FileManager.default.createDirectory(
+        at: workspace.resumeDirectory(job.id), withIntermediateDirectories: true)
+      var data = FragmentBuilder.box("ftyp", Data(repeating: 0, count: 8))
+      data.append(FragmentBuilder.box("mdat", Data(repeating: 0xAB, count: 32)))
+      data.append(FragmentBuilder.box("moov", Data(repeating: 0, count: 16)))
+      try data.write(to: workspace.resumeDirectory(job.id).appending(path: "audio.m4a"))
+    }
+
+    /// What a genuine `SIGKILL` mid-write leaves behind: `ftyp` + `mdat`, no
+    /// `moov` at all, because the encoder writes it last.
+    func writeCorruptSidecar() throws {
+      try FileManager.default.createDirectory(
+        at: workspace.resumeDirectory(job.id), withIntermediateDirectories: true)
+      var data = FragmentBuilder.box("ftyp", Data(repeating: 0, count: 8))
+      data.append(FragmentBuilder.box("mdat", Data(repeating: 0xAB, count: 32)))
+      try data.write(to: workspace.resumeDirectory(job.id).appending(path: "audio.m4a"))
+    }
+
     /// Exercises the composite branch of `makeContext` directly, wired to a
     /// video dependency so the source-fingerprint check has something to
     /// compare — and translates a thrown `SourceChangedError` the way
@@ -1638,6 +1660,47 @@ struct QueueEngineTests {
     #expect(!FileManager.default.fileExists(
       atPath: harness.workspace.resumeDirectory(harness.job.id).appending(path: "piece-1.mp4").path),
       "a zero-frame piece must be removed outright, not left to reach .assemble's pieces.txt")
+  }
+
+  /// No sidecar on disk at all — a genuine first attempt — must not be
+  /// reported as usable. `hasUsableSidecar` defaults to `false` in
+  /// `StepContext`, but this pins that `QueueEngine` actually computes it
+  /// rather than relying on the default surviving by accident.
+  @Test func aFirstAttemptHasNoUsableSidecar() async throws {
+    let harness = try makeHarness()
+    defer { harness.tearDown() }
+
+    let context = try harness.engineContext(forCompositeOf: harness.job)
+
+    #expect(!context.hasUsableSidecar)
+  }
+
+  /// The bug this branch fixes: a sidecar surviving from an earlier attempt
+  /// must be checked for a complete `moov`, not just "on disk" — a
+  /// `SIGKILL` mid-write leaves a non-empty file that is not usable.
+  @Test func aRetryWithACorruptSidecarReportsItAsUnusable() async throws {
+    let harness = try makeHarness()
+    defer { harness.tearDown() }
+    try harness.writePiece(index: 0, frames: 90)
+    try harness.writeCorruptSidecar()
+
+    let context = try harness.engineContext(forCompositeOf: harness.job)
+
+    #expect(!context.hasUsableSidecar)
+  }
+
+  /// A sidecar that finished writing normally (the graceful-`SIGTERM` case,
+  /// or a resume that already repaired it) must be reported usable, so
+  /// `ArgumentBuilder` leaves it alone rather than needlessly re-copying it.
+  @Test func aRetryWithAnIntactSidecarReportsItAsUsable() async throws {
+    let harness = try makeHarness()
+    defer { harness.tearDown() }
+    try harness.writePiece(index: 0, frames: 90)
+    try harness.writeUsableSidecar()
+
+    let context = try harness.engineContext(forCompositeOf: harness.job)
+
+    #expect(context.hasUsableSidecar)
   }
 
   /// A changed source must refuse rather than splice two different videos

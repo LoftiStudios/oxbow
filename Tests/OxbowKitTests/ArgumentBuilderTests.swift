@@ -507,22 +507,75 @@ struct ArgumentBuilderTests {
   /// possible at all; they must survive on both paths.
   /// The first attempt copies the source's audio out beside piece 0, in the
   /// same invocation — it is a stream copy, so it costs nothing, and it is what
-  /// lets §5 delete the 16.3 GB source before assembling. resume.md §4.
+  /// lets §5 delete the 16.3 GB source before assembling. `compositeContext`
+  /// carries no sidecar yet (`hasUsableSidecar` defaults to `false`), which is
+  /// exactly a first attempt's situation. resume.md §4.
   @Test func aFirstAttemptAlsoWritesTheSidecarAudio() {
     let args = ArgumentBuilder.arguments(for: composite, context: compositeContext)
 
     #expect(args.contains { $0.hasSuffix("audio.m4a") })
     #expect(args.contains("0:a:0?"))
+    // A first attempt is already un-seeked at input 0 — no third input needed.
+    #expect(args.filter { $0 == "-i" }.count == 2)
   }
 
-  /// A resumed attempt holds only the tail, so re-extracting would truncate the
-  /// sidecar to it. The first attempt's copy is the whole track; leave it alone.
-  @Test func aResumingCompositeDoesNotRewriteTheAudio() {
+  /// Once a usable sidecar exists, resuming must not touch it: a resumed
+  /// attempt holds only the tail, so re-extracting would truncate the sidecar
+  /// to it. The gate is usability, not attempt number — this is the case where
+  /// the first attempt's own copy is intact and complete.
+  @Test func aResumingCompositeWithAUsableSidecarDoesNotRewriteIt() {
     var context = compositeContext
     context.resumeFrom = .seconds(10)
+    context.hasUsableSidecar = true
     let args = ArgumentBuilder.arguments(for: composite, context: context)
 
     #expect(!args.contains { $0.hasSuffix("audio.m4a") })
+    // No reason to add a third input when nothing needs its audio.
+    #expect(args.filter { $0 == "-i" }.count == 2)
+  }
+
+  /// The defect this branch exists to fix: a `SIGKILL` during the sidecar's
+  /// own write (an ordinary, non-fragmented MP4) leaves it with no `moov`,
+  /// permanently, unless a later attempt gets a chance to rewrite it. Gating
+  /// on `resumeFrom == nil` alone meant no later attempt ever did — every
+  /// retry re-encoded the tail successfully and then failed at `.assemble` on
+  /// the same corrupt file, until the piece cap forced a full restart.
+  /// resume.md §4.
+  ///
+  /// Rewriting on a resume needs an un-seeked copy of the source: both
+  /// existing inputs carry `-ss`, so mapping from input 0 would capture only
+  /// the tail, silently truncating the sidecar instead of restoring it. A
+  /// third, un-seeked input supplies the whole track.
+  @Test func aResumingCompositeWithAnUnusableSidecarRewritesItFromAThirdInput() {
+    var context = compositeContext
+    context.resumeFrom = .seconds(10)
+    context.hasUsableSidecar = false
+    let args = ArgumentBuilder.arguments(for: composite, context: context)
+
+    #expect(args.contains { $0.hasSuffix("audio.m4a") })
+    #expect(args.contains("2:a:0?"))
+    #expect(!args.contains("0:a:0?"))
+
+    // Three inputs: video (seeked), chat (seeked), video again (un-seeked).
+    let inputIndices = args.indices.filter { args[$0] == "-i" }
+    #expect(inputIndices.count == 3)
+    #expect(args[inputIndices[0] + 1] == "/tmp/job/video.mp4")
+    #expect(args[inputIndices[1] + 1] == "/tmp/job/render.mp4")
+    #expect(args[inputIndices[2] + 1] == "/tmp/job/video.mp4")
+
+    // Exactly two `-ss`, both for the composited pair — the third input gets
+    // none, so it is not identically-seeked with the other two, it is simply
+    // un-seeked. Same style as `aResumingCompositeSeeksBothInputs`: each
+    // `-ss` is immediately followed by its value, then its `-i`.
+    let seeks = args.indices.filter { args[$0] == "-ss" }
+    #expect(seeks.count == 2)
+    for index in seeks {
+      #expect(args[index + 1] == "10.000000")
+      #expect(args[index + 2] == "-i")
+    }
+    // Neither seeked `-i` is the third one — it is preceded by the chat
+    // input's path, not by a `-ss`/value pair.
+    #expect(!seeks.contains(inputIndices[2] - 2))
   }
 
   @Test func aResumingCompositeKeepsTheFragmentFlags() {

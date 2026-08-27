@@ -141,26 +141,40 @@ public enum ArgumentBuilder {
       // frame and never overshoots to the next one. resume.md §2.
       let seek = request.resumeSeek(context.resumeFrom)
 
-      // A second output on the first attempt only. FFmpeg takes any number of
-      // outputs per invocation, so the audio copy is free — and it is what
-      // lets the downloaded video be deleted before assemble runs, keeping
-      // recovery near a normal run's disk peak. A resumed attempt holds only
-      // the tail, so re-extracting here would truncate the sidecar to it.
-      // resume.md §4.
-      //
+      // A second output whenever no usable sidecar exists yet — not only on
+      // a first attempt. `context.hasUsableSidecar` is `false` both then and
+      // when a `SIGKILL` left an earlier attempt's sidecar with no `moov`;
+      // either way it needs (re)writing, and FFmpeg's own `-y` above already
+      // permits overwriting it. Gating on `resumeFrom == nil` instead was the
+      // bug: no later attempt ever got a chance to repair a corrupt sidecar,
+      // so `.assemble` failed on every retry until the piece cap forced a
+      // full restart. resume.md §4.
+      let needsSidecar = !context.hasUsableSidecar
+
+      // On a resume both composited inputs carry `-ss`, so mapping audio from
+      // input 0 would capture only the tail — worse than leaving the sidecar
+      // broken, since it would silently truncate instead of failing loudly.
+      // A third, un-seeked copy of the source supplies full-length audio
+      // instead. Added only when it is actually needed: on a first attempt
+      // input 0 is already un-seeked, so a redundant third input would just
+      // be dead weight.
+      let needsUnseekedSource = needsSidecar && context.resumeFrom != nil
+      let thirdInput: [String] = needsUnseekedSource ? ["-i", video] : []
+      let audioInputIndex = needsUnseekedSource ? 2 : 0
+
       // Placed as its own complete output — `-map`/`-c:a`/path — right after
-      // both inputs, before the composite's own output options. FFmpeg reads
+      // every input, before the composite's own output options. FFmpeg reads
       // multiple outputs in sequence, each terminated by its path, so this
       // keeps the composite's own file as the argv's final element.
-      let sidecar: [String] = context.resumeFrom == nil
-        ? ["-map", "0:a:0?", "-c:a", "copy",
+      let sidecar: [String] = needsSidecar
+        ? ["-map", "\(audioInputIndex):a:0?", "-c:a", "copy",
            context.outputFile.deletingLastPathComponent()
              .appending(path: "audio.m4a").path]
         : []
 
       return [
         "-nostdin", "-y", "-hide_banner",
-      ] + seek + ["-i", video] + seek + ["-i", chat] + sidecar + [
+      ] + seek + ["-i", video] + seek + ["-i", chat] + thirdInput + sidecar + [
         "-filter_complex",
         // setpts precedes fps so the rate conversion runs on a zero-based
         // timeline. No `scale` on either input: the chat is rendered at the

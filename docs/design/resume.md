@@ -1,8 +1,16 @@
 # Resuming an interrupted composite — design
 
 **Status:** approved 2026-08-26. Implemented and verified end to end against a
-real VOD (§2) — with one known gap found by that verification and not yet
-fixed: the audio sidecar is not crash-safe the way the piece is (§2, §4).
+real VOD (§2), including the sidecar fix (§2, §4): the audio sidecar is not
+crash-safe the way the piece is, so instead of trying to make it so, a
+resumed composite now rewrites it outright whenever it isn't usable. Argv-
+and unit-level coverage of that fix is complete and green; the live
+end-to-end confirmation is partial — see §2's "Verified end to end" — because
+a Twitch platform outage on 2026-08-27 (independently confirmed via
+status.twitch.com and public outage trackers, affecting video/chat/login
+broadly) cut the run short right after it had already reproduced the defect
+for real. Re-run `ResumeEndToEndTests` once Twitch is stable to get the
+remaining confirmation.
 
 Prerequisites: `docs/design/fragmented-output.md` (the container change this
 depends on entirely), `docs/design/compositing.md` (the step being resumed), and
@@ -128,7 +136,7 @@ gated behind `OXBOW_RESUME_E2E=1` — not part of the default `swift test` run.
 | Is the seam correct, by timestamp? | **Yes.** MAD 1.74 at the seam, 12.27 one frame off — the same clean separation the design spike measured. |
 | Does the delivered frame count match a straight-through encode? | **Within a few frames, not exactly.** Delivered 3603, reference 3601. Chased down, not waved away: `video2` decoded alone splits perfectly at the seek point (2262 + 1310 = 3572, matching one continuous decode), so this is not a seek-accuracy bug. The composite's CFR gap-fill (this section, above) is computed from each piece's own `setpts=PTS-STARTPTS` zero point independently, so splitting the timeline can shift where a fill decision lands relative to one continuous pass — the same way splitting a sum changes floating-point rounding. Bounded at a few frames (a fraction of a second) on this run; the seam MAD is what actually rules out lost or duplicated *content*. Worth knowing, not urgent: this means a resumed delivery is not always bit-for-bit frame-identical to a from-scratch encode of the same range, which nothing above previously said. |
 
-**A real defect, found by this run, not yet fixed:** the audio sidecar
+**A real defect, found by this run, and since fixed:** the audio sidecar
 (§4's `audio.m4a`) has none of the fragmentation that makes a piece survive a
 crash. It is an ordinary MP4, written by the *same* FFmpeg invocation as
 piece 0, and a conventional MP4's index is written once, at the very end — so
@@ -141,17 +149,50 @@ this — FFmpeg finalises both outputs cleanly on `SIGTERM`, which is resume.md
 exactly the case fragmentation exists for (§1: "app quit, crash, closing the
 laptop, reboot") — and only the piece got that protection, not the sidecar.
 
-Because the sidecar is written once, on the first attempt only, and never
-rewritten by a resumed one, this is not self-healing: every subsequent retry
-re-encodes the tail successfully and then fails at `.assemble` on the same
-corrupt file, until the piece cap (§7) forces a restart from scratch. No wrong
-file is ever delivered — `.assemble`'s non-zero exit is caught the same as any
-other step failure — but a crash during the single longest attempt of the
-composite, arguably the likeliest moment for one to land, currently loses the
-recovery this feature exists to provide, for exactly the class of interruption
-§1 leads with. The fix is the same one already applied to the piece —
-`-movflags +frag_keyframe+empty_moov+default_base_moof` on the sidecar's own
-output — but it is unbuilt as of this commit.
+The old gate made this worse than it had to be: `ArgumentBuilder` wrote the
+sidecar only when `resumeFrom == nil`, i.e. only on a first attempt, so a
+sidecar corrupted by a crash was never rewritten by any later one. Every
+subsequent retry re-encoded the tail successfully and then failed at
+`.assemble` on the same corrupt file, until the piece cap (§7) forced a
+restart from scratch. No wrong file was ever delivered —
+`.assemble`'s non-zero exit is caught the same as any other step failure —
+but a crash during the single longest attempt of the composite, arguably the
+likeliest moment for one to land, lost the recovery this feature exists to
+provide, for exactly the class of interruption §1 leads with.
+
+**The fix is not the fragmentation flags this section originally proposed.**
+Fragmenting the sidecar the way the piece is fragmented would need its own
+resume logic — tracking how much of the audio track survived, seeking the
+source to the matching point, splicing the old and new audio — for a file
+that is a plain stream copy and cheap to redo outright. So instead: §4 now
+gates the sidecar on whether a *usable* one already exists
+(`FragmentedMP4.hasCompleteMoov`, decided by `QueueEngine` and handed to the
+pure `ArgumentBuilder` as `StepContext.hasUsableSidecar`), not on attempt
+number. A resumed composite whose sidecar is still missing or corrupt
+rewrites it in the same invocation that resumes the video — via a **third,
+un-seeked** copy of the source input, since the two composited inputs are
+seeked to the resume point and mapping audio from either of those would
+truncate the sidecar to the tail. Covered by unit and argv-level tests in
+`FragmentIndexTests`, `ArgumentBuilderTests`, and `QueueEngineTests`, all
+green.
+
+**Live re-verification is partial, not because the fix failed but because
+Twitch itself did.** A second headless run (`ResumeEndToEndTests`, same
+method as above) reproduced the defect for real: a genuine `SIGKILL` fired at
+`out_time_us=74400000` (72.0s target), wall clock 14.17s; piece 0 survived
+with 4452 complete frames after repair; and the audio sidecar afterward was
+confirmed corrupt exactly as predicted — 1,310,791 bytes, unreadable,
+`hasCompleteMoov == false`. The run could not continue past that point: a
+widespread Twitch platform outage began during this work on 2026-08-27
+(independently confirmed via `status.twitch.com` and public outage trackers,
+affecting video, chat and login broadly — not specific to this VOD, this
+helper, or this repository) and did not clear during the session. So the
+fix's own live confirmation — that the resumed attempt's rewritten sidecar is
+usable and `.assemble` delivers a file with correct, complete, synced audio —
+is proven by argv and unit tests but **not yet confirmed against the real
+helper end to end.** Re-run `OXBOW_RESUME_E2E=1 swift test --filter
+ResumeEndToEndTests` once Twitch is stable; the test now asserts the full
+chain, including the delivered file's audio/video sync.
 
 ## 3. The retention area
 
@@ -188,27 +229,54 @@ is deliberately outside the job workspace and why.
 `QueueEngine.makeContext` points the composite's output at
 `resume/<jobid>/piece-N.mp4` rather than `artifacts/`.
 
-**A first attempt also writes `audio.m4a`.** FFmpeg accepts several outputs in
-one invocation, so the same command that encodes piece 0 stream-copies the
-source's audio track beside it — no extra process and no measurable time, since
-it is a copy. This is what lets §5 delete the re-fetched video before
-assembling: without it the 16.3 GB source would have to survive until delivery
-purely to supply its audio, and the recovery peak would be ~74 GB rather than
-~58. Resumed attempts do not re-extract it; they only hold the tail.
+**`audio.m4a` is written whenever no usable one exists yet — not only on a
+first attempt.** FFmpeg accepts several outputs in one invocation, so the same
+command that encodes a piece stream-copies the source's audio track beside
+it — no extra process and no measurable time, since it is a copy. This is
+what lets §5 delete the re-fetched video before assembling: without it the
+16.3 GB source would have to survive until delivery purely to supply its
+audio, and the recovery peak would be ~74 GB rather than ~58.
 
-**Unlike the piece, this output is not fragmented, and that is a real gap —
-see §2, "Verified end to end."** A hard kill during the first attempt (not a
-graceful `SIGTERM`) leaves it with no `moov` atom, permanently, since nothing
-ever rewrites it. `.assemble` then fails on every subsequent retry until the
-piece cap restarts the job from scratch. Unfixed as of this commit.
+**Unlike the piece, this output is not itself fragmented — that was a real
+gap, found by §2's "Verified end to end," and it is fixed differently from
+how this section originally proposed.** Fragmenting the sidecar the way a
+piece is fragmented would need its own resume machinery for a file that is a
+plain stream copy and cheap to redo outright, so instead the sidecar is
+simply rewritten whenever it isn't usable, on whichever composite attempt
+first notices — first or resumed alike. `QueueEngine` decides usability with
+`FragmentedMP4.hasCompleteMoov` (the same no-decode box walk `FragmentIndex`
+already does for pieces, checking for a complete top-level `moov` rather than
+counting fragments) and hands the answer to `StepContext.hasUsableSidecar`;
+`ArgumentBuilder` stays pure and just reads it.
+
+A resumed attempt whose sidecar needs rewriting cannot map audio from either
+composited input — both carry `-ss` to the resume point, and mapping from
+either would truncate the sidecar to the tail, which is worse than leaving it
+broken: a truncated sidecar desyncs silently instead of failing loudly. So
+`ArgumentBuilder` adds a **third input**, the same source video again but
+un-seeked, purely to supply the sidecar's audio map:
+
+```
+-ss T -i video.mp4  -ss T -i chatrender.mp4  -i video.mp4   ← input 2, un-seeked
+```
+
+On a first attempt input 0 is already un-seeked, so no third input is added —
+the sidecar maps from `0:a:0?` exactly as before. `.assemble` then reads
+whatever sidecar is on disk once the composite step has finished, whichever
+attempt actually produced a usable one.
 
 `StepContext` gains:
 
 - `resumeFrom: Duration?` — the seek point, `nil` on a first attempt
 - `existingPieces: [URL]` — what is already on disk
+- `hasUsableSidecar: Bool` — whether `audio.m4a` is already complete and
+  playable; decided by `QueueEngine`, read but never computed by
+  `ArgumentBuilder`
 
-`ArgumentBuilder` stays pure: it emits `-ss` when handed a `resumeFrom` and
-otherwise emits exactly what it emits today. Everything geometric is unchanged.
+`ArgumentBuilder` stays pure: it emits `-ss` when handed a `resumeFrom`, emits
+the sidecar output (and, on a resume, the third input) when handed
+`hasUsableSidecar == false`, and otherwise emits exactly what it emits today.
+Everything geometric is unchanged.
 
 ## 5. The recovery sequence
 
@@ -364,6 +432,8 @@ is not in the queue at all — it is the presence of pieces in a directory**, an
 | Resume point | `totalFrames ÷ framerate` across one piece and several; the §2 invariant that it is a timestamp and survives CFR fill |
 | `ArgumentBuilder` `.composite` | `-ss` present with a resume point and absent without; the `-movflags` from `fragmented-output.md` §3 unchanged; the two GPL rules still hold |
 | `ArgumentBuilder` `.assemble` | one piece → rename; several → concat plus `-c copy` and the audio mapped from the source |
+| `FragmentedMP4.hasCompleteMoov` | a finalised `ftyp`+`mdat`+`moov` file reads complete; a file killed before `moov` was ever written reads incomplete; a torn `moov` header with no room for its body reads incomplete |
+| Sidecar usability gate | a first attempt (no sidecar yet) and a resumed attempt with a corrupt sidecar both write it, mapped from `0:a:0?` and a third un-seeked input respectively; a resumed attempt with an already-usable sidecar writes nothing; `QueueEngine` computes `hasUsableSidecar` from the real file on disk, corrupt or intact |
 | Source verification | matching length and duration resumes; either mismatched refuses with the §7 message |
 | Piece cap | a fifth attempt restarts from scratch and clears the directory |
 | `Workspace` | `removeAll()` does not touch `resume/`; `removeResumable` does; `contains(_:ofJob:)` reports `false` for a resume-area file |
@@ -372,4 +442,9 @@ is not in the queue at all — it is the presence of pieces in a directory**, an
 
 Plus one end-to-end run: composite a real VOD, kill the app mid-encode, relaunch,
 retry, and verify the delivered file against a straight-through encode **by
-timestamp** (§2.1). The same bar `compositing.md` §9 set for itself.
+timestamp** (§2.1). The same bar `compositing.md` §9 set for itself. Extended
+to hard-kill the *first* attempt specifically (rather than a later one) so the
+audio sidecar is left corrupt, and to assert that the resumed attempt notices
+and rewrites it, and that `.assemble` then delivers a file with synced audio —
+see §2's "Verified end to end" for why that extended assertion is not yet
+confirmed against the real helper.

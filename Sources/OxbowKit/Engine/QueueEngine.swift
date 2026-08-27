@@ -1135,12 +1135,25 @@ public actor QueueEngine {
         }
       }
 
+      // "Exists and is non-empty" is not enough — a `SIGKILL` mid-write
+      // leaves a non-empty file with no `moov`. `hasCompleteMoov` is the same
+      // no-decode box walk `FragmentIndex` already uses for pieces, applied
+      // to the one file on this path that is deliberately *not* fragmented.
+      // Any I/O failure here (missing file, unreadable) is "not usable" —
+      // the safe default, since the cost of a spurious rewrite is a cheap
+      // stream copy, while treating a corrupt sidecar as usable is the exact
+      // defect this fix closes. resume.md §4.
+      let sidecarFile = directory.appending(path: "audio.m4a")
+      let hasUsableSidecar = FileManager.default.fileExists(atPath: sidecarFile.path)
+        && ((try? FragmentedMP4.hasCompleteMoov(at: sidecarFile)) ?? false)
+
       return StepContext(
         stepTempDirectory: stepDirectory,
         outputFile: directory.appending(path: "piece-\(resume.index).mp4"),
         ffmpegPath: configuration.ffmpegPath,
         inputArtifacts: inputs,
         resumeFrom: resume.from,
+        hasUsableSidecar: hasUsableSidecar,
         log: StepLog(fileURL: configuration.workspace.logFile(job: job.id, step: step.id)))
     }
 
