@@ -19,6 +19,35 @@ struct StepRow: View {
   let onRevealRetainedFiles: () -> Void
 
   var body: some View {
+    // The context menu is attached only for `.composite` — not attached-but-
+    // empty for everything else. `.contextMenu { if case .composite … }`
+    // would leave every other row's closure evaluating to nothing, and an
+    // attached-but-empty context menu is its own (SwiftUI-known) visual
+    // artifact on right-click. Branching on whether to attach it at all
+    // keeps every non-composite row exactly as it was before this item
+    // existed.
+    if case .composite = step.kind {
+      rowContent
+        .contextMenu {
+          // Same wording and icon as `QueueActionButtons`' "Show in Finder" —
+          // this reads as the same action, just scoped to the retention area
+          // instead of a job's delivered files. Deliberately just this one
+          // item (docs/design/fragmented-output.md §6): present but disabled
+          // before the combine has started, so the affordance is
+          // discoverable ahead of being usable.
+          Button {
+            onRevealRetainedFiles()
+          } label: {
+            Label("Show in Finder", systemImage: "folder")
+          }
+          .disabled(!JobPresentation.hasStarted(step.status))
+        }
+    } else {
+      rowContent
+    }
+  }
+
+  private var rowContent: some View {
     VStack(alignment: .leading, spacing: 4) {
       HStack(spacing: QueueMetrics.iconSpacing) {
         Image(systemName: icon.name)
@@ -38,24 +67,6 @@ struct StepRow: View {
         .padding(.leading, QueueMetrics.contentIndent)
     }
     .padding(.vertical, 2)
-    // Composite only — nothing else has a retention area to reveal.
-    // Deliberately just this one item (docs/design/fragmented-output.md §6):
-    // present but disabled before the combine has started, so the affordance
-    // is discoverable ahead of being usable, per the design's buried-but-not-
-    // hidden intent.
-    .contextMenu {
-      if case .composite = step.kind {
-        // Same wording and icon as `QueueActionButtons`' "Show in Finder" —
-        // this reads as the same action, just scoped to the retention area
-        // instead of a job's delivered files.
-        Button {
-          onRevealRetainedFiles()
-        } label: {
-          Label("Show in Finder", systemImage: "folder")
-        }
-        .disabled(!JobPresentation.hasStarted(step.status))
-      }
-    }
   }
 
   private var icon: (name: String, tone: JobPresentation.Tone) {
