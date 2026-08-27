@@ -163,6 +163,30 @@ public enum ArgumentBuilder {
         // HTTP progressive streaming a local file does not need.
         context.outputFile.path,
       ]
+
+    case .assemble:
+      // Input 0 is the concat list of pieces; input 1 is the sidecar audio
+      // that the composite's first attempt copied out (resume.md §4). The
+      // downloaded video is gone by now, and pieces are video-only, so this
+      // sidecar is the only audio there is.
+      //
+      // NOT a byte-append: docs/design/fragmented-output.md §2 measured
+      // AVFoundation reading 305 samples of a byte-appended file where FFmpeg
+      // reads 901. The concat demuxer produces a correct file; appending
+      // bytes does not.
+      let audio = context.inputArtifacts.first?.path ?? ""
+      return [
+        "-nostdin", "-y", "-hide_banner",
+        "-f", "concat", "-safe", "0",
+        "-i", context.stepTempDirectory.appending(path: "pieces.txt").path,
+        "-i", audio,
+        "-map", "0:v:0",
+        "-map", "1:a:0?",
+        "-c", "copy",
+        "-nostats", "-loglevel", "error",
+        // No +faststart, for the reason in compositing.md §7.
+        context.outputFile.path,
+      ]
     }
   }
 

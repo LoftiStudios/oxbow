@@ -76,10 +76,12 @@ public struct StepPhases: Sendable, Equatable {
         Phase("Rendering Video", "Render"),
       ])
 
-    case .composite:
+    case .composite, .assemble:
       // FFmpeg emits no phase names — `-progress` reports a real fraction
       // instead, so there is one segment and it fills smoothly. The label
-      // matches the phase `FFmpegProgressParser` stamps on every update.
+      // matches the phase `FFmpegProgressParser` stamps on every update,
+      // which is the same for both: both run FFmpeg via the same `.ffmpeg`
+      // dialect and the parser does not distinguish the two steps.
       StepPhases(phases: [Phase("Compositing", "Combine")])
     }
   }

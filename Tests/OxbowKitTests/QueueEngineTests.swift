@@ -407,6 +407,8 @@ struct QueueEngineTests {
         #expect(step.artifact == destination)
       case .downloadVideo, .downloadClip, .downloadChat, .renderChat:
         #expect(step.artifact == nil, "an intermediate must not be claimed")
+      case .assemble:
+        Issue.record("this job template does not produce an assemble step")
       }
     }
 

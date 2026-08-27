@@ -472,4 +472,34 @@ struct ArgumentBuilderTests {
       destination: URL(filePath: "/out/x.mp4"))
     #expect(StepKind.composite(request).resource == .compute)
   }
+
+  /// One piece is the ordinary case — every job that never failed. Concat of a
+  /// single input still produces a correct file and keeps one code path.
+  @Test func assembleWithOnePieceConcatenatesIt() {
+    let context = StepContext(
+      stepTempDirectory: URL(filePath: "/tmp/job/step"),
+      outputFile: URL(filePath: "/tmp/job/final.mp4"),
+      ffmpegPath: URL(filePath: "/Apps/Oxbow.app/Contents/MacOS/ffmpeg"),
+      inputArtifacts: [URL(filePath: "/tmp/resume/audio.m4a")])
+    let args = ArgumentBuilder.arguments(
+      for: .assemble(AssembleRequest(destination: URL(filePath: "/Users/me/out.mp4"))),
+      context: context)
+
+    #expect(args.contains("-nostdin"))
+    #expect(args.contains("concat"))
+    #expect(args.contains("-c"))
+    #expect(args.contains("copy"))
+    // Audio comes from the sidecar copied out on the first attempt, never
+    // from a piece (pieces are video-only) and never from the downloaded video
+    // (deleted before assemble). See docs/design/resume.md §4 and §6.
+    #expect(args.contains("1:a:0?"))
+    #expect(args.contains("/tmp/resume/audio.m4a"))
+    #expect(args.last == "/tmp/job/final.mp4")
+    #expect(!args.contains("+faststart"))
+  }
+
+  @Test func assembleIsAComputeStep() {
+    let kind = StepKind.assemble(AssembleRequest(destination: URL(filePath: "/x.mp4")))
+    #expect(kind.resource == .compute)
+  }
 }

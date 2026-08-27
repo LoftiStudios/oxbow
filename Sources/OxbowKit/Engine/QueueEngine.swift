@@ -362,6 +362,9 @@ public actor QueueEngine {
     case .composite(let request):
       executable = configuration.ffmpegPath
       dialect = .ffmpeg(duration: request.duration)
+    case .assemble:
+      executable = configuration.ffmpegPath
+      dialect = .ffmpeg(duration: .seconds(0))
     case .downloadVideo, .downloadClip, .downloadChat, .renderChat:
       executable = configuration.helperExecutable
       dialect = .helper
@@ -680,6 +683,7 @@ public actor QueueEngine {
     case .downloadChat(let request): "chat.\(request.format.rawValue)"
     case .renderChat: "render.mp4"
     case .composite: "composite.mp4"
+    case .assemble: "assemble.mp4"
     }
 
     // Order-preserving: `Step.dependsOn` is ordered and the argument builder
@@ -714,11 +718,11 @@ public actor QueueEngine {
   ///
   /// Distinguishes "this kind has no destination, keep it as an intermediate"
   /// from "the move itself failed" — collapsing those (e.g. via `?? file`)
-  /// would report a move failure as success. Four of the five kinds carry an
-  /// optional destination — chat, video, clip, and render — because a
-  /// composite job delivers one file and keeps its inputs as intermediates.
-  /// `.failed` remains the only way `nil` can mean a problem, so the two cases
-  /// must stay distinguishable.
+  /// would report a move failure as success. Four of the six kinds carry an
+  /// optional destination — chat, video, clip, and render — because composite
+  /// and assemble each deliver one file and keep their inputs as
+  /// intermediates. `.failed` remains the only way `nil` can mean a problem,
+  /// so the two cases must stay distinguishable.
   private func move(_ file: URL, toDestinationFor kind: StepKind) -> MoveOutcome {
     let destination: URL? = switch kind {
     case .downloadVideo(let request): request.destination
@@ -726,6 +730,7 @@ public actor QueueEngine {
     case .downloadChat(let request): request.destination
     case .renderChat(let request): request.destination
     case .composite(let request): request.destination
+    case .assemble(let request): request.destination
     }
     guard let destination else { return .notApplicable }
 
