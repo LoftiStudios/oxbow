@@ -134,10 +134,47 @@ public enum ArgumentBuilder {
       // video, [1] is the chat render.
       let video = request.inputPath(context, at: 0)
       let chat = request.inputPath(context, at: 1)
+
+      // Seconds with six decimals. `frames ÷ framerate` is always ≤ the
+      // source's own timestamp for that frame, because Twitch rounds frame
+      // times up to whole milliseconds — so the seek lands on the intended
+      // frame and never overshoots to the next one. resume.md §2.
+      let seek = request.resumeSeek(context.resumeFrom)
+
+      // A second output whenever no usable sidecar exists yet — not only on
+      // a first attempt. `context.hasUsableSidecar` is `false` both then and
+      // when a `SIGKILL` left an earlier attempt's sidecar with no `moov`;
+      // either way it needs (re)writing, and FFmpeg's own `-y` above already
+      // permits overwriting it. Gating on `resumeFrom == nil` instead was the
+      // bug: no later attempt ever got a chance to repair a corrupt sidecar,
+      // so `.assemble` failed on every retry until the piece cap forced a
+      // full restart. resume.md §4.
+      let needsSidecar = !context.hasUsableSidecar
+
+      // On a resume both composited inputs carry `-ss`, so mapping audio from
+      // input 0 would capture only the tail — worse than leaving the sidecar
+      // broken, since it would silently truncate instead of failing loudly.
+      // A third, un-seeked copy of the source supplies full-length audio
+      // instead. Added only when it is actually needed: on a first attempt
+      // input 0 is already un-seeked, so a redundant third input would just
+      // be dead weight.
+      let needsUnseekedSource = needsSidecar && context.resumeFrom != nil
+      let thirdInput: [String] = needsUnseekedSource ? ["-i", video] : []
+      let audioInputIndex = needsUnseekedSource ? 2 : 0
+
+      // Placed as its own complete output — `-map`/`-c:a`/path — right after
+      // every input, before the composite's own output options. FFmpeg reads
+      // multiple outputs in sequence, each terminated by its path, so this
+      // keeps the composite's own file as the argv's final element.
+      let sidecar: [String] = needsSidecar
+        ? ["-map", "\(audioInputIndex):a:0?", "-c:a", "copy",
+           context.outputFile.deletingLastPathComponent()
+             .appending(path: "audio.m4a").path]
+        : []
+
       return [
         "-nostdin", "-y", "-hide_banner",
-        "-i", video,
-        "-i", chat,
+      ] + seek + ["-i", video] + seek + ["-i", chat] + thirdInput + sidecar + [
         "-filter_complex",
         // setpts precedes fps so the rate conversion runs on a zero-based
         // timeline. No `scale` on either input: the chat is rendered at the
@@ -150,17 +187,50 @@ public enum ArgumentBuilder {
           + "[1:v]setpts=PTS-STARTPTS,fps=\(request.framerate)[c];"
           + "[v][c]hstack=inputs=2[out]",
         "-map", "[out]",
-        // The `?` makes the audio map optional so a silent VOD does not fail.
-        "-map", "0:a:0?",
+        // Video-only. Audio is mapped once, from the sidecar copied out
+        // above — not here, and not again at assemble. A piece carrying its
+        // own audio track would double it up for nothing: `.assemble` never
+        // reads it (it maps `1:a:0?` from the sidecar), so the copy would
+        // just be dead weight in every piece. resume.md §2.
+        "-an",
         "-c:v", "h264_videotoolbox",
         "-b:v", "\(request.bitrateMbps)M",
         "-pix_fmt", "yuv420p",
-        // VOD audio is already AAC in MP4. Re-encoding it buys nothing.
-        "-c:a", "copy",
         "-progress", "pipe:1", "-nostats", "-loglevel", "error",
-        // No -movflags +faststart: it rewrites the whole file to relocate the
-        // moov atom, which on a 22 GB output is minutes of disk churn for
-        // HTTP progressive streaming a local file does not need.
+        // empty_moov writes the track declarations with no sample table, so
+        // the file is structurally valid from byte 0 — the precondition for
+        // resuming at all. frag_keyframe starts a fragment at each keyframe;
+        // default_base_moof makes each fragment self-contained. Never
+        // +faststart: it rewrites the whole file to relocate the moov atom,
+        // which on a 22 GB output is minutes of disk churn for HTTP
+        // progressive streaming a local file does not need — and
+        // fragmentation makes it meaningless anyway, since there is no
+        // monolithic moov to relocate. fragmented-output.md §3.
+        "-movflags", "+frag_keyframe+empty_moov+default_base_moof",
+        context.outputFile.path,
+      ]
+
+    case .assemble:
+      // Input 0 is the concat list of pieces; input 1 is the sidecar audio
+      // that the composite's first attempt copied out (resume.md §4). The
+      // downloaded video is gone by now, and pieces are video-only, so this
+      // sidecar is the only audio there is.
+      //
+      // NOT a byte-append: docs/design/fragmented-output.md §2 measured
+      // AVFoundation reading 305 samples of a byte-appended file where FFmpeg
+      // reads 901. The concat demuxer produces a correct file; appending
+      // bytes does not.
+      let audio = context.inputArtifacts.first?.path ?? ""
+      return [
+        "-nostdin", "-y", "-hide_banner",
+        "-f", "concat", "-safe", "0",
+        "-i", context.stepTempDirectory.appending(path: "pieces.txt").path,
+        "-i", audio,
+        "-map", "0:v:0",
+        "-map", "1:a:0?",
+        "-c", "copy",
+        "-nostats", "-loglevel", "error",
+        // No +faststart, for the reason in compositing.md §5.
         context.outputFile.path,
       ]
     }

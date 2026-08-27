@@ -21,8 +21,25 @@ struct JobRow: View {
   let onRetryJob: () -> Void
   /// Restarts one step, from the expanded step list.
   let onRetryStep: (StepID) -> Void
+  /// Reveals the composite step's retained pieces in Finder, from that step's
+  /// own context menu. Job-scoped, not step-scoped — the retention area
+  /// belongs to the job (`QueueEngine.retainedFileURLs(forJob:)`) — so this
+  /// closure takes the `JobID` this row already has, the same shape as
+  /// `retainedBytes` below.
+  let onRevealRetainedFiles: (JobID) -> Void
+  /// What the composite step's Finder-reveal item should currently show, for
+  /// `StepRow` to decide whether that item is enabled. Async and filesystem-
+  /// backed like `retainedBytes` below, for the same reason: existence checks
+  /// do not belong on a view body.
+  let checkRevealTarget: (JobID) async -> RevealTarget?
+  /// Bytes held in this job's retention area. An async closure rather than a
+  /// plain value, matching `StepLogDisclosure.log` — it is a filesystem
+  /// lookup the row makes on demand rather than state `Job` carries, so a row
+  /// that is never failed never pays for it.
+  let retainedBytes: (JobID) async -> Int
 
   @State private var isExpanded = false
+  @State private var bytesRetained: Int?
 
   private var isMultiStep: Bool { job.steps.count > 1 }
 
@@ -36,6 +53,17 @@ struct JobRow: View {
   /// Retry is job-level and unconditional on this: it restarts the job
   /// whatever is expanded, and a step row's Retry restarts that one step.
   private var summarisesRepresentativeStep: Bool { !(isMultiStep && isExpanded) }
+
+  /// Whether this row is a case retention might have something to show for.
+  ///
+  /// Both terminal-with-leftovers endings, not `.failed` alone: retention is
+  /// user-cleared and is deliberately *never* dropped on cancellation
+  /// (docs/design/resume.md §8) — cancelling mid-composite is the one ending
+  /// this disclosure most needs to cover, since it is exactly where retained
+  /// bytes are guaranteed to still be sitting there.
+  private var isRetentionVisible: Bool {
+    job.status == .failed || job.status == .cancelled
+  }
 
   var body: some View {
     let representative = JobPresentation.representativeStep(of: job)
@@ -53,13 +81,44 @@ struct JobRow: View {
 
         if isExpanded {
           ForEach(job.steps) { step in
-            StepRow(step: step) { onRetryStep(step.id) }
+            StepRow(
+              step: step,
+              jobStatus: job.status,
+              onRetry: { onRetryStep(step.id) },
+              onRevealRetainedFiles: { onRevealRetainedFiles(job.id) },
+              checkRevealTarget: { await checkRevealTarget(job.id) })
               .padding(.leading, QueueMetrics.contentIndent)
           }
+        }
+
+        // Job-level, not step-level: the retention area belongs to the job as
+        // a whole (it is what a resumed composite continues from), so this
+        // sits under the header once regardless of which step is shown or
+        // expanded — never duplicated per step.
+        //
+        // `.failed` and `.cancelled` both, not `.failed` alone: retention is
+        // never cleared on cancellation (docs/design/resume.md §8) — it is
+        // the one ending this disclosure exists for — so gating on `.failed`
+        // only hid the exact bytes it was built to surface.
+        if isRetentionVisible, let bytesRetained, bytesRetained > 0 {
+          Text("\(ByteCountFormatter.string(fromByteCount: Int64(bytesRetained), countStyle: .file)) held — dismiss to reclaim")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .padding(.leading, QueueMetrics.contentIndent)
         }
       }
     }
     .padding(.vertical, 4)
+    // Keyed on status: a retry moves the job off `.failed`/`.cancelled` and
+    // the read is no longer meaningful, so the stale byte count is dropped
+    // rather than left showing on a row that is running again.
+    .task(id: job.status) {
+      guard isRetentionVisible else {
+        bytesRetained = nil
+        return
+      }
+      bytesRetained = await retainedBytes(job.id)
+    }
   }
 
   /// A disclosure control only where there is something to disclose — but the
@@ -139,7 +198,10 @@ struct JobRow: View {
 #Preview("Mixed states") {
   List {
     ForEach(JobRowPreviewData.jobs) { job in
-      JobRow(job: job, onCancel: {}, onRetryJob: {}, onRetryStep: { _ in })
+      JobRow(
+        job: job, onCancel: {}, onRetryJob: {}, onRetryStep: { _ in },
+        onRevealRetainedFiles: { _ in }, checkRevealTarget: { _ in nil },
+        retainedBytes: { _ in 0 })
     }
   }
   .frame(width: 560, height: 320)
@@ -151,9 +213,28 @@ struct JobRow: View {
       job: JobRowPreviewData.multiStep,
       onCancel: {},
       onRetryJob: {},
-      onRetryStep: { _ in })
+      onRetryStep: { _ in },
+      onRevealRetainedFiles: { _ in },
+      checkRevealTarget: { _ in nil },
+      retainedBytes: { _ in 0 })
   }
   .frame(width: 560, height: 260)
+}
+
+#Preview("Failed, holding retained bytes") {
+  List {
+    JobRow(
+      job: JobRowPreviewData.failedWithRetention,
+      onCancel: {},
+      onRetryJob: {},
+      onRetryStep: { _ in },
+      onRevealRetainedFiles: { _ in },
+      checkRevealTarget: { _ in nil },
+      // A six-hour stream's worth of retained pieces — resume.md §8's own
+      // example, so the row and the doc agree on what "non-trivial" means.
+      retainedBytes: { _ in 26_000_000_000 })
+  }
+  .frame(width: 560, height: 140)
 }
 
 /// Fake jobs for the previews above. Every state the row can be in, in one
@@ -184,6 +265,12 @@ enum JobRowPreviewData {
       [.failed(StepFailure(kind: .interrupted, summary: "Interrupted"))]),
     job("Video 2844548319", [.cancelled]),
   ]
+
+  static let failedWithRetention = job(
+    "LeighXP - 2026-08-19 - twelve-hour marathon",
+    [.failed(StepFailure(
+      kind: .exited(code: 1),
+      summary: "The chat renderer exited with code 1."))])
 
   static let multiStep = Job(
     id: JobID(rawValue: UUID()), created: .now,

@@ -30,13 +30,16 @@ struct QueueActions {
     jobs.filter { ids.contains($0.id) }
   }
 
-  /// The files these jobs actually delivered.
-  ///
-  /// `Step.artifact` is the delivered path — `Reconciler` clears it for
-  /// anything still sitting inside our own workspace — so what is left is
-  /// exactly what the user asked for, where they asked for it.
+  /// The files these jobs actually delivered — `Job.deliveredFiles`, the one
+  /// definition of "delivered" shared with `JobInfo` (Get Info reads the
+  /// same property). A step's `artifact` is not enough on its own: it is set
+  /// the moment the step succeeds, whatever its destination — including a
+  /// step that only feeds a later one, like a composite job's video, chat,
+  /// and render inputs, whose `artifact` still points inside the job
+  /// workspace even once `.done` (`JobTemplate.makeJob`). `Job.deliveredFiles`
+  /// is what tells those apart from a real delivery.
   func deliveredFiles(in ids: Set<JobID>) -> [URL] {
-    jobs(in: ids).flatMap { $0.steps.compactMap(\.artifact) }
+    jobs(in: ids).flatMap(\.deliveredFiles)
   }
 
   /// Jobs there is anything to restart in.

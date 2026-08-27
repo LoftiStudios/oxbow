@@ -10,9 +10,70 @@ import OxbowKit
 /// job above them instead of starting at their own arbitrary indent.
 struct StepRow: View {
   let step: Step
+  /// Only consulted for the composite row's reveal check below, so a step
+  /// that is not `.composite` never reads it — but it comes from `JobRow`
+  /// unconditionally, the same way `onRevealRetainedFiles` does, since a
+  /// step row cannot tell in advance which kind it is being built for.
+  let jobStatus: JobStatus
   let onRetry: () -> Void
+  /// Reveals the composite step's retained pieces — or, once those are gone
+  /// because the job delivered, the delivered file itself. Job-scoped by the
+  /// time it reaches this view — `JobRow` already closes over the job's
+  /// `JobID`, since both live at the job level, not the step
+  /// (`QueueEngine.revealTarget(forJob:)`) — so this row only has to decide
+  /// whether to offer the item at all, never which job it is for.
+  let onRevealRetainedFiles: () -> Void
+  /// Whether there is currently anything for the item above to reveal.
+  /// Filesystem-backed (`QueueEngine.revealTarget(forJob:)` checks whether
+  /// the retention directory still exists), so it is read on a `.task`
+  /// rather than computed inline in the body — see `revealTarget` below.
+  let checkRevealTarget: () async -> RevealTarget?
+
+  @State private var revealTarget: RevealTarget?
 
   var body: some View {
+    // The context menu is attached only for `.composite` — not attached-but-
+    // empty for everything else. `.contextMenu { if case .composite … }`
+    // would leave every other row's closure evaluating to nothing, and an
+    // attached-but-empty context menu is its own (SwiftUI-known) visual
+    // artifact on right-click. Branching on whether to attach it at all
+    // keeps every non-composite row exactly as it was before this item
+    // existed.
+    if case .composite = step.kind {
+      rowContent
+        .contextMenu {
+          // Same wording and icon as `QueueActionButtons`' "Show in Finder" —
+          // this reads as the same action, just scoped to the retention area
+          // (or, once that is gone, the delivered file) instead of a job's
+          // full set of delivered files. Deliberately just this one item
+          // (docs/design/fragmented-output.md §6): present but disabled
+          // when there is genuinely nothing to reveal yet, so the affordance
+          // is discoverable ahead of being usable.
+          Button {
+            onRevealRetainedFiles()
+          } label: {
+            Label("Show in Finder", systemImage: "folder")
+          }
+          .disabled(revealTarget == nil)
+        }
+        // Keyed on both the step's own status and the job's. The step's,
+        // because the retention directory first appears the moment the
+        // composite step starts, and `Job.status` alone would never catch
+        // that — it is already `.running` from an earlier step. The job's,
+        // because the retention directory is *removed* only once the whole
+        // job reaches `.done` (`QueueEngine.removeJobWorkspace`) — by which
+        // point the composite step's own status stopped changing, settled at
+        // `.done` since before the assemble step even started. Either alone
+        // misses one of the two moments the filesystem actually changes.
+        .task(id: RevealCheckTrigger(step: step.status, job: jobStatus)) {
+          revealTarget = await checkRevealTarget()
+        }
+    } else {
+      rowContent
+    }
+  }
+
+  private var rowContent: some View {
     VStack(alignment: .leading, spacing: 4) {
       HStack(spacing: QueueMetrics.iconSpacing) {
         Image(systemName: icon.name)
@@ -37,6 +98,14 @@ struct StepRow: View {
   private var icon: (name: String, tone: JobPresentation.Tone) {
     JobPresentation.icon(for: step.status)
   }
+}
+
+/// `.task(id:)`'s key for re-checking the composite row's reveal target —
+/// see the doc comment on that call for why it needs both statuses rather
+/// than either alone.
+private struct RevealCheckTrigger: Equatable {
+  var step: StepStatus
+  var job: JobStatus
 }
 
 /// Retry, for a step that did not finish, and nothing at all otherwise.
@@ -196,7 +265,10 @@ struct ProgressLine: View {
           videoID: "1", quality: "", destination: URL(filePath: "/tmp/a.mp4"))),
         status: .running,
         progress: StepProgress(phase: "Downloading", fraction: 0.42, index: 2, total: 5)),
-      onRetry: {})
+      jobStatus: .running,
+      onRetry: {},
+      onRevealRetainedFiles: {},
+      checkRevealTarget: { nil })
   }
   .frame(width: 520, height: 200)
 }
@@ -211,7 +283,82 @@ struct ProgressLine: View {
           kind: .exited(code: 1),
           summary: "The chat renderer exited with code 1.",
           detail: "Unrecognized option 'crf'."))),
-      onRetry: {})
+      jobStatus: .failed,
+      onRetry: {},
+      onRevealRetainedFiles: {},
+      checkRevealTarget: { nil })
+  }
+  .frame(width: 520, height: 200)
+}
+
+/// The composite step's own "Show in Finder" item — the one row that carries
+/// it at all — before the combine has started. Right-click to see the item
+/// present but disabled, per docs/design/fragmented-output.md §6.
+#Preview("Composite, not started — Show in Finder disabled") {
+  List {
+    StepRow(
+      step: Step(
+        id: StepID(rawValue: UUID()),
+        kind: .composite(CompositeRequest(
+          framerate: 30, bitrateMbps: 8, duration: .seconds(60),
+          destination: URL(filePath: "/tmp/out.mp4"))),
+        status: .queued),
+      jobStatus: .running,
+      onRetry: {},
+      onRevealRetainedFiles: {},
+      checkRevealTarget: { nil })
+  }
+  .frame(width: 520, height: 200)
+}
+
+/// The same row once the combine has started — the retention directory
+/// exists on disk, so `revealTarget` comes back `.retained` and the item
+/// enables. `.done`, `.failed`, and `.cancelled` all reach the same enabled
+/// state, since retention persists until the whole job is either delivered
+/// or removed. Right-click to see it enabled.
+#Preview("Composite, retention on disk — Show in Finder enabled") {
+  List {
+    StepRow(
+      step: Step(
+        id: StepID(rawValue: UUID()),
+        kind: .composite(CompositeRequest(
+          framerate: 30, bitrateMbps: 8, duration: .seconds(3600),
+          destination: URL(filePath: "/tmp/out.mp4"))),
+        status: .running,
+        progress: StepProgress(phase: "Combining", fraction: 0.63)),
+      jobStatus: .running,
+      onRetry: {},
+      onRevealRetainedFiles: {},
+      checkRevealTarget: {
+        .retained(directory: URL(filePath: "/tmp/resume/abc"), pieces: [
+          URL(filePath: "/tmp/resume/abc/piece-0.mp4"),
+        ])
+      })
+  }
+  .frame(width: 520, height: 200)
+}
+
+/// The job in question fully delivered: `removeJobWorkspace` already deleted
+/// the retention area (docs/design/resume.md §8), so there is nothing left
+/// on disk to point at — but the job did produce a file, and that is what
+/// this item reveals instead of going dead. This is Fix 2's whole reason for
+/// existing: before it, this state left the item enabled with nothing behind
+/// it. Right-click to see it enabled, pointing at the delivered file.
+#Preview("Composite, delivered — Show in Finder points at the real file") {
+  List {
+    StepRow(
+      step: Step(
+        id: StepID(rawValue: UUID()),
+        kind: .composite(CompositeRequest(
+          framerate: 30, bitrateMbps: 8, duration: .seconds(3600),
+          destination: URL(filePath: "/Users/someone/Downloads/out.mp4"))),
+        status: .done),
+      jobStatus: .done,
+      onRetry: {},
+      onRevealRetainedFiles: {},
+      checkRevealTarget: {
+        .delivered(URL(filePath: "/Users/someone/Downloads/out.mp4"))
+      })
   }
   .frame(width: 520, height: 200)
 }

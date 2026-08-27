@@ -125,8 +125,9 @@ public struct JobTemplate: Sendable {
     // composite cannot manufacture for itself — there is nothing to stack
     // the chat against — so a composite requested with no media is
     // genuinely left unbuilt.
+    var compositeStep: Step?
     if let composite, let mediaStep, let renderStep {
-      steps.append(Step(
+      compositeStep = Step(
         id: nextStepID(),
         kind: .composite(composite),
         // ORDER IS THE CONTRACT: ArgumentBuilder reads input 0 as the video
@@ -135,7 +136,34 @@ public struct JobTemplate: Sendable {
         // out chat-on-the-left at full size, and worse, silently loses audio:
         // `-map 0:a:0?` would then point at input 0, which is the chat
         // render, and a chat render has no audio track.
-        dependsOn: [mediaStep.id, renderStep.id]))
+        dependsOn: [mediaStep.id, renderStep.id])
+      steps.append(compositeStep!)
+    }
+
+    // Delivery is its own step because joining pieces is a second FFmpeg
+    // invocation and `QueueEngine.launch` runs one process per step. On the
+    // ordinary path there is exactly one piece and this is a cheap copy; on
+    // a resumed job it is a real concat. See docs/design/resume.md §6.
+    //
+    // Depends on the composite alone. The audio it maps was copied out by
+    // the composite's first attempt into the retention area, so the
+    // downloaded video is not an input and can be deleted before this runs.
+    //
+    // Gated on `compositeStep` itself, not on a second, separately-spelled
+    // copy of the condition that produced it (the previous form checked
+    // `mediaStep != nil` here, duplicating — with different syntax — what
+    // the guard above already decided) and binds it directly rather than
+    // reaching for `steps.last`, which only happened to be the composite
+    // step because nothing else had been appended yet. `compositeStep`
+    // being non-nil already *is* "composite was requested and had both a
+    // media and a render step to depend on" — there is nothing left for a
+    // second condition to say, and nothing for the two guards to drift out
+    // of sync on.
+    if let composite, let compositeStep {
+      steps.append(Step(
+        id: nextStepID(),
+        kind: .assemble(AssembleRequest(destination: composite.destination)),
+        dependsOn: [compositeStep.id]))
     }
 
     return Job(id: id, created: created, title: title, steps: steps)

@@ -76,6 +76,19 @@ public struct ChatRequest: Codable, Sendable, Equatable {
   }
 }
 
+/// Joins the composite's pieces into the file the user asked for.
+///
+/// Always present, even when there is exactly one piece — a job that never
+/// failed still runs it, and concatenating one input is cheap. Keeping it
+/// unconditional means there is one delivery path rather than two.
+public struct AssembleRequest: Codable, Sendable, Equatable {
+  public var destination: URL
+
+  public init(destination: URL) {
+    self.destination = destination
+  }
+}
+
 public struct RenderRequest: Codable, Sendable, Equatable {
   public var width: Int
   public var height: Int

@@ -33,6 +33,23 @@ public struct Step: Identifiable, Codable, Sendable, Equatable {
 }
 
 extension Step {
+  /// This step's own delivered file, if it has one.
+  ///
+  /// `artifact` alone is not enough to answer that: it is set the moment a
+  /// step succeeds, whatever the step's destination — including a step
+  /// whose kind carries no destination at all, one that only feeds a later
+  /// step (a composite's video, chat, and render inputs, per
+  /// `JobTemplate.makeJob`). `QueueEngine.move` never moves such a step's
+  /// output anywhere, so its `artifact` still points inside the job
+  /// workspace even once it is `.done` — that was never delivered to the
+  /// user, and must not read as though it was. Gating on
+  /// `kind.deliveryDestination` is what tells the two apart.
+  public var deliveredArtifact: URL? {
+    kind.deliveryDestination != nil ? artifact : nil
+  }
+}
+
+extension Step {
   private enum CodingKeys: String, CodingKey {
     case id, kind, status, progress, dependsOn, artifact
   }

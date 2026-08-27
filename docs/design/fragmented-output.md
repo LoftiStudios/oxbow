@@ -1,6 +1,32 @@
 # Fragmenting the composite's output — design
 
-**Status:** approved 2026-08-26. Not yet implemented.
+**Status:** approved 2026-08-26. **§3 implemented** — the `-movflags`
+fragmentation flags, added during the resume branch's Task 6 because resume is
+impossible without them — and verified end to end (`resume.md` §2). **§5's
+failure invariant already holds**, unchanged, in the pre-existing
+`FailureInterpreter` (a non-zero exit is rejected regardless of whether an
+artifact exists), but has no dedicated test pinning it down for a fragmented,
+now-playable partial file specifically, which §9 calls for. **§6's affordance
+is built, in a narrower shape than designed here.** A context menu on the
+composite step's own row (`StepRow`, one item, "Show in Finder") reveals the
+job's **retained pieces** (`QueueEngine.retainedFileURLs(forJob:)`, wired
+through `QueueController`) — not the in-progress *file* this section
+describes, since resume (§8, since built) is what turned that working file
+into a directory of numbered pieces rather than one growing file. It selects
+the pieces themselves, falling back to the (always-created once the step has
+started) retention directory when there are none yet — so the first of §6's
+two rough edges no longer applies: the retention area holds only the
+composite's own pieces, never the video, the chat JSON, or the chat render.
+The second rough edge (the overstated duration) is unaffected — still true of
+whichever piece a player is pointed at. Enablement started as the flat boolean
+`JobPresentation.hasStarted(step.status)` — running or settled by any means —
+but that broke once a job could fully deliver and have its retention area
+deleted out from under a `.done` composite step: the item stayed enabled,
+pointing at a directory that no longer existed. `QueueEngine.revealTarget(forJob:)`
+replaced it with a filesystem-backed answer: the retention area if it is
+still on disk, the delivered file (the `.assemble` step's artifact) once
+that area is gone because the job succeeded, otherwise nothing — with the
+item present and disabled only in that last case.
 
 Prerequisites: `docs/design/compositing.md` (the step this changes) and
 `docs/composite-performance.md` (why the composite takes as long as it does, and
@@ -122,7 +148,7 @@ before the output path:
 - **`default_base_moof`** makes each fragment's data offsets relative to its own
   `moof` rather than to the file, so a fragment is self-contained.
 
-`+faststart` remains forbidden. `compositing.md` §7's reasoning is unchanged —
+`+faststart` remains forbidden. `compositing.md` §5's reasoning is unchanged —
 it rewrites the whole file to relocate the `moov` — and fragmentation makes it
 meaningless anyway, since there is no monolithic `moov` to relocate.
 

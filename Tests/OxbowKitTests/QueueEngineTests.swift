@@ -373,9 +373,11 @@ struct QueueEngineTests {
   }
 
   /// The "one file out" promise the whole feature rests on: a composite job's
-  /// video and chat render are intermediates shaped exactly like real intake
-  /// output (`destination: nil`) and must never reach the user's chosen
-  /// folder, while the composite itself is delivered to its own destination.
+  /// video, chat render, AND composite are all intermediates shaped exactly
+  /// like real intake output (`destination: nil`, or in the composite's case
+  /// a destination `move` deliberately ignores) and must never reach the
+  /// user's chosen folder — only the assemble step, which joins the
+  /// composite's pieces, is delivered.
   @Test func aCompositeJobDeliversExactlyOneFile() async throws {
     let (engine, root) = makeEngine(.succeeds)
     defer { cleanUp(root) }
@@ -400,25 +402,229 @@ struct QueueEngineTests {
 
     // The video, chat, and render steps carried no destination of their own,
     // so each is an intermediate: deleted with the job's workspace, its claim
-    // dropped in the same breath. Only the composite was actually moved out.
+    // dropped in the same breath. The composite's own output is a piece in
+    // the retention area, not the delivered file — `Workspace.contains`
+    // deliberately excludes that area (see its doc comment), so the done
+    // job's workspace sweep never touches it directly. What actually removes
+    // the bytes is delivery-time retention cleanup (docs/design/resume.md
+    // §8): a delivered job has nothing left to resume, so `removeJobWorkspace`
+    // drops the whole retained directory — and, in the same actor turn, nils
+    // the composite step's claim on it, so nothing is left pointing at a
+    // piece that no longer exists (`Reconciler` short-circuits for a `.done`
+    // job, so there is no later chance to notice a stale one).
+    let workspace = Workspace(root: root)
     for step in job.steps {
       switch step.kind {
-      case .composite:
+      case .assemble:
         #expect(step.artifact == destination)
-      case .downloadVideo, .downloadClip, .downloadChat, .renderChat:
+      case .composite, .downloadVideo, .downloadClip, .downloadChat, .renderChat:
         #expect(step.artifact == nil, "an intermediate must not be claimed")
       }
     }
 
     #expect(FileManager.default.fileExists(atPath: destination.path))
+    #expect(!FileManager.default.fileExists(
+      atPath: workspace.resumeDirectory(job.id).path),
+      "a delivered job's retained pieces have no further use")
 
-    // Nothing else reached disk under root: exactly the composite's own
-    // file, nowhere else — the video and render never left the workspace
-    // that was just swept.
+    // Nothing else reached disk under root except the assembled file — the
+    // video, render, and retained composite piece were all cleared once the
+    // job delivered.
     let enumerator = FileManager.default.enumerator(atPath: root.path)
     let delivered = (enumerator?.allObjects as? [String] ?? []).filter { $0.hasSuffix(".mp4") }
-    #expect(delivered == ["out.mp4"])
+    #expect(Set(delivered) == ["out.mp4"])
 
+    await engine.flush()
+  }
+
+  /// The composite step's Finder-reveal item, rule 2: once a job has fully
+  /// delivered, `removeJobWorkspace` has already deleted its retention area
+  /// (verified just above), so pointing at it would be a dead directory. The
+  /// item must fall back to what the job actually produced — the `.assemble`
+  /// step's own artifact — rather than leaving the user staring at nothing.
+  @Test func revealTargetPointsAtTheDeliveredFileOnceRetentionIsGone() async throws {
+    let (engine, root) = makeEngine(.succeeds)
+    defer { cleanUp(root) }
+
+    let destination = root.appending(path: "out.mp4")
+    let template = JobTemplate(
+      media: .video(VideoRequest(videoID: "v", quality: "1080p60")),
+      render: RenderRequest(),
+      composite: CompositeRequest(
+        framerate: 60,
+        bitrateMbps: 8,
+        duration: .seconds(60),
+        destination: destination))
+
+    try await engine.start()
+    await engine.enqueue(template, title: "t")
+    try await settle(engine)
+
+    let job = try #require(await engine.currentJobs.first)
+    #expect(await engine.revealTarget(forJob: job.id) == .delivered(destination))
+
+    await engine.flush()
+  }
+
+  /// The composite step's Finder-reveal item, rule 2 continued: pinned to the
+  /// `.assemble` step specifically, never `job.deliveredFiles.first`. Those
+  /// two coincide today only because the intake gives chat, video, and render
+  /// steps `destination: nil` on a composite job — nothing in `JobTemplate`
+  /// stops a caller from setting one anyway, and step order puts chat ahead
+  /// of assemble. Without the pin, this would reveal the chat JSON instead of
+  /// the finished video the moment both deliver — exactly the drift the
+  /// review that produced this test called out.
+  @Test func revealTargetPrefersTheAssembleStepOverAnEarlierDeliveringStep() async throws {
+    let (engine, root) = makeEngine(.succeeds)
+    defer { cleanUp(root) }
+
+    let chatDestination = root.appending(path: "out.json")
+    let videoDestination = root.appending(path: "out.mp4")
+    let template = JobTemplate(
+      media: .video(VideoRequest(videoID: "v", quality: "1080p60")),
+      chat: ChatRequest(videoID: "v", format: .json, destination: chatDestination),
+      render: RenderRequest(),
+      composite: CompositeRequest(
+        framerate: 60,
+        bitrateMbps: 8,
+        duration: .seconds(60),
+        destination: videoDestination))
+
+    try await engine.start()
+    await engine.enqueue(template, title: "t")
+    try await settle(engine)
+
+    let job = try #require(await engine.currentJobs.first)
+    // Both the chat step and the assemble step delivered — chat earlier in
+    // step order — which is what makes this pin down "follows assemble
+    // specifically" rather than "follows whichever delivering step is first".
+    #expect(job.deliveredFiles.count == 2)
+    #expect(await engine.revealTarget(forJob: job.id) == .delivered(videoDestination))
+
+    await engine.flush()
+  }
+
+  /// The composite step's Finder-reveal item, rule 2's other half: rule 1
+  /// checks the retention directory still exists before trusting it, and the
+  /// delivered branch owes its own file the same check. Moved or deleted
+  /// after delivery, `assemble.artifact` still names it — the exact defect
+  /// `e61278f` fixed on the retention branch, reproduced here on the
+  /// delivered one.
+  @Test func revealTargetIsNilWhenTheDeliveredFileNoLongerExists() async throws {
+    let (engine, root) = makeEngine(.succeeds)
+    defer { cleanUp(root) }
+
+    let destination = root.appending(path: "out.mp4")
+    let template = JobTemplate(
+      media: .video(VideoRequest(videoID: "v", quality: "1080p60")),
+      render: RenderRequest(),
+      composite: CompositeRequest(
+        framerate: 60,
+        bitrateMbps: 8,
+        duration: .seconds(60),
+        destination: destination))
+
+    try await engine.start()
+    await engine.enqueue(template, title: "t")
+    try await settle(engine)
+
+    let job = try #require(await engine.currentJobs.first)
+    #expect(await engine.revealTarget(forJob: job.id) == .delivered(destination))
+
+    try FileManager.default.removeItem(at: destination)
+
+    #expect(
+      await engine.revealTarget(forJob: job.id) == nil,
+      "an enabled item pointing at a moved-or-deleted file is the bug this exists to avoid")
+
+    await engine.flush()
+  }
+
+  /// `removeJobWorkspace`'s `.done` branch nils a step's claim on any
+  /// artifact `Workspace.contains` recognises, then separately deletes the
+  /// whole retained directory. The composite step's own artifact lives
+  /// *inside* that retained directory, which `contains` deliberately does not
+  /// recognise (see its doc comment) — so without an explicit fix, the nilling
+  /// loop skips it and the deletion removes the file out from under a claim
+  /// that survives. That dangling reference is user-visible:
+  /// `JobInfo.deliveredFiles` and "Show in Finder" (`QueueActions.swift`)
+  /// both read a step's `artifact`, so a delivered job would list, and offer
+  /// to reveal, a `piece-0.mp4` this same delivery just deleted.
+  @Test func aDeliveredCompositeJobDoesNotClaimItsRemovedPiece() async throws {
+    let (engine, root) = makeEngine(.succeeds)
+    defer { cleanUp(root) }
+
+    let template = JobTemplate(
+      media: .video(VideoRequest(videoID: "v", quality: "1080p60")),
+      render: RenderRequest(),
+      composite: CompositeRequest(
+        framerate: 60, bitrateMbps: 8, duration: .seconds(60),
+        destination: root.appending(path: "out.mp4")))
+
+    try await engine.start()
+    await engine.enqueue(template, title: "t")
+    try await settle(engine)
+
+    let job = try #require(await engine.currentJobs.first)
+    #expect(job.status == .done, "precondition")
+    let composite = try #require(job.steps.first {
+      if case .composite = $0.kind { return true }
+      return false
+    })
+
+    #expect(composite.artifact == nil,
+            "the composite step must not claim a piece that delivery just removed")
+
+    await engine.flush()
+  }
+
+  /// The failure mode `move`'s `.composite` case exists to prevent: composite
+  /// and assemble carry the *same* destination (`JobTemplate` builds the
+  /// `AssembleRequest` from `CompositeRequest.destination`), so if `move`
+  /// ever let `.composite` deliver again, this would pass by coincidence —
+  /// the file would land at the right path just one step early, with fewer
+  /// pieces joined than a resumed job actually produced. Caught mid-flight,
+  /// with assemble deliberately held `.running` so the moment the composite
+  /// alone could have delivered is directly observable: the destination must
+  /// not exist while composite is `.done` and assemble has not finished.
+  @Test func aCompositeStepNeverDeliversToItsOwnDestination() async throws {
+    let sequenced = SequencedBehaviours(
+      [.succeeds, .succeeds, .succeeds, .succeeds, .hangsUntilCancelled])
+    let (engine, root) = makeEngine { FakeHelper(sequenced.next()) }
+    defer { cleanUp(root) }
+
+    let destination = root.appending(path: "out.mp4")
+    try await engine.start()
+    await engine.enqueue(
+      JobTemplate(
+        media: .video(VideoRequest(videoID: "v", quality: "1080p60")),
+        render: RenderRequest(),
+        composite: CompositeRequest(
+          framerate: 60, bitrateMbps: 8, duration: .seconds(60),
+          destination: destination)),
+      title: "t")
+
+    // Step order is chat, render, video, composite, assemble (`JobTemplate`'s
+    // load-bearing append order). Wait for the composite to finish and the
+    // assemble step — which shares the composite's destination — to be
+    // genuinely in flight, held there by the fake's last behaviour.
+    for _ in 0..<200 {
+      let steps = await engine.currentJobs.first?.steps
+      if steps?[3].status == .done, steps?[4].status == .running {
+        break
+      }
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    let steps = try #require(await engine.currentJobs.first?.steps)
+    #expect(steps[3].status == .done, "precondition: composite must have finished")
+    #expect(steps[4].status == .running, "precondition: assemble must be genuinely in flight")
+
+    #expect(!FileManager.default.fileExists(atPath: destination.path),
+            "the composite must not have delivered its own destination")
+
+    let jobID = try #require(await engine.currentJobs.first?.id)
+    await engine.cancel(job: jobID)
+    try await settle(engine)
     await engine.flush()
   }
 
@@ -597,6 +803,121 @@ struct QueueEngineTests {
     try await settle(engine)
 
     #expect(await engine.currentJobs.first?.steps.first?.status == .cancelled)
+
+    await engine.flush()
+  }
+
+  /// A stubborn file inside a step's own working directory must not vanish
+  /// into the same silence a whole-job teardown failure used to: found on a
+  /// real machine as an 8.66 GB video that survived its job's teardown with
+  /// nothing anywhere recording that the removal had failed.
+  ///
+  /// `chflags`'s user-immutable flag is used to force a genuine
+  /// `FileManager.removeItem` failure — unlike an open file handle, which
+  /// does not stop `unlink` on APFS, or a read-only file, which is still
+  /// removable by the owner of a writable directory. `uchg` is the one
+  /// portable way to make deletion itself fail.
+  ///
+  /// `removeStep` only ever touches a step's own working directory, never
+  /// `logs/` — so unlike a job-level failure (see
+  /// `aJobTeardownFailureIsRecordedInTheWorkspaceLevelLog` below), this one
+  /// has an obvious, still-standing home: the step's own `StepLog`.
+  @Test func aStepTeardownFailureIsRecordedInThatStepsOwnLog() async throws {
+    let (engine, root) = makeEngine(.hangsUntilCancelled)
+    defer { cleanUp(root) }
+    let workspace = Workspace(root: root)
+
+    try await engine.start()
+    await engine.enqueue(
+      JobTemplate(chat: ChatRequest(videoID: "2844548319", format: .json)), title: "test")
+
+    // `enqueue` runs `tick()` — and so `makeContext`'s `prepareStep` — to
+    // completion synchronously before returning, so the step's working
+    // directory already exists here; no polling needed.
+    let jobID = try #require(await engine.currentJobs.first?.id)
+    let stepID = try #require(await engine.currentJobs.first?.steps.first?.id)
+
+    let stuck = workspace.stepDirectory(job: jobID, step: stepID).appending(path: "stuck.tmp")
+    FileManager.default.createFile(atPath: stuck.path, contents: Data("x".utf8))
+    try #require(
+      chflags(stuck.path, UInt32(UF_IMMUTABLE)) == 0,
+      "precondition: chflags must succeed to force the failure this test is after")
+    defer { chflags(stuck.path, 0) }
+
+    await engine.cancel(step: stepID)
+    try await settle(engine)
+
+    // The teardown failure is written by a fire-and-forget `Task` (see
+    // `recordStepTeardownFailure`), so it may still be in flight the moment
+    // `isIdle` goes true — poll rather than reading the log exactly once.
+    let logFile = workspace.logFile(job: jobID, step: stepID)
+    var contents = ""
+    for _ in 0..<80 {
+      contents = (try? String(contentsOf: logFile, encoding: .utf8)) ?? ""
+      if contents.contains("stuck.tmp") { break }
+      try await Task.sleep(for: .milliseconds(25))
+    }
+
+    #expect(contents.contains("teardown"), "step log should record the teardown failure; log was: \(contents)")
+    #expect(
+      contents.contains("stuck.tmp"),
+      "step log should name the file that survived removal; log was: \(contents)")
+    #expect(
+      FileManager.default.fileExists(atPath: stuck.path),
+      "the file the failure names must actually still be there")
+
+    await engine.flush()
+  }
+
+  /// The job-level counterpart of the test above. `removeJob` deletes a
+  /// job's own `logs/` directory as part of what it tears down, so a
+  /// job-level failure has nowhere per-job to land — this is what confirms
+  /// it lands in `Workspace.teardownFailureLog` instead, and that the file
+  /// naming the failure survives it.
+  @Test func aJobTeardownFailureIsRecordedInTheWorkspaceLevelLog() async throws {
+    let (engine, root) = makeEngine(.hangsUntilCancelled)
+    defer { cleanUp(root) }
+    let workspace = Workspace(root: root)
+
+    try await engine.start()
+    await engine.enqueue(
+      JobTemplate(chat: ChatRequest(videoID: "2844548319", format: .json)), title: "test")
+
+    let jobID = try #require(await engine.currentJobs.first?.id)
+
+    // A stray file directly in the job's own directory — a sibling of
+    // `artifacts/` and `logs/` — so its removal failing aborts nothing
+    // upstream of it and this test is purely about where the failure is
+    // *reported*, not whether siblings survive (that is `WorkspaceTests`'
+    // job, at the `Workspace` level where it can be asserted without an
+    // engine's timing in the way).
+    let stuck = workspace.jobDirectory(jobID).appending(path: "stuck.tmp")
+    FileManager.default.createFile(atPath: stuck.path, contents: Data("x".utf8))
+    try #require(
+      chflags(stuck.path, UInt32(UF_IMMUTABLE)) == 0,
+      "precondition: chflags must succeed to force the failure this test is after")
+    defer { chflags(stuck.path, 0) }
+
+    await engine.cancel(job: jobID)
+    try await settle(engine)
+
+    let logFile = workspace.teardownFailureLog
+    var contents = ""
+    for _ in 0..<80 {
+      contents = (try? String(contentsOf: logFile, encoding: .utf8)) ?? ""
+      if contents.contains("stuck.tmp") { break }
+      try await Task.sleep(for: .milliseconds(25))
+    }
+
+    #expect(
+      contents.contains(jobID.rawValue.uuidString),
+      "the workspace-level log should name the job it happened to; log was: \(contents)")
+    #expect(
+      contents.contains("stuck.tmp"),
+      "the workspace-level log should name the file that survived removal; log was: \(contents)")
+    #expect(
+      FileManager.default.fileExists(atPath: stuck.path),
+      "the file the failure names must actually still be there")
 
     await engine.flush()
   }
@@ -1055,5 +1376,595 @@ struct QueueEngineTests {
       }
       #expect(gone, "pid \(pid) outlived the app; it is an orphan")
     }
+  }
+
+  // MARK: - Resume
+
+  /// Everything the resume tests need: an engine wired to a real workspace,
+  /// and a job whose only step is a composite. `dependsOn` is left empty —
+  /// `makeContext`'s wiring guard only checks that inputs and `dependsOn`
+  /// agree in count, and these tests are aimed at the resume machinery, not
+  /// at wiring a full multi-step job.
+  private struct ResumeHarness {
+    let engine: QueueEngine
+    let workspace: Workspace
+    let job: Job
+    let store: QueueStore
+    private let cleanup: () -> Void
+
+    init(
+      engine: QueueEngine, workspace: Workspace, job: Job, store: QueueStore,
+      cleanup: @escaping () -> Void)
+    {
+      self.engine = engine
+      self.workspace = workspace
+      self.job = job
+      self.store = store
+      self.cleanup = cleanup
+    }
+
+    /// Exercises `QueueEngine.makeContext` directly for the composite step —
+    /// the same call `launch(_:)` makes, without actually running a job.
+    func engineContext(forCompositeOf job: Job) throws -> StepContext {
+      try engine.makeContext(job: job, step: job.steps[0])
+    }
+
+    /// A piece already on disk, built from the same box layouts
+    /// `FragmentIndexTests` uses — a single fragment declaring `frames`
+    /// samples is all `resumePoint` ever reads.
+    func writePiece(index: Int, frames: Int) throws {
+      try FileManager.default.createDirectory(
+        at: workspace.resumeDirectory(job.id), withIntermediateDirectories: true)
+      let data = FragmentBuilder.fragmentedFile([UInt32(frames)])
+      try data.write(
+        to: workspace.resumeDirectory(job.id).appending(path: "piece-\(index).mp4"))
+    }
+
+    /// What piece 0 was (supposedly) built from — written here rather than
+    /// produced by a real first attempt, so a test can dial in a mismatch
+    /// directly instead of running two composites to provoke one.
+    func writeFingerprint(byteCount: Int, duration: Duration) throws {
+      try FileManager.default.createDirectory(
+        at: workspace.resumeDirectory(job.id), withIntermediateDirectories: true)
+      try SourceFingerprint(byteCount: byteCount, duration: duration)
+        .write(to: workspace.resumeDirectory(job.id).appending(path: "source.json"))
+    }
+
+    /// A video file of an exact size, standing in for a re-downloaded source —
+    /// written directly rather than run through a helper, so a test can dial
+    /// in the precise byte count `SourceFingerprint` compares against. The
+    /// return value only matters to callers that need to assert on the path
+    /// afterward — `aChangedSourceRefusesToResume` only needs the file on
+    /// disk, not the URL back.
+    @discardableResult
+    func writeVideoArtifact(byteCount: Int) throws -> URL {
+      let url = try workspace.prepareArtifacts(job: job.id).appending(path: "video.mp4")
+      try Data(count: byteCount).write(to: url)
+      return url
+    }
+
+    /// The chat render's stand-in, same reasoning as `writeVideoArtifact`.
+    @discardableResult
+    func writeRenderArtifact(byteCount: Int) throws -> URL {
+      let url = try workspace.prepareArtifacts(job: job.id).appending(path: "render.mp4")
+      try Data(count: byteCount).write(to: url)
+      return url
+    }
+
+    /// A finalised sidecar: `ftyp` + `mdat` + a complete trailing `moov` — the
+    /// layout a first attempt's `-c:a copy` produces when it runs to
+    /// completion. Same box-building helper `FragmentIndexTests` uses.
+    func writeUsableSidecar() throws {
+      try FileManager.default.createDirectory(
+        at: workspace.resumeDirectory(job.id), withIntermediateDirectories: true)
+      var data = FragmentBuilder.box("ftyp", Data(repeating: 0, count: 8))
+      data.append(FragmentBuilder.box("mdat", Data(repeating: 0xAB, count: 32)))
+      data.append(FragmentBuilder.box("moov", Data(repeating: 0, count: 16)))
+      try data.write(to: workspace.resumeDirectory(job.id).appending(path: "audio.m4a"))
+    }
+
+    /// What a genuine `SIGKILL` mid-write leaves behind: `ftyp` + `mdat`, no
+    /// `moov` at all, because the encoder writes it last.
+    func writeCorruptSidecar() throws {
+      try FileManager.default.createDirectory(
+        at: workspace.resumeDirectory(job.id), withIntermediateDirectories: true)
+      var data = FragmentBuilder.box("ftyp", Data(repeating: 0, count: 8))
+      data.append(FragmentBuilder.box("mdat", Data(repeating: 0xAB, count: 32)))
+      try data.write(to: workspace.resumeDirectory(job.id).appending(path: "audio.m4a"))
+    }
+
+    /// Exercises the composite branch of `makeContext` directly, wired to a
+    /// video dependency so the source-fingerprint check has something to
+    /// compare — and translates a thrown `SourceChangedError` the way
+    /// `launch(_:)` does, since that translation is what a caller actually
+    /// sees.
+    func runComposite() async -> StepOutcome {
+      let videoStep = Step(
+        id: StepID(rawValue: UUID()),
+        kind: .downloadVideo(VideoRequest(videoID: "v", quality: "best")),
+        status: .done,
+        artifact: workspace.artifactsDirectory(job.id).appending(path: "video.mp4"))
+      let compositeStep = Step(
+        id: StepID(rawValue: UUID()),
+        kind: .composite(CompositeRequest(
+          framerate: 30, bitrateMbps: 8, duration: .seconds(547),
+          destination: workspace.root.appending(path: "out.mp4"))),
+        dependsOn: [videoStep.id])
+      let wired = Job(id: job.id, created: job.created, title: job.title,
+                       steps: [videoStep, compositeStep])
+
+      do {
+        let context = try engine.makeContext(job: wired, step: compositeStep)
+        return .succeeded(artifact: context.outputFile)
+      } catch let error as SourceChangedError {
+        return .failed(StepFailure(
+          kind: .noArtifact,
+          summary: error.reason ?? "The source changed since this download started. Start it again."))
+      } catch {
+        return .failed(StepFailure(kind: .launchFailed("\(error)"), summary: "\(error)"))
+      }
+    }
+
+    /// Exercises the assemble branch of `makeContext` directly, wired to a
+    /// video and a render dependency so there is something for it to drop.
+    /// The deletion is a plain filesystem side effect of building the
+    /// context, so there is nothing further to run.
+    func runAssemble() async {
+      let videoStep = Step(
+        id: StepID(rawValue: UUID()),
+        kind: .downloadVideo(VideoRequest(videoID: "v", quality: "best")),
+        status: .done,
+        artifact: workspace.artifactsDirectory(job.id).appending(path: "video.mp4"))
+      let renderStep = Step(
+        id: StepID(rawValue: UUID()),
+        kind: .renderChat(RenderRequest()),
+        status: .done,
+        artifact: workspace.artifactsDirectory(job.id).appending(path: "render.mp4"))
+      let compositeStep = Step(
+        id: StepID(rawValue: UUID()),
+        kind: .composite(CompositeRequest(
+          framerate: 30, bitrateMbps: 8, duration: .seconds(60),
+          destination: workspace.root.appending(path: "out.mp4"))),
+        status: .done,
+        dependsOn: [videoStep.id, renderStep.id],
+        // Never read by the assemble branch — it hardcodes the sidecar path
+        // instead — but `makeContext`'s wiring guard still counts it, so a
+        // nil here would misreport this as a wiring bug rather than
+        // exercising the deletion this test is actually after.
+        artifact: workspace.resumeDirectory(job.id).appending(path: "piece-0.mp4"))
+      let assembleStep = Step(
+        id: StepID(rawValue: UUID()),
+        kind: .assemble(AssembleRequest(destination: workspace.root.appending(path: "out.mp4"))),
+        dependsOn: [compositeStep.id])
+      let wired = Job(id: job.id, created: job.created, title: job.title,
+                       steps: [videoStep, renderStep, compositeStep, assembleStep])
+
+      _ = try? engine.makeContext(job: wired, step: assembleStep)
+    }
+
+    /// Runs `job` to real completion through the engine's own pipeline,
+    /// rather than through `makeContext` directly — clearing the resume area
+    /// on delivery is `QueueEngine.removeJobWorkspace`'s doing, and that only
+    /// fires from inside the actor once the job's own steps are genuinely
+    /// `.done`.
+    func completeJobSuccessfully() async {
+      try? store.save([job])
+      try? await engine.start()
+      for _ in 0..<200 {
+        if await engine.isIdle { return }
+        try? await Task.sleep(for: .milliseconds(25))
+      }
+    }
+
+    func tearDown() {
+      cleanup()
+    }
+  }
+
+  private func makeHarness() throws -> ResumeHarness {
+    let root = makeRoot()
+    let workspace = Workspace(root: root)
+    let engine = QueueEngine(configuration: makeConfiguration(root: root) { FakeHelper(.succeeds) })
+
+    // 30fps so a piece's frame count converts to seconds by simple division —
+    // see aSecondAttemptResumesAfterTheSurvivingFrames.
+    let job = Job(
+      id: JobID(rawValue: UUID()),
+      created: Date(),
+      title: "resume",
+      steps: [Step(
+        id: StepID(rawValue: UUID()),
+        kind: .composite(CompositeRequest(
+          framerate: 30, bitrateMbps: 8, duration: .seconds(60),
+          destination: root.appending(path: "out.mp4"))))])
+
+    return ResumeHarness(
+      engine: engine, workspace: workspace, job: job,
+      store: QueueStore(fileURL: storeURL(for: root))
+    ) { self.cleanUp(root) }
+  }
+
+  /// A first attempt writes piece-0 into the retention area, not the workspace
+  /// — the workspace is swept at launch and the whole point is surviving that.
+  @Test func aCompositeWritesItsFirstPieceIntoTheResumeArea() async throws {
+    let harness = try makeHarness()
+    defer { harness.tearDown() }
+
+    let context = try harness.engineContext(forCompositeOf: harness.job)
+
+    #expect(context.outputFile.lastPathComponent == "piece-0.mp4")
+    // `.path`, not `==`, on the URLs themselves: `deletingLastPathComponent()`
+    // always returns a directory-flavoured URL (trailing slash), which never
+    // compares equal via `==` to the file-flavoured URL `resumeDirectory`
+    // returns even for the identical path — the same reason `WorkspaceTests`
+    // compares `.path` rather than the URLs directly.
+    #expect(context.outputFile.deletingLastPathComponent().path
+      == harness.workspace.resumeDirectory(harness.job.id).path)
+    #expect(context.resumeFrom == nil)
+  }
+
+  /// With a piece already on disk, the next attempt continues rather than
+  /// restarting: a new piece, and a seek derived from the frames that survived.
+  @Test func aSecondAttemptResumesAfterTheSurvivingFrames() async throws {
+    let harness = try makeHarness()
+    defer { harness.tearDown() }
+    // 90 frames at 30 fps == 3.0 seconds.
+    try harness.writePiece(index: 0, frames: 90)
+
+    let context = try harness.engineContext(forCompositeOf: harness.job)
+
+    #expect(context.outputFile.lastPathComponent == "piece-1.mp4")
+    #expect(context.resumeFrom == .seconds(3))
+  }
+
+  /// Past the cap, a retry starts over: a job that has failed this many times
+  /// is reporting something resuming will not fix. resume.md §7.
+  @Test func theFifthAttemptStartsOver() async throws {
+    let harness = try makeHarness()
+    defer { harness.tearDown() }
+    for index in 0 ..< 4 { try harness.writePiece(index: index, frames: 30) }
+
+    let context = try harness.engineContext(forCompositeOf: harness.job)
+
+    #expect(context.outputFile.lastPathComponent == "piece-0.mp4")
+    #expect(context.resumeFrom == nil)
+    // The cap reset drops the whole retained directory (`removeResumable`)
+    // and `prepareResume` recreates it empty right after — so this pins that
+    // it comes back genuinely empty, not merely present. If `removeResumable`
+    // ever silently failed, `piece-1` through `piece-3` would survive here,
+    // the fresh run would overwrite only `piece-0`, and assemble would splice
+    // three stale pieces onto one fresh one — a silently wrong video.
+    let contents = try FileManager.default.contentsOfDirectory(
+      atPath: harness.workspace.resumeDirectory(harness.job.id).path)
+    #expect(contents.isEmpty)
+  }
+
+  /// A piece that reached only `ftyp`+`moov` before the crash — killed before
+  /// a single fragment finished — has nothing to resume from and must not be
+  /// treated as a real attempt: left in place it would burn a slot against
+  /// the piece cap and hand `.assemble` an empty segment in `pieces.txt`.
+  /// resume.md §7.
+  @Test func aZeroFramePieceIsDiscardedRatherThanCounted() async throws {
+    let harness = try makeHarness()
+    defer { harness.tearDown() }
+    try harness.writePiece(index: 0, frames: 90)
+    try harness.writePiece(index: 1, frames: 0)
+
+    let context = try harness.engineContext(forCompositeOf: harness.job)
+
+    // The zero-frame piece must not have claimed an index of its own — the
+    // next attempt reuses it rather than continuing past it.
+    #expect(context.outputFile.lastPathComponent == "piece-1.mp4")
+    // 90 frames at 30 fps == 3.0s, from the real piece alone.
+    #expect(context.resumeFrom == .seconds(3))
+    #expect(!FileManager.default.fileExists(
+      atPath: harness.workspace.resumeDirectory(harness.job.id).appending(path: "piece-1.mp4").path),
+      "a zero-frame piece must be removed outright, not left to reach .assemble's pieces.txt")
+  }
+
+  /// No sidecar on disk at all — a genuine first attempt — must not be
+  /// reported as usable. `hasUsableSidecar` defaults to `false` in
+  /// `StepContext`, but this pins that `QueueEngine` actually computes it
+  /// rather than relying on the default surviving by accident.
+  @Test func aFirstAttemptHasNoUsableSidecar() async throws {
+    let harness = try makeHarness()
+    defer { harness.tearDown() }
+
+    let context = try harness.engineContext(forCompositeOf: harness.job)
+
+    #expect(!context.hasUsableSidecar)
+  }
+
+  /// The bug this branch fixes: a sidecar surviving from an earlier attempt
+  /// must be checked for a complete `moov`, not just "on disk" — a
+  /// `SIGKILL` mid-write leaves a non-empty file that is not usable.
+  @Test func aRetryWithACorruptSidecarReportsItAsUnusable() async throws {
+    let harness = try makeHarness()
+    defer { harness.tearDown() }
+    try harness.writePiece(index: 0, frames: 90)
+    try harness.writeCorruptSidecar()
+
+    let context = try harness.engineContext(forCompositeOf: harness.job)
+
+    #expect(!context.hasUsableSidecar)
+  }
+
+  /// A sidecar that finished writing normally (the graceful-`SIGTERM` case,
+  /// or a resume that already repaired it) must be reported usable, so
+  /// `ArgumentBuilder` leaves it alone rather than needlessly re-copying it.
+  @Test func aRetryWithAnIntactSidecarReportsItAsUsable() async throws {
+    let harness = try makeHarness()
+    defer { harness.tearDown() }
+    try harness.writePiece(index: 0, frames: 90)
+    try harness.writeUsableSidecar()
+
+    let context = try harness.engineContext(forCompositeOf: harness.job)
+
+    #expect(context.hasUsableSidecar)
+  }
+
+  /// A changed source must refuse rather than splice two different videos
+  /// together. resume.md §7.
+  @Test func aChangedSourceRefusesToResume() async throws {
+    let harness = try makeHarness()
+    defer { harness.tearDown() }
+    try harness.writePiece(index: 0, frames: 30)
+    try harness.writeFingerprint(byteCount: 1000, duration: .seconds(547))
+    try harness.writeVideoArtifact(byteCount: 2000)
+
+    let outcome = await harness.runComposite()
+
+    guard case .failed(let failure) = outcome else {
+      Issue.record("expected refusal, got \(outcome)")
+      return
+    }
+    #expect(failure.summary.contains("source changed"))
+  }
+
+  /// The fail-open twin of `aChangedSourceRefusesToResume`: no `source.json`
+  /// at all, as if the first attempt's own `try?` write had failed — a full
+  /// disk is the likeliest reason a composite failed in the first place, and
+  /// also the likeliest reason the fingerprint write failed alongside it. A
+  /// resume that cannot verify its source must refuse the same as one that
+  /// verifies and finds a mismatch, not silently treat "unreadable" as
+  /// "matches". resume.md §7.
+  @Test func aMissingFingerprintRefusesToResume() async throws {
+    let harness = try makeHarness()
+    defer { harness.tearDown() }
+    try harness.writePiece(index: 0, frames: 30)
+    // Deliberately no `writeFingerprint` call — `source.json` is absent.
+    try harness.writeVideoArtifact(byteCount: 2000)
+
+    let outcome = await harness.runComposite()
+
+    guard case .failed(let failure) = outcome else {
+      Issue.record("expected refusal, got \(outcome)")
+      return
+    }
+    // Not the mismatch wording: nothing was compared, so nothing "changed".
+    #expect(!failure.summary.contains("source changed"))
+    #expect(failure.summary.contains("could not be verified"))
+  }
+
+  /// Deleting the re-fetched inputs before assembling is what keeps the disk
+  /// peak at ~58 GB rather than ~84 on a six-hour job. resume.md §5.
+  @Test func assembleDropsTheRefetchedInputsFirst() async throws {
+    let harness = try makeHarness()
+    defer { harness.tearDown() }
+    let video = try harness.writeVideoArtifact(byteCount: 10)
+    let render = try harness.writeRenderArtifact(byteCount: 10)
+
+    await harness.runAssemble()
+
+    #expect(!FileManager.default.fileExists(atPath: video.path))
+    #expect(!FileManager.default.fileExists(atPath: render.path))
+  }
+
+  /// Delivered means done: the retained bytes have no further use.
+  @Test func aDeliveredJobClearsItsResumeArea() async throws {
+    let harness = try makeHarness()
+    defer { harness.tearDown() }
+    try harness.writePiece(index: 0, frames: 30)
+
+    await harness.completeJobSuccessfully()
+
+    #expect(!FileManager.default.fileExists(
+      atPath: harness.workspace.resumeDirectory(harness.job.id).path))
+  }
+
+  /// Dismissing a failed job is how a user reclaims the space, since retention
+  /// is user-cleared for now. resume.md §8.
+  @Test func removingAJobClearsItsResumeArea() async throws {
+    let harness = try makeHarness()
+    defer { harness.tearDown() }
+    try harness.writePiece(index: 0, frames: 30)
+
+    await harness.engine.remove(jobs: [harness.job.id])
+
+    #expect(!FileManager.default.fileExists(
+      atPath: harness.workspace.resumeDirectory(harness.job.id).path))
+  }
+
+  /// The number the failed row shows, so user-cleared retention stays honest.
+  /// resume.md §8.
+  @Test func retainedBytesAreReportedForAFailedJob() async throws {
+    let harness = try makeHarness()
+    defer { harness.tearDown() }
+    try harness.writePiece(index: 0, frames: 30)
+
+    let bytes = await harness.engine.retainedBytes(forJob: harness.job.id)
+
+    #expect(bytes > 0)
+  }
+
+  @Test func aJobWithNoPiecesReportsNothingRetained() async throws {
+    let harness = try makeHarness()
+    defer { harness.tearDown() }
+
+    #expect(await harness.engine.retainedBytes(forJob: harness.job.id) == 0)
+  }
+
+  /// What the composite step's Finder-reveal item points at
+  /// (docs/design/fragmented-output.md §6): the retention directory, and the
+  /// pieces inside it, in order — never anything under the job workspace.
+  @Test func retainedFileURLsReportTheDirectoryAndItsPiecesInOrder() async throws {
+    let harness = try makeHarness()
+    defer { harness.tearDown() }
+    try harness.writePiece(index: 1, frames: 30)
+    try harness.writePiece(index: 0, frames: 30)
+
+    let (directory, pieces) = await harness.engine.retainedFileURLs(forJob: harness.job.id)
+
+    #expect(directory == harness.workspace.resumeDirectory(harness.job.id))
+    #expect(pieces.map(\.lastPathComponent) == ["piece-0.mp4", "piece-1.mp4"])
+  }
+
+  /// The fallback the reveal action needs: a composite that has started but
+  /// has not yet finished its first fragment still has a real, existing
+  /// directory to point Finder at — `prepareResume` creates it the moment the
+  /// step starts, before any `piece-*.mp4` exists.
+  @Test func retainedFileURLsReportTheDirectoryEvenWithNoPiecesYet() async throws {
+    let harness = try makeHarness()
+    defer { harness.tearDown() }
+
+    let (directory, pieces) = await harness.engine.retainedFileURLs(forJob: harness.job.id)
+
+    #expect(directory == harness.workspace.resumeDirectory(harness.job.id))
+    #expect(pieces.isEmpty)
+  }
+
+  /// The composite step's Finder-reveal item, rule 1: the retention area is
+  /// still on disk, so it reveals what is actually there — the same answer
+  /// `retainedFileURLs` already gives, wrapped so a caller does not have to
+  /// separately decide whether that answer applies.
+  @Test func revealTargetReportsRetainedPiecesWhileTheyAreOnDisk() async throws {
+    let harness = try makeHarness()
+    defer { harness.tearDown() }
+    try harness.writePiece(index: 0, frames: 30)
+
+    let target = await harness.engine.revealTarget(forJob: harness.job.id)
+
+    // Built from the same call `revealTarget` itself makes, not from
+    // `resumeDirectory` directly — `contentsOfDirectory` resolves `/var` to
+    // `/private/var` on a real filesystem, and a hand-built expectation
+    // would fail on that alone rather than on anything this test is
+    // actually about.
+    let (directory, pieces) = await harness.engine.retainedFileURLs(forJob: harness.job.id)
+    #expect(target == .retained(directory: directory, pieces: pieces))
+    #expect(pieces.map(\.lastPathComponent) == ["piece-0.mp4"])
+  }
+
+  /// Rule 3: a composite that has never started has neither a retention area
+  /// nor anything delivered — there is genuinely nothing to reveal, and the
+  /// item must disable rather than invent something to select.
+  @Test func revealTargetIsNilBeforeTheCompositeHasEverStarted() async throws {
+    let harness = try makeHarness()
+    defer { harness.tearDown() }
+
+    #expect(await harness.engine.revealTarget(forJob: harness.job.id) == nil)
+  }
+
+  /// The invariant resume.md §8 exists to protect, and the one no existing
+  /// test pinned: cancellation is the one ending where retention is
+  /// deliberately *kept*. `removeJobWorkspace`'s not-done branch has two
+  /// early returns, and adding a stray `removeResumable` call to either
+  /// would pass every other test in this file while quietly breaking this.
+  @Test func cancellingAJobWithARetainedPieceKeepsIt() async throws {
+    let root = makeRoot()
+    let workspace = Workspace(root: root)
+    let engine = QueueEngine(
+      configuration: makeConfiguration(root: root) { FakeHelper(.hangsUntilCancelled) })
+    defer { cleanUp(root) }
+
+    let jobID = JobID(rawValue: UUID())
+    let job = Job(
+      id: jobID,
+      created: Date(),
+      title: "resume",
+      steps: [Step(
+        id: StepID(rawValue: UUID()),
+        kind: .composite(CompositeRequest(
+          framerate: 30, bitrateMbps: 8, duration: .seconds(60),
+          destination: root.appending(path: "out.mp4"))))])
+
+    // A piece retained from an earlier interrupted attempt — what a resumed
+    // composite continues from, and what cancelling a *new* attempt must
+    // not touch.
+    try FileManager.default.createDirectory(
+      at: workspace.resumeDirectory(jobID), withIntermediateDirectories: true)
+    try FragmentBuilder.fragmentedFile([UInt32(30)])
+      .write(to: workspace.resumeDirectory(jobID).appending(path: "piece-0.mp4"))
+
+    try QueueStore(fileURL: storeURL(for: root)).save([job])
+    try await engine.start()
+
+    for _ in 0..<200 {
+      if await engine.currentJobs.first?.steps.first?.status == .running { break }
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(
+      await engine.currentJobs.first?.steps.first?.status == .running,
+      "precondition: the composite must be genuinely in flight")
+
+    await engine.cancel(job: jobID)
+    try await settle(engine)
+
+    #expect(await engine.currentJobs.first?.status == .cancelled)
+    #expect(
+      FileManager.default.fileExists(
+        atPath: workspace.resumeDirectory(jobID).appending(path: "piece-0.mp4").path),
+      "resume.md §8: cancellation is the one ending where retention is deliberately kept")
+
+    await engine.flush()
+  }
+
+  /// A retention directory naming no job the queue just loaded — the
+  /// signature of a lost or corrupted queue store — is otherwise both
+  /// unreachable (nothing in the UI names it) and unshowable
+  /// (`retainedBytes(forJob:)` needs a `JobID` nothing has any more)
+  /// forever, since `removeAll()` deliberately never reaches `resumeRoot`.
+  /// `start()` must sweep exactly that case, and nothing else: a job still
+  /// in the queue is not an orphan, whatever its status.
+  @Test func startSweepsAnOrphanedResumeDirectoryButKeepsAKnownJobs() async throws {
+    let root = makeRoot()
+    let workspace = Workspace(root: root)
+    let engine = QueueEngine(configuration: makeConfiguration(root: root) { FakeHelper(.succeeds) })
+    defer { cleanUp(root) }
+
+    // A cancelled job still tracked by the queue — its retained piece must
+    // survive the sweep.
+    let knownJobID = JobID(rawValue: UUID())
+    let knownJob = Job(
+      id: knownJobID, created: Date(), title: "resume",
+      steps: [Step(
+        id: StepID(rawValue: UUID()),
+        kind: .composite(CompositeRequest(
+          framerate: 30, bitrateMbps: 8, duration: .seconds(60),
+          destination: root.appending(path: "out.mp4"))),
+        status: .cancelled)])
+    try FileManager.default.createDirectory(
+      at: workspace.resumeDirectory(knownJobID), withIntermediateDirectories: true)
+    try Data("x".utf8).write(
+      to: workspace.resumeDirectory(knownJobID).appending(path: "piece-0.mp4"))
+
+    // An orphan: a resume directory naming a job id the store never heard
+    // of — what a lost or corrupted queue store leaves behind.
+    let orphanJobID = JobID(rawValue: UUID())
+    try FileManager.default.createDirectory(
+      at: workspace.resumeDirectory(orphanJobID), withIntermediateDirectories: true)
+    try Data("x".utf8).write(
+      to: workspace.resumeDirectory(orphanJobID).appending(path: "piece-0.mp4"))
+
+    try QueueStore(fileURL: storeURL(for: root)).save([knownJob])
+    try await engine.start()
+
+    #expect(
+      FileManager.default.fileExists(atPath: workspace.resumeDirectory(knownJobID).path),
+      "a job still in the queue is not an orphan, whatever its status")
+    #expect(
+      !FileManager.default.fileExists(atPath: workspace.resumeDirectory(orphanJobID).path),
+      "a directory naming no loaded job must not survive forever")
+
+    await engine.flush()
   }
 }

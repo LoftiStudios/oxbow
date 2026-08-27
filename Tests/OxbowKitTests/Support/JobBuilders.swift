@@ -11,6 +11,16 @@ enum Build {
     JobID(rawValue: UUID(uuidString: "00000000-0000-0000-0001-\(String(format: "%012d", n))")!)
   }
 
+  /// A deterministic `nextStepID` closure for tests that don't need to name
+  /// individual steps up front — just that they come out distinct and stable.
+  static func sequentialStepIDs() -> () -> StepID {
+    var n = 0
+    return {
+      n += 1
+      return stepID(n)
+    }
+  }
+
   /// A `.network` step — any of the download verbs contends the same way.
   static func network(_ n: Int, _ status: StepStatus = .queued, dependsOn: [StepID] = []) -> Step {
     Step(

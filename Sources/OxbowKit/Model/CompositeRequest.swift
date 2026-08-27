@@ -34,4 +34,15 @@ extension CompositeRequest {
       ? context.inputArtifacts[index].path
       : ""
   }
+
+  /// `-ss` for a resume point, or nothing on a first attempt. Applied before
+  /// each `-i` — an input seek, not a filter — because input and output seek
+  /// agree exactly on Twitch sources where frame-index trimming does not.
+  /// See docs/design/resume.md §2.1.
+  func resumeSeek(_ from: Duration?) -> [String] {
+    guard let from else { return [] }
+    let seconds = Double(from.components.seconds)
+      + Double(from.components.attoseconds) / 1e18
+    return ["-ss", String(format: "%.6f", seconds)]
+  }
 }

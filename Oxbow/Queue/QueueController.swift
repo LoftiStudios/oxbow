@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Observation
 import OxbowKit
@@ -79,6 +80,38 @@ final class QueueController {
 
   /// The tail of a step's captured helper output, for the detail disclosure.
   func log(for step: StepID) async -> String? { await engine.log(for: step) }
+
+  /// Bytes held in a job's retention area, for the failed-row disclosure.
+  /// Retention is user-cleared (docs/design/resume.md §8), so the row reads
+  /// this on demand rather than carrying it in `Job` — it is a filesystem
+  /// fact, not queue state, and stale for exactly as long as a snapshot is.
+  func retainedBytes(for job: JobID) async -> Int { await engine.retainedBytes(forJob: job) }
+
+  /// What the composite step's Finder-reveal item should currently show —
+  /// retained pieces, the file the job delivered once those pieces are gone,
+  /// or nothing. `StepRow` reads this to decide whether the item is enabled;
+  /// `revealRetainedFiles` reads it again, fresh, to decide what to select.
+  /// See `QueueEngine.revealTarget(forJob:)`.
+  func revealTarget(for job: JobID) async -> RevealTarget? {
+    await engine.revealTarget(forJob: job)
+  }
+
+  /// Reveals whatever the composite step's Finder-reveal item currently
+  /// points at — never the job workspace, which also holds the download and
+  /// the chat render. docs/design/fragmented-output.md §6.
+  func revealRetainedFiles(for job: JobID) async {
+    switch await engine.revealTarget(forJob: job) {
+    case .retained(let directory, let pieces):
+      NSWorkspace.shared.activateFileViewerSelecting(pieces.isEmpty ? [directory] : pieces)
+    case .delivered(let file):
+      NSWorkspace.shared.activateFileViewerSelecting([file])
+    case nil:
+      // The item is disabled in exactly this case, so a click can only
+      // reach here through a stale state read; do nothing rather than open
+      // a Finder window on nothing.
+      break
+    }
+  }
 
   /// Forgets these jobs: out of the queue, off disk, helpers killed first if
   /// any were running. Delivered files are never touched — see

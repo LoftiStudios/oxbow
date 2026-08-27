@@ -59,6 +59,16 @@ public struct FFmpegProgressParser: Sendable {
     // `out_time_us`, NOT `out_time_ms`: FFmpeg's `out_time_ms` is actually
     // microseconds — both fields read 4983333 for 4.983 seconds. Verified
     // 2026-08-25. Do not "fix" this.
+    //
+    // Known quirk on a resumed composite (docs/design/resume.md §4): FFmpeg
+    // reports `out_time_us` as the max across every output in the
+    // invocation, not just the piece. When a resume also rewrites the
+    // sidecar, that second output spans the whole content window while the
+    // piece spans only the tail, so this fraction can read close to or at 1
+    // before the encode is actually done. FFmpeg's own dts balancing bounds
+    // how far the lead runs, so it is a cosmetic tail effect on the number
+    // reported here, not a stalled or stuck job. Do not restructure progress
+    // reporting to fix it.
     let total = Double(duration.components.seconds)
     let elapsed = fields["out_time_us"].flatMap(Double.init).map { $0 / 1_000_000 }
 

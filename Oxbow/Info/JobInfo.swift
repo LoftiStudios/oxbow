@@ -124,12 +124,15 @@ nonisolated struct JobInfo {
     destinations.first?.deletingLastPathComponent()
   }
 
-  /// Only the files that actually landed. `Step.artifact` is nil until a step
-  /// succeeds, and `Reconciler` clears it again for anything still sitting
-  /// inside our own workspace, so what is left is what the user can open.
-  var deliveredFiles: [URL] {
-    job.steps.compactMap(\.artifact)
-  }
+  /// Only the files that actually landed — `Job.deliveredFiles`, the one
+  /// definition of "delivered" shared with `QueueActions` (Show in Finder
+  /// reads the same property). `Step.artifact` alone is not enough: it is
+  /// set the moment a step succeeds, whatever its destination — including a
+  /// step that only feeds a later one, like a composite job's video, chat,
+  /// and render inputs, whose `artifact` still points inside the job
+  /// workspace even once `.done` (`JobTemplate.makeJob`). `Job.deliveredFiles`
+  /// is what excludes those rather than trusting they are already gone.
+  var deliveredFiles: [URL] { job.deliveredFiles }
 
   private var destinations: [URL] {
     job.steps.compactMap { step in
@@ -139,6 +142,7 @@ nonisolated struct JobInfo {
       case .downloadChat(let r): r.destination
       case .renderChat(let r): r.destination
       case .composite(let r): r.destination
+      case .assemble(let r): r.destination
       }
     }
   }

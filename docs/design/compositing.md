@@ -309,19 +309,22 @@ public struct CompositeRequest: Codable, Sendable, Equatable {
 
 It carries no geometry, because `hstack` derives all of it from the inputs.
 
-The argv, verified in section 2:
+The argv, verified in section 2 and (for the two changes resuming required —
+the sidecar output and the fragmented `-movflags`) in
+docs/design/resume.md §2 and §4:
 
 ```
 ffmpeg -nostdin -y -hide_banner
   -i {video} -i {render}
+  -map "0:a:0?" -c:a copy {resume-area}/audio.m4a
   -filter_complex "[0:v]setpts=PTS-STARTPTS[v];
                    [1:v]setpts=PTS-STARTPTS,fps={framerate}[c];
                    [v][c]hstack=inputs=2[out]"
-  -map "[out]" -map "0:a:0?"
+  -map "[out]" -an
   -c:v h264_videotoolbox -b:v {bitrate}M -pix_fmt yuv420p
-  -c:a copy
+  -movflags +frag_keyframe+empty_moov+default_base_moof
   -progress pipe:1 -nostats -loglevel error
-  {output}
+  {piece}
 ```
 
 Every element is load-bearing:
@@ -338,10 +341,25 @@ Every element is load-bearing:
 - **No `scale` on either input.** The chat is rendered at the right size by the
   render step; the video is already native. The prototype's `scale=w:h` to the
   source's own dimensions ran swscale over every frame for nothing.
-- **`-c:a copy`, not a re-encode.** VOD audio is already AAC in MP4.
-- **`0:a:0?`** — the `?` makes the map optional so a silent VOD does not hard
-  fail. It must be quoted in a shell; `ArgumentBuilder` passes argv directly, so
-  this only matters when reproducing by hand.
+- **`-map "0:a:0?" -c:a copy {audio.m4a}` is a second, complete output, not
+  something attached to the composite's own file.** FFmpeg accepts several
+  outputs in one invocation, so copying the source's audio out beside the
+  piece costs nothing measurable — and it is what lets the re-fetched video be
+  deleted before `.assemble` runs rather than surviving to deliver its audio.
+  Written only on a first attempt (`resumeFrom == nil`); a resumed attempt
+  holds only the tail, so re-extracting here would truncate the sidecar to
+  it. The `?` still makes the map optional so a silent VOD does not hard
+  fail. docs/design/resume.md §4.
+- **`-an` on the piece itself.** The composite's own output carries no audio
+  at all — it is mapped once, into the sidecar above. A piece carrying its
+  own audio track would double it up for nothing: `.assemble` never reads a
+  piece's audio, it maps `1:a:0?` from the sidecar. docs/design/resume.md §2.
+- **`-movflags +frag_keyframe+empty_moov+default_base_moof`.** The piece is a
+  fragmented MP4, so a crash mid-encode leaves a structurally valid prefix
+  behind rather than an unreadable file — the entire precondition for
+  resuming at all. docs/design/fragmented-output.md §3. (The sidecar is not
+  fragmented, which is a real, currently-unfixed gap of its own —
+  docs/design/resume.md §2, "Verified end to end".)
 - **No `-movflags +faststart`.** It rewrites the entire file to relocate the
   moov atom, which on a 22 GB output is minutes of pure disk churn buying HTTP
   progressive streaming that a local file does not need.
@@ -510,7 +528,7 @@ prunes the fields themselves, only the UI that used to vary them.
 | Unit | Covered by |
 |---|---|
 | `FFmpegProgressParser` | the twelve-key block; blocks split mid-chunk; `progress=end`; `speed` -> `remaining`; `speed=0` guarded; `out_time_us=N/A`; missing keys |
-| `ArgumentBuilder` `.composite` | the exact filter graph, `-nostdin`, `-c:a copy`, `0:a:0?`, absence of `+faststart`; the two GPL rules still hold |
+| `ArgumentBuilder` `.composite` | the exact filter graph, `-nostdin`, the sidecar's `-map "0:a:0?" -c:a copy`, the piece's own `-an`, the fragmented `-movflags`, absence of `+faststart`; the two GPL rules still hold |
 | `Scheduler.admissible` | a two-parent step is not admitted until both parents are `.done` |
 | `Scheduler.retry` | retrying one failed parent does not requeue a step whose other parent is still failed |
 | `Scheduler.blockDependents` | failing either parent blocks the composite |
