@@ -96,8 +96,12 @@ struct QueueEngineTests {
   }
 
   /// Status lines drive the progress bar and arrive by the hundreds — one per
-  /// render frame batch. Writing them to the log too would bury the handful of
-  /// lines that actually say what a step was doing when it stopped.
+  /// render frame batch. Writing them all to the log would bury the handful
+  /// of lines that actually say what a step was doing when it stopped, so
+  /// only a periodic heartbeat (`QueueEngine.heartbeat`) reaches the log —
+  /// and only once a step has run long enough for one to be due. This step
+  /// reports exactly one status line before failing, well under
+  /// `heartbeatInterval`, so no heartbeat fires at all.
   @Test func statusLinesAreNotWrittenToTheLog() async throws {
     let (engine, root) = makeEngine(.failsWithoutArtifact(stderr: "boom"))
     defer { cleanUp(root) }

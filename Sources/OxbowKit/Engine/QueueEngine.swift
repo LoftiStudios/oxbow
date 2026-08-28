@@ -66,6 +66,8 @@ public actor QueueEngine {
   /// retained, because cancelling that task would not stop the child process
   /// — `HelperProcessing.cancel()` is the only thing that does.
   private var running: [StepID: HelperProcessing] = [:]
+  /// Last time `heartbeat` wrote a line for a step — see its doc comment.
+  private var lastHeartbeatAt: [StepID: ContinuousClock.Instant] = [:]
   private var observers: [UUID: AsyncStream<[Job]>.Continuation] = [:]
   private var saveTask: Task<Void, Never>?
   /// Jobs whose workspace a `cancel(job:)` wants removed, but that still had
@@ -451,9 +453,11 @@ public actor QueueEngine {
         switch line {
         case .status(let progress):
           // Status lines drive the progress bar and arrive by the hundreds.
-          // Writing them to the log too would bury the handful of lines that
-          // actually say what a step was doing when it stopped.
+          // Writing every one to the log would bury the handful of lines
+          // that actually say what a step was doing when it stopped, so
+          // `heartbeat` throttles this to a periodic summary instead.
           await self?.updateProgress(id, progress)
+          await self?.heartbeat(id, progress, log: log)
         case .log(let level, let message):
           await log?.append("[\(level)] \(message)")
         case .ffmpeg(let message):
@@ -492,6 +496,45 @@ public actor QueueEngine {
     publish()
   }
 
+  /// How often a running step's progress gets a line in its own `StepLog` —
+  /// see `heartbeat` below.
+  private static let heartbeatInterval: Duration = .seconds(15)
+
+  /// One line per `heartbeatInterval`, so a step that "feels stalled" has a
+  /// timestamped trail of what it actually reported — phase, fraction, and
+  /// (composite only) FFmpeg's own `speed=`, which is what tells "genuinely
+  /// slow" apart from "stuck" without reaching for Activity Monitor. Anything
+  /// finer than this belongs in the progress bar, not the transcript — see
+  /// the comment where this is called.
+  private func heartbeat(_ id: StepID, _ progress: StepProgress, log: StepLog?) async {
+    guard let log else { return }
+
+    // No line for the *first* status update a step ever reports: that only
+    // says "it started," which the row already shows the instant it goes
+    // `.running`. Recording the sighting without logging it is what makes a
+    // step that finishes in under `heartbeatInterval` produce no heartbeat
+    // lines at all — preserving `statusLinesAreNotWrittenToTheLog` for the
+    // common case, while a step that runs long enough to feel stalled gets
+    // its periodic trail.
+    let now = ContinuousClock.now
+    guard let last = lastHeartbeatAt[id] else {
+      lastHeartbeatAt[id] = now
+      return
+    }
+    guard now - last >= Self.heartbeatInterval else { return }
+    lastHeartbeatAt[id] = now
+
+    var parts: [String] = []
+    if let phase = progress.phase { parts.append(phase) }
+    if let fraction = progress.fraction { parts.append("\(Int((fraction * 100).rounded()))%") }
+    if let speed = progress.speed { parts.append(String(format: "%.2fx realtime", speed)) }
+    if let remaining = progress.remaining {
+      parts.append("\(Int(remaining.components.seconds))s remaining")
+    }
+    guard !parts.isEmpty else { return }
+    await log.append("[progress] " + parts.joined(separator: " · "))
+  }
+
   private func finish(_ id: StepID, result: RunResult, context: StepContext) {
     // Checked first, ahead of everything: `shutDown()` signalled this helper,
     // so `result` is our own kill reported back, not an outcome of the work.
@@ -520,6 +563,7 @@ public actor QueueEngine {
       // Can't actually happen given the check above just ran on this same
       // actor turn with no intervening suspension, but keeps this total.
       running[id] = nil
+      lastHeartbeatAt[id] = nil
       return
     }
     let job = jobs[location.job]
@@ -577,6 +621,7 @@ public actor QueueEngine {
   /// overwritten.
   private func abandonAlreadyFinalizedStep(_ id: StepID) {
     running[id] = nil
+    lastHeartbeatAt[id] = nil
     if let location = locate(id) {
       let job = jobs[location.job]
       removeStepWorkspaceFiles(job: job.id, step: id)
@@ -596,6 +641,7 @@ public actor QueueEngine {
   /// wedge on a step that finished, however it finished.
   private func completeStep(_ id: StepID, outcome: StepOutcome) {
     running[id] = nil
+    lastHeartbeatAt[id] = nil
     guard let location = locate(id) else { return }
     let jobID = jobs[location.job].id
 

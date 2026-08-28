@@ -66,6 +66,24 @@ struct FFmpegProgressParserTests {
     #expect(progress.fraction != nil)
   }
 
+  /// `speed` is reported independently of `remaining` — the UI's only way to
+  /// tell a genuinely slow encode apart from a stalled one, even before
+  /// there is enough data for an ETA.
+  @Test func reportsSpeedEvenWhenDegenerate() throws {
+    let zeroed = block.replacingOccurrences(of: "speed=2.35x", with: "speed=0x")
+    let progress = try #require(lines(zeroed).compactMap { line -> StepProgress? in
+      if case .status(let p) = line { return p } else { return nil }
+    }.last)
+    #expect(progress.speed == 0)
+  }
+
+  @Test func reportsSpeed() throws {
+    let progress = try #require(lines(block).compactMap { line -> StepProgress? in
+      if case .status(let p) = line { return p } else { return nil }
+    }.last)
+    #expect(progress.speed == 2.35)
+  }
+
   @Test func toleratesNotAvailableTimes() {
     let na = block.replacingOccurrences(of: "out_time_us=4983333", with: "out_time_us=N/A")
     let progress = lines(na).compactMap { line -> StepProgress? in

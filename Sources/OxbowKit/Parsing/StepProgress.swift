@@ -9,6 +9,13 @@ public struct StepProgress: Codable, Sendable, Equatable {
   public var total: Int?
   public var elapsed: Duration?
   public var remaining: Duration?
+  /// FFmpeg's own encode rate, in multiples of realtime (its `speed=2.35x`
+  /// field). Only `FFmpegProgressParser` ever fills this — the C# helper's
+  /// status lines carry no equivalent. What tells a slow encode apart from a
+  /// stalled one: a `remaining` that keeps climbing is ambiguous on its own,
+  /// but paired with a `speed` near zero it means the encoder is genuinely
+  /// crawling, not stuck.
+  public var speed: Double?
 
   public init(
     phase: String? = nil,
@@ -16,7 +23,8 @@ public struct StepProgress: Codable, Sendable, Equatable {
     index: Int? = nil,
     total: Int? = nil,
     elapsed: Duration? = nil,
-    remaining: Duration? = nil)
+    remaining: Duration? = nil,
+    speed: Double? = nil)
   {
     self.phase = phase
     self.fraction = fraction
@@ -24,5 +32,6 @@ public struct StepProgress: Codable, Sendable, Equatable {
     self.total = total
     self.elapsed = elapsed
     self.remaining = remaining
+    self.speed = speed
   }
 }
