@@ -1,24 +1,82 @@
-# Oxbow
+<p align="center">
+  <img src="docs/icon-384.png" width="160" height="160" alt="Oxbow">
+</p>
 
-VOD downloader and chat renderer for macOS.
+<h1 align="center">Oxbow</h1>
 
-A native SwiftUI front end for [TwitchDownloader](https://github.com/lay295/TwitchDownloader),
-which ships a Windows WPF app and a cross-platform CLI — leaving Mac users with
-the CLI only.
+<p align="center"><strong>Twitch VODs, saved properly. For Mac.</strong></p>
 
-Not affiliated with Twitch Interactive, Inc.
+<p align="center">
+  <a href="https://github.com/barclay/oxbow/releases/latest"><strong>Download for macOS</strong></a>
+  &nbsp;·&nbsp;
+  <a href="https://getoxbow.app">getoxbow.app</a>
+  &nbsp;·&nbsp;
+  <a href="CHANGELOG.md">Changelog</a>
+</p>
 
-> **Status: 0.2.0, the first release.** Paste a VOD or clip link, pick a
-> quality, and download it — on its own, or with its chat rendered and
-> composited alongside it in one file. Queued, resumable, and delivered as a
-> signed and notarized DMG. Expect rough edges; this is an early release, not a
-> finished one. See [`docs/architecture.md`](docs/architecture.md).
+<p align="center"><sub>macOS 15+ · Apple Silicon · signed and notarized · MIT</sub></p>
+
+---
+
+*Paste a link, choose whether the chat comes along, and let it run. Your
+favorite streams end up on your Mac, ready for the flight, the commute, or
+anywhere the wifi gives up.*
+
+<img src="docs/screenshot.jpg" alt="Oxbow downloading a VOD with its chat, showing the queue and a job's detail window" width="100%">
+
+## What it does
+
+**The video.** Best available quality by default, the whole VOD or a trimmed
+range, written straight to a folder you choose. Clips too, from any of the
+shapes a clip link comes in.
+
+**The chat.** Half of what happened in a stream happened in the chat — the
+bits, the spam, the one joke that ran into the ground. It comes along too,
+rendered beside the video in a single file, BTTV, FFZ, and 7TV emotes and all.
+
+**A queue you can walk away from.** Jobs run in order and expand to show every
+step and its progress. The queue survives quitting, and an interrupted
+composite continues from where it stopped rather than starting again — a
+six-hour job killed at 90% recovers in about twenty minutes, not eighty-eight.
+
+**Names you can read.** Files come out as `{streamer} - {date} - {title}`,
+derived from the stream's own metadata and editable before the job starts.
+
+**Nothing to install first.** The downloader, the renderer, and FFmpeg are all
+inside the bundle. No Homebrew, no Python, no terminal.
+
+Oxbow is young — 0.2.0 is its first release, and there are rough edges — but
+every part of it runs end to end today.
+
+## Getting started
+
+1. **Download** the DMG from the
+   [latest release](https://github.com/barclay/oxbow/releases/latest).
+2. **Open it and drag Oxbow to Applications.** The app is signed with a
+   Developer ID and notarized by Apple, so it opens on a double-click — no
+   right-click-to-open, no Gatekeeper detour.
+3. **Paste a Twitch link.** A VOD (`twitch.tv/videos/…`) or a clip
+   (`twitch.tv/<channel>/clip/…`, `clips.twitch.tv/…`, or a bare slug). Oxbow
+   fetches the stream's title, streamer, date, and thumbnail.
+4. **Choose what you want.** Just the video, or the video with its chat
+   rendered and composited beside it. Pick a quality, trim a range if you only
+   want part of it, and choose where it lands.
+5. **Add it to the queue and let it run.** Long jobs keep going in the
+   background; the composite is readable while it's still being written.
 
 ## Requirements
 
 - **macOS 15 or later.**
-- **Apple Silicon.** v1 is arm64 only — Intel Macs are not supported. See
+- **Apple Silicon.** Oxbow is arm64 only — Intel Macs are not supported. See
   "Scope trims for v1" in [`docs/architecture.md`](docs/architecture.md).
+
+## Not affiliated with Twitch
+
+Oxbow is an independent project with no affiliation with, endorsement by, or
+sponsorship from Twitch Interactive, Inc. Twitch and the Twitch logo are
+trademarks of Twitch Interactive, Inc., used here only to describe what the app
+does. Downloaded video and chat remain the property of their respective rights
+holders — please respect their copyright and Twitch's terms of service.
 
 ## Building
 
@@ -92,7 +150,9 @@ See [`docs/ffmpeg.md`](docs/ffmpeg.md) for why we build FFmpeg ourselves.
 
 Downloads and chat rendering are performed by
 [TwitchDownloaderCLI](https://github.com/lay295/TwitchDownloader) © lay295 and
-contributors, bundled as a helper executable.
+contributors, bundled as a helper executable. Oxbow exists because upstream
+ships a Windows WPF app and a cross-platform CLI, leaving Mac users with the
+CLI only.
 
 Video is encoded and finalized with [FFmpeg](https://ffmpeg.org/) © The FFmpeg
 developers, built from unmodified source under LGPL 2.1+.
