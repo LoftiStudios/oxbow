@@ -2,7 +2,8 @@
 #
 # Two independent jobs, matching the split documented in CONTRIBUTING.md:
 #
-#   - OxbowKit tests: the library test suite. Needs only a Swift toolchain.
+#   - OxbowKit tests: the library test suite, plus a coverage floor over
+#     Sources/OxbowKit. Needs only a Swift toolchain.
 #   - App build: an UNSIGNED build of the app target. No signing identity
 #     exists on runners, so CODE_SIGNING_ALLOWED=NO; the "Embed & Sign
 #     Helpers" phase is designed to warn and continue when build/helper and
@@ -40,8 +41,12 @@ jobs:
         run: |
           xcodebuild -version
           swift --version
-      - name: Run OxbowKit test suite
-        run: swift test
+      # Runs `swift test --enable-code-coverage` itself, then reports coverage
+      # over Sources/OxbowKit and fails below the floor. One invocation rather
+      # than a separate `swift test` step, so the suite is not built twice.
+      # The per-file table lands in this job's summary in the Actions UI.
+      - name: Run OxbowKit test suite and check coverage
+        run: ./scripts/coverage.sh
 
   app-build:
     name: App build and tests (unsigned)
