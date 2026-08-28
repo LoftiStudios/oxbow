@@ -30,6 +30,18 @@ swift test
 That is the whole loop. No submodule init, no .NET SDK, no FFmpeg build. If your
 change lives under `Sources/OxbowKit`, stop here.
 
+CI runs the suite through `./scripts/coverage.sh`, which adds a coverage report
+over `Sources/OxbowKit` and fails below a 90% line-coverage floor. Run it the
+same way to see what CI will see:
+
+```bash
+./scripts/coverage.sh
+```
+
+If it fails, the per-file table names the file that lost coverage. Add tests for
+the uncovered lines rather than moving the floor — and if the floor really has
+become wrong, move it in its own commit that says why.
+
 ### Full path — the app bundle
 
 Needed only if you are touching the app target, the helper integration, or the

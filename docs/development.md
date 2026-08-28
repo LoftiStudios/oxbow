@@ -265,6 +265,31 @@ Run both:
 xcodebuild test -project Oxbow.xcodeproj -scheme Oxbow -only-testing:OxbowTests CODE_SIGNING_ALLOWED=NO
 ```
 
+Run the suite with a coverage report over `Sources/OxbowKit`. This is what CI
+runs in place of a bare `swift test`, so a green run here is a green run there:
+
+```bash
+./scripts/coverage.sh
+```
+
+It fails below a floor of **90% line coverage**, set in the script. The floor
+sits a few points under the real number (94.55% at 0.2.0) on purpose: a gate
+pinned to today's exact figure turns every honest refactor red and trains
+people to bump the floor without reading why it moved. It is a regression
+alarm for a file landing untested, not a ratchet. Raise it in its own commit,
+when the real number has held higher for a while.
+
+**Scope is `Sources/OxbowKit` and nothing else.** The SwiftUI layer is verified
+by hand and has close to no automated coverage, so a repository-wide number
+would average a well-tested engine against untested views and move for reasons
+nobody could act on. Measuring the wrong thing precisely is worse than not
+measuring, because the result looks like a fact.
+
+`--no-test` reuses the profdata already on disk, `--floor N` overrides the
+floor for one run, and `--lcov <path>` writes an lcov file if you want to feed
+an editor's coverage gutter. Under Actions the per-file table is written to the
+job summary.
+
 Build the bundled FFmpeg (LGPL, arm64, verified):
 
 ```bash
