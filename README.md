@@ -36,7 +36,7 @@ rendered beside the video in a single file, BTTV, FFZ, and 7TV emotes and all.
 
 **A queue you can walk away from.** Jobs run in order and expand to show every
 step and its progress. The queue survives quitting, and an interrupted
-composite continues from where it stopped rather than starting again — a
+composite continues from where it stopped rather than starting again—a
 six-hour job killed at 90% recovers in about twenty minutes, not eighty-eight.
 
 **Names you can read.** Files come out as `{streamer} - {date} - {title}`,
@@ -45,7 +45,7 @@ derived from the stream's own metadata and editable before the job starts.
 **Nothing to install first.** The downloader, the renderer, and FFmpeg are all
 inside the bundle. No Homebrew, no Python, no terminal.
 
-Oxbow is young — 0.2.0 is its first release, and there are rough edges — but
+Oxbow is young—0.2.x is its first release, and there are rough edges—but
 every part of it runs end to end today.
 
 ## Getting started
@@ -53,7 +53,7 @@ every part of it runs end to end today.
 1. **Download** the DMG from the
    [latest release](https://github.com/barclay/oxbow/releases/latest).
 2. **Open it and drag Oxbow to Applications.** The app is signed with a
-   Developer ID and notarized by Apple, so it opens on a double-click — no
+   Developer ID and notarized by Apple, so it opens on a double-click—no
    right-click-to-open, no Gatekeeper detour.
 3. **Paste a Twitch link.** A VOD (`twitch.tv/videos/…`) or a clip
    (`twitch.tv/<channel>/clip/…`, `clips.twitch.tv/…`, or a bare slug). Oxbow
