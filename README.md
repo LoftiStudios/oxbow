@@ -8,10 +8,11 @@ the CLI only.
 
 Not affiliated with Twitch Interactive, Inc.
 
-> **Status: pre-alpha.** The build and signing pipeline works end to end, and
-> the core library (`OxbowKit` — task queue, CLI wrapper, output parser,
-> persistence) is built and tested. There is no app UI yet.
-> See [`docs/architecture.md`](docs/architecture.md).
+> **Status: 0.2.0, the first release.** Paste a VOD or clip link, pick a
+> quality, and download it — on its own, or with its chat rendered and
+> composited alongside it in one file. Queued, resumable, and delivered as a
+> signed and notarized DMG. Expect rough edges; this is an early release, not a
+> finished one. See [`docs/architecture.md`](docs/architecture.md).
 
 ## Requirements
 

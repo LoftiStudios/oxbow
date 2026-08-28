@@ -16,7 +16,11 @@ is the repository's commit count, stamped into the bundle at build time by
 
 ## [Unreleased]
 
-Pre-alpha. Nothing released yet.
+## [0.2.0] - 2026-08-28
+
+First release. The app downloads a Twitch VOD or clip, optionally renders its
+chat and composites the two into one file, and ships as a signed, notarized
+DMG.
 
 ### Added
 
@@ -56,6 +60,20 @@ Pre-alpha. Nothing released yet.
   finished chat render into one file, via `hstack` on the bundled FFmpeg
   (`docs/design/compositing.md`), reachable from intake as the "video + chat"
   choice above.
+- The composite is written as a fragmented MP4
+  (`-movflags +frag_keyframe+empty_moov+default_base_moof`), so the file is
+  readable while FFmpeg is still writing it — to within ~0.4s of the live edge,
+  at a measured cost of 0.3s of wall clock and 123 bytes. The finished file
+  stays fragmented and is fully seekable; FFmpeg writes an `mfra` index on
+  close. Verified against Apple players; non-Apple players and upload pipelines
+  are not verified. See `docs/design/fragmented-output.md`.
+- Retrying an interrupted composite **continues** it rather than restarting,
+  across app launches. A six-hour composite killed at 90% recovers in about 23
+  minutes instead of re-running the whole ~88-minute job. Only possible because
+  of the fragmented output above: a conventional MP4 writes its index last, so
+  the same interruption leaves 26 GB of undecodable bytes and nothing to resume
+  from. Resume state lives on disk rather than in the queue, so `Reconciler` and
+  `Scheduler` are unchanged. See `docs/design/resume.md`.
 - Chat text size: a Small / Medium / Large picker for the video + chat intake,
   scaling with the video's own resolution (`CompositeGeometry.fontSize(for:)`)
   rather than a fixed point size, so the same column reads correctly at 480p
