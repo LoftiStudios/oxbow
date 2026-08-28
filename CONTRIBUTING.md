@@ -36,7 +36,8 @@ Needed only if you are touching the app target, the helper integration, or the
 build and signing scripts.
 
 **Clone with submodules.** `vendor/TwitchDownloader` is pinned to an exact
-upstream commit; a plain clone leaves it empty and the build fails confusingly.
+commit, in a mirror of upstream we add nothing to; a plain clone leaves it empty
+and the build fails confusingly.
 
 ```bash
 git clone --recurse-submodules https://github.com/barclay/oxbow.git

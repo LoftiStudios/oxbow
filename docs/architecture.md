@@ -37,6 +37,14 @@ Developer account.
 **Upstream** — the C# project. Anything we need from it goes back as small,
 independently-useful PRs (see §8). We are a consumer of the CLI, not a fork.
 
+**The mirror is not a fork of the kind this section rules out.** Since 0.2.0 the
+submodule URL points at `barclay/TwitchDownloader`, which exists to hold tags —
+upstream's, plus `oxbow-pin-*` anchors that keep a pinned commit fetchable if
+upstream ever rebases. It carries no Oxbow code, no patches, and no divergence;
+it is fast-forwarded from upstream and nothing else. The distinction that matters
+is maintenance burden, and an anchor has none. See "submodule pin policy" in
+`docs/development.md`.
+
 Precedent for this shape: `mohad12211/twitch-downloader-gui` is a Linux GUI that
 lives as its own project and just expects the CLI binary to be present.
 
