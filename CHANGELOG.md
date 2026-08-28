@@ -16,6 +16,50 @@ is the repository's commit count, stamped into the bundle at build time by
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-08-28
+
+Ships work that was finished before 0.2.0 went out but did not reach it. The
+release workflow builds from the pushed tag, and `v0.2.0` points at the release
+commit itself, so a fix merged to `main` afterwards is not in the DMG no matter
+how long it sat there before publication. The trim-duration fix below was in
+that position.
+
+Nothing here changes behaviour that 0.2.0 users have already come to rely on,
+so the upgrade is unconditional.
+
+### Added
+
+- FFmpeg's own `speed=Nx` is kept on `StepProgress` and shown next to a running
+  step's remaining time. A composite that reports `0.4x` is slow; one that
+  reports nothing has stalled. The bar alone could not tell those apart.
+- A throttled heartbeat line — phase, fraction, speed, ETA — written into a
+  running step's log every 15s. Status lines are still not logged individually;
+  hundreds of them would bury the narrative lines that say what a step was
+  doing when it stopped. Nothing is written if a step finishes inside the first
+  interval, so short steps read exactly as before.
+- A second release asset, `Oxbow-arm64.dmg`, carrying no version in its name,
+  so `/releases/latest/download/Oxbow-arm64.dmg` resolves to the current build
+  and a download link can be published before the version it will serve exists.
+  The versioned asset is unchanged and still the one to cite when a specific
+  build matters. Notarization survives the copy — the ticket is stapled into
+  the DMG, not bound to its filename — and the workflow revalidates the copy so
+  a regression fails the release rather than shipping an unstapled download.
+
+  **This asset exists from 0.2.1 onward.** The 0.2.0 release predates it, so
+  the `latest/download` link 404s until 0.2.1 is published.
+
+### Fixed
+
+- The composite's progress bar and the Add sheet's per-quality size estimate
+  both measured against `info.duration`, the whole VOD's length, even when
+  `trimStart`/`trimEnd` had narrowed the job to a fraction of it. The video and
+  chat download requests already received the trim window; the composite's own
+  `duration` did not, and `FFmpegProgressParser` divides elapsed time by it to
+  derive every fraction and ETA. A 30-minute trim out of a 3-hour VOD therefore
+  pinned the bar at 15–20% for the entire ~5-minute encode, which reads as a
+  job that has hung for the better part of an hour. Both paths now go through
+  `IntakeModel.effectiveDuration`, so the trim math exists in one place.
+
 ## [0.2.0] - 2026-08-28
 
 First release. The app downloads a Twitch VOD or clip, optionally renders its
