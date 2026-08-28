@@ -413,6 +413,21 @@ jobs:
           TAG="${GITHUB_REF_TYPE:-}"
           if [ "${TAG}" = "tag" ]; then TAG="${GITHUB_REF_NAME}"; else TAG="v${VERSION}"; fi
 
+          # A second copy under a name that never carries the version, so the
+          # website can link straight at the download:
+          #   /releases/latest/download/Oxbow-arm64.dmg
+          # That redirect resolves an *exact* filename against the latest
+          # published release, so a versioned name can never be linked ahead of
+          # time. Keep this asset on every release or that link 404s.
+          #
+          # Notarization survives the copy: the ticket is stapled into the DMG
+          # itself, not bound to its name. Revalidated below so a regression
+          # fails the release instead of shipping an unstapled download.
+          STABLE="build/Oxbow-arm64.dmg"
+          cp "${{ steps.verify.outputs.dmg }}" "${STABLE}"
+          xcrun stapler validate "${STABLE}"
+          ( cd build && shasum -a 256 "$(basename "${STABLE}")" > "$(basename "${STABLE}").sha256" )
+
           # Draft, deliberately. The in-app update check reads the releases API,
           # so publishing is the moment every existing install starts offering
           # this version — that should be a human pressing a button after
@@ -422,7 +437,9 @@ jobs:
             --title "Oxbow ${VERSION}" \
             --generate-notes \
             "${{ steps.verify.outputs.dmg }}" \
-            "${{ steps.verify.outputs.dmg }}.sha256"
+            "${{ steps.verify.outputs.dmg }}.sha256" \
+            "${STABLE}" \
+            "${STABLE}.sha256"
           echo "Draft release ${TAG} created. Review and publish it by hand."
 
       # ------------------------------------------------------------- cleanup
