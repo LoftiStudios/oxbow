@@ -30,7 +30,7 @@ anywhere the wifi gives up.*
 range, written straight to a folder you choose. Clips too, from any of the
 shapes a clip link comes in.
 
-**The chat.** Half of what happened in a stream happened in the chat — the
+**The chat.** Half of what happened in a stream happened in the chat—the
 bits, the spam, the one joke that ran into the ground. It comes along too,
 rendered beside the video in a single file, BTTV, FFZ, and 7TV emotes and all.
 
