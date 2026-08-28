@@ -225,8 +225,8 @@ final class IntakeModel {
   /// without metadata, because there is no duration to multiply by — a
   /// zero would read as a real estimate of nothing.
   func estimatedBytes(for quality: StreamQuality) -> Int? {
-    guard let info else { return nil }
-    return quality.estimatedBytes(over: info.duration)
+    guard let duration = effectiveDuration else { return nil }
+    return quality.estimatedBytes(over: duration)
   }
 
   /// One row of the quality picker.
@@ -262,6 +262,17 @@ final class IntakeModel {
 
   var trimStart: Duration? { showsTrimOptions ? Timecode.parse(trimStartText) : nil }
   var trimEnd: Duration? { showsTrimOptions ? Timecode.parse(trimEndText) : nil }
+
+  /// `info.duration`, narrowed to the trim window when one is set. Every
+  /// duration-based estimate — the size shown per quality here, and the
+  /// composite's own `duration` in `composedTemplate()` below, which
+  /// `FFmpegProgressParser` divides by for its fraction and ETA — has to use
+  /// this instead of `info.duration` directly, or a trimmed job's numbers
+  /// describe the untrimmed VOD.
+  var effectiveDuration: Duration? {
+    guard let fullDuration = info?.duration else { return nil }
+    return (trimEnd ?? fullDuration) - (trimStart ?? .zero)
+  }
 
   /// A typed trim time that is neither empty nor a time, or an end at or
   /// before the start. Either would reach the CLI as an argument that fails
@@ -410,9 +421,16 @@ final class IntakeModel {
       // The composite needs a concrete rendition to derive its geometry from
       // (see `compositeQuality`), and a duration to report FFmpeg progress
       // against. Neither is available without settled metadata.
+      // The video and chat requests below get the trim window; the
+      // composite's own `duration` has to match `effectiveDuration`, since
+      // it is the total `FFmpegProgressParser` divides by for every
+      // fraction and ETA it reports. The untrimmed `info.duration` would
+      // leave the composite step's progress bar stuck around 15-20% when
+      // the actual (trimmed) encode is nearly done, with an ETA counting
+      // down against content that was never going to be encoded.
       guard let selected = compositeQuality,
             let geometry = CompositeGeometry(quality: selected),
-            let duration = info?.duration
+            let duration = effectiveDuration
       else { return nil }
 
       // One file out: the media and the render are intermediates, so neither

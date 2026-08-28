@@ -247,6 +247,10 @@ struct ProgressLine: View {
         // Redundant once the segments are on screen: they already say which
         // of how many, and say it in the phase's own name.
         if segmented == nil, let counter = display.counter { Text(counter) }
+        // Only FFmpeg's own steps (the composite) ever have this — it is
+        // what tells "genuinely slow" apart from "looks stalled" without
+        // opening the log.
+        if let rate = display.rate { Text(rate) }
         if let remaining = display.remaining { Text(remaining) }
       }
       .font(.caption)

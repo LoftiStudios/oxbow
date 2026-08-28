@@ -79,13 +79,16 @@ public struct FFmpegProgressParser: Sendable {
     }
 
     // FFmpeg reports no total, so the ETA comes from its own reported rate.
+    let speed = fields["speed"].flatMap { Double($0.dropLast()) }
+
+    // Reported unconditionally (including the degenerate `0.00x` FFmpeg
+    // emits on its first few blocks) so the UI can tell "genuinely slow" from
+    // "no data yet" apart from a stalled `remaining`.
+    result.speed = speed
+
     // Early blocks report a degenerate speed (e.g. `0.00x`); dividing by it
     // would give an infinite remaining time, so it is simply not reported.
-    if let elapsed,
-      let speed = fields["speed"].flatMap({ Double($0.dropLast()) }),
-      speed > 0,
-      total > elapsed
-    {
+    if let elapsed, let speed, speed > 0, total > elapsed {
       result.remaining = .seconds((total - elapsed) / speed)
     }
 

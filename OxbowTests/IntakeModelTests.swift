@@ -575,6 +575,19 @@ struct IntakeModelTests {
     #expect(model.estimatedBytes(for: quality) == 3_600_000_000)
   }
 
+  /// A trim narrows the estimate the same way it narrows the actual
+  /// download — the size shown must describe what will land on disk, not
+  /// the untrimmed VOD. `Self.info()` fixes the VOD at an hour with a
+  /// bitrate that makes the full estimate 3_600_000_000 bytes (above); a
+  /// 10-minute trim is a sixth of that.
+  @Test func theSizeEstimateAccountsForATrimmedWindow() async throws {
+    let model = await loadedModel()
+    model.trimStartText = "0:00"
+    model.trimEndText = "10:00"
+    let quality = try #require(model.qualities.first)
+    #expect(model.estimatedBytes(for: quality) == 600_000_000)
+  }
+
   @Test func thereIsNoSizeEstimateWithoutMetadata() {
     let model = makeModel()
     let quality = StreamQuality(name: "x", resolution: "y", bitsPerSecond: 1)
@@ -674,6 +687,32 @@ struct IntakeModelTests {
     #expect(videoRequest(of: template)?.trimEnd == .seconds(3723))
     #expect(template.chat?.trimStart == .seconds(60))
     #expect(template.chat?.trimEnd == .seconds(3723))
+  }
+
+  /// The composite's own `duration` is what `FFmpegProgressParser` divides
+  /// by for every fraction and ETA it reports while the step runs. Left at
+  /// the full VOD's length on a trimmed job, a composite that only ever
+  /// encodes the trimmed window can never report more than a sliver of
+  /// progress, and its ETA counts down against footage it will never touch.
+  @Test func aTrimmedCompositesDurationIsTheTrimmedWindowNotTheWholeVOD() async throws {
+    let model = await loaded(quality: "1080p60", resolution: "1920x1080", bitsPerSecond: 10_000_000)
+    model.output = .videoWithChat
+    model.trimStartText = "10:00"
+    model.trimEndText = "40:00"
+
+    let composite = try #require(model.composedTemplate()?.composite)
+    #expect(composite.duration == .seconds(1800))
+  }
+
+  @Test func aTrimmedCompositesDurationWithOnlyAStartUsesTheVODsEnd() async throws {
+    let model = await loaded(quality: "1080p60", resolution: "1920x1080", bitsPerSecond: 10_000_000)
+    model.output = .videoWithChat
+    model.trimStartText = "10:00"
+
+    let composite = try #require(model.composedTemplate()?.composite)
+    // `Self.info()` fixes the VOD at an hour long (see the untrimmed test
+    // above), so a 10-minute start with no end runs to 3600s - 600s = 3000s.
+    #expect(composite.duration == .seconds(3000))
   }
 
   @Test func noTrimTextMeansNoTrim() async throws {

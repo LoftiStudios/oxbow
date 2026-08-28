@@ -12,6 +12,7 @@ nonisolated struct ProgressDisplay {
   let phase: String?
   let counter: String?
   let remaining: String?
+  let rate: String?
 
   var isIndeterminate: Bool { fraction == nil }
 
@@ -26,6 +27,7 @@ nonisolated struct ProgressDisplay {
     }
 
     remaining = Self.format(progress.remaining)
+    rate = Self.format(rate: progress.speed)
   }
 
   /// Nil for absent durations and any duration that would render as "0s".
@@ -51,5 +53,13 @@ nonisolated struct ProgressDisplay {
       "\(seconds)s"
     }
     return "\(value) remaining"
+  }
+
+  /// Nil below a hundredth — FFmpeg's own degenerate `0.00x` before it has
+  /// measured anything, which is worth hiding rather than showing "0.0x" and
+  /// reading as a stalled encoder when it is only an unstarted one.
+  private static func format(rate: Double?) -> String? {
+    guard let rate, rate >= 0.01 else { return nil }
+    return String(format: "%.1fx realtime", rate)
   }
 }
