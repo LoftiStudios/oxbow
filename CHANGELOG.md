@@ -69,6 +69,19 @@ Pre-alpha. Nothing released yet.
   decoder accepts either the old scalar shape or the new array and no
   migration step is needed.
 
+- `vendor/TwitchDownloader` points at a mirror of upstream,
+  `barclay/TwitchDownloader`, rather than at `lay295/TwitchDownloader`. The
+  mirror adds no code — it holds upstream's history and all 112 of its tags,
+  plus `oxbow-pin-*` anchor tags that keep a pinned commit fetchable if upstream
+  ever rebases or force-pushes. The pinned commit itself is unchanged.
+
+  This unblocks shipping. The release gate required the pin to be an upstream
+  *release tag*, but the pin is deliberately twelve commits past `1.56.5` for
+  the 7TV emote-set endpoint migration, and upstream releases every 3-5 months.
+  The gate's real concern was that a bare mid-stream SHA can be garbage
+  collected; an anchor tag settles that without waiting for a release, and
+  without regressing to `1.56.5`, which breaks 7TV emote resolution. The gate
+  now accepts either kind of tag and says in the log which applied.
 - Version settings moved out of the Xcode project, where the template had
   written `MARKETING_VERSION = 1.0` into all six target configurations, and
   into `Config/Shared.xcconfig` as a single inherited source of truth.

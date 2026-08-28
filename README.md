@@ -33,8 +33,11 @@ swift test
 Building the **app bundle** needs more. Start with the submodule:
 
 **Clone with submodules.** `vendor/TwitchDownloader` is a git submodule pinned
-to an exact upstream commit. A plain `git clone` leaves it empty and the build
-will fail confusingly.
+to an exact commit. A plain `git clone` leaves it empty and the build will fail
+confusingly. It points at a mirror of upstream rather than at
+`lay295/TwitchDownloader` directly — the mirror carries upstream's own history
+unmodified plus tags that keep a pinned commit fetchable, and Oxbow adds no
+code to it. See "submodule pin policy" in [`docs/development.md`](docs/development.md).
 
 ```bash
 git clone --recurse-submodules https://github.com/barclay/oxbow.git

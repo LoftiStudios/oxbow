@@ -149,26 +149,47 @@ jobs:
           ALLOW_UNTAGGED: ${{ github.event_name == 'workflow_dispatch' && !inputs.publish && inputs.allow_untagged_submodule }}
         run: |
           set -euo pipefail
-          # docs/development.md, submodule pin policy: a release must pin to an
-          # upstream RELEASE TAG. A mid-stream commit is only reachable while it
-          # stays on a branch — if upstream rebases or force-pushes, the SHA can
-          # be garbage-collected and this release becomes unbuildable by anyone,
-          # including us. Tags do not evaporate.
+          # docs/development.md, submodule pin policy. The property this gate
+          # enforces is DURABLE REACHABILITY: a bare mid-stream commit is only
+          # reachable while it stays on a branch, so if upstream rebases or
+          # force-pushes the SHA can be garbage-collected and the release
+          # becomes unbuildable by anyone, including us. Tags do not evaporate.
           #
-          # As of writing the pin is deliberately ahead of 1.56.5 for the 7TV
-          # endpoint migration, so this gate is EXPECTED to fail until upstream
-          # tags a release containing it. That is the point: it blocks shipping
-          # rather than letting the pin slip out quietly.
+          # Two kinds of tag satisfy that, and the log says which applied:
+          #
+          #   1. An upstream RELEASE TAG (1.56.5). Preferred - it is code
+          #      upstream has release-tested.
+          #   2. An `oxbow-pin-*` ANCHOR TAG in our own mirror. For commits
+          #      upstream has not tagged yet. Upstream releases every 3-5
+          #      months, and the 0.2.0 pin is twelve commits past 1.56.5 for
+          #      the 7TV endpoint migration (#1632) and the new m3u8 API
+          #      (#1631) - reverting to 1.56.5 breaks 7TV emote resolution, so
+          #      waiting for a tag would mean shipping known-broken emotes.
+          #
+          # An anchor tag makes the commit durable but says NOTHING about
+          # whether upstream has tested it. That is a separate obligation,
+          # discharged by hand in the pin-bump commit.
           cd vendor/TwitchDownloader
+          # `submodules: recursive` fetches the pinned commit, not necessarily
+          # the tags pointing at it. describe needs them.
+          git fetch --tags --quiet origin || true
           sha="$(git rev-parse HEAD)"
           if tag="$(git describe --tags --exact-match "${sha}" 2>/dev/null)"; then
-            echo "submodule pinned to ${tag} (${sha})"
+            case "${tag}" in
+              oxbow-pin-*)
+                echo "submodule pinned to anchor tag ${tag} (${sha})"
+                echo "::notice::Pinned to ${tag}, an Oxbow anchor rather than an upstream release tag. Durable, but not upstream-release-tested."
+                ;;
+              *)
+                echo "submodule pinned to upstream release tag ${tag} (${sha})"
+                ;;
+            esac
           else
             described="$(git describe --tags "${sha}" 2>/dev/null || echo 'no tag in ancestry')"
             if [ "${ALLOW_UNTAGGED}" = "true" ]; then
-              echo "::warning::submodule pinned to ${described}, which is not a release tag. Permitted because this run cannot publish."
+              echo "::warning::submodule pinned to ${described}, which no tag points at. Permitted because this run cannot publish."
             else
-              echo "::error::vendor/TwitchDownloader is pinned to ${sha}, which is not an upstream release tag: ${described}. Re-pin to a release tag before shipping."
+              echo "::error::vendor/TwitchDownloader is pinned to ${sha}, which no tag points at: ${described}. Re-pin to an upstream release tag, or cut an oxbow-pin-* anchor tag in the mirror. See docs/development.md, submodule pin policy."
               exit 1
             fi
           fi

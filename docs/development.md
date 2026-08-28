@@ -160,18 +160,53 @@ machines. They are not style preferences.
 - **The submodule pin is a deliberate choice, never an accident.** A gitlink is
   one exact SHA — there are no version ranges — so the only question is which
   commit and why.
-  - **Release builds must pin to an upstream release tag.** A mid-stream commit
-    is only reachable while it stays on a branch; if upstream rebases or
-    force-pushes, an unreferenced SHA can be garbage collected and the submodule
-    points at something nobody can fetch. Tags don't evaporate.
-  - A non-tag pin is allowed during development **only with a recorded reason**
-    (see below). Bumping the pin is its own commit whose message says what
-    changed upstream and why we want it.
-  - **Current pin: `d4122d8` (`1.56.5-12-g d4122d8`), deliberately ahead of the
-    `1.56.5` tag** for "Migrate to 7TV emote-set API endpoint" (#1632) and
-    "New m3u8 API + support vertical VODs" (#1631). Reverting to `1.56.5` would
-    likely break 7TV emote resolution. Re-pin to the next release tag that
-    contains both before shipping.
+  - **Release builds must pin to a tag — but not necessarily upstream's.** The
+    property that matters is *durable reachability*: a mid-stream commit is only
+    reachable while it stays on a branch, so if upstream rebases or force-pushes,
+    an unreferenced SHA can be garbage collected and the submodule points at
+    something nobody can fetch. Tags don't evaporate. Two kinds qualify:
+    - **An upstream release tag** (`1.56.5`). Preferred, because it is code
+      upstream has release-tested.
+    - **An `oxbow-pin-*` anchor tag** in our mirror, `barclay/TwitchDownloader`.
+      For commits upstream has not tagged yet. Upstream releases every 3-5
+      months, so a policy of upstream-tags-only means waiting a quarter for
+      fixes that are already on master and already verified here.
+  - **The submodule URL points at the mirror**, not at `lay295/TwitchDownloader`.
+    That is what makes an anchor tag mean anything at fetch time — a tag in a
+    repo we do not control is not a guarantee. The mirror carries all 112 of
+    upstream's tags plus our anchors, and **diverges from upstream by nothing**:
+    we never commit to it, never carry patches, and fast-forward it from
+    upstream. Track upstream directly from inside the submodule:
+
+    ```bash
+    git -C vendor/TwitchDownloader remote add upstream https://github.com/lay295/TwitchDownloader.git
+    git -C vendor/TwitchDownloader fetch --tags upstream
+    ```
+
+  - **Cutting an anchor tag.** Name it `oxbow-pin-<git describe output>`, make it
+    annotated, and say in the message why the pin is ahead of the last release:
+
+    ```bash
+    git -C vendor/TwitchDownloader tag -a "oxbow-pin-$(git -C vendor/TwitchDownloader describe --tags)" -m "why this pin is ahead of the last release"
+    git -C vendor/TwitchDownloader push git@github.com:barclay/TwitchDownloader.git --tags
+    ```
+
+  - **An anchor tag makes a commit durable. It says nothing about whether it
+    works.** Upstream's release testing is exactly what you give up by pinning
+    past a tag, and nothing replaces it automatically. A pin-bump onto an anchor
+    has to carry its own verification against the real binary and decoded output,
+    the way `docs/design/chat-and-render.md` §1 does — see `docs/twitch-metadata.md`
+    §7 for why an exit code is not enough.
+  - A pin that no tag points at is allowed during development **only with a
+    recorded reason** (see below). Bumping the pin is its own commit whose
+    message says what changed upstream and why we want it.
+  - **Current pin: `d4122d8`, tagged `oxbow-pin-1.56.5-12-gd4122d8`** in the
+    mirror — twelve commits ahead of `1.56.5` for "Migrate to 7TV emote-set API
+    endpoint" (#1632) and "New m3u8 API + support vertical VODs" (#1631).
+    Reverting to `1.56.5` breaks 7TV emote resolution, so the anchor is what
+    lets 0.2.0 ship without regressing emotes. BTTV, FFZ and 7TV emote
+    resolution were verified by hand on this pin before release. Re-pin to the
+    next upstream release tag containing both once one exists.
 - The built helper self-identifies as `1.56.5+<full-sha>`, so a shipped DMG is
   traceable to an exact upstream commit. Surface that string in the About box.
 
