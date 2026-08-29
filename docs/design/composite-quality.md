@@ -368,8 +368,10 @@ the middle piece.
   [`fragmented-output.md`](fragmented-output.md) were most careful about.
 - The calibration in §8.2 is two points; its absolute levels are rough.
 
-This deserves its own design document. This one establishes that it is worth
-writing.
+**Written up as [`composite-sections.md`](composite-sections.md)**, which
+settles the section length by measurement (60 seconds: +3.6% wall clock, no
+adaptation lost), keeps the analysis out of a new `StepKind`, and identifies
+frame-exactness across 360 boundaries as the most likely subtle bug.
 
 ---
 
@@ -454,8 +456,10 @@ Three rules §9 earned:
 
 ## 11. Next
 
-1. **Per-section allocation (§8), as its own design document.** The best
-   answer, the most invasive, and the blocking risk is already cleared.
+1. **Per-section allocation (§8).** Designed in
+   [`composite-sections.md`](composite-sections.md); not built. Two things
+   must be settled first: widen the two-point calibration, and verify seek
+   cost at a five-hour offset.
 2. **Widen §5's sample if the metric is to drive anything absolute.** Ten more
    VODs would tell you whether +0.68 improves or is a ceiling. Not needed for
    §8, which uses ranking only.
