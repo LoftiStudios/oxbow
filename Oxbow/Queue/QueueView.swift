@@ -140,6 +140,13 @@ struct QueueView: View {
         Button("Add Download…") { openWindow(id: OxbowApp.intakeWindowID) }
           .disabled(controller == nil)
       }
+      // Fills the space the `List` branch would, so the `VStack` above has a
+      // child that expands. Without it the stack's children total less than
+      // the window and get centred as a block — which left the update banner
+      // floating in the middle of an empty window instead of sitting under
+      // the toolbar. `ContentUnavailableView` still centres its own content
+      // inside this, so the empty state looks unchanged.
+      .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
   }
 
