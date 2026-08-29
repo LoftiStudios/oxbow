@@ -39,6 +39,39 @@ struct FailureInterpreterTests {
     #expect(failure.detail == stderr, "the full trace is kept for bug reports")
   }
 
+  /// A clip whose parent VOD is gone. Upstream checks `clip.video == null ||
+  /// clip.videoOffsetSeconds == null` and throws with a *different* sentence
+  /// from the VOD case above — "Invalid VOD **for clip**, …" — so the VOD
+  /// check does not cover it, and without its own case the summary is
+  /// upstream's internal diagnostic, question mark and all.
+  ///
+  /// Real captured stderr, from `chatdownload --id
+  /// AdorableStylishPotatoPlanking-5UAS4GFYHTkDW4xX`.
+  @Test func recognisesAClipWhoseParentVodIsGone() throws {
+    let stderr = """
+      Unhandled exception. System.AggregateException: One or more errors occurred. (Invalid VOD for clip, deleted/expired VOD possibly?)
+       ---> System.NullReferenceException: Invalid VOD for clip, deleted/expired VOD possibly?
+         at TwitchDownloaderCore.ChatDownloader.InitChatRoot(DownloadType downloadType)
+      """
+    let failure = try #require(interpret(.signalled(SIGABRT), stderr, artifactExists: false))
+    #expect(failure.summary == """
+      This clip's original broadcast is no longer on Twitch, so its chat \
+      cannot be downloaded.
+      """)
+    #expect(failure.detail == stderr, "the full trace is kept for bug reports")
+  }
+
+  /// The clip sentence must not swallow the VOD one: they are different
+  /// failures with different advice, and `contains` on the shorter string
+  /// would match both if either check were written loosely.
+  @Test func keepsTheClipAndVodSentencesDistinct() throws {
+    let vod = try #require(interpret(
+      .signalled(SIGABRT),
+      "---> System.NullReferenceException: Invalid VOD, deleted/expired VOD possibly?",
+      artifactExists: false))
+    #expect(vod.summary == "This VOD no longer exists or has expired.")
+  }
+
   /// The most common real-world failure for a Twitch downloader.
   @Test func recognisesSubscriberOnlyVods() throws {
     let stderr = "Unhandled exception. System.Exception: vod_manifest_restricted"

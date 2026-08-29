@@ -35,7 +35,16 @@ asset whose `bitrate` and `frameRate` are zero. Its `width` and `height` are
 present (1280x720, 852x480, 640x360), so the aspect-ratio fallback for a
 missing resolution is exercised by a synthetic case in `VideoInfoTests`, not by
 this fixture — what this fixture pins is that a zero bitrate produces no size
-estimate rather than "about Zero KB". Both list every rendition twice, which is why quality names carry
+estimate rather than "about Zero KB".
+
+The 2020 clip pins one more thing, discovered later: its `video` and
+`videoOffsetSeconds` are both `null`, because Twitch expired the broadcast it
+was cut from years ago. That is the exact pair upstream's
+`ChatDownloader.InitChatRoot` tests before throwing "Invalid VOD for clip,
+deleted/expired VOD possibly?", so this fixture is also our only captured
+example of a clip whose chat cannot be downloaded — see
+`VideoInfo.hasDownloadableChat`. Replacing it with a *recent* clip would keep
+every assertion above passing while silently deleting that coverage. Both list every rendition twice, which is why quality names carry
 upstream's `-1` disambiguator.
 
 A clip's `Raw` output is a different document from a VOD's — one JSON object

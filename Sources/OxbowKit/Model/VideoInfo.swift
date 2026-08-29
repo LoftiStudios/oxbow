@@ -123,6 +123,36 @@ public struct VideoInfo: Sendable, Equatable {
   /// how large the sheet may draw it.
   public var thumbnailURL: URL?
 
+  /// Whether this video's chat can be downloaded at all.
+  ///
+  /// False only for a clip whose parent broadcast is gone. A clip carries no
+  /// chat of its own — upstream reconstructs it from the VOD the clip was cut
+  /// from, seeking to `videoOffsetSeconds` — so when Twitch has expired or
+  /// deleted that broadcast there is nothing to read, and
+  /// `ChatDownloader.InitChatRoot` aborts the process with "Invalid VOD for
+  /// clip, deleted/expired VOD possibly?".
+  ///
+  /// **This is upstream's own predicate, not a proxy for it.** The `info`
+  /// verb and the chat downloader both call
+  /// `TwitchHelper.GetShareClipRenderStatus`, so we test
+  /// `clip.video == null || clip.videoOffsetSeconds == null` over the same
+  /// document `ChatDownloader` will test — which is what keeps this clear of
+  /// docs/twitch-metadata.md §6, where the sin is trusting a field that
+  /// merely correlates with what you want to know.
+  ///
+  /// **It is still a hint about the future, and only safe in one direction.**
+  /// An expired broadcast never comes back, so false stays false and refusing
+  /// on it is sound. True can go stale — §5 of that document shows a clip
+  /// payload changing inside half an hour — so a VOD can expire between
+  /// intake and the job actually running. `FailureInterpreter` therefore
+  /// keeps its own case for this; nothing here replaces it.
+  ///
+  /// True for every VOD: a VOD *is* the broadcast, so it has no parent that
+  /// could have expired. Defaulted true in `init` for the same reason every
+  /// other caller — tests, previews — is describing something whose chat is
+  /// fine.
+  public var hasDownloadableChat: Bool
+
   /// `thumbnailURL` defaults to nil: it adorns the intake sheet and nothing
   /// else derives from it, so the tests and previews that build a `VideoInfo`
   /// for its name, duration or qualities should not have to name one.
@@ -132,7 +162,8 @@ public struct VideoInfo: Sendable, Equatable {
     createdAt: Date,
     duration: Duration,
     qualities: [StreamQuality],
-    thumbnailURL: URL? = nil)
+    thumbnailURL: URL? = nil,
+    hasDownloadableChat: Bool = true)
   {
     self.streamer = streamer
     self.title = title
@@ -140,6 +171,7 @@ public struct VideoInfo: Sendable, Equatable {
     self.duration = duration
     self.qualities = qualities
     self.thumbnailURL = thumbnailURL
+    self.hasDownloadableChat = hasDownloadableChat
   }
 
   public static func parse(_ output: String) -> VideoInfo? {
@@ -179,7 +211,11 @@ public struct VideoInfo: Sendable, Equatable {
         createdAt: clip.createdAt,
         duration: .seconds(clip.durationSeconds),
         qualities: Self.clipQualities(of: clip),
-        thumbnailURL: Self.clipThumbnailURL(of: clip))
+        thumbnailURL: Self.clipThumbnailURL(of: clip),
+        // Upstream's exact condition, negated. Both fields, not just
+        // `video`: upstream checks both, and a payload carrying one without
+        // the other would abort the chat download just the same.
+        hasDownloadableChat: clip.video != nil && clip.videoOffsetSeconds != nil)
     }
 
     return nil
@@ -430,7 +466,20 @@ private struct ClipInfoEnvelope: Decodable {
     var durationSeconds: Int
     var broadcaster: BroadcasterEnvelope
     var assets: [AssetEnvelope]?
+    /// The broadcast this clip was cut from, decoded **only for its
+    /// presence** — the same idiom as `portraitMetadata` below, and for the
+    /// same reason: an empty `Decodable` accepts any object shape, so a
+    /// future field appearing inside `video` can never fail the whole clip's
+    /// metadata over something we do not read. Its `id` is upstream's
+    /// business, not ours.
+    var video: ParentVideoEnvelope?
+    /// Where in that broadcast the clip starts. Null exactly when `video` is,
+    /// in every payload observed — but upstream tests both, so we decode
+    /// both rather than assume they move together.
+    var videoOffsetSeconds: Int?
   }
+
+  struct ParentVideoEnvelope: Decodable {}
 
   struct BroadcasterEnvelope: Decodable {
     var displayName: String

@@ -145,7 +145,10 @@ struct IntakeWindow: View {
         }
       }
 
-      if model.output == .videoWithChat {
+      // `chatProblem == nil` as well as the output: offering a text size for
+      // chat that cannot be downloaded, above a row explaining that it
+      // cannot, is a control for something that will never happen.
+      if model.output == .videoWithChat, model.chatProblem == nil {
         // The one control the deleted render-options form left behind (see
         // docs/design/compositing.md §4, §8): a fixed size cannot serve both
         // a laptop window and a TV across the room. "Small"/"Medium"/"Large"
@@ -165,6 +168,16 @@ struct IntakeWindow: View {
           + "one file. This takes roughly as long as the stream itself.")
           .font(.caption)
           .foregroundStyle(.secondary)
+      }
+
+      // Only reachable for a clip whose parent broadcast Twitch has expired
+      // — see `IntakeModel.chatProblem`. Without this the sheet would simply
+      // grey Add out with nothing on screen saying why, which is the exact
+      // failure `compositeProblem` below exists to prevent.
+      if let chatProblem = model.chatProblem {
+        Label(chatProblem, systemImage: "exclamationmark.triangle")
+          .font(.caption)
+          .foregroundStyle(.red)
       }
 
       // Only reachable for a clip whose selected rendition Twitch never
@@ -413,6 +426,29 @@ extension VideoInfo {
   let model = previewModel()
   model.output = .videoWithChat
   model.chatSize = .large
+  return IntakeWindow(model: model)
+}
+
+/// A clip whose parent broadcast Twitch has expired, with chat asked for.
+/// Exercises `IntakeModel.chatProblem`: the chat size picker and its encoding
+/// note are suppressed, the refusal is shown in their place, and Add is
+/// disabled — while `.video` remains selectable, because the clip itself
+/// still downloads.
+#Preview("Clip + chat - broadcast gone") {
+  let clipInfo = VideoInfo(
+    streamer: "f00xtr0t323",
+    title: "This dude jumped off the ledge.",
+    createdAt: .now,
+    duration: .seconds(30),
+    qualities: [
+      StreamQuality(name: "1080p60", resolution: "1920x1080", bitsPerSecond: 6_264_272),
+    ],
+    thumbnailURL: nil,
+    hasDownloadableChat: false)
+  let model = previewModel(
+    link: "https://clips.twitch.tv/AdorableStylishPotatoPlanking-5UAS4GFYHTkDW4xX",
+    info: clipInfo)
+  model.output = .videoWithChat
   return IntakeWindow(model: model)
 }
 

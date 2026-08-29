@@ -11,6 +11,14 @@ struct VideoInfoTests {
     String(decoding: try Fixture.bytes("info-vod-raw.stdout"), as: UTF8.self)
   }
 
+  /// A VOD *is* the broadcast, so there is no parent to have expired: the
+  /// clip-only check must never leak into the VOD path and disable chat for
+  /// every VOD in the app.
+  @Test func aVodAlwaysHasDownloadableChat() throws {
+    let info = try #require(VideoInfo.parse(try fixture()))
+    #expect(info.hasDownloadableChat)
+  }
+
   @Test func readsTheStreamerTitleAndDuration() throws {
     let info = try #require(VideoInfo.parse(try fixture()))
 
@@ -146,6 +154,30 @@ struct ClipInfoTests {
   /// the asset's aspect ratio alone.
   private func legacyFixture() throws -> String {
     String(decoding: try Fixture.bytes("info-clip-legacy-raw.stdout"), as: UTF8.self)
+  }
+
+  /// The two fields upstream's `ChatDownloader.InitChatRoot` actually tests
+  /// (`clip.video == null || clip.videoOffsetSeconds == null`) before it
+  /// throws "Invalid VOD for clip, deleted/expired VOD possibly?".
+  ///
+  /// Not a proxy for that decision — the same predicate over the same
+  /// payload. The `info` verb and the chat downloader both call
+  /// `TwitchHelper.GetShareClipRenderStatus`, so this is the identical
+  /// document, not a lookalike. That is what keeps this out of the territory
+  /// docs/twitch-metadata.md §6 warns about: nothing here is inferred from a
+  /// field that merely correlates.
+  @Test func knowsAModernClipStillHasItsBroadcast() throws {
+    let info = try #require(VideoInfo.parse(try fixture()))
+    #expect(info.hasDownloadableChat)
+  }
+
+  /// The 2020 clip's parent VOD is long gone — Twitch expires broadcasts, so
+  /// `video` and `videoOffsetSeconds` are both null in this captured payload.
+  /// This fixture was captured for its zeroed asset fields; that it is also a
+  /// real example of a dead parent VOD is what makes it usable here.
+  @Test func knowsALegacyClipHasLostItsBroadcast() throws {
+    let info = try #require(VideoInfo.parse(try legacyFixture()))
+    #expect(!info.hasDownloadableChat)
   }
 
   @Test func readsTheBroadcasterTitleAndDuration() throws {
