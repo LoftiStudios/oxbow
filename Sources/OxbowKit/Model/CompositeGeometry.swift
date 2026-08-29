@@ -102,15 +102,28 @@ public struct CompositeGeometry: Sendable, Equatable {
   /// measured **11 dB apart at the same bitrate**; nothing in the metadata
   /// predicts which is which.
   ///
-  /// **0.10 is a no-regression value, not an optimum.** It was chosen so that
-  /// no measured case gets less than it did before: 1080p60 goes 11 -> 15 for
-  /// starved sources and stays at 15 for the rest, 1824x1026@30 stays at 10,
-  /// and 720p60 rises off the old 6 floor. What the *right* operating point is
-  /// remains open — §9 also shows bits-per-pixel does not transfer across
-  /// framerates (≈0.36 bpp at 30fps against ≈0.17 at 60fps for equivalent
-  /// quality), so a single constant cannot serve both well. Widening the
-  /// sample is step 3 of §11; do not tune this number on four VODs.
-  private static let bitsPerPixel = 0.10
+  /// **0.12 covers roughly two thirds of real content.** Measured across
+  /// sixteen VOD and clip samples (`composite-quality.md` §9): reaching the
+  /// same quality takes **0.034 bpp** on 2D 30fps content and **0.254** on
+  /// Street Fighter 6 — a **7.5x spread** at identical resolution and
+  /// framerate. No constant serves both ends, and nothing in the metadata
+  /// predicts which end a given stream sits at.
+  ///
+  /// The median requirement is 0.102. `0.12` sits a little above it and
+  /// covers 9 of the 13 usable samples; 0.10 covered 6. The remaining four are
+  /// the busiest — a fighting game and two shooters — which need up to 2.1x
+  /// this to reach the same bar.
+  ///
+  /// The two errors are not symmetric, which is why this errs high rather than
+  /// low. Over-serving costs disk: predictable, and the file can be deleted.
+  /// Under-serving costs quality, and it is unrecoverable without
+  /// re-downloading and re-compositing the whole job.
+  ///
+  /// Do not read `0.12` as an optimum. It is a percentile of a distribution
+  /// measured at one quality bar (Y = 26 dB against the pristine chat render),
+  /// and that bar moves the answer a long way: at Y = 24 this same constant
+  /// covers ~85% of the samples, at Y = 28 nearer 40%.
+  private static let bitsPerPixel = 0.12
 
   /// The composite's bitrate, in Mbps.
   ///

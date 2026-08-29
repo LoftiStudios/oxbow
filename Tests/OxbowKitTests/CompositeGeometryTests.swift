@@ -109,10 +109,10 @@ struct CompositeGeometryTests {
   // MARK: - Composite bitrate
 
   /// The composite's rate comes from the composite frame's own pixel rate and
-  /// nothing else. 2280x1080x60 x 0.10 bpp = 14.8 -> 15 Mbps.
+  /// nothing else. 2280x1080x60 x 0.12 bpp = 17.7 -> 18 Mbps.
   @Test func derivesTheBitrateFromTheCompositesOwnPixelRate() throws {
     let geometry = try #require(CompositeGeometry(quality: quality("1080p60", "1920x1080")))
-    #expect(geometry.compositeBitrateMbps() == 15)
+    #expect(geometry.compositeBitrateMbps() == 18)
   }
 
   /// The one that encodes the bug. The source's advertised `BANDWIDTH` used to
@@ -133,7 +133,7 @@ struct CompositeGeometryTests {
       quality: quality("1080p60", "1920x1080", bitsPerSecond: 30_000_000)))
 
     #expect(starved.compositeBitrateMbps() == generous.compositeBitrateMbps())
-    #expect(starved.compositeBitrateMbps() == 15)
+    #expect(starved.compositeBitrateMbps() == 18)
   }
 
   /// Framerate is part of the pixel rate, so the same resolution at half the
@@ -154,10 +154,10 @@ struct CompositeGeometryTests {
   }
 
   /// A larger frame asks for proportionally more, with no cap to collide with:
-  /// 3040x1440x60 x 0.10 = 26.3 Mbps.
+  /// 3040x1440x60 x 0.12 = 31.5 Mbps.
   @Test func scalesUpForFramesLargerThanAnythingMeasured() throws {
     let geometry = try #require(CompositeGeometry(quality: quality("1440p60", "2560x1440")))
-    #expect(geometry.compositeBitrateMbps() == 26)
+    #expect(geometry.compositeBitrateMbps() == 32)
   }
 
   // MARK: - Chat font size

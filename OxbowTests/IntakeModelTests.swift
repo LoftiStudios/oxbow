@@ -310,8 +310,8 @@ struct IntakeModelTests {
   /// the chosen quality and the video's own duration, not left at some
   /// default that happens to compile.
   ///
-  /// 15 Mbps: `CompositeGeometry.compositeBitrateMbps()` derives it from the
-  /// composite frame's own pixel rate (2280x1080x60 x 0.10 bpp), and
+  /// 18 Mbps: `CompositeGeometry.compositeBitrateMbps()` derives it from the
+  /// composite frame's own pixel rate (2280x1080x60 x 0.12 bpp), and
   /// deliberately not from `bitsPerSecond` — see `composite-quality.md` §9 for
   /// why the source's advertised bandwidth was removed. The 10 Mbps source
   /// here is now ignored, which is the point.
@@ -319,7 +319,7 @@ struct IntakeModelTests {
     let model = await loaded(quality: "1080p60", resolution: "1920x1080", bitsPerSecond: 10_000_000)
     model.output = .videoWithChat
     let composite = try #require(model.composedTemplate()?.composite)
-    #expect(composite.bitrateMbps == 15)
+    #expect(composite.bitrateMbps == 18)
     #expect(composite.duration == .seconds(3600), "the hour-long duration `Self.info()` fixes")
   }
 

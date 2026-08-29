@@ -464,14 +464,25 @@ of Y = 26 dB against the pristine render:
 framerate.** That is the single most important number in this document. No
 constant can serve both ends, and the spread is content, not geometry.
 
-**The shipped 0.10 bpp is the median of that distribution** (the median
-requirement is 0.102). That was chosen in §7.1 purely to avoid regressions, so
-it is luck rather than judgement — but it means roughly half of real content is
-adequately served today, and the other half is not.
+**0.10, shipped in §7.1 purely to avoid regressions, turned out to be the
+median of that distribution** (the median requirement is 0.102) — luck rather
+than judgement, and it left about half of real content under-served.
+**The constant is now 0.12**, which covers 9 of the 13 usable samples against
+6 at 0.10. The four it still misses are the busiest: a fighting game and two
+shooters, needing up to 2.1x more.
+
+The two errors are not symmetric, which is why this errs high. Over-serving
+costs disk — predictable, and the file can be deleted. Under-serving costs
+quality, and is unrecoverable without re-downloading and re-compositing.
 
 Useful framing for choosing a default: covering ~70% of content needs ~0.12
 bpp, ~90% needs ~0.18, and everything in this sample needs 0.25. At 1080p60
 those are 18, 27 and 38 Mbps — about 47, 70 and 98 GB for six hours.
+
+**And the quality bar moves this more than the percentile does.** Y = 26 dB is
+a judgement, not a fact. At Y = 24 the same 0.12 covers ~85% of these samples;
+at Y = 28, nearer 40%. Anyone revisiting this constant should decide what
+"acceptable" means before arguing about percentiles.
 
 ### Can it be predicted? Partly, and not well enough
 
