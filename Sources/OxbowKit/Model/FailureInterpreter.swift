@@ -46,6 +46,25 @@ public enum FailureInterpreter {
     {
       return "This is a subscriber-only VOD."
     }
+    // Checked before the VOD case below, and matched on the longer string:
+    // upstream throws a *different* sentence for a clip whose parent VOD is
+    // gone ("Invalid VOD for clip, …") from the one it throws for a VOD that
+    // is itself gone ("Invalid VOD, …"). The two are disjoint as written, so
+    // the order is documentation rather than load-bearing — but the advice
+    // differs, and a future edit that loosens either pattern to a shared
+    // prefix must not silently collapse them into one.
+    //
+    // The clip's own video still downloads fine; only its chat cannot be
+    // reconstructed, because chat lives on the broadcast the clip was cut
+    // from (upstream: `clip.video == null || clip.videoOffsetSeconds == null`
+    // in `ChatDownloader.InitChatRoot`). Saying so is the difference between
+    // a user retrying forever and one who knows to ask for video alone.
+    if standardError.contains("Invalid VOD for clip, deleted/expired VOD possibly?") {
+      return """
+        This clip's original broadcast is no longer on Twitch, so its chat \
+        cannot be downloaded.
+        """
+    }
     if standardError.contains("Invalid VOD, deleted/expired VOD possibly?") {
       return "This VOD no longer exists or has expired."
     }
