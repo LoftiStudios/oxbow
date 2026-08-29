@@ -46,7 +46,14 @@ struct OxbowApp: App {
       // Its own task, not a step inside `setUp()`: the two are unrelated,
       // and a check that waits for the helper to be found would be a check
       // that never runs on the builds most in need of an update.
-      .task { await updates.checkAutomatically() }
+      //
+      // Guarded, because `OxbowTests` is hosted by this app: without it every
+      // `xcodebuild test` made a live GitHub request and wrote the real
+      // preferences. See `AppComposition.isUserSession`.
+      .task {
+        guard AppComposition.isUserSession else { return }
+        await updates.checkAutomatically()
+      }
     }
     .defaultSize(width: 720, height: 480)
     .windowResizability(.contentMinSize)

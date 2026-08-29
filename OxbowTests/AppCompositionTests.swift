@@ -44,6 +44,23 @@ struct AppCompositionTests {
     #expect(configuration.store.fileURL.path.hasPrefix(support.path))
   }
 
+  // MARK: - User session
+
+  /// The test bundle is hosted by the app, so running this suite launches
+  /// `OxbowApp` — and with it the launch-time update check, which made a live
+  /// GitHub request and wrote the developer's real `.standard` preferences on
+  /// every `xcodebuild test`, CI included. It passed unnoticed because the
+  /// automatic path swallows its own failures.
+  ///
+  /// Measured before the guard existed: with no tests running the key stayed
+  /// absent over 15s; one test run later it was there.
+  ///
+  /// This assertion holds only while the guard reads a variable XCTest really
+  /// sets — misspell the key and it silently becomes false.
+  @Test func aTestHostIsNotAUserSession() {
+    #expect(!AppComposition.isUserSession)
+  }
+
   @Test func reportsAMissingHelper() {
     guard case .helperMissing(let message) = resolve(existing: ["/Apps/Oxbow.app/Contents/MacOS/ffmpeg"]) else {
       Issue.record("expected .helperMissing")

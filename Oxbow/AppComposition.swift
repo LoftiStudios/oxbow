@@ -21,6 +21,25 @@ nonisolated enum AppComposition {
     case helperMissing(String)
   }
 
+  /// Whether this process is a person using Oxbow, as opposed to the app
+  /// being launched only to host a unit-test bundle.
+  ///
+  /// `OxbowTests` runs inside this app, so `xcodebuild test` starts
+  /// `OxbowApp` for real — scenes, `.task` modifiers and all. Anything the
+  /// launch path reaches for, a test run reaches for too. That made every
+  /// test run, on every developer machine and on every CI run, perform a live
+  /// unauthenticated request to api.github.com and write the real
+  /// `studio.lofti.Oxbow` preferences. Nothing failed, because the automatic
+  /// update check is silent about its own errors by design — which is exactly
+  /// why it went unnoticed.
+  ///
+  /// `XCTestConfigurationFilePath` is set by XCTest in the host process and
+  /// by nothing else, so it distinguishes the two without the app having to
+  /// know what a test is beyond "not a user".
+  static var isUserSession: Bool {
+    ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil
+  }
+
   static func resolve(
     bundleExecutable: URL,
     supportDirectory: URL,
