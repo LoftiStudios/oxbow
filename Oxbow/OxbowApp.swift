@@ -7,6 +7,10 @@ struct OxbowApp: App {
   @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
   @State private var content: QueueContent?
 
+  /// Built eagerly: unlike the engine it needs nothing resolved first, and
+  /// the launch-time check should not queue behind helper discovery.
+  @State private var updates = UpdateModel.live()
+
   /// Read once. Nothing in it can change while the app runs — it is all
   /// stamped into the bundle at build time — and both the menu item and the
   /// window title need the name.
@@ -27,18 +31,22 @@ struct OxbowApp: App {
     // item while leaving the scene duplicable by anything else that opens
     // one. `Window` makes single-instance the scene's own guarantee, and
     // drops the menu item as a consequence rather than as the fix.
-    Window("Oxbow", id: "queue") {
+    Window("Oxbow", id: Self.queueWindowID) {
       Group {
         // One view for both outcomes. `QueueView` owns the toolbar and the
         // banner, so a payload-missing launch gets the `+`-disabled window
         // design §6 describes rather than a bare page with no chrome.
         if let content {
-          QueueView(content: content)
+          QueueView(content: content, updates: updates)
         } else {
           ProgressView().frame(minWidth: 480, minHeight: 320)
         }
       }
       .task { await setUp() }
+      // Its own task, not a step inside `setUp()`: the two are unrelated,
+      // and a check that waits for the helper to be found would be a check
+      // that never runs on the builds most in need of an update.
+      .task { await updates.checkAutomatically() }
     }
     .defaultSize(width: 720, height: 480)
     .windowResizability(.contentMinSize)
@@ -50,6 +58,10 @@ struct OxbowApp: App {
       // the menu, one of them insufficient.
       CommandGroup(replacing: .appInfo) {
         AboutCommand(applicationName: about.applicationName)
+        // Where a Mac app puts it, and the only way to get a definitive
+        // answer: the automatic check is silent unless it finds something,
+        // so without this there is no way to tell "up to date" from "broken".
+        CheckForUpdatesCommand(updates: updates)
       }
       // ⌘N is free: the queue is a `Window`, so there is no New Window item to
       // collide with. It opens intake, which is the only thing in this app a
@@ -132,6 +144,9 @@ struct OxbowApp: App {
   /// The id the About menu item opens.
   static let aboutWindowID = "about"
 
+  /// The queue itself — the window the update banner appears in.
+  static let queueWindowID = "queue"
+
   /// The id `QueueView` and the Downloads menu open Get Info with.
   static let infoWindowID = "info"
 
@@ -181,6 +196,24 @@ private struct AddDownloadCommand: View {
     Button("Add Download…") { openWindow(id: OxbowApp.intakeWindowID) }
       .keyboardShortcut("n")
       .disabled(!isEnabled)
+  }
+}
+
+/// The Oxbow ▸ Check for Updates… item.
+///
+/// Opens the queue window before checking, because the queue window is where
+/// the answer is drawn. Choosing this from the menu bar with every window
+/// closed would otherwise run a check whose result nothing displays.
+private struct CheckForUpdatesCommand: View {
+  let updates: UpdateModel
+
+  @Environment(\.openWindow) private var openWindow
+
+  var body: some View {
+    Button("Check for Updates…") {
+      openWindow(id: OxbowApp.queueWindowID)
+      Task { await updates.checkManually() }
+    }
   }
 }
 
