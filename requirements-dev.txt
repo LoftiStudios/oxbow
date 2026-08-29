@@ -1,7 +1,16 @@
-# Python dependencies for release packaging. Installed into .venv by `mise run setup`.
+# Python dev dependencies. Installed into .venv by `mise run setup`.
 #
 # dmgbuild writes the DMG's .DS_Store directly (via ds-store/mac-alias) instead
 # of driving Finder over AppleScript. That is the whole reason it is here: the
 # AppleScript approach needs a logged-in GUI session and Automation permission,
 # so it cannot run on a CI runner.
 dmgbuild==1.6.7
+
+# Image analysis, for looking at what the chat renderer and the composite
+# actually produced rather than reasoning about it. The bundled FFmpeg is built
+# without a PNG encoder (LGPL build, --disable-everything plus an explicit
+# allowlist), so frames come out as raw RGB and something has to read them.
+# Pinned for the same reason dmgbuild is: a silent minor bump should not change
+# what a measurement says.
+pillow==12.3.0
+numpy==2.5.2
