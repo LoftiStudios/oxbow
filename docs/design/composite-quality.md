@@ -510,6 +510,65 @@ window per VOD, so nothing in this document says how much the requirement
 varies *within* a single stream. That variance is precisely what per-section
 allocation would exploit, and it has not been measured.
 
+### Within a stream: the variance is real, and it changes the recommendation
+
+§7.4 was proposed on the assumption that the requirement varies within a
+single stream. It does, and validating it changes per-section allocation from
+"best but invasive" to the option that costs less than what ships today.
+
+Per-minute `motion + detail` across a contiguous 20-minute stretch of three
+streams, against the 16-sample between-stream spread:
+
+| | spread | CV |
+|---|---|---|
+| FF7 Remake, 20 min | 2.5x | 0.25 |
+| Overwatch, 20 min | 2.8x | 0.19 |
+| IRL, 20 min | 1.8x | 0.15 |
+| **between 16 streams** | **4.2x** | **0.39** |
+
+Within-stream variance is roughly half the between-stream variance — smaller,
+but far from negligible.
+
+**And it is need, not just metric.** Two adjacent 2-minute windows of the same
+FF7 stream, two minutes apart:
+
+| window | m+d | required bpp |
+|---|---|---|
+| 9600s, quiet | 11.2 | **0.059** |
+| 9720s, busy | 25.9 | **0.110** |
+
+Metric ratio 2.32x, measured need ratio **1.87x**. The metric tracks the
+requirement *within* a stream in both direction and rough magnitude — which is
+the assumption §7.4 rested on, now tested rather than asserted.
+
+### What per-section allocation would actually do
+
+Applying a two-point calibration (`need ≈ 0.020 + 0.0035 x (m+d)`) to the
+per-minute profiles:
+
+| stream | flat 0.12 | per-section mean | file size | minutes mis-served at the flat rate |
+|---|---|---|---|---|
+| FF7 Remake | 0.120 | 0.091 | **−24%** | 100% over-served, avg 24% wasted |
+| IRL | 0.120 | 0.075 | **−38%** | 100% over-served, avg 38% wasted |
+| Overwatch | 0.120 | 0.137 | +14% | **84% under-served** |
+
+This is the finding that matters: **per-section allocation is not a quality
+feature that costs disk, it is a disk feature that also fixes quality.** Two of
+three streams get materially smaller files at unchanged quality, because every
+minute of them is currently paying for bits it cannot use. The third gets
+bigger — and it is the one that looks bad.
+
+It also dissolves the dilemma §9 ends on. A flat constant must choose between
+wasting space on quiet content and starving busy content, because it cannot
+tell them apart. Allocating per section does not have to tell them apart: a
+quiet stream is simply one whose sections are all quiet.
+
+**The calibration is two points and the absolute levels are rough.** What is
+solid is the relative claim — busy minutes need roughly twice what quiet
+minutes need, measured directly. A proportional allocation within a
+user-chosen total budget would need only that relative ranking, and never the
+absolute fit, which is the weakest part of all of this.
+
 ### Constant quality: tried, not understood
 
 `h264_videotoolbox` accepts `-q:v`, and content-adaptive allocation is exactly
