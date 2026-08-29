@@ -4,11 +4,15 @@ import OxbowKit
 
 struct QueueView: View {
   let content: QueueContent
+  let updates: UpdateModel
 
   /// Opens the intake window (`OxbowApp.intakeWindowID`). Intake is a window
   /// rather than a sheet on this one — see `IntakeWindow` for why — so the
   /// toolbar button hands off to the scene instead of presenting anything.
   @Environment(\.openWindow) private var openWindow
+
+  /// Opening the release page is the update banner's whole action.
+  @Environment(\.openURL) private var openURL
 
   @State private var selection: Set<JobID> = []
 
@@ -45,6 +49,16 @@ struct QueueView: View {
     VStack(spacing: 0) {
       if let banner {
         QueueBanner(title: banner.title, message: banner.message)
+        Divider()
+      }
+      // Below the warning, never above it. A missing helper means the app
+      // cannot do its job at all, which outranks news about a version that
+      // would have the same problem.
+      if updates.state != .idle {
+        UpdateBanner(
+          state: updates.state,
+          onOpen: { openURL($0) },
+          onDismiss: { updates.dismiss() })
         Divider()
       }
       queue
@@ -126,6 +140,13 @@ struct QueueView: View {
         Button("Add Download…") { openWindow(id: OxbowApp.intakeWindowID) }
           .disabled(controller == nil)
       }
+      // Fills the space the `List` branch would, so the `VStack` above has a
+      // child that expands. Without it the stack's children total less than
+      // the window and get centred as a block — which left the update banner
+      // floating in the middle of an empty window instead of sitting under
+      // the toolbar. `ContentUnavailableView` still centres its own content
+      // inside this, so the empty state looks unchanged.
+      .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
   }
 
@@ -187,10 +208,23 @@ struct QueueView: View {
 }
 
 #Preview("Helper missing") {
-  QueueView(content: .unavailable("""
+  QueueView(
+    content: .unavailable("""
     The TwitchDownloaderCLI helper is not embedded in this build. Build it \
     with the dotnet publish command in docs/development.md, then build the \
     app again.
-    """))
+    """),
+    updates: UpdateModel { .upToDate })
   .frame(width: 720, height: 420)
+}
+
+#Preview("Update available") {
+  let updates = UpdateModel {
+    .available(
+      ReleaseVersion("0.3.0")!,
+      URL(string: "https://github.com/barclay/oxbow/releases/tag/v0.3.0")!)
+  }
+  return QueueView(content: .unavailable("No helper in this build."), updates: updates)
+    .frame(width: 720, height: 420)
+    .task { await updates.checkAutomatically() }
 }
