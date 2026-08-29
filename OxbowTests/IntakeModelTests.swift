@@ -312,10 +312,11 @@ struct IntakeModelTests {
   /// the chosen quality and the video's own duration, not left at some
   /// default that happens to compile.
   ///
-  /// 11 Mbps, not 10: `CompositeGeometry.compositeBitrateMbps(sourceBitsPerSecond:)`
-  /// corrects for the wider composite frame and re-encode headroom (design
-  /// doc §5, measurements there) rather than passing the source's own
-  /// bitrate straight through.
+  /// 18 Mbps: `CompositeGeometry.compositeBitrateMbps()` derives it from the
+  /// composite frame's own pixel rate (2280x1080x60 x 0.12 bpp), and
+  /// deliberately not from `bitsPerSecond` — see `composite-quality.md` §9 for
+  /// why the source's advertised bandwidth was removed. The 10 Mbps source
+  /// here is now ignored, which is the point.
   @Test func theCompositeSeedsItsBitrateAndDurationFromTheChosenQuality() async throws {
     let model = await loaded(quality: "1080p60", resolution: "1920x1080", bitsPerSecond: 10_000_000)
     model.output = .videoWithChat

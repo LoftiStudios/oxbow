@@ -12,6 +12,12 @@ plausible optimisations have already been measured at zero.
 `docs/twitch-metadata.md` records which of Twitch's metadata fields can be
 trusted and which are measurably wrong — read it before writing anything that
 reasons about a video before downloading it.
+`docs/design/composite-quality.md` is the same kind of document for how the
+composited chat *looks*. Read it before proposing anything about the chat
+renderer, its arguments, the intermediate encode, or the composite's bitrate:
+the renderer is not the problem, four plausible fixes are measured at
+approximately zero, and the bitrate a composite needs spans 7.5x across real
+content with nothing in the metadata predicting it.
 
 **Current state:** the app works end to end. It downloads a VOD or clip, its
 chat, and a rendered chat video, into files named from the stream's own

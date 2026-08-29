@@ -272,6 +272,33 @@ struct ArgumentBuilderTests {
   /// `--allow-unlisted-emotes`) cannot be turned off through this CLI at
   /// all, so `RenderRequest` has no fields for them — see
   /// `renderNeverEmitsTheSixUnexpressibleTrueDefaultSwitches` below.
+  /// Always on, and not a `RenderRequest` field, because there is no good
+  /// reason to want the alternative.
+  ///
+  /// A Twitch API change in November 2022 made downloaded chat carry only
+  /// whole-second timestamps, so six messages sent across one second all
+  /// record as the same instant and the render drops all six on screen at
+  /// once, then shows nothing until the next second. `--dispersion` uses the
+  /// additional metadata to restore when messages were actually sent.
+  ///
+  /// The CLI documents it as requiring an update rate below 1.0 to be
+  /// effective. We never pass `--update-rate`, and upstream's default is 0.2,
+  /// so the precondition holds and the bare flag alone is enough — asserted
+  /// below so that passing `--update-rate` later cannot silently neuter this.
+  ///
+  /// The pinned submodule contains upstream's rewritten algorithm
+  /// (`861b493`, "New, more accurate dispersion algorithm", #1636), not the
+  /// 2019 original.
+  @Test func renderAlwaysDispersesWholeSecondTimestamps() {
+    let a = args(.renderChat(RenderRequest(destination: URL(filePath: "/tmp/c.mp4"))))
+    #expect(a.contains("--dispersion"))
+    #expect(!a.contains { $0.hasPrefix("--dispersion=") })
+    // The precondition: an update rate below 1.0. We rely on the CLI default
+    // of 0.2 by never setting it.
+    #expect(!a.contains("--update-rate"))
+    #expect(!a.contains { $0.hasPrefix("--update-rate=") })
+  }
+
   @Test func alternateBackgroundsFlagIsBareAndOnlyPresentWhenTrue() {
     let off = args(.renderChat(RenderRequest(destination: URL(filePath: "/tmp/c.mp4"))))
     #expect(!off.contains("--alternate-backgrounds"))

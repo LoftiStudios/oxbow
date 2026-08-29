@@ -224,7 +224,7 @@ vs 6.1s at 16 Mbps, same clip. `h264_videotoolbox`'s encode speed does not
 depend on the bitrate target, so — as with the intermediate render's bitrate
 above — there is no cost tradeoff to erring generous. Only file size grows.
 
-**The fix:**
+**The fix (SUPERSEDED 2026-08-29 — see below):**
 
 ```
 compositeBitrateMbps
@@ -232,13 +232,32 @@ compositeBitrateMbps
     floored at 6
 ```
 
-`outputWidth / videoWidth` corrects for the extra pixels the composite frame
-carries over the source; the flat `1.5` is re-encode headroom. Both factors are
-named constants (`CompositeGeometry.reencodeHeadroom` and the pixel-ratio
-computed inline) with a comment citing the table above, so either number is a
-one-line, traceable adjustment rather than a re-derivation. The `6` Mbps floor
-is the same floor the old flat seed used, kept so a very low source bitrate
-still produces a watchable composite.
+> **This formula no longer exists.** The `sourceBitsPerSecond` term was removed
+> in full: measured across sixteen samples it is *anti-correlated* with need —
+> both quiet VODs advertise more bandwidth than both busy ones — so it gave
+> least to the streams that needed most. `BANDWIDTH` is a peak describing the
+> rendition's ceiling, not the difficulty of the footage.
+>
+> The rate now derives from the composite frame's own pixel rate at 0.12 bits
+> per pixel, floored at 10. The measurements below remain valid for what they
+> measured — that the *old* seed starved the chat column, and that bitrate is
+> free in wall-clock time — but the diagnosis of *which* bitrate and *why* is
+> superseded by [`composite-quality.md`](composite-quality.md), which also
+> shows the requirement spans 7.5x across real content and that no constant
+> can serve it.
+>
+> The 6 Mbps floor is likewise gone: it measured 18.1 dB against a pristine
+> chat render, which is visibly mush.
+
+*(Historical, describing the superseded formula.)* `outputWidth / videoWidth`
+corrected for the extra pixels the composite frame carries over the source and
+the flat `1.5` was re-encode headroom, both named constants. The `6` Mbps floor
+was the same floor the old flat seed used.
+
+The reasoning that survives is the *observation* — that the chat column is
+sharp, high-contrast text on a flat background, H.264's worst case, and that a
+visually noisy source starves it. What did not survive is deriving the answer
+from the source's own bitrate; see the note above.
 
 Worked examples, all at 1080p (`outputWidth / videoWidth` = 2280/1920 =
 1.1875):

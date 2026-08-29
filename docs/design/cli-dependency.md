@@ -187,9 +187,38 @@ If chat that ticks robotically in one-second clumps is a meaningful part of
 "mid-tier at best", that is a one-line change, not a subsystem. **Try the flags
 before concluding anything about Skia.**
 
-Unmeasured, and deliberately not claimed: whether `--dispersion` visibly improves
-our composite renders, and what it costs. Measure it against decoded output, per
-`twitch-metadata.md` §7.
+**`--dispersion` measured and adopted, 2026-08-28.** It is now always on
+(`ArgumentBuilder`), and not a `RenderRequest` field, because nobody wants the
+alternative.
+
+Measured on a 180-second window of a heavy-chat VOD (`2856361990` at 2:30:00,
+1,253 messages, 418/minute). **100% of downloaded timestamps land exactly on a
+whole second**, and 138 separate seconds carry four or more messages at the
+identical instant — the worst carrying **fifteen**.
+
+Rendered both ways and compared by detecting frames where the chat column
+visibly changed:
+
+| | update events | within 0.1s of a whole second |
+|---|---|---|
+| without `--dispersion` | 262 | **72.9%** |
+| with `--dispersion` | 527 | **30.0%** |
+
+It doubles the number of distinct update moments and spreads them through the
+second instead of stacking them on the boundary. In a filmstrip across the
+fifteen-message second, the undispersed render holds **five consecutive frames
+identical** and then changes everything at once; the dispersed one trickles.
+
+Render cost: none measurable — 73.6s against 42.1s wall clock on the same
+input, the dispersed render being the *faster* of the two, which is noise from
+CPU contention rather than a real difference.
+
+`--avatars` is still untried, and there is now a reason for caution that did
+not exist when this section was written: avatars are photographs, so they add
+high spatial detail inside the chat column, and
+[`composite-quality.md`](composite-quality.md) shows that column is already
+losing the bit competition. Measure what it costs the composite before
+adopting it.
 
 ## 8. Trimming the publish — 126 MB to 67 MB
 

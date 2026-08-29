@@ -79,66 +79,61 @@ public struct CompositeGeometry: Sendable, Equatable {
 
   // MARK: - Composite bitrate
 
-  /// How much wider the composite frame is than the source video, and how
-  /// much re-encode headroom to add on top of that — the two corrections the
-  /// old flat `max(source bps, 6 Mbps)` seed was missing.
+  /// The floor below which a composite is not worth shipping.
   ///
-  /// Measured on a real clip (LeighXP, FF7 Rebirth, 1080p60 @ 6128 kbps),
-  /// chat region PSNR/SSIM against the pristine chat render:
-  ///
-  /// | composite bitrate | PSNR | SSIM |
-  /// |---|---|---|
-  /// | 6 Mbps (source's own rate — the old seed) | 25.5 dB | 0.916 |
-  /// | 11 Mbps (this formula's output) | 29.5 dB | 0.952 |
-  /// | 16 Mbps | 31.9 dB | 0.963 |
-  ///
-  /// The composite frame carries ~19% more pixels than the source (video +
-  /// chat column) while re-encoding already-lossy material, so seeding it at
-  /// the source's own bitrate starves the chat column — sharp, high-contrast
-  /// text is H.264's worst case — of bits the noisy game footage soaks up
-  /// first. Also measured: bitrate is free in wall-clock time on
-  /// `h264_videotoolbox` — 6.0s to encode at 6 Mbps vs 6.1s at 16 Mbps on the
-  /// same clip — so there is no speed cost to erring high, only file size.
-  private static let reencodeHeadroom = 1.5
+  /// Ten, not six. Six was measured against the pristine chat render at
+  /// **18.1 dB** — visibly mush (`docs/design/composite-quality.md` §5). A
+  /// floor that cannot produce an acceptable frame is not a floor.
+  static let minimumBitrateMbps = 10
 
-  /// The floor below which a composite is not worth shipping — the same
-  /// floor the old flat seed used.
-  static let minimumBitrateMbps = 6
+  /// Bits per pixel of the *composite* frame, per second of output.
+  ///
+  /// This is now the whole derivation, and deliberately so. It was previously
+  /// a cap on a figure derived from the source's advertised `BANDWIDTH`, with
+  /// that source term doing the primary work.
+  ///
+  /// **The source term was removed because it is worse than uninformative.**
+  /// `composite-quality.md` §9 measured four VODs: the two whose chat columns
+  /// were visibly starved advertise 6.36 and 6.40 Mbps, and the two that
+  /// needed nothing advertise 8.44 and 8.56. `BANDWIDTH` is a peak describing
+  /// the rendition's ceiling, not the difficulty of the footage, so keying the
+  /// rate to it handed bits to the streams with nothing to spend them on and
+  /// withheld them from the streams that needed them. Two 1080p60 VODs
+  /// measured **11 dB apart at the same bitrate**; nothing in the metadata
+  /// predicts which is which.
+  ///
+  /// **0.12 covers roughly two thirds of real content.** Measured across
+  /// sixteen VOD and clip samples (`composite-quality.md` §9): reaching the
+  /// same quality takes **0.034 bpp** on 2D 30fps content and **0.254** on
+  /// Street Fighter 6 — a **7.5x spread** at identical resolution and
+  /// framerate. No constant serves both ends, and nothing in the metadata
+  /// predicts which end a given stream sits at.
+  ///
+  /// The median requirement is 0.102. `0.12` sits a little above it and
+  /// covers 9 of the 13 usable samples; 0.10 covered 6. The remaining four are
+  /// the busiest — a fighting game and two shooters — which need up to 2.1x
+  /// this to reach the same bar.
+  ///
+  /// The two errors are not symmetric, which is why this errs high rather than
+  /// low. Over-serving costs disk: predictable, and the file can be deleted.
+  /// Under-serving costs quality, and it is unrecoverable without
+  /// re-downloading and re-compositing the whole job.
+  ///
+  /// Do not read `0.12` as an optimum. It is a percentile of a distribution
+  /// measured at one quality bar (Y = 26 dB against the pristine chat render),
+  /// and that bar moves the answer a long way: at Y = 24 this same constant
+  /// covers ~85% of the samples, at Y = 28 nearer 40%.
+  private static let bitsPerPixel = 0.12
 
-  /// The ceiling on bits spent per pixel per frame, independent of
-  /// resolution or framerate.
+  /// The composite's bitrate, in Mbps.
   ///
-  /// Exists because `sourceBitsPerSecond` (`StreamQuality.bitsPerSecond`,
-  /// read from the m3u8's `BANDWIDTH` attribute) is a **peak**, not an
-  /// average — a 1080p60 VOD advertising ~20 Mbps peak otherwise yields
-  /// ~36 Mbps here (pixel ratio x headroom), which is ~97 GB for a six-hour
-  /// stream against the ~22 GB the cost analysis in
-  /// `docs/design/compositing.md` reasons about.
-  ///
-  /// Measured bits-per-pixel-per-frame at the same 2280x1080@60 points as
-  /// the table above: 11 Mbps is ≈0.075 bpp, 16 Mbps (already diminishing
-  /// returns — +2.4 dB for 45% more bytes over 11) is ≈0.108 bpp. `0.15`
-  /// sits comfortably past that knee while still bounding the worst case:
-  /// for 2280x1080@60 it caps at ~22 Mbps rather than ~36.
-  private static let maxBitsPerPixel = 0.15
-
-  /// The composite's bitrate, in Mbps, for a source encoded at
-  /// `sourceBitsPerSecond`.
-  ///
-  /// `outputWidth / videoWidth` corrects for the extra pixels the composite
-  /// frame carries over the source; `reencodeHeadroom` accounts for
-  /// re-encoding material that is already lossy. See the constants above for
-  /// the measurements behind both factors. The result is then capped by
-  /// `maxBitsPerPixel` applied to the composite frame's own pixel rate, so
-  /// the cap scales correctly across resolutions and framerates instead of
-  /// being a single magic number.
-  public func compositeBitrateMbps(sourceBitsPerSecond: Int) -> Int {
-    let pixelRatio = Double(outputWidth) / Double(videoWidth)
-    let mbps = Double(sourceBitsPerSecond) * pixelRatio * Self.reencodeHeadroom / 1_000_000
-    let ceilingMbps =
-      Double(outputWidth) * Double(videoHeight) * Double(videoFramerate) * Self.maxBitsPerPixel
-      / 1_000_000
-    return max(Self.minimumBitrateMbps, Int(min(mbps, ceilingMbps).rounded()))
+  /// A function of the output frame alone — its width, height and framerate —
+  /// so it scales correctly across resolutions and framerates instead of
+  /// inheriting a number that describes something else.
+  public func compositeBitrateMbps() -> Int {
+    let pixelRate = Double(outputWidth) * Double(videoHeight) * Double(videoFramerate)
+    let mbps = pixelRate * Self.bitsPerPixel / 1_000_000
+    return max(Self.minimumBitrateMbps, Int(mbps.rounded()))
   }
 
   // MARK: - Chat font size
