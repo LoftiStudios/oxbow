@@ -55,7 +55,8 @@ struct IntakeModelTests {
     qualities: [StreamQuality] = [
       StreamQuality(name: "1080p60", resolution: "1920x1080", bitsPerSecond: 8_000_000),
       StreamQuality(name: "720p60", resolution: "1280x720", bitsPerSecond: 3_000_000),
-    ])
+    ],
+    hasDownloadableChat: Bool = true)
     -> VideoInfo
   {
     VideoInfo(
@@ -63,7 +64,8 @@ struct IntakeModelTests {
       title: title,
       createdAt: createdAt,
       duration: duration,
-      qualities: qualities)
+      qualities: qualities,
+      hasDownloadableChat: hasDownloadableChat)
   }
 
   /// Captures what `add()` hands to the queue.
@@ -545,6 +547,63 @@ struct IntakeModelTests {
     #expect(model.compositeProblem == nil)
     let render = try #require(model.composedTemplate()?.render)
     #expect(render.height == 852, "rounded down from the metadata's odd 853")
+  }
+
+  // MARK: - Chat problem
+
+  /// A clip whose parent broadcast is gone. The chat step would abort the
+  /// helper on SIGABRT the moment it ran, and — because `JobTemplate.makeJob`
+  /// appends the chat step *first*, so the short download claims the network
+  /// slot — it would do so before the video download it was racing. The video
+  /// step has no `dependsOn`, so it would then download in full into a
+  /// workspace intermediate with no destination, and the composite, assemble
+  /// and render steps would all be blocked behind the failed chat. The user
+  /// would wait out an entire video download to receive no file at all.
+  ///
+  /// So this refuses up front rather than explaining afterwards.
+  @Test func aClipWhoseBroadcastIsGoneCannotBeAddedWithChat() async throws {
+    let model = await loadedModel(
+      link: Self.clipLink,
+      info: Self.info(
+        qualities: [StreamQuality(name: "1080p60", resolution: "1920x1080", bitsPerSecond: 6_000_000)],
+        hasDownloadableChat: false))
+    model.output = .videoWithChat
+
+    #expect(model.composedTemplate() == nil)
+    #expect(!model.canAdd)
+
+    let problem = try #require(model.chatProblem)
+    #expect(problem.contains("no longer on Twitch"))
+    #expect(!problem.contains("Invalid VOD"), "upstream's diagnostic must not reach the sheet")
+  }
+
+  /// The whole point of refusing only the chat: the clip's *video* downloads
+  /// fine, so video-only must stay available and stay addable. A user who
+  /// picks it gets their clip.
+  @Test func aClipWhoseBroadcastIsGoneCanStillBeAddedAsVideoOnly() async throws {
+    let model = await loadedModel(
+      link: Self.clipLink,
+      info: Self.info(hasDownloadableChat: false))
+
+    #expect(model.output == .video, "the default")
+    #expect(model.chatProblem == nil, "video-only has no chat to explain away")
+    #expect(model.canAdd)
+  }
+
+  /// The positive control: a clip whose broadcast is still up has nothing to
+  /// explain.
+  @Test func chatProblemIsNilForAClipThatStillHasItsBroadcast() async throws {
+    let model = await loadedClip(quality: "1080p60", resolution: "1920x1080")
+    model.output = .videoWithChat
+    #expect(model.chatProblem == nil)
+  }
+
+  /// A VOD is the broadcast, so this can never fire for one. Guards against a
+  /// clip-only rule that quietly disables chat for every VOD in the app.
+  @Test func chatProblemIsNilForAVod() async throws {
+    let model = await loaded(quality: "1080p60", resolution: "1920x1080")
+    model.output = .videoWithChat
+    #expect(model.chatProblem == nil)
   }
 
   // MARK: - Quality

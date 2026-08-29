@@ -356,6 +356,37 @@ final class IntakeModel {
       """
   }
 
+  /// Why `.videoWithChat` cannot be added for this clip, or nil when it can
+  /// (and always nil for `.video`, which needs no chat at all).
+  ///
+  /// A clip carries no chat of its own — it is reconstructed from the
+  /// broadcast the clip was cut from — so when Twitch has expired that
+  /// broadcast there is nothing to download. `VideoInfo.hasDownloadableChat`
+  /// reads upstream's own predicate off the same `info` payload the chat
+  /// downloader will read, so this is a refusal on the facts rather than a
+  /// guess about them.
+  ///
+  /// **Refusing up front is worth more here than explaining afterwards.**
+  /// `JobTemplate.makeJob` appends the chat step first, deliberately, so it
+  /// claims the network slot ahead of the video download. The chat step would
+  /// abort in seconds; the video step, which has no `dependsOn`, would then
+  /// download in full into a workspace intermediate carrying no destination;
+  /// and the render, composite and assemble steps would all sit blocked
+  /// behind the failed chat. Only `assemble` ever delivers a file, so the
+  /// user would wait out an entire video download and receive nothing.
+  ///
+  /// Deliberately does *not* disable the clip: only its chat is unavailable,
+  /// and `.video` downloads it perfectly well. Saying which of the two
+  /// choices still works is the difference between an explanation and a dead
+  /// end — the same reason `compositeProblem` ends in "Pick another quality".
+  var chatProblem: String? {
+    guard output == .videoWithChat, let info, !info.hasDownloadableChat else { return nil }
+    return """
+      This clip's original broadcast is no longer on Twitch, so its chat \
+      cannot be downloaded. Choose "Video" to download the clip itself.
+      """
+  }
+
   /// True once *this link's* fetch has settled either way. `.failed` counts:
   /// the sheet stays usable, with a name derived from the id or slug.
   var hasSettledMetadata: Bool {
@@ -418,6 +449,14 @@ final class IntakeModel {
       }
 
     case .videoWithChat:
+      // A clip whose parent broadcast Twitch has expired has no chat to
+      // download, so this cannot produce the one file it promises.
+      // `chatProblem` is the sentence for the refusal; the refusal itself
+      // has to live here, or `canAdd` — which is defined as this returning
+      // something — would admit a job that cannot deliver. One condition
+      // read two ways, never two conditions that can drift apart.
+      guard chatProblem == nil else { return nil }
+
       // The composite needs a concrete rendition to derive its geometry from
       // (see `compositeQuality`), and a duration to report FFmpeg progress
       // against. Neither is available without settled metadata.
