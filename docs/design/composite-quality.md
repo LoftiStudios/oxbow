@@ -406,6 +406,99 @@ Four samples across two framerate classes is not enough to fit a
 framerate-dependent curve, and pretending otherwise would be the same mistake
 as §9's first draft.
 
+### Sixteen samples, and a measurement bug worth recording
+
+§7.3's motion/detail table was produced by a **broken harness** and its
+conclusion — "motion fails, detail works" — is **retracted**. With the bug
+fixed the finding inverts: motion is the stronger predictor and detail alone
+is weak.
+
+**The bug.** One frame was sampled from the composite and compared against the
+same frame index of the pristine render. But the composite's chat lags by
+under 0.2s (the `fps=30->60` resample), so when a message appeared near the
+sampled instant the two landed on opposite sides of it:
+
+| chat-render frame | PSNR against the composite's frame |
+|---|---|
+| 3355 | 24.3 dB |
+| 3360 | **10.4 dB** — one message appeared here |
+
+One sample scored 2.9 dB, which is not a quality measurement. Worse, the
+failure probability scales with **chat density**, so the harness was partly
+measuring how busy the chat was rather than how hard the video is.
+
+Fixed by sampling five instants per window and searching ±10 frames around
+each for the best match, taking the median. Windows went 150s -> 300s, since
+several samples had fewer than ten messages in 150s. Three samples remain too
+thin to trust (fewer than ~2000 text pixels) and are excluded.
+
+Two other corrections the wider set forced: samples were being compared at a
+fixed **megabit** rate, which is a different bits-per-pixel at every geometry —
+1080p30 gets twice what 1080p60 does, and one 1152x744@30 sample was getting
+five times. Everything below is measured at a fixed bits-per-pixel of each
+sample's own output frame.
+
+### What content actually costs
+
+Thirteen usable samples, spanning static talking heads to Street Fighter 6.
+"Required bpp" extrapolates from two measured points to a fixed quality target
+of Y = 26 dB against the pristine render:
+
+| sample | m+d | required bpp | at 1080p60 |
+|---|---|---|---|
+| zelda (2D, 30fps) | 17.9 | 0.034 | 5.0 Mbps |
+| static | 10.5 | 0.048 | 7.1 |
+| frankie (Chrono Trigger) | 11.5 | 0.070 | 10.3 |
+| justchat | 17.6 | 0.072 | 10.7 |
+| marzzzzy (trailers) | 18.5 | 0.073 | 10.8 |
+| djclip (DJ visuals) | 22.1 | 0.081 | 12.0 |
+| fighting game | 43.8 | 0.102 | 15.1 |
+| leigh (FF7 battle) | 25.7 | 0.112 | 16.5 |
+| overwatch | 32.7 | 0.114 | 16.8 |
+| rpg (open world) | 17.2 | 0.123 | 18.2 |
+| busy2 | 35.2 | 0.158 | 23.3 |
+| fps2 | 28.5 | 0.177 | 26.2 |
+| sf6 | 37.3 | 0.254 | 37.6 |
+
+**The requirement spans 7.5x — 5 to 38 Mbps at the same resolution and
+framerate.** That is the single most important number in this document. No
+constant can serve both ends, and the spread is content, not geometry.
+
+**The shipped 0.10 bpp is the median of that distribution** (the median
+requirement is 0.102). That was chosen in §7.1 purely to avoid regressions, so
+it is luck rather than judgement — but it means roughly half of real content is
+adequately served today, and the other half is not.
+
+Useful framing for choosing a default: covering ~70% of content needs ~0.12
+bpp, ~90% needs ~0.18, and everything in this sample needs 0.25. At 1080p60
+those are 18, 27 and 38 Mbps — about 47, 70 and 98 GB for six hours.
+
+### Can it be predicted? Partly, and not well enough
+
+Against **required bpp**, on the thirteen usable samples:
+
+| predictor | Pearson | Spearman |
+|---|---|---|
+| motion | +0.59 | +0.69 |
+| detail | +0.42 | +0.41 |
+| motion + detail | **+0.65** | **+0.68** |
+| motion x detail | +0.64 | +0.69 |
+
+Spearman ~0.68 is enough to **rank** content and nowhere near enough to **set
+a rate**. The clearest failure: `rpg` (m+d 17.2) needs 0.123 bpp while `zelda`
+(m+d 17.9) needs 0.034 — indistinguishable metrics, **3.6x** different
+requirements. Any silent per-VOD auto-selection would get cases like that
+badly wrong in both directions.
+
+So §7.2(c) as *per-VOD detection* is not supportable. §7.4 per-**section**
+allocation is untouched by this, because ranking is exactly what a +0.68
+Spearman is good for, and it never needs an absolute threshold.
+
+**Unknown, and now the interesting question:** every measurement here is one
+window per VOD, so nothing in this document says how much the requirement
+varies *within* a single stream. That variance is precisely what per-section
+allocation would exploit, and it has not been measured.
+
 ### Constant quality: tried, not understood
 
 `h264_videotoolbox` accepts `-q:v`, and content-adaptive allocation is exactly
