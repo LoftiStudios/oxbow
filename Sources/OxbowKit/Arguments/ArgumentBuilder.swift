@@ -94,6 +94,24 @@ public enum ArgumentBuilder {
       // expressible: emit the bare flag when true, omit it when false.
       // Without `--alternate-backgrounds`, `--alt-background-color` is
       // documented by the CLI as inert.
+      // Always on, and deliberately not a `RenderRequest` field.
+      //
+      // A Twitch API change in November 2022 made downloaded chat carry only
+      // whole-second timestamps: every message sent during one second records
+      // at the same instant, so the render drops them on screen as a clump and
+      // then shows nothing until the next second. Real chat trickles.
+      // `--dispersion` uses the additional metadata to restore when each
+      // message was actually sent.
+      //
+      // Nobody wants the alternative, so there is no field for it — the same
+      // reasoning `docs/design/compositing.md` used to narrow the intake.
+      //
+      // The CLI documents this as needing an update rate below 1.0. We never
+      // pass `--update-rate` and upstream's default is 0.2, so the bare flag
+      // is sufficient; `renderAlwaysDispersesWholeSecondTimestamps` pins both
+      // halves so adding an update rate later cannot silently neuter it.
+      args += ["--dispersion"]
+
       if request.hasAlternateBackgrounds { args += ["--alternate-backgrounds"] }
       if request.hasTimestamps { args += ["--timestamp"] }
       if request.hasOutline { args += ["--outline"] }
