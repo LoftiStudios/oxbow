@@ -293,10 +293,25 @@ Plumbing that already exists: `.assemble` concatenates pieces with `-c copy`,
 built for resume (`resume.md`). Different bitrates concatenate fine — bitrate
 is not a stream parameter.
 
-Not free, and not yet verified:
+**The assembly gate is verified.** `h264_videotoolbox` holds profile **High**
+and level **5.0** identical across a 10x bitrate range (6, 12, 18, 25, 40 and
+60 Mbps at 2280x1080@60), so pieces at different rates concatenate with
+`-c copy`. Tested end to end rather than inferred from headers: joining a 6M,
+a 60M and an 18M piece gives exit 0, a duration of exactly 3:00.05 against
+3 x 60.02, a clean full decode with no warnings, exactly 10,803 frames against
+3 x 3601, and correct seeking into the middle piece.
 
-- Whether `h264_videotoolbox` holds profile and level constant across a wide
-  bitrate range. If it does not, `-c copy` concat breaks.
+That was the one finding that could have killed the approach, and it did not.
+
+Also recorded, because it cost an hour: an early version of this test dropped
+`setpts=PTS-STARTPTS` and encoded the source directly. The source starts at
+0.666s, and without the reset `h264_videotoolbox` aborted at 27.4s of a 60s
+input with `Unexpected end of SEI NAL Unit parsing type`. **The shipping
+composite is not affected** — it always resets PTS on both inputs, and the
+same source through the app's real argv produces the full 60.02s with no
+errors. The lesson is to test the argv the app actually sends.
+
+Still not free, and not yet verified:
 - Section boundaries must land on keyframes.
 - Sections must be minutes, not Twitch's ~10s segments: 2,160 encoder
   invocations for a six-hour job is absurd.
