@@ -1,8 +1,7 @@
 # Why the composited chat looks coarse, and what to do about it
 
 **Status:** investigated 2026-08-28 across four VODs. The cause is settled
-(§1–§6). The fix is not: §7.1 is unambiguous, the rest is open, and §11 says
-what to do next.
+(§1–§6). §7.1 has **landed**; the rest is open, and §11 says what to do next.
 **Question:** the rendered chat in a composite "just doesn't look that good" —
 the type reads as coarse. Is that the renderer, or the encoder?
 
@@ -29,9 +28,11 @@ a lossless intermediate, a ProRes 4:4:4 intermediate, and `--outline`.
 
 And the amount of bitrate needed is **a property of the footage, not of the
 stream's metadata** (§9). Two 1080p60 VODs measured 11 dB apart at the same
-bitrate. Worse, today's formula is keyed to the source's advertised bandwidth,
-which in this sample is *anti-correlated* with need: it gives the least to the
-streams that need the most. That is a bug independent of everything else here.
+bitrate. Worse, the formula *was* keyed to the source's advertised bandwidth,
+which in this sample is *anti-correlated* with need: it gave the least to the
+streams that need the most. That was a bug independent of everything else here,
+and §7.1 has removed it — the rate now comes from the composite frame's own
+pixel rate. Where that rate should sit is still open.
 
 ---
 
@@ -177,10 +178,14 @@ That is a good argument for §10's rule about looking at pixels.
 
 ---
 
-## 6. The trap in the constants
+## 6. The trap in the constants — historical
 
-The two constants in `CompositeGeometry.compositeBitrateMbps` interact, and
-the one the comments draw attention to is not always the one that binds:
+*Describes the formula as it stood before §7.1. Kept because it explains why
+raising the ceiling alone would not have worked, which is the fix a reader
+reaches for first.*
+
+The two constants in `CompositeGeometry.compositeBitrateMbps` interacted, and
+the one the comments drew attention to was not always the one that bound:
 
 ```
 mbps    = source × pixelRatio × reencodeHeadroom
@@ -460,9 +465,18 @@ chroma metric alone says this change is not worth making.
 
 ## 11. Next steps, in the order they are worth doing
 
-**1. Fix the anti-correlation (§7.1).** Small, self-contained, wrong under
-every other design, and it needs no new measurement to justify. Raise
-`minimumBitrateMbps` in the same change.
+**1. Fix the anti-correlation (§7.1). — DONE.** `compositeBitrateMbps()` now
+takes no argument and derives the rate from the composite frame's own pixel
+rate at **0.10 bits per pixel**, with the floor raised from 6 to **10**.
+
+`0.10` is a **no-regression value, not an optimum**: it was chosen so that no
+measured case gets less than it did before. 1080p60 goes 11 → 15 where the
+source was starving it and stays at 15 elsewhere; 1824×1026@30 stays at 10;
+720p60 rises off the old 6. The starved 1080p60 case gains a measured +3.3 dB.
+
+Explicitly **not** an answer to where the operating point belongs — §9 shows a
+single bits-per-pixel constant cannot serve 30fps and 60fps equally, and four
+VODs are not enough to fit one. That is step 3.
 
 **2. Decide (a), (b) or (c) from §7.2.** This is a product judgment about
 whether gameplay is the modal VOD, not a technical one, and the measurements

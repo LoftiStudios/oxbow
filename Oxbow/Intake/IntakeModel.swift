@@ -465,7 +465,7 @@ final class IntakeModel {
         destination: nil)
       composite = CompositeRequest(
         framerate: geometry.videoFramerate,
-        bitrateMbps: geometry.compositeBitrateMbps(sourceBitsPerSecond: selected.bitsPerSecond),
+        bitrateMbps: geometry.compositeBitrateMbps(),
         duration: duration,
         destination: destination(OutputSuffix.video))
     }

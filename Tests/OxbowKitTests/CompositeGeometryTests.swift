@@ -5,8 +5,13 @@ import Testing
 @Suite("Composite geometry")
 struct CompositeGeometryTests {
 
-  private func quality(_ name: String, _ resolution: String) -> StreamQuality {
-    StreamQuality(name: name, resolution: resolution, bitsPerSecond: 6_000_000)
+  private func quality(
+    _ name: String,
+    _ resolution: String,
+    bitsPerSecond: Int = 6_000_000)
+    -> StreamQuality
+  {
+    StreamQuality(name: name, resolution: resolution, bitsPerSecond: bitsPerSecond)
   }
 
   @Test(arguments: [
@@ -103,38 +108,56 @@ struct CompositeGeometryTests {
 
   // MARK: - Composite bitrate
 
-  /// The exact values from `docs/design/compositing.md` §5, derived on a real
-  /// clip (LeighXP, FF7 Rebirth, 1080p60 @ 6128 kbps): the composite's
-  /// bitrate corrects the source's own rate for the wider composite frame
-  /// (2280/1920 at 1080p) and adds re-encode headroom, rather than passing
-  /// the source's bitrate straight through.
-  @Test(arguments: [
-    (6_128_000, 11),
-    (9_685_000, 17),
-    (6_184_000, 11),
-  ])
-  func computesTheCompositeBitrateFromTheSourcesRate(sourceBitsPerSecond: Int, expected: Int)
-    throws
-  {
+  /// The composite's rate comes from the composite frame's own pixel rate and
+  /// nothing else. 2280x1080x60 x 0.10 bpp = 14.8 -> 15 Mbps.
+  @Test func derivesTheBitrateFromTheCompositesOwnPixelRate() throws {
     let geometry = try #require(CompositeGeometry(quality: quality("1080p60", "1920x1080")))
-    #expect(geometry.compositeBitrateMbps(sourceBitsPerSecond: sourceBitsPerSecond) == expected)
+    #expect(geometry.compositeBitrateMbps() == 15)
   }
 
-  /// A very low source bitrate must not seed a composite that is unwatchable
-  /// on its own — the same 6 Mbps floor the old flat seed used.
-  @Test func floorsTheCompositeBitrateAtSix() throws {
+  /// The one that encodes the bug. The source's advertised `BANDWIDTH` used to
+  /// be the primary term, and `docs/design/composite-quality.md` §9 measured it
+  /// *anti-correlated* with need across four VODs: both quiet samples advertise
+  /// more than both busy ones, so the formula gave least to the streams that
+  /// needed most. A peak bandwidth describes the rendition's ceiling, not the
+  /// footage.
+  ///
+  /// Two renditions identical but for what they advertise must now agree.
+  /// Under the previous formula these produced **6 and 22 Mbps**:
+  /// `3 Mbps x 1.1875 x 1.5` floored at 6, against `30 Mbps x 1.1875 x 1.5`
+  /// capped by the old 0.15 bpp ceiling at 22.
+  @Test func ignoresWhatTheSourceAdvertises() throws {
+    let starved = try #require(CompositeGeometry(
+      quality: quality("1080p60", "1920x1080", bitsPerSecond: 3_000_000)))
+    let generous = try #require(CompositeGeometry(
+      quality: quality("1080p60", "1920x1080", bitsPerSecond: 30_000_000)))
+
+    #expect(starved.compositeBitrateMbps() == generous.compositeBitrateMbps())
+    #expect(starved.compositeBitrateMbps() == 15)
+  }
+
+  /// Framerate is part of the pixel rate, so the same resolution at half the
+  /// framerate asks for roughly half the bits — and then lands on the floor.
+  @Test func scalesWithFramerateAsWellAsResolution() throws {
+    let sixty = try #require(CompositeGeometry(quality: quality("1080p60", "1920x1080")))
+    let thirty = try #require(CompositeGeometry(quality: quality("1080p30", "1920x1080")))
+    #expect(sixty.compositeBitrateMbps() > thirty.compositeBitrateMbps())
+    #expect(thirty.compositeBitrateMbps() == 10)
+  }
+
+  /// The floor is 10, not 6. Six was measured at 18.1 dB against the pristine
+  /// chat render — visibly mush (`composite-quality.md` §5). A floor that
+  /// cannot produce an acceptable frame is not a floor.
+  @Test func floorsWhereTextIsStillLegible() throws {
     let geometry = try #require(CompositeGeometry(quality: quality("360p30", "640x360")))
-    #expect(geometry.compositeBitrateMbps(sourceBitsPerSecond: 100_000) == 6)
+    #expect(geometry.compositeBitrateMbps() == 10)
   }
 
-  /// `StreamQuality.bitsPerSecond` for a VOD is the m3u8's `BANDWIDTH`
-  /// attribute — a peak, not an average. A 1080p60 source advertising a
-  /// realistic ~20 Mbps peak would otherwise yield ~36 Mbps uncapped
-  /// (pixel ratio x headroom); the per-pixel ceiling caps it at
-  /// 2280x1080x60x0.15 bpp ≈ 22 Mbps instead.
-  @Test func capsTheCompositeBitrateByPixelRate() throws {
-    let geometry = try #require(CompositeGeometry(quality: quality("1080p60", "1920x1080")))
-    #expect(geometry.compositeBitrateMbps(sourceBitsPerSecond: 20_000_000) == 22)
+  /// A larger frame asks for proportionally more, with no cap to collide with:
+  /// 3040x1440x60 x 0.10 = 26.3 Mbps.
+  @Test func scalesUpForFramesLargerThanAnythingMeasured() throws {
+    let geometry = try #require(CompositeGeometry(quality: quality("1440p60", "2560x1440")))
+    #expect(geometry.compositeBitrateMbps() == 26)
   }
 
   // MARK: - Chat font size
