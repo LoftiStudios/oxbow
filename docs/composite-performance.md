@@ -45,9 +45,15 @@ Reproducible, because the conclusion depends on the hardware:
 | Derived geometry | chat **342x1026 @ 30**, output **2166x1026**, composite bitrate **10 Mbps**, font size 15 |
 | Chat | 72,697-byte JSON; render took 77.5s and produced 145.7 MB (2.13 Mbps, well under the 12 Mbps ceiling) |
 
-The 10 Mbps is `CompositeGeometry.compositeBitrateMbps` doing its job: the
-pixel-ratio-and-headroom formula asks for 11.3 Mbps and `maxBitsPerPixel` caps it
-at 10.0.
+The 10 Mbps was `CompositeGeometry.compositeBitrateMbps` doing its job under
+the formula of the time: the pixel-ratio-and-headroom term asked for 11.3 Mbps
+and `maxBitsPerPixel` capped it at 10.0.
+
+**Both of those constants were removed on 2026-08-29**
+([`design/composite-quality.md`](design/composite-quality.md) §6.1). This
+geometry still yields 10 Mbps today, by a different route — 2166 x 1026 x 30 at
+0.12 bpp is 8.0, raised to the 10 Mbps floor — so the timings in this document
+stand unchanged.
 
 A 30 fps source was deliberate — it halves the frame count against
 `compositing.md` §9's 1080p60 run, so the two measurements probe the same
