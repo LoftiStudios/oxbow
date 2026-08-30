@@ -51,4 +51,43 @@ nonisolated struct TimelineScale: Equatable {
   func x(atStep step: Int) -> CGFloat {
     width * CGFloat(step) / CGFloat(Self.subdivisions)
   }
+
+  /// Rounded up to one of these rather than to the raw time-per-point, so a
+  /// drag produces `00:10:00` and not `00:09:47`.
+  static let niceUnits = [1, 2, 5, 10, 15, 30, 60, 120, 300, 600]
+
+  var dragUnitSeconds: Int {
+    guard isDrawable else { return 1 }
+    let perPoint = totalSeconds / Double(width)
+    return Self.niceUnits.first { Double($0) >= perPoint } ?? Self.niceUnits[Self.niceUnits.count - 1]
+  }
+
+  var dragUnit: Duration { .seconds(dragUnitSeconds) }
+
+  func x(for time: Duration) -> CGFloat {
+    guard isDrawable else { return 0 }
+    let seconds = min(max(Double(time.components.seconds), 0), totalSeconds)
+    return width * CGFloat(seconds / totalSeconds)
+  }
+
+  /// Already rounded, so no caller has to remember to. Clamped rather than
+  /// extrapolated: a drag can leave the track, and a time past the end of the
+  /// video reaches the CLI as an argument that fails minutes into a download.
+  func time(atX x: CGFloat) -> Duration {
+    guard isDrawable else { return .zero }
+    return snapped(min(max(Double(x / width), 0), 1) * totalSeconds)
+  }
+
+  /// The stop nearest `seconds`, where the stops are every `dragUnit` **plus
+  /// the true end of the video**. That last stop is not decoration: without it
+  /// the snap rounds down and the final partial unit cannot be reached at all
+  /// — a 3:17:43 VOD on a 30s unit stops at 03:17:30, under a label that
+  /// correctly reads 03:17:43. So the last stop sits closer to its neighbour
+  /// than a full unit, the same asymmetry the endpoint labels have.
+  func snapped(_ seconds: Double) -> Duration {
+    let unit = Double(dragUnitSeconds)
+    let grid = min(max((seconds / unit).rounded() * unit, 0), totalSeconds)
+    guard abs(seconds - totalSeconds) < abs(seconds - grid) else { return .seconds(Int(grid)) }
+    return duration
+  }
 }

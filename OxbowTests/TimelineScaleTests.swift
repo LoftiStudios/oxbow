@@ -55,4 +55,48 @@ struct TimelineScaleTests {
     #expect(ticks[36].x == 360)
     #expect(ticks[54].x == 540)
   }
+
+  /// One pixel's worth of time, rounded up to something round. A person
+  /// dragging on a six-hour VOD cannot land on a second no matter what the
+  /// control does, so the readout may as well be a number they meant.
+  @Test func picksADragUnitFromTimePerPoint() {
+    #expect(TimelineScale(duration: .seconds(180), width: 500).dragUnitSeconds == 1)
+    #expect(TimelineScale(duration: .seconds(991), width: 500).dragUnitSeconds == 2)
+    #expect(TimelineScale(duration: .seconds(2400), width: 500).dragUnitSeconds == 5)
+    #expect(TimelineScale(duration: .seconds(11863), width: 500).dragUnitSeconds == 30)
+    #expect(TimelineScale(duration: .seconds(21600), width: 500).dragUnitSeconds == 60)
+  }
+
+  @Test func projectsTheEndsToTheEdges() {
+    let scale = TimelineScale(duration: Self.fortyMinutes, width: 500)
+    #expect(scale.x(for: .zero) == 0)
+    #expect(scale.x(for: Self.fortyMinutes) == 500)
+  }
+
+  @Test func roundTripsEveryValueOnTheDragGrid() {
+    let scale = TimelineScale(duration: Self.fortyMinutes, width: 500)
+    for seconds in stride(from: 0, through: 2400, by: scale.dragUnitSeconds) {
+      let time = Duration.seconds(seconds)
+      #expect(scale.time(atX: scale.x(for: time)) == time)
+    }
+  }
+
+  /// The end of the video is a stop even when it is not on the grid. Without
+  /// it the snap rounds down and the last partial unit is unreachable: this
+  /// VOD on a 30s unit would stop at 03:17:30, under a label reading 03:17:43.
+  @Test func theEndOfTheVideoIsAlwaysReachable() {
+    let scale = TimelineScale(duration: .seconds(11863), width: 500)
+    #expect(scale.time(atX: 500) == .seconds(11863))
+  }
+
+  @Test func clampsRatherThanExtrapolatingOutsideTheTrack() {
+    let scale = TimelineScale(duration: Self.fortyMinutes, width: 500)
+    #expect(scale.time(atX: -80) == .zero)
+    #expect(scale.time(atX: 900) == Self.fortyMinutes)
+  }
+
+  @Test func projectsToZeroWithoutADurationOrAWidth() {
+    #expect(TimelineScale(duration: .zero, width: 500).x(for: .seconds(5)) == 0)
+    #expect(TimelineScale(duration: .zero, width: 500).time(atX: 10) == .zero)
+  }
 }
