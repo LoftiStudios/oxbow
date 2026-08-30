@@ -143,6 +143,43 @@ struct TrimTimeline: View {
     .contentShape(Rectangle())
     .offset(x: viewX(time) - Metrics.hit / 2)
     .frame(maxWidth: .infinity, alignment: .leading)
+    .gesture(
+      DragGesture(minimumDistance: 0)
+        .onChanged { value in
+          // Captured once, on the first change of this gesture — never
+          // recomputed from the current value. `time(atX:)` snaps and
+          // `x(for:)` does not, so deriving the origin every frame feeds that
+          // rounding back through the projection and the handle drifts behind
+          // the cursor and then sticks.
+          let origin = dragOrigin ?? viewX(time)
+          dragOrigin = origin
+          move(edge, to: scale.time(atX: origin + value.translation.width - Metrics.inset))
+        }
+        .onEnded { _ in dragOrigin = nil })
+  }
+
+  /// Clamped so the handles keep at least one drag unit between them, which is
+  /// what makes it impossible for a drag to be the thing that trips
+  /// `IntakeModel.trimIsInvalid`.
+  ///
+  /// **An extreme clears the field rather than writing the boundary value.**
+  /// Empty already means "no trim" to the model, so clearing keeps
+  /// `effectiveDuration` computing from the true `info.duration` instead of a
+  /// snapped copy of it, and brings the `End of video` placeholder back.
+  private func move(_ edge: Handle, to time: Duration) {
+    switch edge {
+    case .start:
+      let clamped = min(time, endTime - scale.dragUnit)
+      startText = clamped <= .zero ? "" : Timecode.format(clamped)
+    case .end:
+      let clamped = max(time, startTime + scale.dragUnit)
+      endText = clamped >= duration ? "" : Timecode.format(clamped)
+    }
+  }
+
+  private func nudge(_ edge: Handle, bySteps steps: Int) {
+    let current = edge == .start ? startTime : endTime
+    move(edge, to: current + .seconds(scale.dragUnitSeconds * steps))
   }
 }
 
