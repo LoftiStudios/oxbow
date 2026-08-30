@@ -336,7 +336,7 @@ docs/design/resume.md §2 and §4:
 ffmpeg -nostdin -y -hide_banner
   -i {video} -i {render}
   -map "0:a:0?" -c:a copy {resume-area}/audio.m4a
-  -filter_complex "[0:v]setpts=PTS-STARTPTS[v];
+  -filter_complex "[0:v]fps={framerate}:start_time=0[v];
                    [1:v]setpts=PTS-STARTPTS,fps={framerate}[c];
                    [v][c]hstack=inputs=2[out]"
   -map "[out]" -an
@@ -348,8 +348,34 @@ ffmpeg -nostdin -y -hide_banner
 
 Every element is load-bearing:
 
-- **`setpts` precedes `fps`** so the rate conversion runs on a zero-based
-  timeline.
+- **`fps=…:start_time=0` on the video, never `setpts=PTS-STARTPTS`.** It pads
+  the head rather than shifting the track, and that distinction is the whole
+  point. A trimmed download legitimately begins its video stream *after* its
+  audio: upstream trims with an input `-ss` and `-c copy`
+  (`VideoDownloader.RunFfmpegVideoCopy`), a stream copy can only start video on
+  a keyframe, so the file honestly records `video start_time = 0.866, audio
+  start_time = 0.000` and every player honours the gap.
+
+  The audio never enters this filter graph — it is `-c:a copy`-ed to the
+  sidecar above and remuxed untouched at `.assemble` — so zeroing the video's
+  PTS rebased the two halves of one source by different amounts. Measured on a
+  real 20-minute delivery trimmed to 50:00–70:00: the video ran **0.866s ahead
+  of its audio**, constant at both ends of the file (24-frame lag at 0–65s and
+  again at 1140–1200s, against fresh reference downloads of the same ranges;
+  correlation minimum 12.1 versus 41 and 43 one sixth of a second either side).
+  Replaying this argv against a clean download reproduced the identical lag,
+  which is what pinned it here rather than on the CLI.
+
+  It is present without a start trim too, at 0.058s — two frames, which is why
+  it went unnoticed until someone trimmed to a point that was not a part
+  boundary and it grew to a keyframe interval.
+
+  It is deliberately not a bare *removal* of the reset either: dropping it
+  outright made `h264_videotoolbox` abort mid-encode on a source starting at
+  0.666s (`composite-quality.md` §9). The video stays zero-based and CFR; only
+  the padding changes.
+- **`setpts` precedes `fps` on the chat**, which starts at zero, so the rate
+  conversion runs on a zero-based timeline.
 - **`hstack`, not `pad` + `overlay`.** The tolerant alternative accepts a
   mismatched chat render and produces a subtly wrong 22 GB file with a black
   band under the chat. `hstack`'s strictness is the feature: a one-second

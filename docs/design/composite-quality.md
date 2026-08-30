@@ -419,9 +419,16 @@ thin (under ~2000 text pixels) and are excluded rather than averaged in.
 **A false alarm worth recording.** An early encoder test dropped
 `setpts=PTS-STARTPTS` and encoded a source starting at 0.666s;
 `h264_videotoolbox` aborted at 27.4s of a 60s input with `Unexpected end of SEI
-NAL Unit parsing type`. **The shipping composite is unaffected** — it always
-resets PTS on both inputs and produces the full duration. The lesson is to test
-the argv the app actually sends.
+NAL Unit parsing type`. **The shipping composite is unaffected** — it hands the
+encoder a zero-based, CFR timeline and produces the full duration. The lesson
+is to test the argv the app actually sends.
+
+This is also why the video's PTS reset was later *replaced* rather than
+removed. `compositing.md` explains why `setpts=PTS-STARTPTS` on `[0:v]` had to
+go — it desynchronised the delivery's audio by the download's leading offset —
+but a bare deletion would have walked straight back into the abort recorded
+here. `fps={framerate}:start_time=0` keeps the timeline zero-based and CFR and
+only changes the padding.
 
 ---
 
@@ -447,7 +454,7 @@ build/helper/TwitchDownloaderCLI chatrender --banner=false --collision Overwrite
 
 # a composite at a chosen bits-per-pixel of ITS OWN output frame
 build/ffmpeg/ffmpeg -i video.mp4 -i chat.mp4 -filter_complex \
-  "[0:v]setpts=PTS-STARTPTS[v];[1:v]setpts=PTS-STARTPTS,fps=<fps>[c];[v][c]hstack=inputs=2[out]" \
+  "[0:v]fps=<fps>:start_time=0[v];[1:v]setpts=PTS-STARTPTS,fps=<fps>[c];[v][c]hstack=inputs=2[out]" \
   -map "[out]" -an -c:v h264_videotoolbox -b:v <N>M -pix_fmt yuv420p out.mp4
 ```
 

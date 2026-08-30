@@ -465,7 +465,7 @@ struct ArgumentBuilderTests {
       "-c:a", "copy",
       "/tmp/job/audio.m4a",
       "-filter_complex",
-      "[0:v]setpts=PTS-STARTPTS[v];"
+      "[0:v]fps=60:start_time=0[v];"
         + "[1:v]setpts=PTS-STARTPTS,fps=60[c];"
         + "[v][c]hstack=inputs=2[out]",
       "-map", "[out]",
@@ -479,6 +479,47 @@ struct ArgumentBuilderTests {
       "-movflags", "+frag_keyframe+empty_moov+default_base_moof",
       "/tmp/job/composite.mp4",
     ])
+  }
+
+  /// The video branch must not zero its own start timestamp.
+  ///
+  /// A trimmed download legitimately begins its video stream *after* its
+  /// audio: upstream trims with an input `-ss` and `-c copy`, and a stream
+  /// copy can only start video on a keyframe, so the file honestly records
+  /// `video start_time = 0.866, audio start_time = 0.000` and every player
+  /// honours the gap.
+  ///
+  /// `setpts=PTS-STARTPTS` on `[0:v]` threw that gap away. The audio never
+  /// passes through the filter graph — it is `-c:a copy`-ed to the sidecar
+  /// and remuxed untouched at `.assemble` — so the two halves of one source
+  /// were rebased by different amounts and the delivery came out with its
+  /// video 0.866s early. Measured on a real 20-minute trimmed VOD: a
+  /// 24-frame lag, constant at both ends of the file, reproduced exactly by
+  /// replaying this argv against a clean download.
+  ///
+  /// `fps=…:start_time=0` holds the first frame across the gap instead of
+  /// dragging the whole track earlier, so output time *is* source time —
+  /// which is what `docs/design/resume.md` §2 already claimed and this made
+  /// true. Do not "simplify" it back to `setpts`.
+  ///
+  /// It is deliberately not a bare removal either: dropping the reset
+  /// outright made `h264_videotoolbox` abort mid-encode on a source starting
+  /// at 0.666s (`composite-quality.md` §9). The output stays zero-based and
+  /// CFR; only the padding changes.
+  @Test func compositeKeepsTheVideoOnItsSourceTimeline() {
+    let a = ArgumentBuilder.arguments(
+      for: .composite(CompositeRequest(
+        framerate: 30, duration: .seconds(60),
+        destination: URL(filePath: "/out/x.mp4"))),
+      context: compositeContext)
+
+    let graph = a[try! #require(a.firstIndex(of: "-filter_complex")) + 1]
+
+    #expect(graph.hasPrefix("[0:v]fps=30:start_time=0[v];"))
+    #expect(!graph.contains("[0:v]setpts"))
+    // The chat render always starts at zero and still needs zero-basing
+    // before the rate conversion.
+    #expect(graph.contains("[1:v]setpts=PTS-STARTPTS,fps=30[c];"))
   }
 
   /// A quality target, never a bitrate, and never `-maxrate`.
