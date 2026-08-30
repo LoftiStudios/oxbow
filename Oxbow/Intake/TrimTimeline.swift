@@ -19,7 +19,7 @@ struct TrimTimeline: View {
   var isDimmed = false
 
   @State private var trackWidth: CGFloat = 0
-  @State private var dragOrigin: CGFloat?
+  @GestureState private var dragOrigin: CGFloat?
 
   private enum Handle { case start, end }
 
@@ -145,21 +145,24 @@ struct TrimTimeline: View {
     .frame(maxWidth: .infinity, alignment: .leading)
     .gesture(
       DragGesture(minimumDistance: 0)
-        .onChanged { value in
-          // Captured once, on the first change of this gesture — never
-          // recomputed from the current value. `time(atX:)` snaps and
-          // `x(for:)` does not, so deriving the origin every frame feeds that
-          // rounding back through the projection and the handle drifts behind
-          // the cursor and then sticks.
-          let origin = dragOrigin ?? viewX(time)
-          dragOrigin = origin
-          move(edge, to: scale.time(atX: origin + value.translation.width - Metrics.inset))
+        // `@GestureState` rather than `@State`: it resets itself when the
+        // gesture ends *or* is cancelled, and a stale origin surviving a
+        // cancelled drag would teleport the handle on the next grab.
+        .updating($dragOrigin) { _, origin, _ in
+          if origin == nil { origin = viewX(time) }
         }
-        .onEnded { _ in dragOrigin = nil })
+        .onChanged { value in
+          // Captured once per gesture and never recomputed from the current
+          // value: `time(atX:)` snaps and `x(for:)` does not, so deriving the
+          // origin every frame feeds that rounding back through the
+          // projection and the handle drifts behind the cursor and sticks.
+          guard let origin = dragOrigin else { return }
+          move(edge, to: scale.time(atX: origin + value.translation.width - Metrics.inset))
+        })
   }
 
-  /// Clamped so the handles keep at least one drag unit between them, which is
-  /// what makes it impossible for a drag to be the thing that trips
+  /// Clamped so the handles keep at least `minimumSeparation` between them,
+  /// which is what makes it impossible for a drag to be the thing that trips
   /// `IntakeModel.trimIsInvalid`.
   ///
   /// **An extreme clears the field rather than writing the boundary value.**
@@ -169,12 +172,20 @@ struct TrimTimeline: View {
   private func move(_ edge: Handle, to time: Duration) {
     switch edge {
     case .start:
-      let clamped = min(time, endTime - scale.dragUnit)
+      let clamped = min(time, endTime - minimumSeparation)
       startText = clamped <= .zero ? "" : Timecode.format(clamped)
     case .end:
-      let clamped = max(time, startTime + scale.dragUnit)
+      let clamped = max(time, startTime + minimumSeparation)
       endText = clamped >= duration ? "" : Timecode.format(clamped)
     }
+  }
+
+  /// One drag unit, or the time occupied by a handle's hit target — whichever
+  /// is longer. A unit is about a point on a long video, so a unit-wide
+  /// selection would leave the two hit targets on top of each other and the
+  /// handle underneath could never be picked up again.
+  private var minimumSeparation: Duration {
+    max(scale.dragUnit, scale.time(atX: Metrics.hit))
   }
 
   private func nudge(_ edge: Handle, bySteps steps: Int) {
