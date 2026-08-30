@@ -86,10 +86,18 @@ conversion fills small gaps by duplication.
 
 That does not matter, and the reason is worth writing down because it is not
 obvious. The composite's output is CFR at `framerate`, so output frame N sits
-at output time `N ÷ framerate`. The filter graph applies `setpts=PTS-STARTPTS`
-and no rate change to the video, so **output time is source time**. Seeking the
-source to `N ÷ framerate` therefore lands on the frame that becomes output
-frame N, regardless of how many frames CFR fill inserted along the way.
+at output time `N ÷ framerate`. The filter graph applies
+`fps={framerate}:start_time=0` and no rate change to the video, so **output
+time is source time**. Seeking the source to `N ÷ framerate` therefore lands on
+the frame that becomes output frame N, regardless of how many frames CFR fill
+inserted along the way.
+
+**That sentence used to be false, and this is why the filter is not `setpts`.**
+`setpts=PTS-STARTPTS` zeroed the video's own start timestamp, so output time
+was source time *minus* whatever leading offset the download carried — 0.866s
+on a trimmed VOD, because a `-c copy` trim can only start video on a keyframe
+(`compositing.md`). The seek then read that offset as a gap. `fps` pads the
+head instead of shifting the track, which makes the claim above hold literally.
 
 Resume must seek by **time**, never by frame index. See §2.1.
 

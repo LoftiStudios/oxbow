@@ -194,14 +194,35 @@ public enum ArgumentBuilder {
         "-nostdin", "-y", "-hide_banner",
       ] + seek + ["-i", video] + seek + ["-i", chat] + thirdInput + sidecar + [
         "-filter_complex",
-        // setpts precedes fps so the rate conversion runs on a zero-based
-        // timeline. No `scale` on either input: the chat is rendered at the
-        // right size and the video is already native.
+        // `start_time=0` pads the head; it does not shift the track. A
+        // trimmed download legitimately begins its video stream after its
+        // audio — upstream trims with an input `-ss` and `-c copy`, and a
+        // stream copy can only start video on a keyframe, so the file
+        // honestly records `video 0.866s / audio 0.000s` and players honour
+        // the gap. `setpts=PTS-STARTPTS` here threw that gap away: audio
+        // never enters this filter graph (it is copied to the sidecar and
+        // remuxed untouched at `.assemble`), so the two halves of one source
+        // were rebased by different amounts and every trimmed delivery came
+        // out with its video 0.866s early. `fps` holds the first frame
+        // across the gap instead, which is also what makes resume.md §2's
+        // "output time is source time" actually true — the resume seek was
+        // reading the same offset as a gap. Never "simplify" this back to
+        // setpts.
+        //
+        // Nor to a bare removal: dropping the reset outright made
+        // `h264_videotoolbox` abort mid-encode on a source starting at
+        // 0.666s (composite-quality.md §9). The video stays zero-based and
+        // CFR — only the padding changes.
+        //
+        // setpts still precedes fps on the chat, which starts at zero, so
+        // its rate conversion runs on a zero-based timeline. No `scale` on
+        // either input: the chat is rendered at the right size and the video
+        // is already native.
         //
         // No `shortest`: chat renders end at the last message, so a quiet
         // final stretch would truncate the VIDEO. hstack's default
         // eof_action=repeat holds the last chat frame instead. Verified.
-        "[0:v]setpts=PTS-STARTPTS[v];"
+        "[0:v]fps=\(request.framerate):start_time=0[v];"
           + "[1:v]setpts=PTS-STARTPTS,fps=\(request.framerate)[c];"
           + "[v][c]hstack=inputs=2[out]",
         "-map", "[out]",
