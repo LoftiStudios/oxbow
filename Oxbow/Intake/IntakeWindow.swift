@@ -211,22 +211,45 @@ struct IntakeWindow: View {
     }
   }
 
+  /// The timeline needs a duration to scale against, so a VOD whose metadata
+  /// fetch failed falls back to the two fields alone — which is the state the
+  /// `Metadata failed` preview below already reaches, since `showsTrimOptions`
+  /// keys off the parsed link rather than off `info`.
   private var trim: some View {
-    Section("Trim") {
-      LabeledContent("Start") {
-        TextField("Start", text: $model.trimStartText, prompt: Text("0:00"))
-          .labelsHidden()
-      }
-      LabeledContent("End") {
-        TextField("End", text: $model.trimEndText, prompt: Text("End of video"))
-          .labelsHidden()
-      }
-      if model.trimIsInvalid {
-        Label(
-          "Use h:mm:ss, m:ss, or seconds. The end must come after the start.",
-          systemImage: "exclamationmark.triangle")
-          .font(.caption)
-          .foregroundStyle(.red)
+    Section {
+      Toggle("Trim", isOn: $model.isTrimEnabled)
+
+      if model.isTrimEnabled {
+        if let duration = model.info?.duration {
+          TrimTimeline(
+            duration: duration,
+            startText: $model.trimStartText,
+            endText: $model.trimEndText,
+            isDimmed: model.trimIsInvalid)
+        }
+
+        LabeledContent("Start") {
+          TextField("Start", text: $model.trimStartText, prompt: Text("0:00"))
+            .labelsHidden()
+        }
+        LabeledContent("End") {
+          TextField("End", text: $model.trimEndText, prompt: Text("End of video"))
+            .labelsHidden()
+        }
+        if let selected = model.effectiveDuration {
+          LabeledContent("Duration") {
+            Text(Timecode.spelled(selected))
+              .foregroundStyle(.secondary)
+          }
+        }
+        if model.trimIsInvalid {
+          Label(
+            "Use h:mm:ss, m:ss, or seconds. The end must come after the start, "
+              + "and both must fall inside the video.",
+            systemImage: "exclamationmark.triangle")
+            .font(.caption)
+            .foregroundStyle(.red)
+        }
       }
     }
   }
@@ -511,4 +534,13 @@ extension VideoInfo {
 /// two halves of the overwrite warning, which have to appear together.
 #Preview("Name already taken") {
   IntakeWindow(model: previewModel(fileExists: { _ in true }))
+}
+
+/// The timeline in the window it actually lives in, at a real VOD's length,
+/// with a trim set. The section is otherwise only reachable by clicking.
+#Preview("Video - trimmed") {
+  let model = previewModel()
+  model.isTrimEnabled = true
+  model.trimStartText = "00:02:00"
+  return IntakeWindow(model: model)
 }
