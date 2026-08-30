@@ -29,6 +29,8 @@ struct StepRow: View {
   /// rather than computed inline in the body — see `revealTarget` below.
   let checkRevealTarget: () async -> RevealTarget?
 
+  @Environment(\.colorScheme) private var colorScheme
+
   @State private var revealTarget: RevealTarget?
 
   var body: some View {
@@ -77,7 +79,7 @@ struct StepRow: View {
     VStack(alignment: .leading, spacing: 4) {
       HStack(spacing: QueueMetrics.iconSpacing) {
         Image(systemName: icon.name)
-          .foregroundStyle(icon.tone.color)
+          .foregroundStyle(icon.tone.color(for: colorScheme))
           .frame(width: QueueMetrics.icon, height: QueueMetrics.titleLine)
           .accessibilityHidden(true)
 
@@ -229,6 +231,8 @@ struct ProgressLine: View {
   /// still right for a step whose phases we cannot name.
   var phases: StepPhases?
 
+  @Environment(\.colorScheme) private var colorScheme
+
   var body: some View {
     let display = ProgressDisplay(progress: progress)
     let segmented = phases.flatMap { $0.index(matching: progress) != nil ? $0 : nil }
@@ -257,6 +261,11 @@ struct ProgressLine: View {
       .foregroundStyle(.secondary)
       .monospacedDigit()
     }
+    // Covers both `ProgressView` branches above. `PhaseProgressBar` fills
+    // itself from `Brand` directly — a tint reaches a control's own style, not
+    // a `Capsule` somebody drew — so all three bars agree only because both
+    // routes read the same value.
+    .tint(Brand.progressFill(for: colorScheme))
   }
 }
 

@@ -63,6 +63,43 @@ nonisolated enum Brand {
   static func updateBanner(for scheme: ColorScheme) -> BannerPalette {
     scheme == .dark ? updateBannerDark : updateBannerLight
   }
+
+  // MARK: - Progress
+
+  /// What a progress bar fills with in light mode.
+  ///
+  /// The one place the app spends colour on something that is neither a status
+  /// nor a banner. A progress bar is the longest-lived colour on screen — a
+  /// six-hour VOD means six hours of it — which makes it the natural place to
+  /// put the brand rather than the system accent, and the last place to want
+  /// anything loud.
+  ///
+  /// Neither fill is a value from the website ramp, unlike everything above
+  /// them: this one sits a shade above `--color-accent-2-700` (`#5C5783`) on
+  /// the muted ramp, and both are cooler than anything on either ramp — green
+  /// edges above red here, where every published value has red above green.
+  /// They are a family with each other rather than with the stylesheet.
+  static let progressLight = Color(hex: 0x62658E)
+
+  /// What a progress bar fills with in dark mode.
+  ///
+  /// **Lighter than the light-mode fill, which is the whole point** and reads
+  /// backwards at a glance. A bar is a solid shape on a background, not text:
+  /// in light mode it has to be darker than a white window, and in dark mode
+  /// lighter than a near-black one, so the two values move in the same
+  /// direction as their backgrounds rather than opposite ones.
+  /// `darkModeGetsTheLighterOfTheTwoFills` pins that, because "the dark
+  /// appearance should get the darker colour" is exactly the tidy-up that
+  /// would undo it.
+  ///
+  /// Lands beside `--color-accent-2-600` (`#7972A9`) in lightness, cooler in
+  /// the same way its light-mode counterpart is.
+  static let progressDark = Color(hex: 0x7A7DA3)
+
+  /// The fill for an appearance.
+  static func progressFill(for scheme: ColorScheme) -> Color {
+    scheme == .dark ? progressDark : progressLight
+  }
 }
 
 nonisolated extension Color {
