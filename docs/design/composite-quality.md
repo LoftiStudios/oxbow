@@ -195,6 +195,12 @@ needs ~0.36 bpp at 1824x1026**@30** but ~0.17 bpp at 1080p**60**. At 60fps
 consecutive frames are more alike, so the same result costs half the bits per
 pixel. A single constant over-serves 60fps or starves 30fps.
 
+*(This obstacle is dissolved rather than solved by
+[`composite-rate-control.md`](composite-rate-control.md): under a quality
+target, bits-per-pixel is an output, not an input. Measured at equal quality it
+still varies 0.053–0.072 across geometries — which is exactly why no bpp
+constant could have worked.)*
+
 ---
 
 ## 5. Can content difficulty be predicted? Partly
@@ -368,10 +374,17 @@ the middle piece.
   [`fragmented-output.md`](fragmented-output.md) were most careful about.
 - The calibration in §8.2 is two points; its absolute levels are rough.
 
-**Written up as [`composite-sections.md`](composite-sections.md)**, which
-settles the section length by measurement (60 seconds: +3.6% wall clock, no
-adaptation lost), keeps the analysis out of a new `StepKind`, and identifies
-frame-exactness across 360 boundaries as the most likely subtle bug.
+**Superseded.** Per-section allocation was designed in full and killed by its
+own preconditions: the cheap metrics do not rank sections reliably *within* a
+stream (one stream's need doubles while the metric moves 7%; another's metric
+swings 2.6x while the need is flat).
+
+The answer is simpler and is in
+[`composite-rate-control.md`](composite-rate-control.md): give
+`h264_videotoolbox` a **quality** target instead of a bitrate and let it
+measure difficulty by encoding, rather than predicting it from a proxy. One
+`q:v 50` holds quality within 1.9 dB across a 5.3x bitrate spread, and beats a
+fixed bitrate by **+6.3 dB at the same bits**.
 
 ---
 
@@ -456,10 +469,10 @@ Three rules §9 earned:
 
 ## 11. Next
 
-1. **Per-section allocation (§8).** Designed in
-   [`composite-sections.md`](composite-sections.md); not built. Two things
-   must be settled first: widen the two-point calibration, and verify seek
-   cost at a five-hour offset.
+1. **Constant-quality rate control.**
+   [`composite-rate-control.md`](composite-rate-control.md). Replaces both the
+   0.12 constant and the per-section design. One argv change; the open
+   question is what happens to the intake's size estimate.
 2. **Widen §5's sample if the metric is to drive anything absolute.** Ten more
    VODs would tell you whether +0.68 improves or is a ceiling. Not needed for
    §8, which uses ranking only.
