@@ -86,6 +86,11 @@ public struct FFmpegProgressParser: Sendable {
     // "no data yet" apart from a stalled `remaining`.
     result.speed = speed
 
+    // `Int.init` rather than a lenient parse: FFmpeg writes `total_size=N/A`
+    // until the first packet is muxed, and that is the absence of a number
+    // rather than a zero. A zero would project a zero-byte output.
+    result.bytesWritten = fields["total_size"].flatMap(Int.init)
+
     // Early blocks report a degenerate speed (e.g. `0.00x`); dividing by it
     // would give an infinite remaining time, so it is simply not reported.
     if let elapsed, let speed, speed > 0, total > elapsed {

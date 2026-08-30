@@ -47,6 +47,57 @@ struct FFmpegProgressParserTests {
     #expect(remaining > .seconds(2) && remaining < .seconds(2.2))
   }
 
+  /// `total_size` is the only signal the app has for how big a composite is
+  /// becoming.
+  ///
+  /// `.composite` asks the encoder for a quality rather than a bitrate
+  /// (`composite-rate-control.md`), so the output size is not knowable in
+  /// advance — and §7.1 there establishes that it cannot be capped either,
+  /// because `-maxrate` displaces quality targeting instead of bounding it.
+  /// The mitigation is that a runaway encode announces itself: bytes written
+  /// over fraction complete is a live projection that converges early.
+  ///
+  /// FFmpeg has always emitted this; it was simply never read.
+  @Test func reportsBytesWrittenSoFar() throws {
+    let progress = try #require(lines(block).compactMap { line -> StepProgress? in
+      if case .status(let p) = line { return p } else { return nil }
+    }.last)
+    #expect(progress.bytesWritten == 6_411_550)
+  }
+
+  /// `total_size=N/A` appears before the first packet is muxed. It is the
+  /// absence of a number, not a zero.
+  @Test func treatsAnUnavailableSizeAsAbsent() throws {
+    let text = block.replacingOccurrences(of: "total_size=6411550", with: "total_size=N/A")
+    let progress = try #require(lines(text).compactMap { line -> StepProgress? in
+      if case .status(let p) = line { return p } else { return nil }
+    }.last)
+    #expect(progress.bytesWritten == nil)
+  }
+
+  // MARK: - Projected size
+
+  /// Bytes so far over fraction complete. The composite's size is unknowable
+  /// in advance under a quality target, so this is the only number that can
+  /// warn anyone a job is heading somewhere unexpected.
+  @Test func projectsTheFinalSizeFromBytesAndProgress() {
+    let p = StepProgress(fraction: 0.25, bytesWritten: 1_000_000_000)
+    #expect(p.projectedBytes == 4_000_000_000)
+  }
+
+  /// The first blocks are all I-frames and a tiny denominator, so an early
+  /// projection is not wrong so much as meaningless — 0.3% complete would
+  /// project a wildly inflated total and then visibly collapse, which reads as
+  /// a broken number rather than a converging one.
+  @Test func refusesToProjectFromTheFirstFewPercent() {
+    #expect(StepProgress(fraction: 0.003, bytesWritten: 50_000_000).projectedBytes == nil)
+    #expect(StepProgress(fraction: 0, bytesWritten: 50_000_000).projectedBytes == nil)
+  }
+
+  @Test func hasNoProjectionWithoutBytes() {
+    #expect(StepProgress(fraction: 0.5).projectedBytes == nil)
+  }
+
   /// Reading a clock is not this type's job; `StepProgress` is all-optional
   /// precisely so a parser can decline to fill a field.
   @Test func neverReportsElapsed() {

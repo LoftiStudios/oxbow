@@ -252,6 +252,7 @@ struct ProgressLine: View {
         // opening the log.
         if let rate = display.rate { Text(rate) }
         if let remaining = display.remaining { Text(remaining) }
+        if let size = display.projectedSize { Text(size) }
       }
       .font(.caption)
       .foregroundStyle(.secondary)
@@ -304,7 +305,7 @@ struct ProgressLine: View {
       step: Step(
         id: StepID(rawValue: UUID()),
         kind: .composite(CompositeRequest(
-          framerate: 30, bitrateMbps: 8, duration: .seconds(60),
+          framerate: 30, duration: .seconds(60),
           destination: URL(filePath: "/tmp/out.mp4"))),
         status: .queued),
       jobStatus: .running,
@@ -326,7 +327,7 @@ struct ProgressLine: View {
       step: Step(
         id: StepID(rawValue: UUID()),
         kind: .composite(CompositeRequest(
-          framerate: 30, bitrateMbps: 8, duration: .seconds(3600),
+          framerate: 30, duration: .seconds(3600),
           destination: URL(filePath: "/tmp/out.mp4"))),
         status: .running,
         progress: StepProgress(phase: "Combining", fraction: 0.63)),
@@ -354,7 +355,7 @@ struct ProgressLine: View {
       step: Step(
         id: StepID(rawValue: UUID()),
         kind: .composite(CompositeRequest(
-          framerate: 30, bitrateMbps: 8, duration: .seconds(3600),
+          framerate: 30, duration: .seconds(3600),
           destination: URL(filePath: "/Users/someone/Downloads/out.mp4"))),
         status: .done),
       jobStatus: .done,

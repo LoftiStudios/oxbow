@@ -170,7 +170,7 @@ struct StepPhasesTests {
 
   @Test func aCompositeIsOnePhaseThatSimplyFills() throws {
     let request = CompositeRequest(
-      framerate: 60, bitrateMbps: 8, duration: .seconds(60),
+      framerate: 60, duration: .seconds(60),
       destination: URL(filePath: "/out/x.mp4"))
     let phases = try #require(StepPhases.expected(for: .composite(request)))
     #expect(phases.phases.count == 1)

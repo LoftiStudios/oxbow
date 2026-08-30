@@ -44,7 +44,7 @@ struct JobTemplateTests {
       media: .video(VideoRequest(videoID: "v", quality: "1080p60")),
       render: RenderRequest(),
       composite: CompositeRequest(
-        framerate: 60, bitrateMbps: 8, duration: .seconds(60),
+        framerate: 60, duration: .seconds(60),
         destination: URL(filePath: "/out/x.mp4")))
   }
 
@@ -403,7 +403,7 @@ struct JobTemplateTests {
       media: .video(VideoRequest(videoID: "v", quality: "1080p60")),
       render: RenderRequest(),
       composite: CompositeRequest(
-        framerate: 60, bitrateMbps: 8, duration: .seconds(60),
+        framerate: 60, duration: .seconds(60),
         destination: URL(filePath: "/out/x.mp4")))
 
     var n = 0
@@ -448,7 +448,7 @@ struct JobTemplateTests {
     let template = JobTemplate(
       media: .video(VideoRequest(videoID: "v", quality: "1080p60")),
       composite: CompositeRequest(
-        framerate: 60, bitrateMbps: 8, duration: .seconds(60),
+        framerate: 60, duration: .seconds(60),
         destination: URL(filePath: "/out/x.mp4")))
 
     var n = 0
@@ -486,7 +486,7 @@ struct JobTemplateTests {
   @Test func aCompositeWithNoMediaIsNotBuilt() {
     let template = JobTemplate(
       composite: CompositeRequest(
-        framerate: 60, bitrateMbps: 8, duration: .seconds(60),
+        framerate: 60, duration: .seconds(60),
         destination: URL(filePath: "/out/x.mp4")))
 
     var n = 0
@@ -509,7 +509,7 @@ struct JobTemplateTests {
       media: .video(video),
       render: render,
       composite: CompositeRequest(
-        framerate: 60, bitrateMbps: 8, duration: .seconds(60),
+        framerate: 60, duration: .seconds(60),
         destination: URL(filePath: "/out/x.mp4")))
     var job = makeJob(template)
 

@@ -447,7 +447,6 @@ struct ResumeEndToEndTests {
       fontSize: geometry.fontSize(for: .default))
     let compositeRequest = CompositeRequest(
       framerate: geometry.videoFramerate,
-      bitrateMbps: geometry.compositeBitrateMbps(),
       duration: Self.contentDuration,
       destination: scratch.appending(path: "delivered.mp4"))
     let assembleRequest = AssembleRequest(destination: scratch.appending(path: "delivered.mp4"))

@@ -138,7 +138,7 @@ struct JobInfoTests {
       step(.downloadChat(ChatRequest(videoID: "1", format: .json, destination: nil))),
       step(.renderChat(RenderRequest(destination: nil))),
       step(.composite(CompositeRequest(
-        framerate: 60, bitrateMbps: 6, duration: .seconds(60),
+        framerate: 60, duration: .seconds(60),
         destination: Self.folder.appending(path: "a.mp4")))))
 
     #expect(JobInfo(job: subject).outputs == ["Video + chat"])
@@ -173,7 +173,7 @@ struct JobInfoTests {
   @Test func excludesARetainedPieceEvenWhenTheCompositeStepStillClaimsOne() {
     let piece = URL(filePath: "/Caches/studio.lofti.Oxbow/resume/abc/piece-0.mp4")
     let composite = CompositeRequest(
-      framerate: 60, bitrateMbps: 6, duration: .seconds(60),
+      framerate: 60, duration: .seconds(60),
       destination: Self.folder.appending(path: "out.mp4"))
     let subject = job(
       step(
@@ -194,7 +194,7 @@ struct JobInfoTests {
   @Test func reportsTheChatColumnGeometryOfAComposite() {
     let render = RenderRequest(width: 420, height: 800, framerate: 30, destination: nil)
     let composite = CompositeRequest(
-      framerate: 60, bitrateMbps: 6, duration: .seconds(60),
+      framerate: 60, duration: .seconds(60),
       destination: Self.folder.appending(path: "a.mp4"))
     let rows = JobInfo(job: job(step(.renderChat(render)), step(.composite(composite)))).renderSettings
 

@@ -133,7 +133,7 @@ struct SidecarRewriteFFmpegTests {
       resumeFrom: .seconds(resumeSeconds),
       hasUsableSidecar: false)
     let request = CompositeRequest(
-      framerate: 10, bitrateMbps: 1, duration: .seconds(sourceDuration), destination: pieceOutput)
+      framerate: 10, duration: .seconds(sourceDuration), destination: pieceOutput)
     let arguments = ArgumentBuilder.arguments(for: .composite(request), context: context)
 
     // Same shape `ArgumentBuilderTests` already asserts on synthetic paths —

@@ -162,7 +162,7 @@ struct ModelTests {
   @Test func deliveredArtifactIsNilForACompositeStepEvenWithAnArtifact() {
     let piece = URL(filePath: "/Caches/studio.lofti.Oxbow/resume/abc/piece-0.mp4")
     let composite = CompositeRequest(
-      framerate: 30, bitrateMbps: 8, duration: .seconds(60),
+      framerate: 30, duration: .seconds(60),
       destination: Self.folder.appending(path: "out.mp4"))
     #expect(step(.composite(composite), artifact: piece).deliveredArtifact == nil)
   }
@@ -192,7 +192,7 @@ struct ModelTests {
     let piece = URL(filePath: "/Caches/studio.lofti.Oxbow/resume/abc/piece-0.mp4")
     let destination = Self.folder.appending(path: "out.mp4")
     let composite = CompositeRequest(
-      framerate: 30, bitrateMbps: 8, duration: .seconds(60), destination: destination)
+      framerate: 30, duration: .seconds(60), destination: destination)
     let subject = Job(
       id: JobID(rawValue: UUID()), created: .now, title: "t",
       steps: [

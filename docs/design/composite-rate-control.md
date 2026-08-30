@@ -189,112 +189,76 @@ Whether `compositeBitrateMbps()` survives as a size *estimator* is §6.
 
 ---
 
-## 6. The consequence: size stops being predictable
+## 6. Size estimation — a correction
 
-This is the real cost, and it is a product question rather than a technical
-one.
+**An earlier draft of this section was wrong, and the error is worth keeping
+rather than quietly deleting.**
 
-Today the intake can say "about 48 GB" before the job starts, because the
-bitrate is known in advance. Under constant quality the same job is somewhere
-between 9 and 47 GB and **nothing knows which until the encode runs**. That is
-the same fact that makes the feature good — the file is as big as the content
-needs — but it removes a number the intake currently shows.
+It claimed the intake shows a composite output size derived from
+`compositeBitrateMbps()`, and that switching to `-q:v` would break it. It then
+designed a "typical and maximum" replacement, rejected a probe, and rejected a
+duration curve — all to solve a problem that does not exist.
 
-### 6.1 A probe at intake was considered and rejected
+**What the app actually shows.** The only size estimate in the intake is in the
+quality picker, one row per rendition:
 
-Encoding ten seconds at `q:v 50` and extrapolating would give a real number.
-It is the wrong trade:
+```
+1080p60 · 1920x1080 — about 4.2 GB
+```
 
-- **It costs 15–30 seconds** on good hardware and a fast connection, and more
-  on a base Mac. A faithful probe needs a chat download, a video slice, a chat
-  render and a composite; the chat render is the CPU-heavy part.
-- **The intake downloads nothing today.** A probe makes pasting a URL a
-  network-and-disk operation.
-- **The settings that change the answer are on the same screen.** Quality, trim
-  start and end, and whether chat is included all invalidate a probe. Either it
-  re-runs on every change (unusable) or it hides behind a button (worse than no
-  estimate).
+That is `StreamQuality.estimatedBytes(over:)`, which is `bitsPerSecond x
+duration` — the **source download** size. `compositeBitrateMbps()` feeds no
+display anywhere; its only caller sets the encode bitrate on
+`CompositeRequest`.
 
-The second and third points are structural, not latency that better
-engineering could remove.
+**Consequences of the correction:**
 
-### 6.2 There is no free estimate either
+- Switching to `-q:v` **breaks no displayed number.** The picker's estimate is
+  about the download, which is unaffected.
+- The relabel to "typical and maximum" is **unnecessary**. Nothing to relabel.
+- `compositeBitrateMbps()` becomes genuinely unused once the composite stops
+  reading it, rather than surviving as an estimator.
 
-The source's advertised bitrate arrives free with `info`, so it is the obvious
-candidate. It is **anti-correlated** with the constant-quality output size:
+### 6.1 What is still true, and still worth doing
 
-| window | source | q50 output |
-|---|---|---|
-| frankie 2D | 8.56 Mbps | 3.3 Mbps |
-| marzzzzy talk | 8.44 | 3.3 |
-| fps shooter | 6.89 | **17.5** |
-| leigh FF7 | 6.40 | 7.8 |
+**No output size is shown at any point** — not before the job, not during it,
+and the composite is the longest step in the app by a wide margin. That was
+already true under a fixed bitrate; constant quality does not make it worse,
+but it does remove the one thing that would have made an up-front estimate
+possible even in principle.
 
-Spearman **−0.60** (n=6). It would confidently predict backwards, which is
-worse than showing nothing. Consistent with `composite-quality.md` §4.1, where
-the same field is anti-correlated with need under a fixed bitrate.
-
-### 6.3 A duration curve: measured, and not worth building
-
-Longer content averages its peaks away, so a duration-dependent ceiling is
-tempting. Measured on two 20-minute composites at `q:v 50`, taking the maximum
-rolling average at each window length:
-
-| window | busy shooter | quiet 2D RPG |
-|---|---|---|
-| 1 min | 22.5 Mbps (**127%** of ceiling) | 8.4 Mbps |
-| 5 min | 19.9 (112%) | 6.0 |
-| 10 min | 17.3 (98%) | 5.6 |
-| 20 min | 14.2 (**80%**) | 4.9 (**28%**) |
-
-Three things fall out, and together they say no.
-
-**Short content exceeds the ceiling rather than meeting it.** At one minute the
-busy stream wants 127% of the 0.12 bpp constant. Any curve anchored at "100%
-for short content" is wrong in the dangerous direction — under-promising disk.
-
-**The duration effect is real and consistent** — 1.59x for the busy stream from
-one minute to twenty, 1.70x for the quiet one — so it *would* be a reliable
-correction.
-
-**But content moves it 2.9x and duration only 1.6x.** A curve saying "80% at
-twenty minutes" is right for the shooter and **three times too high** for the
-2D RPG. It fixes the smaller term while the larger one is untouched, and it
-cannot be fixed, because §6.2 shows nothing predicts content.
-
-And where the correction is largest it does not matter: a clip is short *and*
-is the spectacle, so it is the case that most exceeds the ceiling — but sixty
-seconds at 22.5 Mbps is **169 MB**, so a 27% under-estimate is 45 MB.
-
-### 6.4 What to do instead
-
-**At intake, show a typical and a maximum.** Both fall out of
-`compositeBitrateMbps()`, which stops steering the encode and becomes what it
-is actually good at — a ceiling. It returns 0.12 bpp and the worst case
-measured under `q:v 50` was 0.119, so it is an excellent one.
-
-The typical is the median of the measured distribution, ~35% of the ceiling.
-For a six-hour 1080p60 job that is "usually around 17 GB, up to 48 GB" rather
-than a flat "about 48 GB". A range is more useful for deciding than a worst
-case, and it is honest about the thing that is genuinely unknown.
-
-*The typical figure rests on six windows and should be widened before it goes
-on screen.*
-
-**During the composite, replace it with the truth.** FFmpeg's `-progress`
-stream already emits `total_size` every block — it is in this repo's own
-`FFmpegProgressParser` fixture and simply is not extracted yet. Projecting
+**The live projection is still worth building, and now for a safety reason
+rather than a UX one.** §7.2 establishes that constant quality has no
+enforceable ceiling and that `-maxrate` cannot supply one. The mitigation for a
+runaway encode is that it *announces itself*: FFmpeg's `-progress` stream
+already emits `total_size` every block — it is in this repo's own
+`FFmpegProgressParser` fixture and simply is not extracted — so projecting
 `total_size / fraction` gives a live estimate that converges within the first
-minutes and then tracks real content drift.
+minutes.
 
-That needs one more key parsed, one more field on `StepProgress`, and a
-display. It lands squarely in the file `development.md` says exists to isolate
-exactly this kind of parsing, and it costs nothing at runtime.
+Without it, a job heading for 300 GB looks exactly like a job heading for 30
+until the disk fills. That is the argument for building it, and it does not
+depend on anything the earlier draft claimed.
 
-**On completion the queue shows the real size**, which needs nothing new.
+### 6.2 The rejected alternatives, which stand on their own
 
-Honest at every stage, no probe, and the number improves rather than going
-stale.
+Both were measured for the wrong reason and remain useful findings.
+
+**A probe at intake** — rejected structurally, not for latency. The settings
+that change the answer (quality, trim, whether chat is included) live on the
+same screen, so it would re-run on every change. It also makes pasting a URL a
+network-and-disk operation in a screen that downloads nothing today.
+
+**The source's advertised bitrate as a predictor** — free, and
+**anti-correlated** with the constant-quality output size (Spearman −0.60,
+n=6): the two highest-bitrate sources produce the two smallest outputs. Worth
+recording because it is the third place in this investigation where that field
+has misled — see `composite-quality.md` §4.1.
+
+**A duration curve** — measured on two 20-minute composites. Short content
+*exceeds* the ceiling rather than meeting it (127% at one minute), and content
+moves the answer 2.9x where duration moves it 1.6x, so a curve reading 80% at
+twenty minutes is right for a shooter and three times too high for a 2D RPG.
 
 ## 7. The three gates, measured
 

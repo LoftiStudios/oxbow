@@ -49,7 +49,6 @@ enum Build {
       id: stepID(n),
       kind: .composite(CompositeRequest(
         framerate: 60,
-        bitrateMbps: 8,
         duration: .seconds(60),
         destination: URL(filePath: "/tmp/c.mp4"))),
       status: status,
