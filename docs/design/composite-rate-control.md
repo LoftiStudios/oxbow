@@ -1,7 +1,8 @@
 # Composite rate control: constant quality, not a bitrate
 
-**Status:** measured 2026-08-29/30. The change is one argument. Three things
-remain unverified before shipping (§7).
+**Status:** measured 2026-08-29/30. The change is one argument, and its three
+shipping gates are cleared (§7). What remains is §6 — the intake's size
+estimate — which must land in the same change.
 
 **Prerequisite reading:** [`composite-quality.md`](composite-quality.md)
 establishes that the composite starves the chat column and that no single
@@ -295,26 +296,121 @@ exactly this kind of parsing, and it costs nothing at runtime.
 Honest at every stage, no probe, and the number improves rather than going
 stale.
 
-## 7. Not verified
+## 7. The three gates, measured
 
-- **Bitrate ceiling.** Nothing in these measurements bounds what `q:v 50`
-  might choose on pathological content — heavy film grain, confetti, a
-  particle-heavy fighting game at 4K. A `-maxrate`/`-bufsize` guard may be
-  wanted, and its interaction with VideoToolbox is untested.
-- **Long-run behaviour.** Every measurement here is 180 seconds. A six-hour
-  encode's rate control may drift in ways a three-minute window cannot show.
-- **`-q:v` support across target machines.** Verified on this Apple Silicon Mac
-  only. `docs/development.md` sets the deployment target at macOS 15, and
-  VideoToolbox's constant-quality mode is not equally available on all
-  hardware — on Intel Macs it is documented as unsupported for H.264. The app
-  is arm64-only (`architecture.md` §7), which likely makes this moot, but
-  "likely" is not a measurement.
-- **Fragmented output.** All the composites above were written with the
-  standard `-movflags`; the app also passes
-  `+frag_keyframe+empty_moov+default_base_moof`. No reason to expect an
-  interaction, and no evidence there isn't one.
+All three cleared 2026-08-30. One produced a trap worth more than the gate
+itself.
 
----
+### 7.1 `-maxrate` must NOT be used — it silently disables constant quality
+
+The obvious guard against a runaway bitrate is `-maxrate`. **It does the
+opposite of what it looks like.**
+
+| | resulting bitrate |
+|---|---|
+| ordinary content, `-q:v 50` | **5.0 Mbps** |
+| ordinary content, `-q:v 50 -maxrate 30M -bufsize 60M` | **19.3 Mbps** |
+
+Nearly 4x *more*, not capped. And it does not respect its own value: on pure
+noise, `-maxrate` of 5M, 8M and 15M all produced 25–27 Mbps, with `-bufsize`
+making no difference.
+
+The encoder's option list explains it. **Neither `-q:v` nor `-maxrate` is an
+encoder option at all** — `h264_videotoolbox` declares `profile`, `level`,
+`coder`, `constant_bit_rate`, `spatial_aq` and others, but not these. `-q:v`
+travels the generic `global_quality`/`QSCALE` path onto
+`kVTCompressionPropertyKey_Quality`; `-maxrate` maps to `DataRateLimits`,
+which is a **hard windowed limit and a different rate-control mode**. Setting
+it switches the encoder out of quality mode rather than bounding it.
+
+**So there is no way to cap constant quality.** See §7.2 for why that is
+tolerable.
+
+### 7.2 The unbounded ceiling is real, pre-existing, and bounded in practice
+
+Synthetic worst cases are alarming:
+
+| input | mode | result |
+|---|---|---|
+| pure random noise | `-q:v 50` | **545.9 Mbps** |
+| pure random noise | `-b:v 8M` *(today's mode)* | **78.9 Mbps** |
+| real footage + heavy grain (`noise=alls=40`) | `-q:v 50` | 87.4 Mbps |
+| real footage, ungrained | `-q:v 50` | 5.0 Mbps |
+
+Two things make this acceptable.
+
+**It is not a regression.** Today's `-b:v` overshoots its own target roughly
+tenfold on the same pathological input — 78.9 Mbps from an 8 Mbps request. The
+composite has never had a guaranteed ceiling.
+
+**The source bounds it.** Twitch delivers an H.264 stream at 6–8.5 Mbps, which
+has already low-passed the content before we see it; anything that would
+explode our encoder would have exploded Twitch's first. Measured across six
+real windows, our output is **0.39x to 2.54x** the source's bitrate, so the
+practical worst case at 1080p60 is around **22 Mbps** — consistent with the
+17.5 Mbps maximum actually observed across sixteen samples, and nowhere near
+the synthetic figures.
+
+The residual risk is handled by §6's live projection: a runaway job announces
+itself in the progress display within the first minute, which is a better
+outcome than a hard cap that silently degrades quality instead.
+
+### 7.3 Long-run behaviour: no drift
+
+One hour of the worst-case shooter, composited end to end at `q:v 50`:
+
+| | |
+|---|---|
+| duration | **01:00:00.02** — no truncation |
+| output | 6.43 GB, 15.3 Mbps average |
+| full decode | clean, no warnings |
+| encode speed | ~4.8x realtime |
+
+Per ten-minute block: 12.7, 15.6, 17.6, **18.7**, **12.0**, 15.4 Mbps. The
+variation is **non-monotonic** — the fourth block is the highest and the fifth
+the lowest — so it is content, not rate control wandering. Six-hour projection
+for the busiest content measured: **41 GB, against today's flat 48**.
+
+### 7.4 Other hardware: identical
+
+The same `lavfi` source, byte-identical on both machines. A base M2 mini
+(8 cores, 8 GB, macOS 27) against this M1 Max:
+
+| q:v | M1 Max | M2 mini | ratio |
+|---|---|---|---|
+| 40 | 6.8 Mbps | 6.6 | 0.98x |
+| 50 | 10.8 | 10.6 | **0.99x** |
+| 60 | 18.0 | 17.9 | 0.99x |
+
+Within 1–2%, no software fallback (`-allow_sw` defaults false, so a machine
+lacking the hardware path errors rather than silently crawling), no errors.
+**`q:v 50` means the same thing on both**, so the constant is safe to hardcode.
+
+Encode time was identical too — 7s each — despite the M2 having one video
+engine to the M1 Max's two. A single stream uses one engine either way, so
+composite speed does not scale with machine tier.
+
+FFmpeg documents VideoToolbox's quality mode as Apple-Silicon-only. The app is
+arm64-only (`architecture.md` §7), so the Intel case that would genuinely
+break is already out of scope by construction.
+
+### 7.5 Closed doors
+
+- **`-spatial_aq 1`** — adaptive quantisation by spatial complexity, which
+  sounded ideal given the chat column is a distinct spatial region. Measured:
+  **identical** bitrate and identical chat-column quality. Either unsupported
+  on this silicon or already implicit.
+- **`-frames_before` / `-frames_after`** — documented as helping "smooth
+  concatenation issues". Not needed here, but they are exactly what §3's
+  abandoned per-section design would have wanted, and are recorded in case
+  anything ever concatenates separately-encoded pieces again.
+
+### 7.6 Still not verified
+
+- **Fragmented output.** The hour-long run above used the app's real
+  `-movflags`, so this is now largely covered — but the four content samples
+  in §2 did not.
+- **A full six-hour job**, as opposed to one hour extrapolated.
 
 ## 8. Testing
 
@@ -330,9 +426,21 @@ harness. Re-run it on the four windows in §2 whenever the constant changes.
 
 ## 9. Next
 
-1. **Settle §6** — the size estimate is the only user-visible regression.
-2. **Bound the ceiling** (§7) before shipping, or accept an unbounded worst
-   case knowingly.
-3. **One long-run encode** end to end, to close §7's second bullet.
+The gates are cleared and the ceiling question is answered as far as it can be
+(§7.1 shows it cannot be capped; §7.2 shows it does not need to be).
 
-Then the change itself is a single line.
+What is left is **§6**, and it is not optional: switching to `-q:v` without it
+leaves the intake displaying a number derived from a bitrate the encoder no
+longer uses. Three pieces, none large:
+
+1. **`ArgumentBuilder`** — `-b:v` becomes `-q:v 50`. Explicitly *not*
+   `-maxrate` (§7.1).
+2. **`FFmpegProgressParser`** — extract `total_size`, already in the stream and
+   in this repo's own fixture; add it to `StepProgress`; project
+   `total_size / fraction` during the composite.
+3. **The intake** — `compositeBitrateMbps()` stops steering the encode and
+   becomes the ceiling it is good at, relabelled as a maximum alongside a
+   typical.
+
+Widening the "typical" figure beyond six windows can follow; it affects a
+displayed number, not correctness.
