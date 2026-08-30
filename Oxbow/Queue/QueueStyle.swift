@@ -46,13 +46,17 @@ extension JobPresentation.Tone {
   /// the icon in one appearance and the bar beneath it in the other.
   func color(for scheme: ColorScheme) -> Color {
     switch self {
-    case .neutral: .secondary
+    // Two greys, and which one says whether the step is still going to
+    // happen — see `Tone`. Both are system semantic colours, so they follow
+    // the appearance and the increased-contrast setting without a Brand
+    // value of their own.
+    case .neutral: Color(nsColor: .tertiaryLabelColor)
+    case .pending: .secondary
     // Deliberately the progress fill itself, not a colour near it: the running
     // icon sits directly above the bar it describes, and two purples that are
     // almost the same read as a mistake where one reads as one thing.
     case .active: Brand.progressFill(for: scheme)
     case .success: .green
-    case .warning: .orange
     case .error: .red
     }
   }

@@ -39,13 +39,16 @@ nonisolated enum JobPresentation {
   /// What a status looks like: a symbol, and the tone that says what it means.
   ///
   /// Filled circles throughout, bar the warning triangle, so the icons read as
-  /// one family at 16pt — and each carries a distinct tone rather than the
-  /// single shade of secondary grey they all used to share. A queue where only
-  /// the failure is coloured makes every other state invisible at a glance,
-  /// which is exactly the job the icon column exists to do.
+  /// one family at 16pt. Tone carries a hierarchy rather than one shade of
+  /// secondary grey for everything: running is the brand purple, a settled
+  /// step is green or red, a step still to come is `pending`, and a step that
+  /// will never run is dimmer still. A queue where only the failure is
+  /// coloured makes every other state invisible at a glance, which is exactly
+  /// the job the icon column exists to do — but colouring a state that asks
+  /// nothing of the user says something is wrong when nothing is.
   static func icon(for status: JobStatus) -> (name: String, tone: Tone) {
     switch status {
-    case .queued: ("clock", .warning)
+    case .queued: ("clock", .pending)
     case .running: ("arrow.down.circle.fill", .active)
     case .done: ("checkmark.circle.fill", .success)
     case .failed: ("exclamationmark.triangle.fill", .error)
@@ -62,7 +65,7 @@ nonisolated enum JobPresentation {
   /// failed and the one that merely inherited the failure.
   static func icon(for status: StepStatus) -> (name: String, tone: Tone) {
     switch status {
-    case .queued: ("clock", .warning)
+    case .queued: ("clock", .pending)
     case .blocked: ("minus.circle.fill", .neutral)
     case .running: ("arrow.down.circle.fill", .active)
     case .done: ("checkmark.circle.fill", .success)
@@ -89,11 +92,22 @@ nonisolated enum JobPresentation {
 
   /// The meaning behind a status icon's colour. Named here and coloured in the
   /// view layer, so this type stays free of SwiftUI.
-  enum Tone: Sendable {
+  ///
+  /// `pending` and `neutral` are both greys, and the difference between them
+  /// is whether the step is still going to happen. A queued step is waiting
+  /// its turn; a blocked or cancelled one never runs. Painting them alike
+  /// would leave the glyph as the only thing saying which is which.
+  ///
+  /// There is deliberately no `warning`. Queued used to be one, which put an
+  /// orange clock on every step a composite job had not reached yet — three
+  /// or four at once, reading as a list of problems when it was the normal
+  /// path. Orange is the platform's "this needs you", and nothing here does.
+  /// The case comes back if a state ever genuinely means that.
+  enum Tone: Sendable, Equatable {
     case neutral
+    case pending
     case active
     case success
-    case warning
     case error
   }
 }
