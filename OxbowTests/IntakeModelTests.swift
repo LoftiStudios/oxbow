@@ -1067,6 +1067,34 @@ struct IntakeModelTests {
     #expect(model.trimStart == .seconds(600))
   }
 
+  /// A trim is scoped to the video it was drawn against more tightly than a
+  /// quality is: `trimIsInvalid` checks the window against `info.duration`, so
+  /// a trim carried over from a longer video does not get quietly ignored the
+  /// way a stale quality selection would — it gets rejected, leaving the
+  /// timeline dimmed and Add disabled over a video the trim was never drawn
+  /// against. Pasting a new link has to clear it, not just the quality.
+  @Test func loadingADifferentVideoClearsAnyTrimFromTheLastOne() async {
+    let long = Self.info(duration: .seconds(2400))
+    let short = Self.info(duration: .seconds(300))
+    let model = IntakeModel(
+      fetchInfo: { id in id == "1111" ? long : short },
+      enqueue: { _, _ in },
+      calendar: Self.pacific)
+
+    model.linkText = "https://www.twitch.tv/videos/1111"
+    await model.load()
+    model.isTrimEnabled = true
+    model.trimStartText = "10:00"
+    model.trimEndText = "20:00"
+
+    model.linkText = "https://www.twitch.tv/videos/2222"
+    await model.load()
+
+    #expect(!model.isTrimEnabled)
+    #expect(model.trimStartText.isEmpty)
+    #expect(model.trimEndText.isEmpty)
+  }
+
   /// A superseded fetch is not a failure. `.task(id:)` cancels the previous
   /// fetch on every edit to the link, and `generation` cannot hide it — the
   /// replacement has not necessarily incremented the counter by the time the

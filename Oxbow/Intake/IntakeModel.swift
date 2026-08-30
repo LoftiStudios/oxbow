@@ -236,6 +236,11 @@ final class IntakeModel {
       // A different video: whatever quality was picked for the last one is
       // not necessarily on offer for this one.
       quality = ""
+      // And the trim with it, for the same reason but more so: a quality that
+      // does not exist is merely ignored, while a trim from a longer video
+      // fails its bounds check and leaves the window refusing to add a job it
+      // never described.
+      isTrimEnabled = false
       name = OutputNaming.baseName(
         streamer: info.streamer,
         date: info.createdAt,

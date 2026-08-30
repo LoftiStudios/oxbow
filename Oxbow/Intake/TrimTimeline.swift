@@ -58,7 +58,11 @@ struct TrimTimeline: View {
     .frame(height: Metrics.trackHeight)
     .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { trackWidth = $0 }
     .opacity(isDimmed ? 0.4 : 1)
-    .allowsHitTesting(!isDimmed)
+    // `.disabled` rather than `.allowsHitTesting`: the latter stops the mouse
+    // but leaves the handles tab-focusable and adjustable by VoiceOver, so a
+    // nudge would overwrite the half-typed value the dimming exists to keep
+    // visible.
+    .disabled(isDimmed)
   }
 
   private var selection: some View {
@@ -244,7 +248,8 @@ private struct TimelinePreview: View {
   TimelinePreview(duration: .seconds(2400), start: "", end: "")
 }
 
-/// The second mockup: the first ten minutes cut off the front.
+/// The first ten minutes cut off the front — the common case, and the one that
+/// shows the selection fill against the untrimmed remainder.
 #Preview("40:00 - first ten minutes trimmed") {
   TimelinePreview(duration: .seconds(2400), start: "00:10:00", end: "")
 }
