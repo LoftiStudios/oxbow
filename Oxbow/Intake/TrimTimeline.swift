@@ -68,6 +68,9 @@ struct TrimTimeline: View {
       .frame(width: max(0, end - start))
       .offset(x: start)
       .frame(maxWidth: .infinity, alignment: .leading)
+      // The track is a rounded rectangle; an unclipped fill squares off its
+      // corners whenever the selection reaches either end.
+      .clipShape(.rect(cornerRadius: Metrics.corner))
   }
 
   /// Drawn over the selection fill, not under it, so the ruler reads
@@ -135,7 +138,13 @@ struct TrimTimeline: View {
   private func handle(_ edge: Handle) -> some View {
     let time = edge == .start ? startTime : endTime
     return ZStack {
-      Capsule().fill(.primary).frame(width: Metrics.line)
+      Capsule()
+        .fill(.primary)
+        // Starts below the timestamps rather than spanning the whole track:
+        // a handle parked under a label would otherwise draw a line straight
+        // through the text.
+        .frame(width: Metrics.line, height: Metrics.trackHeight - Metrics.labelRow)
+        .offset(y: Metrics.labelRow / 2)
       Circle().fill(.primary).frame(width: Metrics.dot, height: Metrics.dot)
         .offset(y: -Metrics.trackHeight / 2 + Metrics.labelRow + Metrics.dot / 2)
     }
