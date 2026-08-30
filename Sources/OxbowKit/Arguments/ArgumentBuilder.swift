@@ -159,6 +159,15 @@ public enum ArgumentBuilder {
       // frame and never overshoots to the next one. resume.md §2.
       let seek = request.resumeSeek(context.resumeFrom)
 
+      // The chat render's own seek, which is usually the same instant and
+      // occasionally is not. A render shorter than its video — they end at
+      // the last message — seeked past its own end yields zero frames, and
+      // `hstack` cannot repeat a frame that never arrived, so the composite
+      // produces nothing and still exits 0. `makeContext` clamps this to one
+      // frame inside the render's end for that case; `nil` means "no clamp
+      // needed", not "do not seek". resume.md §12.
+      let chatSeek = request.resumeSeek(context.chatResumeFrom ?? context.resumeFrom)
+
       // A second output whenever no usable sidecar exists yet — not only on
       // a first attempt. `context.hasUsableSidecar` is `false` both then and
       // when a `SIGKILL` left an earlier attempt's sidecar with no `moov`;
@@ -192,7 +201,7 @@ public enum ArgumentBuilder {
 
       return [
         "-nostdin", "-y", "-hide_banner",
-      ] + seek + ["-i", video] + seek + ["-i", chat] + thirdInput + sidecar + [
+      ] + seek + ["-i", video] + chatSeek + ["-i", chat] + thirdInput + sidecar + [
         "-filter_complex",
         // `start_time=0` pads the head; it does not shift the track. A
         // trimmed download legitimately begins its video stream after its

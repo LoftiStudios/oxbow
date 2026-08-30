@@ -501,3 +501,84 @@ audio sidecar is left corrupt, and to assert that the resumed attempt notices
 and rewrites it, and that `.assemble` then delivers a file with synced audio —
 see §2's "Verified end to end" for why that extended assertion is not yet
 confirmed against the real helper.
+
+---
+
+## 12. The chat render's own seek
+
+A resumed composite seeks both of its inputs to the same instant. That is right
+for the video and wrong, sometimes catastrophically, for the chat render.
+
+**Chat renders do not always run as long as their video.** §4's filter graph
+already knows this — it is why there is no `shortest=1`, and why `hstack`'s
+`eof_action=repeat` holds the last chat frame for the rest of the video. A
+stream that goes quiet twenty minutes before it ends produces a render twenty
+minutes shorter, and that is ordinary, not pathological.
+
+Seeking such a render past its own end yields **zero frames**. `hstack` cannot
+repeat a frame that never arrived, so the graph produces nothing at all — and
+FFmpeg **exits 0**. Measured with the bundled binary, a 60s video seeked to 30s
+beside a 5s chat render seeked to 30s:
+
+| chat length vs. seek | piece |
+|---|---|
+| chat 60s, seek 30s | 903 frames, 11.3 MB |
+| chat 5s, seek 30s | no decodable frames, 1,785 bytes |
+| chat 5s, seek clamped inside its end | 903 frames, 8.1 MB |
+
+Exit 0 in all three. Nothing downstream noticed: `.assemble` concatenated the
+empty piece as an empty segment and delivered a file truncated at the seam,
+with no error anywhere in the pipeline. The end-to-end test in §11 had been
+failing on exactly this, with `piece 1 = 1` against a reference of `7203`.
+
+**So the two seeks are separate values.** `StepContext.chatResumeFrom` is the
+resume point clamped to just inside the render's own end, which lands on its
+last frame and lets `hstack` repeat it — precisely what a first attempt shows
+at that point. `nil` means "the same as the video", which is the ordinary case
+and the behaviour that was always correct for it.
+
+### The margin is measured in the render's frames, not the composite's
+
+This is the part that is easy to get wrong, and it fails silently when you do.
+
+The two framerates are routinely different — normalising a 30fps render up to a
+60fps video is one of the filter graph's jobs. A margin of one *composite*
+frame (0.0167s at 60fps) lands **past** the last frame of a 30fps render, which
+sits 0.0333s before the end. The seek then yields nothing and the piece comes
+out empty exactly as if there had been no clamp at all. The first version of
+this did that, and the end-to-end test failed identically before and after it,
+which is what makes it worth writing down: a clamp that looks applied, prints
+a plausible number in the argv, and does nothing.
+
+`QueueEngine.makeContext` therefore reads the framerate from the *render step's
+own request* and uses two of its frames — one frame of tolerance either way.
+The cost is that the seam replays two chat frames (67ms at 30fps) rather than
+freezing on the last one. The cost of being one frame too late is the whole
+tail of the delivery.
+
+### Where the duration comes from
+
+`FragmentedMP4.duration(of:)` reads `moov` → `mvhd`, the same no-decode box
+walk the rest of that type uses. We bundle no `ffprobe` to ask, and a decode
+would be absurd for one number. It returns `nil` rather than zero when it
+cannot read a header: a caller clamping a seek must be able to tell "this
+render is N seconds long" from "I could not find out", because those call for
+opposite behaviour — clamp, or leave the seek alone.
+
+### The guard that should have caught this
+
+The defect survived because **the exit code said nothing and every existence
+check agreed**. `QueueEngine.isUsableArtifact` already knows exit codes decide
+nothing here, but "exists and is non-empty" is not sufficient for a piece: a
+filter graph that yields nothing still writes `ftyp` and `moov`, so the file is
+neither missing nor zero-length.
+
+So a composite's piece is now checked for declared samples — `trun` carries the
+count, so it is a box walk, not a decode — and a frameless piece fails the step
+with "The composite produced no video." rather than being handed to
+`.assemble`. Unreadable counts as frameless, for the same reason
+`hasUsableSidecar` fails closed: a piece we cannot read is not one to give the
+concat demuxer.
+
+This guard is the general form. The chat seek was one way to produce an empty
+piece; the guard covers the class.

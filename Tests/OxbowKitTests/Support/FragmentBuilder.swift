@@ -36,6 +36,38 @@ enum FragmentBuilder {
     return data
   }
 
+  /// An `mvhd` payload: version + flags, then creation, modification,
+  /// timescale and duration. Version 0 writes 32-bit times, version 1 writes
+  /// 64-bit ones — the only structural difference the duration reader cares
+  /// about, and the reason both are exercised.
+  static func mvhd(timescale: UInt32, duration: UInt64, version: UInt8) -> Data {
+    var payload = Data([version, 0, 0, 0])
+    if version == 1 {
+      payload.append(Data(repeating: 0, count: 16))     // creation + modification
+      var scale = timescale.bigEndian
+      withUnsafeBytes(of: &scale) { payload.append(contentsOf: $0) }
+      var value = duration.bigEndian
+      withUnsafeBytes(of: &value) { payload.append(contentsOf: $0) }
+    } else {
+      payload.append(Data(repeating: 0, count: 8))      // creation + modification
+      var scale = timescale.bigEndian
+      withUnsafeBytes(of: &scale) { payload.append(contentsOf: $0) }
+      var value = UInt32(truncatingIfNeeded: duration).bigEndian
+      withUnsafeBytes(of: &value) { payload.append(contentsOf: $0) }
+    }
+    return box("mvhd", payload)
+  }
+
+  /// An ordinary (non-fragmented) file carrying only what the duration
+  /// reader looks at: `ftyp`, then a `moov` whose first child is `mvhd`.
+  static func fileWithDuration(
+    timescale: UInt32, duration: UInt64, version: UInt8 = 0) -> Data
+  {
+    var data = box("ftyp", Data(repeating: 0, count: 8))
+    data.append(box("moov", mvhd(timescale: timescale, duration: duration, version: version)))
+    return data
+  }
+
   /// A box header declaring `size == 1` (the "read a 64-bit extended size
   /// next" signal) whose `largesize` does not fit in `Int` by default — the
   /// shape that used to trap `FragmentedMP4` outright instead of reading as

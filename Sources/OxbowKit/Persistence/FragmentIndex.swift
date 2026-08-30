@@ -129,6 +129,90 @@ public enum FragmentedMP4 {
     return false
   }
 
+  /// How long the movie is, from `moov` → `mvhd`, or `nil` if that cannot be
+  /// read.
+  ///
+  /// Exists so a resumed composite can tell whether its chat render is long
+  /// enough to seek into. Seeking a render past its own end yields zero
+  /// frames, `hstack` has no last frame to repeat, and the piece comes out
+  /// empty while FFmpeg still exits 0 — see docs/design/resume.md §12. The
+  /// clamp needs a duration, and we bundle no `ffprobe` to ask for one, so
+  /// this reads it the same no-decode way the rest of this type works.
+  ///
+  /// **`nil` is not zero.** A caller clamping a seek must be able to tell
+  /// "this render is N seconds long" from "I could not find out": the first
+  /// says clamp, the second says leave the seek alone and let the existing
+  /// behaviour stand. Returning zero for an unreadable header would clamp
+  /// every resume to the very start of the chat.
+  ///
+  /// Reads the *movie* header, not a track's. A composite's inputs are
+  /// single-track for this purpose and `mvhd` is the one duration that is
+  /// always present at a fixed place; walking `trak` → `mdia` → `mdhd` would
+  /// buy per-track precision this has no use for.
+  public static func duration(of url: URL) throws -> Duration? {
+    let handle = try FileHandle(forReadingFrom: url)
+    defer { try? handle.close() }
+    let size = Int(try handle.seekToEnd())
+
+    guard let moov = try box(named: "moov", handle: handle, start: 0, end: size),
+          let mvhd = try box(named: "mvhd", handle: handle, start: moov.start, end: moov.end)
+    else { return nil }
+
+    try handle.seek(toOffset: UInt64(mvhd.start))
+    guard let version = try handle.read(upToCount: 1)?.first else { return nil }
+
+    // version 0 writes 32-bit creation/modification times, version 1 writes
+    // 64-bit ones. Timescale is always 32-bit; duration follows it and
+    // matches the version's width. Reading one layout as the other does not
+    // fail — it returns a plausible, wrong number — so the version byte is
+    // load-bearing, not a formality.
+    let timesWidth = version == 1 ? 16 : 8
+    try handle.seek(toOffset: UInt64(mvhd.start + 4 + timesWidth))
+
+    guard let scaleBytes = try handle.read(upToCount: 4), scaleBytes.count == 4 else { return nil }
+    let timescale = scaleBytes.reduce(UInt64(0)) { $0 << 8 | UInt64($1) }
+    guard timescale > 0 else { return nil }
+
+    let durationWidth = version == 1 ? 8 : 4
+    guard let valueBytes = try handle.read(upToCount: durationWidth),
+          valueBytes.count == durationWidth
+    else { return nil }
+    let value = valueBytes.reduce(UInt64(0)) { $0 << 8 | UInt64($1) }
+
+    return .seconds(Double(value) / Double(timescale))
+  }
+
+  /// The payload bounds of the first child box of `type` between `start` and
+  /// `end`, or `nil` if there is none. Shares the header decoding — extended
+  /// `largesize`, `size == 0` meaning "to the end" — with the walks above.
+  private static func box(
+    named type: String, handle: FileHandle, start: Int, end: Int)
+    throws -> (start: Int, end: Int)?
+  {
+    var offset = start
+    while offset + 8 <= end {
+      try handle.seek(toOffset: UInt64(offset))
+      guard let header = try handle.read(upToCount: 8), header.count == 8 else { return nil }
+
+      var boxSize = Int(header[header.startIndex ..< header.startIndex + 4]
+        .reduce(0) { $0 << 8 | UInt32($1) })
+      let name = String(decoding: header[header.startIndex + 4 ..< header.startIndex + 8],
+                        as: UTF8.self)
+
+      if boxSize == 1 {
+        guard let extended = try largesize(handle: handle) else { return nil }
+        boxSize = extended
+      } else if boxSize == 0 {
+        boxSize = end - offset
+      }
+
+      guard boxSize >= 8, offset + boxSize <= end else { return nil }
+      if name == type { return (offset + 8, offset + boxSize) }
+      offset += boxSize
+    }
+    return nil
+  }
+
   /// The 64-bit `largesize` that follows a box header declaring `size == 1`.
   /// `Int(exactly:)`, not a bare `Int(...)`: a `largesize` past `Int.max`
   /// would otherwise trap, and a trap is not something the `try?` at every
