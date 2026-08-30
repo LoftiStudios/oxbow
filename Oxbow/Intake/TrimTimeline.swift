@@ -38,6 +38,12 @@ struct TrimTimeline: View {
     static let tickLabel: CGFloat = 14
     static let tickMajor: CGFloat = 10
     static let tickMinor: CGFloat = 6
+    /// How far the selection sits inside the track, top and bottom, so the
+    /// gradient still shows above and below it — without this the selection
+    /// reads as a second track laid over the first rather than as a region cut
+    /// into one.
+    static let selectionInset: CGFloat = 6
+    static let selectionCorner: CGFloat = 4
   }
 
   private var scale: TimelineScale {
@@ -49,7 +55,7 @@ struct TrimTimeline: View {
 
   var body: some View {
     ZStack(alignment: .topLeading) {
-      RoundedRectangle(cornerRadius: Metrics.corner).fill(.ultraThinMaterial)
+      RoundedRectangle(cornerRadius: Metrics.corner).fill(Self.track)
       selection
       ruler
       handle(.start)
@@ -65,17 +71,71 @@ struct TrimTimeline: View {
     .disabled(isDimmed)
   }
 
+  /// The track's own surface: a vertical wash from `#B6B5C5` down to
+  /// `#787697`.
+  ///
+  /// Fixed colours rather than a material, because the ruler is a physical
+  /// object — the point of the gradient is that light falls across a strip of
+  /// metal — and a material would take its cast from whatever sits behind the
+  /// form instead. It is dark enough at the bottom to carry the light handle
+  /// dot and light enough at the top for the timestamps to read black.
+  private static let track = LinearGradient(
+    colors: [
+      Color(red: 0xB6 / 255, green: 0xB5 / 255, blue: 0xC5 / 255),
+      Color(red: 0x78 / 255, green: 0x76 / 255, blue: 0x97 / 255),
+    ],
+    startPoint: .top,
+    endPoint: .bottom)
+
+  /// Everything drawn on the track: ticks, timestamps, handles.
+  ///
+  /// A fixed colour, not `.primary`. The track above is the same lavender in
+  /// either appearance, so its markings have to be too — `.primary` inverts to
+  /// white in dark mode and the timestamps all but vanished against the pale
+  /// top of the gradient.
+  private static let ink = Color(red: 0x1C / 255, green: 0x1B / 255, blue: 0x2A / 255)
+
+  /// The chosen range, as a channel recessed into the track.
+  ///
+  /// **Multiplied rather than laid on top.** A flat translucent fill covers the
+  /// gradient and flattens it; multiplying darkens what is already there, so
+  /// the same light-to-dark wash runs through the selection and the two read as
+  /// one surface at two depths. The inner shadow is what sells the depth — it
+  /// is the only thing here that says "cut into" rather than "painted on".
   private var selection: some View {
     let start = viewX(startTime), end = viewX(endTime)
-    return Rectangle()
-      .fill(Color.accentColor.opacity(0.28))
+    return RoundedRectangle(cornerRadius: Metrics.selectionCorner)
+      .fill(
+        Self.selectionTint.shadow(
+          .inner(color: .black.opacity(0.45), radius: 2.5, x: 0, y: 1)))
+      .blendMode(.multiply)
       .frame(width: max(0, end - start))
+      // The top inset clears the timestamps rather than matching the bottom.
+      // Multiplied through, the channel darkens the strip enough that the dark
+      // ink of a label sitting on it loses most of its contrast — so the
+      // timestamps stay out on the light band and the channel begins where the
+      // ticks do.
+      .padding(.top, Metrics.labelRow)
+      .padding(.bottom, Metrics.selectionInset)
       .offset(x: start)
       .frame(maxWidth: .infinity, alignment: .leading)
-      // The track is a rounded rectangle; an unclipped fill squares off its
-      // corners whenever the selection reaches either end.
+      // Still clipped to the track: inset vertically it can no longer overrun
+      // the top and bottom corners, but at either extreme it still meets the
+      // track's own rounded ends.
       .clipShape(.rect(cornerRadius: Metrics.corner))
   }
+
+  /// Darkens the track's own colour rather than introducing a new one — a
+  /// desaturated violet from the same family as the gradient above. The system
+  /// accent was tried here and fought it: a blue wash over a violet strip reads
+  /// as two unrelated materials.
+  ///
+  /// Light, for a multiply. The ruler is drawn over the channel in the same
+  /// dark ink it uses outside it, and a heavier tint sank the ticks inside the
+  /// selection far enough that the scale stopped reading continuously across
+  /// the two.
+  private static let selectionTint = Color(
+    red: 0xA6 / 255, green: 0xA4 / 255, blue: 0xC0 / 255)
 
   /// Drawn over the selection fill, not under it, so the ruler reads
   /// continuously across the whole track. One `Canvas` rather than 73 shape
@@ -90,7 +150,7 @@ struct TrimTimeline: View {
           path.move(to: CGPoint(x: tick.x + Metrics.inset, y: 0))
           path.addLine(to: CGPoint(x: tick.x + Metrics.inset, y: Self.length(of: tick.height)))
           context.stroke(
-            path, with: .color(.primary.opacity(Self.opacity(of: tick.height))), lineWidth: 1)
+            path, with: .color(Self.ink.opacity(Self.opacity(of: tick.height))), lineWidth: 1)
         }
       }
       .frame(height: Metrics.tickLabel)
@@ -129,6 +189,7 @@ struct TrimTimeline: View {
       }
     }
     .frame(height: Metrics.labelRow, alignment: .topLeading)
+    .foregroundStyle(Self.ink)
   }
 
   private func leftEdge(of label: TimelineScale.Label) -> CGFloat {
@@ -143,13 +204,13 @@ struct TrimTimeline: View {
     let time = edge == .start ? startTime : endTime
     return ZStack {
       Capsule()
-        .fill(.primary)
+        .fill(Self.ink)
         // Starts below the timestamps rather than spanning the whole track:
         // a handle parked under a label would otherwise draw a line straight
         // through the text.
         .frame(width: Metrics.line, height: Metrics.trackHeight - Metrics.labelRow)
         .offset(y: Metrics.labelRow / 2)
-      Circle().fill(.primary).frame(width: Metrics.dot, height: Metrics.dot)
+      Circle().fill(Self.ink).frame(width: Metrics.dot, height: Metrics.dot)
         .offset(y: -Metrics.trackHeight / 2 + Metrics.labelRow + Metrics.dot / 2)
     }
     // Both children are positioned by an offset from this box's centre, so it

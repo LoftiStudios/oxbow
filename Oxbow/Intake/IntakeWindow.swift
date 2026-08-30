@@ -237,6 +237,7 @@ struct IntakeWindow: View {
             .foregroundStyle(.secondary)
           TextField("Start", text: $model.trimStartText, prompt: Text("0:00"))
             .labelsHidden()
+            .monospacedDigit()
             .frame(width: 88)
 
           Spacer(minLength: 8)
@@ -251,9 +252,21 @@ struct IntakeWindow: View {
 
           Text("End")
             .foregroundStyle(.secondary)
+          // Trailing-aligned and sized to its contents, unlike Start. This is
+          // the right-hand end of the range and it sits under the right-hand
+          // end of the timeline, so it stays anchored there whatever it holds
+          // — in a fixed-width box the long `End of video` placeholder reached
+          // the edge while a typed `07:13:00` stopped short of it, and the
+          // label was left stranded across a gap that changed size with the
+          // value. `minWidth` keeps a half-typed value from shrinking the
+          // field to something too small to click back into, and monospaced
+          // digits stop the label twitching as the digits change under a drag.
           TextField("End", text: $model.trimEndText, prompt: Text("End of video"))
             .labelsHidden()
-            .frame(width: 88)
+            .multilineTextAlignment(.trailing)
+            .monospacedDigit()
+            .fixedSize()
+            .frame(minWidth: 64, alignment: .trailing)
         }
         if model.trimIsInvalid {
           Label(
