@@ -178,12 +178,15 @@ struct TrimTimeline: View {
     // `.pointerStyle` rather than NSCursor: no push/pop pairs to keep balanced
     // across a view that redraws on every frame of a drag.
     .pointerStyle(.frameResize(position: edge == .start ? .leading : .trailing))
-    .focusable()
-    .onKeyPress(keys: [.leftArrow, .rightArrow]) { press in
-      let steps = press.modifiers.contains(.shift) ? 10 : 1
-      nudge(edge, bySteps: press.key == .leftArrow ? -steps : steps)
-      return .handled
-    }
+    // Deliberately not `.focusable()`. Both handles are positioned by
+    // `.offset`, which moves what is drawn but not the layout frame, so both
+    // report the same full-width frame and the focus engine has no geometry to
+    // order them by — tab jumped between them arbitrarily. Giving them real
+    // layout would fix the order but not the premise: a `Slider` is one tab
+    // stop on this platform, never two, and the Start and End fields beside
+    // the timeline already carry these same two values in reading order. The
+    // handles stay a pointer affordance; VoiceOver still reaches them through
+    // the adjustable action below.
     .accessibilityLabel(edge == .start ? "Trim start" : "Trim end")
     .accessibilityValue(Timecode.format(time))
     .accessibilityAdjustableAction { direction in

@@ -228,19 +228,32 @@ struct IntakeWindow: View {
             isDimmed: model.trimIsInvalid)
         }
 
-        LabeledContent("Start") {
+        // One row, not three. As separate `LabeledContent` rows these pushed
+        // the section below the fold of the default window, and they read as
+        // three unrelated settings rather than as the two ends of one range
+        // with its length between them.
+        HStack(spacing: 8) {
+          Text("Start")
+            .foregroundStyle(.secondary)
           TextField("Start", text: $model.trimStartText, prompt: Text("0:00"))
             .labelsHidden()
-        }
-        LabeledContent("End") {
-          TextField("End", text: $model.trimEndText, prompt: Text("End of video"))
-            .labelsHidden()
-        }
-        if let selected = model.effectiveDuration {
-          LabeledContent("Duration") {
+            .frame(width: 88)
+
+          Spacer(minLength: 8)
+          if let selected = model.effectiveDuration {
+            // Not a field: it is derived from the two that are, and giving it
+            // a box would invite people to type into it.
             Text(Timecode.spelled(selected))
               .foregroundStyle(.secondary)
+              .monospacedDigit()
           }
+          Spacer(minLength: 8)
+
+          Text("End")
+            .foregroundStyle(.secondary)
+          TextField("End", text: $model.trimEndText, prompt: Text("End of video"))
+            .labelsHidden()
+            .frame(width: 88)
         }
         if model.trimIsInvalid {
           Label(
