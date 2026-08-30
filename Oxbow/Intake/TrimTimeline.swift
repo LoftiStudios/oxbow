@@ -159,6 +159,24 @@ struct TrimTimeline: View {
           guard let origin = dragOrigin else { return }
           move(edge, to: scale.time(atX: origin + value.translation.width - Metrics.inset))
         })
+    // `.pointerStyle` rather than NSCursor: no push/pop pairs to keep balanced
+    // across a view that redraws on every frame of a drag.
+    .pointerStyle(.frameResize(position: edge == .start ? .leading : .trailing))
+    .focusable()
+    .onKeyPress(keys: [.leftArrow, .rightArrow]) { press in
+      let steps = press.modifiers.contains(.shift) ? 10 : 1
+      nudge(edge, bySteps: press.key == .leftArrow ? -steps : steps)
+      return .handled
+    }
+    .accessibilityLabel(edge == .start ? "Trim start" : "Trim end")
+    .accessibilityValue(Timecode.format(time))
+    .accessibilityAdjustableAction { direction in
+      switch direction {
+      case .increment: nudge(edge, bySteps: 1)
+      case .decrement: nudge(edge, bySteps: -1)
+      @unknown default: break
+      }
+    }
   }
 
   /// Clamped so the handles keep at least `minimumSeparation` between them,
@@ -239,5 +257,5 @@ private struct TimelinePreview: View {
 /// What a half-typed trim time looks like: inert and dimmed, with the reason
 /// shown by the form's own error row rather than here.
 #Preview("Dimmed - invalid text") {
-  TimelinePreview(duration: .seconds(2400), start: "00:1", end: "", isDimmed: true)
+  TimelinePreview(duration: .seconds(2400), start: "half an hour", end: "", isDimmed: true)
 }
