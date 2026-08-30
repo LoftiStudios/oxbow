@@ -170,6 +170,7 @@ final class IntakeModel {
     linkText = ""
     name = ""
     quality = ""
+    isTrimEnabled = false
     trimStartText = ""
     trimEndText = ""
     metadata = .idle
@@ -303,8 +304,24 @@ final class IntakeModel {
     return false
   }
 
-  var trimStart: Duration? { showsTrimOptions ? Timecode.parse(trimStartText) : nil }
-  var trimEnd: Duration? { showsTrimOptions ? Timecode.parse(trimEndText) : nil }
+  /// Off by default, and turning it off clears the fields rather than merely
+  /// ignoring them. A trim that survives behind an unchecked box is state the
+  /// window is not showing, and the job would trim for a reason nothing on
+  /// screen explains.
+  var isTrimEnabled = false {
+    didSet {
+      guard !isTrimEnabled else { return }
+      trimStartText = ""
+      trimEndText = ""
+    }
+  }
+
+  /// Both conditions, not either: a clip has no trim options at all, and an
+  /// unchecked box means the whole video.
+  private var isTrimming: Bool { showsTrimOptions && isTrimEnabled }
+
+  var trimStart: Duration? { isTrimming ? Timecode.parse(trimStartText) : nil }
+  var trimEnd: Duration? { isTrimming ? Timecode.parse(trimEndText) : nil }
 
   /// `info.duration`, narrowed to the trim window when one is set. Every
   /// duration-based estimate — the size shown per quality here, and the
@@ -321,7 +338,7 @@ final class IntakeModel {
   /// before the start. Either would reach the CLI as an argument that fails
   /// minutes into a download, so Add refuses first.
   var trimIsInvalid: Bool {
-    guard showsTrimOptions else { return false }
+    guard isTrimming else { return false }
     if !Timecode.isBlankOrValid(trimStartText) || !Timecode.isBlankOrValid(trimEndText) {
       return true
     }
