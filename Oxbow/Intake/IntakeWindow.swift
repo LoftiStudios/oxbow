@@ -65,6 +65,9 @@ struct IntakeWindow: View {
     .background(HostWindowReader(window: $hostWindow))
     .defaultFocus($isLinkFocused, true)
     .onAppear(perform: prefillFromClipboard)
+    // The scene outlives the window, so closing it has to do what dismissing
+    // a sheet would have done for free. See `IntakeModel.reset()`.
+    .onDisappear(perform: model.reset)
     // Debounced here rather than in the model so the model stays synchronous
     // to test: `.task(id:)` already cancels the previous fetch when the link
     // changes, and the sleep keeps a half-typed URL from being fetched.

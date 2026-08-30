@@ -27,6 +27,106 @@ struct IntakeModelTests {
     #expect(model.folder == nil)
   }
 
+  // MARK: - Starting over
+
+  /// The bug this exists for: Add Download is one `Window` for the app's whole
+  /// run, so the model survives a close and the second open showed the first
+  /// link again.
+  @Test func resetClearsEverythingAboutTheVideoJustAdded() async {
+    let model = await loadedModel()
+    model.trimStartText = "00:01:00"
+    model.trimEndText = "00:02:00"
+    #expect(!model.linkText.isEmpty)
+    #expect(!model.name.isEmpty)
+
+    model.reset()
+
+    #expect(model.linkText.isEmpty)
+    #expect(model.name.isEmpty)
+    #expect(model.quality.isEmpty)
+    #expect(model.trimStartText.isEmpty)
+    #expect(model.trimEndText.isEmpty)
+    #expect(model.info == nil)
+    #expect(!model.hasSettledMetadata)
+  }
+
+  /// The other half of the same decision, and the one a tidy-up would undo:
+  /// a reset that also cleared these would re-ask where files go on every
+  /// single download, which is exactly what `defaultDestination` removed.
+  @Test func resetKeepsTheAnswersThatAreNotAboutThisVideo() async {
+    let model = await loadedModel()
+    model.output = .videoWithChat
+    model.chatSize = .large
+    let folder = model.folder
+
+    model.reset()
+
+    #expect(model.folder == folder)
+    #expect(model.output == .videoWithChat)
+    #expect(model.chatSize == .large)
+  }
+
+  /// A reset while a fetch is in flight must invalidate it, or the reply lands
+  /// in the emptied form and names the next download after the last one.
+  ///
+  /// The waiting matters: `reset()` empties `linkText`, so a `load()` that has
+  /// not yet reached its fetch returns at the `guard let target` instead and
+  /// the race never happens. Written without `waitForArrival` this test passes
+  /// with the `generation` bump deleted, which is to say it tests nothing.
+  /// `name` is the assertion that bites — `info` is nil either way once the
+  /// link is gone, because nothing describes a link that is not there.
+  @Test func aFetchStillInFlightCannotSettleIntoAResetForm() async {
+    let gate = AsyncGate()
+    let model = IntakeModel(
+      fetchInfo: { _ in
+        await gate.arriveAndWait()
+        return IntakeModelTests.info()
+      },
+      enqueue: { _, _ in },
+      calendar: Self.pacific)
+    model.linkText = Self.videoLink
+
+    async let loading: Void = model.load()
+    await gate.waitForArrival()
+    model.reset()
+    await gate.open()
+    await loading
+
+    #expect(model.name.isEmpty)
+    #expect(model.linkText.isEmpty)
+    #expect(!model.hasSettledMetadata)
+  }
+
+  /// Lets a fetch be held open across a `reset()`, and lets the test wait
+  /// until that fetch has genuinely started, without sleeping for either.
+  private actor AsyncGate {
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+    private var arrivals: [CheckedContinuation<Void, Never>] = []
+    private var hasArrived = false
+    private var isOpen = false
+
+    /// Called from inside the fake fetch: announces that it is running, then
+    /// blocks until `open()`.
+    func arriveAndWait() async {
+      hasArrived = true
+      for arrival in arrivals { arrival.resume() }
+      arrivals.removeAll()
+      guard !isOpen else { return }
+      await withCheckedContinuation { waiters.append($0) }
+    }
+
+    func waitForArrival() async {
+      guard !hasArrived else { return }
+      await withCheckedContinuation { arrivals.append($0) }
+    }
+
+    func open() {
+      isOpen = true
+      for waiter in waiters { waiter.resume() }
+      waiters.removeAll()
+    }
+  }
+
   // MARK: - Fixtures
 
   private static let videoLink = "https://www.twitch.tv/videos/2844548319"
