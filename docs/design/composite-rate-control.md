@@ -199,27 +199,101 @@ between 9 and 47 GB and **nothing knows which until the encode runs**. That is
 the same fact that makes the feature good — the file is as big as the content
 needs — but it removes a number the intake currently shows.
 
-Options, none yet chosen:
+### 6.1 A probe at intake was considered and rejected
 
-1. **Show a range.** Honest and immediately understandable: "9–47 GB depending
-   on how busy the video is". Wide enough to be nearly useless for planning.
-2. **Estimate from a probe.** Encode ~10 seconds at `q:v 50` and extrapolate.
-   Cheap (§4.4 bounds it at well under a second of overhead plus the encode
-   itself) and probably accurate to ±20%, but it needs the video downloaded
-   before the estimate can be shown, which is not where the intake sits.
-3. **Drop the estimate for composites.** It was always "about", and
-   `composite-quality.md` shows the number it displayed was frequently wrong in
-   the sense that mattered: it accurately predicted a file size that was the
-   wrong size to be.
-4. **Keep `compositeBitrateMbps()` purely as an estimator.** It stops steering
-   the encode and becomes a guess for the UI. Cheapest, and dishonest in a
-   small way: the number would no longer describe what the encoder does.
+Encoding ten seconds at `q:v 50` and extrapolating would give a real number.
+It is the wrong trade:
 
-Recommendation: **(2), with (1) as the fallback** while the video is not yet
-available. A probe is the only option that produces a number connected to
-reality.
+- **It costs 15–30 seconds** on good hardware and a fast connection, and more
+  on a base Mac. A faithful probe needs a chat download, a video slice, a chat
+  render and a composite; the chat render is the CPU-heavy part.
+- **The intake downloads nothing today.** A probe makes pasting a URL a
+  network-and-disk operation.
+- **The settings that change the answer are on the same screen.** Quality, trim
+  start and end, and whether chat is included all invalidate a probe. Either it
+  re-runs on every change (unusable) or it hides behind a button (worse than no
+  estimate).
 
----
+The second and third points are structural, not latency that better
+engineering could remove.
+
+### 6.2 There is no free estimate either
+
+The source's advertised bitrate arrives free with `info`, so it is the obvious
+candidate. It is **anti-correlated** with the constant-quality output size:
+
+| window | source | q50 output |
+|---|---|---|
+| frankie 2D | 8.56 Mbps | 3.3 Mbps |
+| marzzzzy talk | 8.44 | 3.3 |
+| fps shooter | 6.89 | **17.5** |
+| leigh FF7 | 6.40 | 7.8 |
+
+Spearman **−0.60** (n=6). It would confidently predict backwards, which is
+worse than showing nothing. Consistent with `composite-quality.md` §4.1, where
+the same field is anti-correlated with need under a fixed bitrate.
+
+### 6.3 A duration curve: measured, and not worth building
+
+Longer content averages its peaks away, so a duration-dependent ceiling is
+tempting. Measured on two 20-minute composites at `q:v 50`, taking the maximum
+rolling average at each window length:
+
+| window | busy shooter | quiet 2D RPG |
+|---|---|---|
+| 1 min | 22.5 Mbps (**127%** of ceiling) | 8.4 Mbps |
+| 5 min | 19.9 (112%) | 6.0 |
+| 10 min | 17.3 (98%) | 5.6 |
+| 20 min | 14.2 (**80%**) | 4.9 (**28%**) |
+
+Three things fall out, and together they say no.
+
+**Short content exceeds the ceiling rather than meeting it.** At one minute the
+busy stream wants 127% of the 0.12 bpp constant. Any curve anchored at "100%
+for short content" is wrong in the dangerous direction — under-promising disk.
+
+**The duration effect is real and consistent** — 1.59x for the busy stream from
+one minute to twenty, 1.70x for the quiet one — so it *would* be a reliable
+correction.
+
+**But content moves it 2.9x and duration only 1.6x.** A curve saying "80% at
+twenty minutes" is right for the shooter and **three times too high** for the
+2D RPG. It fixes the smaller term while the larger one is untouched, and it
+cannot be fixed, because §6.2 shows nothing predicts content.
+
+And where the correction is largest it does not matter: a clip is short *and*
+is the spectacle, so it is the case that most exceeds the ceiling — but sixty
+seconds at 22.5 Mbps is **169 MB**, so a 27% under-estimate is 45 MB.
+
+### 6.4 What to do instead
+
+**At intake, show a typical and a maximum.** Both fall out of
+`compositeBitrateMbps()`, which stops steering the encode and becomes what it
+is actually good at — a ceiling. It returns 0.12 bpp and the worst case
+measured under `q:v 50` was 0.119, so it is an excellent one.
+
+The typical is the median of the measured distribution, ~35% of the ceiling.
+For a six-hour 1080p60 job that is "usually around 17 GB, up to 48 GB" rather
+than a flat "about 48 GB". A range is more useful for deciding than a worst
+case, and it is honest about the thing that is genuinely unknown.
+
+*The typical figure rests on six windows and should be widened before it goes
+on screen.*
+
+**During the composite, replace it with the truth.** FFmpeg's `-progress`
+stream already emits `total_size` every block — it is in this repo's own
+`FFmpegProgressParser` fixture and simply is not extracted yet. Projecting
+`total_size / fraction` gives a live estimate that converges within the first
+minutes and then tracks real content drift.
+
+That needs one more key parsed, one more field on `StepProgress`, and a
+display. It lands squarely in the file `development.md` says exists to isolate
+exactly this kind of parsing, and it costs nothing at runtime.
+
+**On completion the queue shows the real size**, which needs nothing new.
+
+Honest at every stage, no probe, and the number improves rather than going
+stale.
 
 ## 7. Not verified
 
