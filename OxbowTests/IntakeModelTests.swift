@@ -891,7 +891,7 @@ struct IntakeModelTests {
   /// A trimmed video rendered against the whole VOD's chat is wrong output
   /// that looks like a success, so both requests get the same window.
   @Test func trimTimesReachBothTheVideoAndItsChat() async throws {
-    let model = await loadedModel()
+    let model = await loadedModel(info: Self.info(duration: .seconds(7200)))
     model.output = .videoWithChat
     model.isTrimEnabled = true
     model.trimStartText = "1:00"
@@ -960,6 +960,35 @@ struct IntakeModelTests {
 
     model.trimEndText = "2:01"
     #expect(model.canAdd)
+  }
+
+  /// A start past the end of the video reaches the CLI as an argument that
+  /// fails minutes into a download, which is the exact failure `trimIsInvalid`
+  /// exists to get ahead of.
+  @Test func refusesATrimPastTheEndOfTheVideo() async {
+    let model = await loadedModel(info: Self.info(duration: .seconds(2400)))
+    model.isTrimEnabled = true
+
+    model.trimStartText = "01:00:00"
+    #expect(model.trimIsInvalid)
+
+    model.trimStartText = ""
+    model.trimEndText = "01:00:00"
+    #expect(model.trimIsInvalid)
+  }
+
+  /// An end at exactly the last frame is the whole video, which is fine. A
+  /// start there selects nothing, which is not.
+  @Test func acceptsAnEndAtTheVideosLengthButNotAStartThere() async {
+    let model = await loadedModel(info: Self.info(duration: .seconds(2400)))
+    model.isTrimEnabled = true
+
+    model.trimEndText = "00:40:00"
+    #expect(!model.trimIsInvalid)
+
+    model.trimEndText = ""
+    model.trimStartText = "00:40:00"
+    #expect(model.trimIsInvalid)
   }
 
   @Test func timecodesAreReadAsSecondsMinutesAndHours() {

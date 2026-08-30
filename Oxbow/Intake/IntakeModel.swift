@@ -343,6 +343,13 @@ final class IntakeModel {
       return true
     }
     if let start = trimStart, let end = trimEnd, end <= start { return true }
+    // Against the video's own length, not just against each other. Without
+    // this a start past the end is "valid", Add stays enabled, and the
+    // refusal arrives from the CLI minutes into a download.
+    if let total = info?.duration {
+      if let start = trimStart, start >= total { return true }
+      if let end = trimEnd, end > total { return true }
+    }
     return false
   }
 
