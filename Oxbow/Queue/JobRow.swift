@@ -38,6 +38,8 @@ struct JobRow: View {
   /// that is never failed never pays for it.
   let retainedBytes: (JobID) async -> Int
 
+  @Environment(\.colorScheme) private var colorScheme
+
   @State private var isExpanded = false
   @State private var bytesRetained: Int?
 
@@ -153,7 +155,7 @@ struct JobRow: View {
 
     return HStack(spacing: QueueMetrics.iconSpacing) {
       Image(systemName: icon.name)
-        .foregroundStyle(icon.tone.color)
+        .foregroundStyle(icon.tone.color(for: colorScheme))
         .frame(width: QueueMetrics.icon, height: QueueMetrics.titleLine)
         .accessibilityHidden(true)
 
@@ -204,6 +206,10 @@ struct JobRow: View {
         retainedBytes: { _ in 0 })
     }
   }
+  // Mirrors `QueueView`, so this preview shows the banding the real list has
+  // — the one place it is visible, since the `QueueView` previews have no
+  // controller and so no rows.
+  .alternatingRowBackgrounds()
   .frame(width: 560, height: 320)
 }
 

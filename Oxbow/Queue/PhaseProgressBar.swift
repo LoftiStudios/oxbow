@@ -17,6 +17,10 @@ struct PhaseProgressBar: View {
 
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
+  /// Read here rather than inherited: the fill below is a `Color` this view
+  /// picks, not a control the environment's tint reaches.
+  @Environment(\.colorScheme) private var colorScheme
+
   private static let track: CGFloat = 5
   private static let gap: CGFloat = 3
 
@@ -56,7 +60,7 @@ struct PhaseProgressBar: View {
       .overlay(alignment: .leading) {
         GeometryReader { proxy in
           Capsule()
-            .fill(Color.accentColor)
+            .fill(Brand.progressFill(for: colorScheme))
             .frame(width: proxy.size.width * fill(at: index))
         }
       }
@@ -120,6 +124,34 @@ private let previewStages: [(String, StepProgress)] = [
   ("Finalizing Video 98% [4/4]",
    StepProgress(phase: "Finalizing Video", fraction: 0.98, index: 4, total: 4)),
 ]
+
+/// Both brand fills, side by side.
+///
+/// A progress bar is only on screen while something is downloading, so without
+/// this the only way to look at the colours is to start a real VOD and wait.
+/// Both appearances at once rather than one pinned preview each, because the
+/// two values are chosen against each other — the dark fill has to be the
+/// lighter one — and that is only checkable when they are side by side.
+#Preview("Brand fills, both appearances") {
+  HStack(alignment: .top, spacing: 0) {
+    ForEach([ColorScheme.light, .dark], id: \.self) { scheme in
+      VStack(alignment: .leading, spacing: 16) {
+        ForEach(previewStages, id: \.0) { name, progress in
+          VStack(alignment: .leading, spacing: 4) {
+            Text(name).font(.caption).foregroundStyle(.secondary)
+            PhaseProgressBar(
+              phases: StepPhases.expected(for: previewVideoKind)!,
+              progress: progress)
+          }
+        }
+      }
+      .padding()
+      .frame(width: 380)
+      .background(scheme == .dark ? Color(white: 0.12) : .white)
+      .environment(\.colorScheme, scheme)
+    }
+  }
+}
 
 #Preview("Chat render — counter vanishes on phase two") {
   let kind = StepKind.renderChat(RenderRequest(destination: URL(filePath: "/tmp/a.mp4")))

@@ -65,6 +65,9 @@ struct IntakeWindow: View {
     .background(HostWindowReader(window: $hostWindow))
     .defaultFocus($isLinkFocused, true)
     .onAppear(perform: prefillFromClipboard)
+    // The scene outlives the window, so closing it has to do what dismissing
+    // a sheet would have done for free. See `IntakeModel.reset()`.
+    .onDisappear(perform: model.reset)
     // Debounced here rather than in the model so the model stays synchronous
     // to test: `.task(id:)` already cancels the previous fetch when the link
     // changes, and the sleep keeps a half-typed URL from being fetched.
@@ -115,12 +118,29 @@ struct IntakeWindow: View {
     Section {
       TextField("Name", text: $model.name)
     } footer: {
-      // What this job will actually write, so the name field is not a guess.
-      Text(exampleFilenames)
-        .font(.caption)
-        .foregroundStyle(.secondary)
-        .frame(maxWidth: .infinity, alignment: .leading)
+      VStack(alignment: .leading, spacing: 4) {
+        // What this job will actually write, so the name field is not a guess.
+        Text(exampleFilenames)
+          .font(.caption)
+          .foregroundStyle(.secondary)
+        if let collision = model.destinationCollision {
+          // Orange, not red: nothing is wrong and nothing is blocked. Red is
+          // reserved for `addFailure` below, where the sheet is refusing.
+          Label(collisionWarning(for: collision), systemImage: "exclamationmark.triangle")
+            .font(.caption)
+            .foregroundStyle(.orange)
+            .fixedSize(horizontal: false, vertical: true)
+        }
+      }
+      .frame(maxWidth: .infinity, alignment: .leading)
     }
+  }
+
+  /// Names the folder rather than saying "the destination", so the sentence
+  /// is checkable at a glance against the folder row further down.
+  private func collisionWarning(for collision: URL) -> String {
+    let folder = collision.deletingLastPathComponent().lastPathComponent
+    return "A file with this name is already in \(folder) — adding this will replace it."
   }
 
   /// Two choices, not three independent toggles: a chat render in isolation
@@ -265,7 +285,11 @@ struct IntakeWindow: View {
       if isAdding { ProgressView().controlSize(.small) }
       Button("Cancel") { dismiss() }
         .keyboardShortcut(.cancelAction)
-      Button("Add") { add() }
+      // Named for what it does. No ellipsis: nothing further is asked for —
+      // the warning above is the whole disclosure, and this button completes
+      // the action (HIG reserves the ellipsis for actions that need more
+      // input).
+      Button(model.destinationCollision == nil ? "Add" : "Replace") { add() }
         .keyboardShortcut(.defaultAction)
         .disabled(!model.canAdd || isAdding)
     }
@@ -377,7 +401,8 @@ private struct HostWindowReader: NSViewRepresentable {
 private func previewModel(
   link: String = "https://www.twitch.tv/videos/2844548319",
   info: VideoInfo? = .previewVOD,
-  folder: URL? = URL(filePath: "/Users/you/Downloads"))
+  folder: URL? = URL(filePath: "/Users/you/Downloads"),
+  fileExists: @escaping (URL) -> Bool = { _ in false })
   -> IntakeModel
 {
   let model = IntakeModel(
@@ -385,7 +410,8 @@ private func previewModel(
       guard let info else { throw VideoInfoFetchError.unparseableOutput(snippet: "") }
       return info
     },
-    enqueue: { _, _ in })
+    enqueue: { _, _ in },
+    fileExists: fileExists)
   model.linkText = link
   model.folder = folder
   return model
@@ -478,4 +504,11 @@ extension VideoInfo {
 
 #Preview("Metadata failed") {
   IntakeWindow(model: previewModel(info: nil))
+}
+
+/// A name whose file is already sitting in the chosen folder. Exercises the
+/// caution line under the name field and the Add button's relabelling — the
+/// two halves of the overwrite warning, which have to appear together.
+#Preview("Name already taken") {
+  IntakeWindow(model: previewModel(fileExists: { _ in true }))
 }

@@ -181,12 +181,14 @@ private struct StepInfoRow: View {
   let step: Step
   let log: (StepID) async -> String?
 
+  @Environment(\.colorScheme) private var colorScheme
+
   var body: some View {
     VStack(alignment: .leading, spacing: 4) {
       HStack(spacing: QueueMetrics.iconSpacing) {
         let icon = JobPresentation.icon(for: step.status)
         Image(systemName: icon.name)
-          .foregroundStyle(icon.tone.color)
+          .foregroundStyle(icon.tone.color(for: colorScheme))
           .frame(width: QueueMetrics.icon, height: QueueMetrics.titleLine)
           .accessibilityHidden(true)
 

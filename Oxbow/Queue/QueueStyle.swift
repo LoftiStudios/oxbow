@@ -37,12 +37,26 @@ enum QueueMetrics {
 /// enum of derivations that `OxbowTests` calls synchronously — so it names the
 /// tone and this file, in the view layer, decides what tone looks like.
 extension JobPresentation.Tone {
-  var color: Color {
+  /// Takes the appearance rather than reading it, because the one tone that is
+  /// ours rather than the system's has a value per appearance
+  /// (`Brand.progressFill(for:)`). A dynamic `NSColor` would spare the three
+  /// call sites this argument, but it resolves against `NSAppearance` instead
+  /// of the SwiftUI environment — so a `#Preview` pinned to `.light`, or an
+  /// `ImageRenderer` sheet drawing both appearances side by side, would show
+  /// the icon in one appearance and the bar beneath it in the other.
+  func color(for scheme: ColorScheme) -> Color {
     switch self {
-    case .neutral: .secondary
-    case .active: .accentColor
+    // Two greys, and which one says whether the step is still going to
+    // happen — see `Tone`. Both are system semantic colours, so they follow
+    // the appearance and the increased-contrast setting without a Brand
+    // value of their own.
+    case .neutral: Color(nsColor: .tertiaryLabelColor)
+    case .pending: .secondary
+    // Deliberately the progress fill itself, not a colour near it: the running
+    // icon sits directly above the bar it describes, and two purples that are
+    // almost the same read as a mistake where one reads as one thing.
+    case .active: Brand.progressFill(for: scheme)
     case .success: .green
-    case .warning: .orange
     case .error: .red
     }
   }

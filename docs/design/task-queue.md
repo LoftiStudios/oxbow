@@ -375,6 +375,58 @@ launch must never be blocked by a file the user cannot reach.
 
 ---
 
+## 5a. Delivering into an occupied destination
+
+The helper only ever writes inside our workspace; the Swift parent moves the
+finished file to the folder the user chose. That move used to call
+`replaceItemAt` whenever something was already there, which destroyed the
+existing file silently — GitHub issue #29.
+
+**The rule: a file may only be destroyed by someone who was told it was
+there.** That is a fact about a *decision*, not about the disk, so the
+decision is what gets carried. `JobTemplate.replacesExistingFile` — persisted
+onto `Job` — records that the intake sheet showed the warning and the user
+chose Replace anyway. `QueueEngine.move` consults it and nothing else:
+
+- `true` — replace in place. That is what was asked for, and stepping the
+  name aside instead would quietly overrule the user and leave the stale file
+  as the one they find.
+- `false` — nobody agreed to anything, so `Delivery.moveWithoutReplacing`
+  steps to the next free name (`out (2).mp4`, the shape Finder uses). The
+  stepped URL becomes the step's `artifact`, so `Job.deliveredFiles` — and
+  with it Get Info and Show in Finder — name the file that actually exists.
+
+**Why the flag is not re-derived at delivery.** A download runs for hours. By
+the time it finishes, "is a file there" may well have changed answer, and
+re-checking would either overwrite something the user never saw a warning
+about, or refuse to overwrite the one they explicitly said to replace.
+Neither is what they asked for. The only question delivery can usefully ask is
+the one the flag answers.
+
+Absent from a queue persisted before 2026-08-30, the flag decodes as `false`
+(`Job.init(from:)`) — an old job resumes having authorized nothing, which is
+the safe direction.
+
+**Two jobs claiming one name is covered by the same mechanism.** The intake
+check reads the disk, so adding the same VOD twice in a row shows no warning
+either time: neither file exists yet. The first job delivers to `out.mp4` and
+the second, carrying `replacesExistingFile == false`, steps to `out (2).mp4`
+rather than clobbering it. No queue-aware intake check is needed for the
+outcome to be right.
+
+**The race is real and cheap to lose.** `availableURL` picks a name that was
+free when it was chosen; the user's Downloads folder belongs to everything
+else on the machine too. `Delivery` moves with `moveItem`, which *fails*
+rather than replaces on an occupied destination, and retries on exactly that
+error — so losing the race costs a second attempt instead of failing a job
+whose download already succeeded. Every other error is rethrown at once: a
+full disk must surface as a move failure, not spin through candidate names.
+Each retry steps from the original destination, never from the previous
+candidate — re-stepping `out (2).mp4` yields `out (2) (2).mp4`, which is not
+the next free name.
+
+---
+
 ## 6. Error handling
 
 ```swift

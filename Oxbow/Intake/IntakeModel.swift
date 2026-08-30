@@ -92,6 +92,11 @@ final class IntakeModel {
   private let fetchInfo: (String) async throws -> VideoInfo
   private let enqueue: (JobTemplate, String) async -> Void
   private let calendar: Calendar
+  /// Injected so the collision rule is testable without touching a real
+  /// folder; production passes `FileManager`'s check. The app is not
+  /// sandboxed, so probing the user's chosen folder needs no further
+  /// ceremony.
+  private let fileExists: (URL) -> Bool
 
   /// Distinguishes the fetch in flight from one the user has already
   /// superseded by editing the link. Without it a slow fetch for the previous
@@ -101,11 +106,15 @@ final class IntakeModel {
   init(
     fetchInfo: @escaping (String) async throws -> VideoInfo,
     enqueue: @escaping (JobTemplate, String) async -> Void,
-    calendar: Calendar = .current)
+    calendar: Calendar = .current,
+    fileExists: @escaping (URL) -> Bool = {
+      FileManager.default.fileExists(atPath: $0.path)
+    })
   {
     self.fetchInfo = fetchInfo
     self.enqueue = enqueue
     self.calendar = calendar
+    self.fileExists = fileExists
   }
 
   convenience init(controller: QueueController, calendar: Calendar = .current) {
@@ -135,6 +144,40 @@ final class IntakeModel {
   static var defaultDestination: URL? {
     try? FileManager.default.url(
       for: .downloadsDirectory, in: .userDomainMask, appropriateFor: nil, create: false)
+  }
+
+  // MARK: - Starting over
+
+  /// Returns the form to its opening state, keeping what is a standing
+  /// preference rather than this video's business.
+  ///
+  /// Add Download is a `Window` rather than a `WindowGroup` — one scene for
+  /// the app's whole run, so that half-filled copies cannot stack — which
+  /// means the model that survives a close is also the one the next open
+  /// inherits. Without this, the second open shows the first link again.
+  ///
+  /// Worse than merely reappearing: the clipboard prefill is guarded on the
+  /// link field being empty, so a link left behind here stops the next open
+  /// from reading the clipboard *at all*. The staleness and the dead prefill
+  /// are the same bug, and this is the one place that fixes both.
+  ///
+  /// `folder`, `output` and `chatSize` deliberately survive. They answer how
+  /// the user works rather than anything about this video, and re-picking a
+  /// destination on every download is the annoyance `defaultDestination`
+  /// exists to remove. Everything cleared below describes one specific video
+  /// and is wrong for the next one.
+  func reset() {
+    linkText = ""
+    name = ""
+    quality = ""
+    trimStartText = ""
+    trimEndText = ""
+    metadata = .idle
+    metadataIdentifier = nil
+    addFailure = nil
+    // Invalidates a fetch still in flight the same way a new link does, so a
+    // late arrival cannot settle metadata into the form it just emptied.
+    generation += 1
   }
 
   // MARK: - The link
@@ -397,6 +440,29 @@ final class IntakeModel {
     }
   }
 
+  /// The file already sitting where this job would deliver, if there is one.
+  ///
+  /// This is what the sheet warns about and what `composedTemplate()` turns
+  /// into `JobTemplate.replacesExistingFile` — one definition, so the
+  /// warning the user is shown and the permission the job carries cannot
+  /// drift apart. A job can never authorize replacing a file over a warning
+  /// nobody saw.
+  ///
+  /// Gated on settled metadata because before that the name is a
+  /// placeholder, and a warning about a file this job will never write is
+  /// just noise. Deliberately NOT gated on `canAdd`: that is defined as
+  /// `composedTemplate()` returning something, and `composedTemplate()`
+  /// reads this — the pair would recurse forever.
+  ///
+  /// One `stat` per evaluation, on a path the user chose. Cheap enough to
+  /// stay derived rather than cached, and derived is what keeps it honest
+  /// when the name field changes under it.
+  var destinationCollision: URL? {
+    guard hasSettledMetadata, let folder else { return nil }
+    let destination = folder.appending(path: outputBaseName + OutputSuffix.video)
+    return fileExists(destination) ? destination : nil
+  }
+
   /// Exactly the condition under which `composedTemplate()` returns
   /// something — one definition, so the button's enabled state and what Add
   /// can actually build cannot drift apart.
@@ -508,7 +574,12 @@ final class IntakeModel {
         destination: destination(OutputSuffix.video))
     }
 
-    return JobTemplate(media: media, chat: chat, render: render, composite: composite)
+    return JobTemplate(
+      media: media,
+      chat: chat,
+      render: render,
+      composite: composite,
+      replacesExistingFile: destinationCollision != nil)
   }
 
   /// Adds the job. Returns whether it landed, so the sheet dismisses on a

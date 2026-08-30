@@ -98,6 +98,12 @@ struct QueueView: View {
           .tag(job.id)
         }
       }
+      // The system's own alternating row colours, not a colour of our own:
+      // rows here vary wildly in height — a collapsed single-step job is one
+      // line, an expanded composite is five — and banding is what lets the eye
+      // tell where one job ends and the next begins. It costs nothing when
+      // there is one job, since the first row is always the unshaded one.
+      .alternatingRowBackgrounds()
       // Delete on the selection, which is what a Mac list does. Removal is the
       // thing this window had no way to do at all: every job ever enqueued
       // stayed on screen forever.

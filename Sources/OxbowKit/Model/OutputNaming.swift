@@ -82,6 +82,42 @@ public enum OutputNaming {
     return result.isEmpty ? "untitled" : result
   }
 
+  /// The first name at or after `destination` that nothing occupies.
+  ///
+  /// Returns `destination` untouched when it is free. Otherwise it steps
+  /// `name.mp4` to `name (2).mp4`, `name (3).mp4`, and so on — the shape
+  /// Finder uses, so a stepped file reads as a duplicate rather than as a
+  /// mangled name.
+  ///
+  /// The counter buys its room out of the base name rather than on top of
+  /// it. A base is sanitized against a reservation that covers its suffix
+  /// and nothing more, so a maximum-length name plus ` (2)` would overrun
+  /// the 255-byte cap and fail to write at all — which is why this re-runs
+  /// `sanitized` with the marker counted into the reservation.
+  ///
+  /// `exists` is a parameter so this stays pure and testable; production
+  /// passes `FileManager`'s check. The loop terminates because a directory
+  /// holds finitely many files, so some counter is always free.
+  public static func availableURL(for destination: URL, exists: (URL) -> Bool) -> URL {
+    guard exists(destination) else { return destination }
+
+    let directory = destination.deletingLastPathComponent()
+    let pathExtension = destination.pathExtension
+    // Not `appendingPathExtension`: an empty extension would leave a
+    // trailing "." and invent a file type the caller never asked for.
+    let suffix = pathExtension.isEmpty ? "" : ".\(pathExtension)"
+    let base = destination.deletingPathExtension().lastPathComponent
+
+    var counter = 2
+    while true {
+      let marker = " (\(counter))"
+      let trimmed = sanitized(base, reservingSuffixBytes: (marker + suffix).utf8.count)
+      let candidate = directory.appending(path: trimmed + marker + suffix)
+      if !exists(candidate) { return candidate }
+      counter += 1
+    }
+  }
+
   /// Strips control characters (NUL, BEL, and the like) outright, and
   /// collapses any run of whitespace/newline characters into a single space.
   ///

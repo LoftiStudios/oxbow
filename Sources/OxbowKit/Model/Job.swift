@@ -6,12 +6,24 @@ public struct Job: Identifiable, Codable, Sendable, Equatable {
   public var title: String
   /// Ordered. Index order is execution order.
   public var steps: [Step]
+  /// Whether the user was told a file already sat at this job's destination
+  /// and chose to replace it. See `JobTemplate.replacesExistingFile` for why
+  /// the decision is carried rather than re-derived, and `QueueEngine.move`
+  /// for what each value does at delivery.
+  public let replacesExistingFile: Bool
 
-  public init(id: JobID, created: Date, title: String, steps: [Step]) {
+  public init(
+    id: JobID,
+    created: Date,
+    title: String,
+    steps: [Step],
+    replacesExistingFile: Bool = false)
+  {
     self.id = id
     self.created = created
     self.title = title
     self.steps = steps
+    self.replacesExistingFile = replacesExistingFile
   }
 
   /// Derived, never stored. A stored summary can drift from the steps it
@@ -40,5 +52,29 @@ public struct Job: Identifiable, Codable, Sendable, Equatable {
   /// even once its step is `.done`.
   public var deliveredFiles: [URL] {
     steps.compactMap(\.deliveredArtifact)
+  }
+}
+
+extension Job {
+  private enum CodingKeys: String, CodingKey {
+    case id, created, title, steps, replacesExistingFile
+  }
+
+  /// `replacesExistingFile` did not exist until 2026-08-30. A queue persisted
+  /// before then decodes here rather than failing and stranding the user's
+  /// in-flight jobs, so no migration step is needed.
+  ///
+  /// Absent reads as `false`, which is the safe direction: an old job resumes
+  /// having authorized nothing, so delivery steps around whatever it finds
+  /// rather than assuming permission nobody gave.
+  public init(from decoder: any Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    self.init(
+      id: try container.decode(JobID.self, forKey: .id),
+      created: try container.decode(Date.self, forKey: .created),
+      title: try container.decode(String.self, forKey: .title),
+      steps: try container.decode([Step].self, forKey: .steps),
+      replacesExistingFile:
+        try container.decodeIfPresent(Bool.self, forKey: .replacesExistingFile) ?? false)
   }
 }
