@@ -148,7 +148,10 @@ struct TrimTimeline: View {
       Circle().fill(.primary).frame(width: Metrics.dot, height: Metrics.dot)
         .offset(y: -Metrics.trackHeight / 2 + Metrics.labelRow + Metrics.dot / 2)
     }
-    .frame(width: Metrics.hit)
+    // Both children are positioned by an offset from this box's centre, so it
+    // has to be the full track height — sizing it to the tallest child would
+    // silently move them.
+    .frame(width: Metrics.hit, height: Metrics.trackHeight)
     .contentShape(Rectangle())
     .offset(x: viewX(time) - Metrics.hit / 2)
     .frame(maxWidth: .infinity, alignment: .leading)
