@@ -78,4 +78,22 @@ struct ProgressDisplayTests {
 
     #expect(display.remaining == "1h 1m remaining")
   }
+
+  // MARK: - Projected size
+
+  /// The composite's size is unknowable before it runs, so the row carries a
+  /// projection while it is running. Formatted the same way the intake's own
+  /// estimate is, and hedged with "about" for the same reason: it is a
+  /// projection, not a measurement.
+  @Test func showsWhereTheOutputIsHeading() {
+    let d = ProgressDisplay(progress: StepProgress(fraction: 0.25, bytesWritten: 1_000_000_000))
+    let size = try! #require(d.projectedSize)
+    #expect(size.hasPrefix("about "))
+    #expect(size.contains("4"))
+  }
+
+  @Test func showsNoProjectionBeforeItMeansAnything() {
+    #expect(ProgressDisplay(progress: StepProgress(fraction: 0.005, bytesWritten: 9_000)).projectedSize == nil)
+    #expect(ProgressDisplay(progress: StepProgress(fraction: 0.5)).projectedSize == nil)
+  }
 }

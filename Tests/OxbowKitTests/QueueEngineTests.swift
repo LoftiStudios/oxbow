@@ -355,7 +355,6 @@ struct QueueEngineTests {
       render: RenderRequest(),
       composite: CompositeRequest(
         framerate: 60,
-        bitrateMbps: 8,
         duration: .seconds(60),
         destination: root.appending(path: "out.mp4")))
 
@@ -392,7 +391,6 @@ struct QueueEngineTests {
       render: RenderRequest(),
       composite: CompositeRequest(
         framerate: 60,
-        bitrateMbps: 8,
         duration: .seconds(60),
         destination: destination))
 
@@ -456,7 +454,6 @@ struct QueueEngineTests {
       render: RenderRequest(),
       composite: CompositeRequest(
         framerate: 60,
-        bitrateMbps: 8,
         duration: .seconds(60),
         destination: destination))
 
@@ -490,7 +487,6 @@ struct QueueEngineTests {
       render: RenderRequest(),
       composite: CompositeRequest(
         framerate: 60,
-        bitrateMbps: 8,
         duration: .seconds(60),
         destination: videoDestination))
 
@@ -524,7 +520,6 @@ struct QueueEngineTests {
       render: RenderRequest(),
       composite: CompositeRequest(
         framerate: 60,
-        bitrateMbps: 8,
         duration: .seconds(60),
         destination: destination))
 
@@ -562,7 +557,7 @@ struct QueueEngineTests {
       media: .video(VideoRequest(videoID: "v", quality: "1080p60")),
       render: RenderRequest(),
       composite: CompositeRequest(
-        framerate: 60, bitrateMbps: 8, duration: .seconds(60),
+        framerate: 60, duration: .seconds(60),
         destination: root.appending(path: "out.mp4")))
 
     try await engine.start()
@@ -604,7 +599,7 @@ struct QueueEngineTests {
         media: .video(VideoRequest(videoID: "v", quality: "1080p60")),
         render: RenderRequest(),
         composite: CompositeRequest(
-          framerate: 60, bitrateMbps: 8, duration: .seconds(60),
+          framerate: 60, duration: .seconds(60),
           destination: destination)),
       title: "t")
 
@@ -940,7 +935,7 @@ struct QueueEngineTests {
         chat: ChatRequest(videoID: "2844548319", format: .json),
         render: RenderRequest(destination: root.appending(path: "render.mp4")),
         composite: CompositeRequest(
-          framerate: 60, bitrateMbps: 8, duration: .seconds(60),
+          framerate: 60, duration: .seconds(60),
           destination: root.appending(path: "composite.mp4"))),
       title: "test")
 
@@ -1491,7 +1486,7 @@ struct QueueEngineTests {
       let compositeStep = Step(
         id: StepID(rawValue: UUID()),
         kind: .composite(CompositeRequest(
-          framerate: 30, bitrateMbps: 8, duration: .seconds(547),
+          framerate: 30, duration: .seconds(547),
           destination: workspace.root.appending(path: "out.mp4"))),
         dependsOn: [videoStep.id])
       let wired = Job(id: job.id, created: job.created, title: job.title,
@@ -1527,7 +1522,7 @@ struct QueueEngineTests {
       let compositeStep = Step(
         id: StepID(rawValue: UUID()),
         kind: .composite(CompositeRequest(
-          framerate: 30, bitrateMbps: 8, duration: .seconds(60),
+          framerate: 30, duration: .seconds(60),
           destination: workspace.root.appending(path: "out.mp4"))),
         status: .done,
         dependsOn: [videoStep.id, renderStep.id],
@@ -1579,7 +1574,7 @@ struct QueueEngineTests {
       steps: [Step(
         id: StepID(rawValue: UUID()),
         kind: .composite(CompositeRequest(
-          framerate: 30, bitrateMbps: 8, duration: .seconds(60),
+          framerate: 30, duration: .seconds(60),
           destination: root.appending(path: "out.mp4"))))])
 
     return ResumeHarness(
@@ -1888,7 +1883,7 @@ struct QueueEngineTests {
       steps: [Step(
         id: StepID(rawValue: UUID()),
         kind: .composite(CompositeRequest(
-          framerate: 30, bitrateMbps: 8, duration: .seconds(60),
+          framerate: 30, duration: .seconds(60),
           destination: root.appending(path: "out.mp4"))))])
 
     // A piece retained from an earlier interrupted attempt — what a resumed
@@ -1943,7 +1938,7 @@ struct QueueEngineTests {
       steps: [Step(
         id: StepID(rawValue: UUID()),
         kind: .composite(CompositeRequest(
-          framerate: 30, bitrateMbps: 8, duration: .seconds(60),
+          framerate: 30, duration: .seconds(60),
           destination: root.appending(path: "out.mp4"))),
         status: .cancelled)])
     try FileManager.default.createDirectory(

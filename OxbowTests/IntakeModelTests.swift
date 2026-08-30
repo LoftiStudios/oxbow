@@ -307,21 +307,18 @@ struct IntakeModelTests {
     #expect(template.chat?.videoID == Self.videoID)
   }
 
-  /// The composite's `bitrateMbps` and `duration` are its own fields, not
-  /// `framerate`'s neighbours by coincidence — both have to be seeded from
-  /// the chosen quality and the video's own duration, not left at some
-  /// default that happens to compile.
+  /// The composite's `duration` is its own field, not `framerate`'s neighbour
+  /// by coincidence — it has to be seeded from the video's own duration, not
+  /// left at some default that happens to compile.
   ///
-  /// 18 Mbps: `CompositeGeometry.compositeBitrateMbps()` derives it from the
-  /// composite frame's own pixel rate (2280x1080x60 x 0.12 bpp), and
-  /// deliberately not from `bitsPerSecond` — see `composite-quality.md` §9 for
-  /// why the source's advertised bandwidth was removed. The 10 Mbps source
-  /// here is now ignored, which is the point.
-  @Test func theCompositeSeedsItsBitrateAndDurationFromTheChosenQuality() async throws {
+  /// There is no bitrate to seed any more. `.composite` asks the encoder for a
+  /// quality and lets it choose the cost, so `CompositeRequest` carries no
+  /// rate at all — see `docs/design/composite-rate-control.md`.
+  @Test func theCompositeSeedsItsDurationFromTheChosenQuality() async throws {
     let model = await loaded(quality: "1080p60", resolution: "1920x1080", bitsPerSecond: 10_000_000)
     model.output = .videoWithChat
     let composite = try #require(model.composedTemplate()?.composite)
-    #expect(composite.bitrateMbps == 18)
+    #expect(composite.framerate == 60)
     #expect(composite.duration == .seconds(3600), "the hour-long duration `Self.info()` fixes")
   }
 

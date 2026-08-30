@@ -55,7 +55,7 @@ struct QueueActionsTests {
       step(.renderChat(RenderRequest(destination: nil)), artifact: workspaceRender),
       step(
         .composite(CompositeRequest(
-          framerate: 60, bitrateMbps: 6, duration: .seconds(600),
+          framerate: 60, duration: .seconds(600),
           destination: Self.folder.appending(path: "out.mp4"))),
         .running),
       step(

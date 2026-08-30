@@ -1,7 +1,8 @@
 # Composite rate control: constant quality, not a bitrate
 
-**Status:** measured 2026-08-29/30. The change is one argument. Three things
-remain unverified before shipping (§7).
+**Status:** measured 2026-08-29/30. The change is one argument, and its three
+shipping gates are cleared (§7). What remains is §6 — the intake's size
+estimate — which must land in the same change.
 
 **Prerequisite reading:** [`composite-quality.md`](composite-quality.md)
 establishes that the composite starves the chat column and that no single
@@ -188,133 +189,192 @@ Whether `compositeBitrateMbps()` survives as a size *estimator* is §6.
 
 ---
 
-## 6. The consequence: size stops being predictable
+## 6. Size estimation — a correction
 
-This is the real cost, and it is a product question rather than a technical
-one.
+**An earlier draft of this section was wrong, and the error is worth keeping
+rather than quietly deleting.**
 
-Today the intake can say "about 48 GB" before the job starts, because the
-bitrate is known in advance. Under constant quality the same job is somewhere
-between 9 and 47 GB and **nothing knows which until the encode runs**. That is
-the same fact that makes the feature good — the file is as big as the content
-needs — but it removes a number the intake currently shows.
+It claimed the intake shows a composite output size derived from
+`compositeBitrateMbps()`, and that switching to `-q:v` would break it. It then
+designed a "typical and maximum" replacement, rejected a probe, and rejected a
+duration curve — all to solve a problem that does not exist.
 
-### 6.1 A probe at intake was considered and rejected
+**What the app actually shows.** The only size estimate in the intake is in the
+quality picker, one row per rendition:
 
-Encoding ten seconds at `q:v 50` and extrapolating would give a real number.
-It is the wrong trade:
+```
+1080p60 · 1920x1080 — about 4.2 GB
+```
 
-- **It costs 15–30 seconds** on good hardware and a fast connection, and more
-  on a base Mac. A faithful probe needs a chat download, a video slice, a chat
-  render and a composite; the chat render is the CPU-heavy part.
-- **The intake downloads nothing today.** A probe makes pasting a URL a
-  network-and-disk operation.
-- **The settings that change the answer are on the same screen.** Quality, trim
-  start and end, and whether chat is included all invalidate a probe. Either it
-  re-runs on every change (unusable) or it hides behind a button (worse than no
-  estimate).
+That is `StreamQuality.estimatedBytes(over:)`, which is `bitsPerSecond x
+duration` — the **source download** size. `compositeBitrateMbps()` feeds no
+display anywhere; its only caller sets the encode bitrate on
+`CompositeRequest`.
 
-The second and third points are structural, not latency that better
-engineering could remove.
+**Consequences of the correction:**
 
-### 6.2 There is no free estimate either
+- Switching to `-q:v` **breaks no displayed number.** The picker's estimate is
+  about the download, which is unaffected.
+- The relabel to "typical and maximum" is **unnecessary**. Nothing to relabel.
+- `compositeBitrateMbps()` becomes genuinely unused once the composite stops
+  reading it, rather than surviving as an estimator.
 
-The source's advertised bitrate arrives free with `info`, so it is the obvious
-candidate. It is **anti-correlated** with the constant-quality output size:
+### 6.1 What is still true, and still worth doing
 
-| window | source | q50 output |
-|---|---|---|
-| frankie 2D | 8.56 Mbps | 3.3 Mbps |
-| marzzzzy talk | 8.44 | 3.3 |
-| fps shooter | 6.89 | **17.5** |
-| leigh FF7 | 6.40 | 7.8 |
+**No output size is shown at any point** — not before the job, not during it,
+and the composite is the longest step in the app by a wide margin. That was
+already true under a fixed bitrate; constant quality does not make it worse,
+but it does remove the one thing that would have made an up-front estimate
+possible even in principle.
 
-Spearman **−0.60** (n=6). It would confidently predict backwards, which is
-worse than showing nothing. Consistent with `composite-quality.md` §4.1, where
-the same field is anti-correlated with need under a fixed bitrate.
-
-### 6.3 A duration curve: measured, and not worth building
-
-Longer content averages its peaks away, so a duration-dependent ceiling is
-tempting. Measured on two 20-minute composites at `q:v 50`, taking the maximum
-rolling average at each window length:
-
-| window | busy shooter | quiet 2D RPG |
-|---|---|---|
-| 1 min | 22.5 Mbps (**127%** of ceiling) | 8.4 Mbps |
-| 5 min | 19.9 (112%) | 6.0 |
-| 10 min | 17.3 (98%) | 5.6 |
-| 20 min | 14.2 (**80%**) | 4.9 (**28%**) |
-
-Three things fall out, and together they say no.
-
-**Short content exceeds the ceiling rather than meeting it.** At one minute the
-busy stream wants 127% of the 0.12 bpp constant. Any curve anchored at "100%
-for short content" is wrong in the dangerous direction — under-promising disk.
-
-**The duration effect is real and consistent** — 1.59x for the busy stream from
-one minute to twenty, 1.70x for the quiet one — so it *would* be a reliable
-correction.
-
-**But content moves it 2.9x and duration only 1.6x.** A curve saying "80% at
-twenty minutes" is right for the shooter and **three times too high** for the
-2D RPG. It fixes the smaller term while the larger one is untouched, and it
-cannot be fixed, because §6.2 shows nothing predicts content.
-
-And where the correction is largest it does not matter: a clip is short *and*
-is the spectacle, so it is the case that most exceeds the ceiling — but sixty
-seconds at 22.5 Mbps is **169 MB**, so a 27% under-estimate is 45 MB.
-
-### 6.4 What to do instead
-
-**At intake, show a typical and a maximum.** Both fall out of
-`compositeBitrateMbps()`, which stops steering the encode and becomes what it
-is actually good at — a ceiling. It returns 0.12 bpp and the worst case
-measured under `q:v 50` was 0.119, so it is an excellent one.
-
-The typical is the median of the measured distribution, ~35% of the ceiling.
-For a six-hour 1080p60 job that is "usually around 17 GB, up to 48 GB" rather
-than a flat "about 48 GB". A range is more useful for deciding than a worst
-case, and it is honest about the thing that is genuinely unknown.
-
-*The typical figure rests on six windows and should be widened before it goes
-on screen.*
-
-**During the composite, replace it with the truth.** FFmpeg's `-progress`
-stream already emits `total_size` every block — it is in this repo's own
-`FFmpegProgressParser` fixture and simply is not extracted yet. Projecting
+**The live projection is still worth building, and now for a safety reason
+rather than a UX one.** §7.2 establishes that constant quality has no
+enforceable ceiling and that `-maxrate` cannot supply one. The mitigation for a
+runaway encode is that it *announces itself*: FFmpeg's `-progress` stream
+already emits `total_size` every block — it is in this repo's own
+`FFmpegProgressParser` fixture and simply is not extracted — so projecting
 `total_size / fraction` gives a live estimate that converges within the first
-minutes and then tracks real content drift.
+minutes.
 
-That needs one more key parsed, one more field on `StepProgress`, and a
-display. It lands squarely in the file `development.md` says exists to isolate
-exactly this kind of parsing, and it costs nothing at runtime.
+Without it, a job heading for 300 GB looks exactly like a job heading for 30
+until the disk fills. That is the argument for building it, and it does not
+depend on anything the earlier draft claimed.
 
-**On completion the queue shows the real size**, which needs nothing new.
+### 6.2 The rejected alternatives, which stand on their own
 
-Honest at every stage, no probe, and the number improves rather than going
-stale.
+Both were measured for the wrong reason and remain useful findings.
 
-## 7. Not verified
+**A probe at intake** — rejected structurally, not for latency. The settings
+that change the answer (quality, trim, whether chat is included) live on the
+same screen, so it would re-run on every change. It also makes pasting a URL a
+network-and-disk operation in a screen that downloads nothing today.
 
-- **Bitrate ceiling.** Nothing in these measurements bounds what `q:v 50`
-  might choose on pathological content — heavy film grain, confetti, a
-  particle-heavy fighting game at 4K. A `-maxrate`/`-bufsize` guard may be
-  wanted, and its interaction with VideoToolbox is untested.
-- **Long-run behaviour.** Every measurement here is 180 seconds. A six-hour
-  encode's rate control may drift in ways a three-minute window cannot show.
-- **`-q:v` support across target machines.** Verified on this Apple Silicon Mac
-  only. `docs/development.md` sets the deployment target at macOS 15, and
-  VideoToolbox's constant-quality mode is not equally available on all
-  hardware — on Intel Macs it is documented as unsupported for H.264. The app
-  is arm64-only (`architecture.md` §7), which likely makes this moot, but
-  "likely" is not a measurement.
-- **Fragmented output.** All the composites above were written with the
-  standard `-movflags`; the app also passes
-  `+frag_keyframe+empty_moov+default_base_moof`. No reason to expect an
-  interaction, and no evidence there isn't one.
+**The source's advertised bitrate as a predictor** — free, and
+**anti-correlated** with the constant-quality output size (Spearman −0.60,
+n=6): the two highest-bitrate sources produce the two smallest outputs. Worth
+recording because it is the third place in this investigation where that field
+has misled — see `composite-quality.md` §4.1.
 
----
+**A duration curve** — measured on two 20-minute composites. Short content
+*exceeds* the ceiling rather than meeting it (127% at one minute), and content
+moves the answer 2.9x where duration moves it 1.6x, so a curve reading 80% at
+twenty minutes is right for a shooter and three times too high for a 2D RPG.
+
+## 7. The three gates, measured
+
+All three cleared 2026-08-30. One produced a trap worth more than the gate
+itself.
+
+### 7.1 `-maxrate` must NOT be used — it silently disables constant quality
+
+The obvious guard against a runaway bitrate is `-maxrate`. **It does the
+opposite of what it looks like.**
+
+| | resulting bitrate |
+|---|---|
+| ordinary content, `-q:v 50` | **5.0 Mbps** |
+| ordinary content, `-q:v 50 -maxrate 30M -bufsize 60M` | **19.3 Mbps** |
+
+Nearly 4x *more*, not capped. And it does not respect its own value: on pure
+noise, `-maxrate` of 5M, 8M and 15M all produced 25–27 Mbps, with `-bufsize`
+making no difference.
+
+The encoder's option list explains it. **Neither `-q:v` nor `-maxrate` is an
+encoder option at all** — `h264_videotoolbox` declares `profile`, `level`,
+`coder`, `constant_bit_rate`, `spatial_aq` and others, but not these. `-q:v`
+travels the generic `global_quality`/`QSCALE` path onto
+`kVTCompressionPropertyKey_Quality`; `-maxrate` maps to `DataRateLimits`,
+which is a **hard windowed limit and a different rate-control mode**. Setting
+it switches the encoder out of quality mode rather than bounding it.
+
+**So there is no way to cap constant quality.** See §7.2 for why that is
+tolerable.
+
+### 7.2 The unbounded ceiling is real, pre-existing, and bounded in practice
+
+Synthetic worst cases are alarming:
+
+| input | mode | result |
+|---|---|---|
+| pure random noise | `-q:v 50` | **545.9 Mbps** |
+| pure random noise | `-b:v 8M` *(today's mode)* | **78.9 Mbps** |
+| real footage + heavy grain (`noise=alls=40`) | `-q:v 50` | 87.4 Mbps |
+| real footage, ungrained | `-q:v 50` | 5.0 Mbps |
+
+Two things make this acceptable.
+
+**It is not a regression.** Today's `-b:v` overshoots its own target roughly
+tenfold on the same pathological input — 78.9 Mbps from an 8 Mbps request. The
+composite has never had a guaranteed ceiling.
+
+**The source bounds it.** Twitch delivers an H.264 stream at 6–8.5 Mbps, which
+has already low-passed the content before we see it; anything that would
+explode our encoder would have exploded Twitch's first. Measured across six
+real windows, our output is **0.39x to 2.54x** the source's bitrate, so the
+practical worst case at 1080p60 is around **22 Mbps** — consistent with the
+17.5 Mbps maximum actually observed across sixteen samples, and nowhere near
+the synthetic figures.
+
+The residual risk is handled by §6's live projection: a runaway job announces
+itself in the progress display within the first minute, which is a better
+outcome than a hard cap that silently degrades quality instead.
+
+### 7.3 Long-run behaviour: no drift
+
+One hour of the worst-case shooter, composited end to end at `q:v 50`:
+
+| | |
+|---|---|
+| duration | **01:00:00.02** — no truncation |
+| output | 6.43 GB, 15.3 Mbps average |
+| full decode | clean, no warnings |
+| encode speed | ~4.8x realtime |
+
+Per ten-minute block: 12.7, 15.6, 17.6, **18.7**, **12.0**, 15.4 Mbps. The
+variation is **non-monotonic** — the fourth block is the highest and the fifth
+the lowest — so it is content, not rate control wandering. Six-hour projection
+for the busiest content measured: **41 GB, against today's flat 48**.
+
+### 7.4 Other hardware: identical
+
+The same `lavfi` source, byte-identical on both machines. A base M2 mini
+(8 cores, 8 GB, macOS 27) against this M1 Max:
+
+| q:v | M1 Max | M2 mini | ratio |
+|---|---|---|---|
+| 40 | 6.8 Mbps | 6.6 | 0.98x |
+| 50 | 10.8 | 10.6 | **0.99x** |
+| 60 | 18.0 | 17.9 | 0.99x |
+
+Within 1–2%, no software fallback (`-allow_sw` defaults false, so a machine
+lacking the hardware path errors rather than silently crawling), no errors.
+**`q:v 50` means the same thing on both**, so the constant is safe to hardcode.
+
+Encode time was identical too — 7s each — despite the M2 having one video
+engine to the M1 Max's two. A single stream uses one engine either way, so
+composite speed does not scale with machine tier.
+
+FFmpeg documents VideoToolbox's quality mode as Apple-Silicon-only. The app is
+arm64-only (`architecture.md` §7), so the Intel case that would genuinely
+break is already out of scope by construction.
+
+### 7.5 Closed doors
+
+- **`-spatial_aq 1`** — adaptive quantisation by spatial complexity, which
+  sounded ideal given the chat column is a distinct spatial region. Measured:
+  **identical** bitrate and identical chat-column quality. Either unsupported
+  on this silicon or already implicit.
+- **`-frames_before` / `-frames_after`** — documented as helping "smooth
+  concatenation issues". Not needed here, but they are exactly what §3's
+  abandoned per-section design would have wanted, and are recorded in case
+  anything ever concatenates separately-encoded pieces again.
+
+### 7.6 Still not verified
+
+- **Fragmented output.** The hour-long run above used the app's real
+  `-movflags`, so this is now largely covered — but the four content samples
+  in §2 did not.
+- **A full six-hour job**, as opposed to one hour extrapolated.
 
 ## 8. Testing
 
@@ -330,9 +390,21 @@ harness. Re-run it on the four windows in §2 whenever the constant changes.
 
 ## 9. Next
 
-1. **Settle §6** — the size estimate is the only user-visible regression.
-2. **Bound the ceiling** (§7) before shipping, or accept an unbounded worst
-   case knowingly.
-3. **One long-run encode** end to end, to close §7's second bullet.
+The gates are cleared and the ceiling question is answered as far as it can be
+(§7.1 shows it cannot be capped; §7.2 shows it does not need to be).
 
-Then the change itself is a single line.
+What is left is **§6**, and it is not optional: switching to `-q:v` without it
+leaves the intake displaying a number derived from a bitrate the encoder no
+longer uses. Three pieces, none large:
+
+1. **`ArgumentBuilder`** — `-b:v` becomes `-q:v 50`. Explicitly *not*
+   `-maxrate` (§7.1).
+2. **`FFmpegProgressParser`** — extract `total_size`, already in the stream and
+   in this repo's own fixture; add it to `StepProgress`; project
+   `total_size / fraction` during the composite.
+3. **The intake** — `compositeBitrateMbps()` stops steering the encode and
+   becomes the ceiling it is good at, relabelled as a maximum alongside a
+   typical.
+
+Widening the "typical" figure beyond six windows can follow; it affects a
+displayed number, not correctness.

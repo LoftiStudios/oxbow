@@ -10,16 +10,14 @@ public struct CompositeRequest: Codable, Sendable, Equatable {
   /// The **video's** framerate. The chat is normalised up to it before the
   /// stack, so a non-harmonic pair cannot produce a variable-framerate output.
   public var framerate: Int
-  public var bitrateMbps: Int
   /// Only so `FFmpegProgressParser` can turn `out_time_us` into a fraction.
   /// Known from `VideoInfo` at intake; FFmpeg's own progress output never
   /// reports a total.
   public var duration: Duration
   public var destination: URL
 
-  public init(framerate: Int, bitrateMbps: Int, duration: Duration, destination: URL) {
+  public init(framerate: Int, duration: Duration, destination: URL) {
     self.framerate = framerate
-    self.bitrateMbps = bitrateMbps
     self.duration = duration
     self.destination = destination
   }

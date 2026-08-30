@@ -212,7 +212,22 @@ public enum ArgumentBuilder {
         // just be dead weight in every piece. resume.md §2.
         "-an",
         "-c:v", "h264_videotoolbox",
-        "-b:v", "\(request.bitrateMbps)M",
+        // A quality target, not a bitrate. The bitrate a composite needs spans
+        // 7.5x across real content and nothing in the metadata predicts it
+        // (`composite-quality.md`), so the encoder is asked for a quality and
+        // decides the cost itself. Measured: one `q:v 50` holds the chat
+        // column within 1.9 dB across a 5.3x bitrate spread, and beats a fixed
+        // target by +6.3 dB at the *same* bitrate.
+        //
+        // Never `-maxrate`. It reads as the guard against a runaway bitrate
+        // and does the opposite — adding `-maxrate 30M` took ordinary content
+        // from 5.0 to 19.3 Mbps, and it ignores its own value. Neither option
+        // is declared by this encoder: `-q:v` reaches
+        // `kVTCompressionPropertyKey_Quality` via ffmpeg's generic
+        // `global_quality` path, while `-maxrate` maps to `DataRateLimits`,
+        // a different rate-control mode that displaces quality targeting.
+        // See `composite-rate-control.md` §7.1.
+        "-q:v", "50",
         "-pix_fmt", "yuv420p",
         "-progress", "pipe:1", "-nostats", "-loglevel", "error",
         // empty_moov writes the track declarations with no sample table, so

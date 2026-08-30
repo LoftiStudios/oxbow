@@ -13,6 +13,14 @@ nonisolated struct ProgressDisplay {
   let counter: String?
   let remaining: String?
   let rate: String?
+  /// Where the output is heading, while it is still heading there.
+  ///
+  /// The composite asks the encoder for a quality rather than a bitrate, so
+  /// nothing knows the size in advance and nothing can cap it
+  /// (`docs/design/composite-rate-control.md` §7.1). This is the only warning
+  /// a job heading somewhere unexpected ever gives, and it arrives while there
+  /// is still time to cancel.
+  let projectedSize: String?
 
   var isIndeterminate: Bool { fraction == nil }
 
@@ -28,6 +36,13 @@ nonisolated struct ProgressDisplay {
 
     remaining = Self.format(progress.remaining)
     rate = Self.format(rate: progress.speed)
+
+    // "about", matching the intake's own hedge on a number that is bitrate x
+    // duration and nothing more. This one is bytes-so-far x how-much-is-left,
+    // which is a better guess but still a guess.
+    projectedSize = progress.projectedBytes.map {
+      "about \(Int64($0).formatted(.byteCount(style: .file)))"
+    }
   }
 
   /// Nil for absent durations and any duration that would render as "0s".

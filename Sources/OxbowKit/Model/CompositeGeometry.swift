@@ -79,62 +79,15 @@ public struct CompositeGeometry: Sendable, Equatable {
 
   // MARK: - Composite bitrate
 
-  /// The floor below which a composite is not worth shipping.
-  ///
-  /// Ten, not six. Six was measured against the pristine chat render at
-  /// **18.1 dB** — visibly mush (`docs/design/composite-quality.md` §5). A
-  /// floor that cannot produce an acceptable frame is not a floor.
-  static let minimumBitrateMbps = 10
-
-  /// Bits per pixel of the *composite* frame, per second of output.
-  ///
-  /// This is now the whole derivation, and deliberately so. It was previously
-  /// a cap on a figure derived from the source's advertised `BANDWIDTH`, with
-  /// that source term doing the primary work.
-  ///
-  /// **The source term was removed because it is worse than uninformative.**
-  /// `composite-quality.md` §9 measured four VODs: the two whose chat columns
-  /// were visibly starved advertise 6.36 and 6.40 Mbps, and the two that
-  /// needed nothing advertise 8.44 and 8.56. `BANDWIDTH` is a peak describing
-  /// the rendition's ceiling, not the difficulty of the footage, so keying the
-  /// rate to it handed bits to the streams with nothing to spend them on and
-  /// withheld them from the streams that needed them. Two 1080p60 VODs
-  /// measured **11 dB apart at the same bitrate**; nothing in the metadata
-  /// predicts which is which.
-  ///
-  /// **0.12 covers roughly two thirds of real content.** Measured across
-  /// sixteen VOD and clip samples (`composite-quality.md` §9): reaching the
-  /// same quality takes **0.034 bpp** on 2D 30fps content and **0.254** on
-  /// Street Fighter 6 — a **7.5x spread** at identical resolution and
-  /// framerate. No constant serves both ends, and nothing in the metadata
-  /// predicts which end a given stream sits at.
-  ///
-  /// The median requirement is 0.102. `0.12` sits a little above it and
-  /// covers 9 of the 13 usable samples; 0.10 covered 6. The remaining four are
-  /// the busiest — a fighting game and two shooters — which need up to 2.1x
-  /// this to reach the same bar.
-  ///
-  /// The two errors are not symmetric, which is why this errs high rather than
-  /// low. Over-serving costs disk: predictable, and the file can be deleted.
-  /// Under-serving costs quality, and it is unrecoverable without
-  /// re-downloading and re-compositing the whole job.
-  ///
-  /// Do not read `0.12` as an optimum. It is a percentile of a distribution
-  /// measured at one quality bar (Y = 26 dB against the pristine chat render),
-  /// and that bar moves the answer a long way: at Y = 24 this same constant
-  /// covers ~85% of the samples, at Y = 28 nearer 40%.
-  private static let bitsPerPixel = 0.12
-
-  /// The composite's bitrate, in Mbps.
-  ///
-  /// A function of the output frame alone — its width, height and framerate —
-  /// so it scales correctly across resolutions and framerates instead of
-  /// inheriting a number that describes something else.
-  public func compositeBitrateMbps() -> Int {
-    let pixelRate = Double(outputWidth) * Double(videoHeight) * Double(videoFramerate)
-    let mbps = pixelRate * Self.bitsPerPixel / 1_000_000
-    return max(Self.minimumBitrateMbps, Int(mbps.rounded()))
-  }
+  // The composite's bitrate derivation lived here and is gone. It computed a
+  // rate the encoder no longer takes: `.composite` asks `h264_videotoolbox`
+  // for a quality and lets it choose the cost.
+  //
+  // Its constants and the measurements behind them are not lost — they are in
+  // `docs/design/composite-quality.md`, which is also where the reason it had
+  // to go is recorded: the requirement spans 7.5x across real content, so no
+  // constant could serve it, and the source bandwidth it was keyed to turned
+  // out to be anti-correlated with need.
 
   // MARK: - Chat font size
 

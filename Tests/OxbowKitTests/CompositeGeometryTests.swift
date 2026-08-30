@@ -106,59 +106,11 @@ struct CompositeGeometryTests {
     #expect(tiny.chatWidth == 160)
   }
 
-  // MARK: - Composite bitrate
-
-  /// The composite's rate comes from the composite frame's own pixel rate and
-  /// nothing else. 2280x1080x60 x 0.12 bpp = 17.7 -> 18 Mbps.
-  @Test func derivesTheBitrateFromTheCompositesOwnPixelRate() throws {
-    let geometry = try #require(CompositeGeometry(quality: quality("1080p60", "1920x1080")))
-    #expect(geometry.compositeBitrateMbps() == 18)
-  }
-
-  /// The one that encodes the bug. The source's advertised `BANDWIDTH` used to
-  /// be the primary term, and `docs/design/composite-quality.md` §9 measured it
-  /// *anti-correlated* with need across four VODs: both quiet samples advertise
-  /// more than both busy ones, so the formula gave least to the streams that
-  /// needed most. A peak bandwidth describes the rendition's ceiling, not the
-  /// footage.
-  ///
-  /// Two renditions identical but for what they advertise must now agree.
-  /// Under the previous formula these produced **6 and 22 Mbps**:
-  /// `3 Mbps x 1.1875 x 1.5` floored at 6, against `30 Mbps x 1.1875 x 1.5`
-  /// capped by the old 0.15 bpp ceiling at 22.
-  @Test func ignoresWhatTheSourceAdvertises() throws {
-    let starved = try #require(CompositeGeometry(
-      quality: quality("1080p60", "1920x1080", bitsPerSecond: 3_000_000)))
-    let generous = try #require(CompositeGeometry(
-      quality: quality("1080p60", "1920x1080", bitsPerSecond: 30_000_000)))
-
-    #expect(starved.compositeBitrateMbps() == generous.compositeBitrateMbps())
-    #expect(starved.compositeBitrateMbps() == 18)
-  }
-
-  /// Framerate is part of the pixel rate, so the same resolution at half the
-  /// framerate asks for roughly half the bits — and then lands on the floor.
-  @Test func scalesWithFramerateAsWellAsResolution() throws {
-    let sixty = try #require(CompositeGeometry(quality: quality("1080p60", "1920x1080")))
-    let thirty = try #require(CompositeGeometry(quality: quality("1080p30", "1920x1080")))
-    #expect(sixty.compositeBitrateMbps() > thirty.compositeBitrateMbps())
-    #expect(thirty.compositeBitrateMbps() == 10)
-  }
-
-  /// The floor is 10, not 6. Six was measured at 18.1 dB against the pristine
-  /// chat render — visibly mush (`composite-quality.md` §5). A floor that
-  /// cannot produce an acceptable frame is not a floor.
-  @Test func floorsWhereTextIsStillLegible() throws {
-    let geometry = try #require(CompositeGeometry(quality: quality("360p30", "640x360")))
-    #expect(geometry.compositeBitrateMbps() == 10)
-  }
-
-  /// A larger frame asks for proportionally more, with no cap to collide with:
-  /// 3040x1440x60 x 0.12 = 31.5 Mbps.
-  @Test func scalesUpForFramesLargerThanAnythingMeasured() throws {
-    let geometry = try #require(CompositeGeometry(quality: quality("1440p60", "2560x1440")))
-    #expect(geometry.compositeBitrateMbps() == 32)
-  }
+  // The composite-bitrate tests lived here and are gone with the derivation
+  // they covered — `.composite` now asks the encoder for a quality rather than
+  // computing a rate. The argv is pinned by
+  // `ArgumentBuilderTests.compositeTargetsQualityRatherThanABitrate`, and the
+  // measurements are in `docs/design/composite-quality.md`.
 
   // MARK: - Chat font size
 

@@ -267,7 +267,7 @@ enum JobInfoPreviewData {
       Step(
         id: StepID(rawValue: UUID()),
         kind: .composite(CompositeRequest(
-          framerate: 60, bitrateMbps: 6, duration: .seconds(600),
+          framerate: 60, duration: .seconds(600),
           destination: URL(filePath: "/tmp/out.mp4"))),
         status: .done),
     ])

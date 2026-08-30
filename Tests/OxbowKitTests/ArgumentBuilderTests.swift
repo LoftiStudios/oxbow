@@ -32,7 +32,7 @@ struct ArgumentBuilderTests {
 
   private var composite: StepKind {
     .composite(CompositeRequest(
-      framerate: 30, bitrateMbps: 6, duration: .seconds(60),
+      framerate: 30, duration: .seconds(60),
       destination: URL(filePath: "/out/x.mp4")))
   }
 
@@ -452,7 +452,6 @@ struct ArgumentBuilderTests {
   @Test func compositeStacksTheChatColumnBesideTheVideo() {
     let request = CompositeRequest(
       framerate: 60,
-      bitrateMbps: 8,
       duration: .seconds(3600),
       destination: URL(filePath: "/out/stream.mp4"))
 
@@ -472,7 +471,7 @@ struct ArgumentBuilderTests {
       "-map", "[out]",
       "-an",
       "-c:v", "h264_videotoolbox",
-      "-b:v", "8M",
+      "-q:v", "50",
       "-pix_fmt", "yuv420p",
       "-progress", "pipe:1",
       "-nostats",
@@ -482,11 +481,55 @@ struct ArgumentBuilderTests {
     ])
   }
 
+  /// A quality target, never a bitrate, and never `-maxrate`.
+  ///
+  /// `docs/design/composite-rate-control.md` §2: one `q:v 50` holds the chat
+  /// column within 1.9 dB across content whose bitrate requirement spans 5.3x,
+  /// and beats a fixed target by +6.3 dB *at the same bitrate*, because a fixed
+  /// target spreads bits evenly through time and the chat column's difficulty
+  /// is not evenly distributed.
+  ///
+  /// **`-maxrate` is forbidden, and it is not obvious why** (§7.1). It looks
+  /// like the guard against a runaway bitrate and does the opposite: adding
+  /// `-maxrate 30M` took ordinary content from 5.0 to 19.3 Mbps. Neither
+  /// `-q:v` nor `-maxrate` is an encoder option — `-q:v` reaches
+  /// `kVTCompressionPropertyKey_Quality` through ffmpeg's generic
+  /// `global_quality` path, while `-maxrate` maps to `DataRateLimits`, a
+  /// different rate-control mode. Setting it switches the encoder out of
+  /// quality mode rather than bounding it.
+  @Test func compositeTargetsQualityRatherThanABitrate() {
+    let a = ArgumentBuilder.arguments(
+      for: .composite(CompositeRequest(
+        framerate: 60, duration: .seconds(3600),
+        destination: URL(filePath: "/out/x.mp4"))),
+      context: compositeContext)
+
+    let q = try! #require(a.firstIndex(of: "-q:v"))
+    #expect(a[q + 1] == "50")
+    #expect(!a.contains("-b:v"))
+    #expect(!a.contains("-maxrate"))
+    #expect(!a.contains("-bufsize"))
+    #expect(!a.contains("-constant_bit_rate"))
+  }
+
+  /// The chat render's own bitrate is a different decision and stays.
+  ///
+  /// It is an intermediate that the composite immediately re-encodes, and
+  /// `composite-quality.md` §2.2 measured its contribution to the final error
+  /// at ~5%. Switching it to a quality target would buy nothing and cost a
+  /// second constant to reason about.
+  @Test func theChatRenderKeepsItsOwnBitrate() {
+    let a = args(.renderChat(RenderRequest(
+      bitrateMbps: 12, destination: URL(filePath: "/tmp/c.mp4"))))
+    #expect(a.contains { $0.hasPrefix("--output-args=") && $0.contains("-b:v 12M") })
+    #expect(!a.contains { $0.hasPrefix("--output-args=") && $0.contains("-q:v") })
+  }
+
   /// The prototype this replaces carried `shortest=1`, which truncates the
   /// video to the chat's length whenever a stream goes quiet before it ends.
   @Test func compositeNeverPassesShortestOrFaststartOrAGPLEncoder() {
     let request = CompositeRequest(
-      framerate: 30, bitrateMbps: 6, duration: .seconds(60),
+      framerate: 30, duration: .seconds(60),
       destination: URL(filePath: "/out/x.mp4"))
     let context = StepContext(
       stepTempDirectory: URL(filePath: "/tmp/s"),
@@ -504,7 +547,7 @@ struct ArgumentBuilderTests {
 
   @Test func compositeIsAComputeStep() {
     let request = CompositeRequest(
-      framerate: 30, bitrateMbps: 6, duration: .seconds(60),
+      framerate: 30, duration: .seconds(60),
       destination: URL(filePath: "/out/x.mp4"))
     #expect(StepKind.composite(request).resource == .compute)
   }
