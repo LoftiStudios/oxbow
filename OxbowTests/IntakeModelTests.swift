@@ -27,6 +27,57 @@ struct IntakeModelTests {
     #expect(model.folder == nil)
   }
 
+  // MARK: - An occupied destination
+
+  /// The whole point: the warning is what turns a silent overwrite into a
+  /// choice. Nothing is blocked — re-downloading over a bad copy stays one
+  /// click — but the click is named for what it does.
+  @Test func reportsTheFileAlreadySittingAtTheDestination() async {
+    let model = await loadedModel(fileExists: { _ in true })
+    let expected = Self.folder.appending(path: model.outputBaseName + OutputSuffix.video)
+
+    #expect(model.destinationCollision == expected)
+  }
+
+  /// Only the name this job would actually write counts. A folder holding
+  /// other files must not read as a collision.
+  @Test func reportsNoCollisionWhenTheDestinationItselfIsFree() async {
+    let model = await loadedModel(
+      fileExists: { $0 == Self.folder.appending(path: "something else.mp4") })
+
+    #expect(model.destinationCollision == nil)
+  }
+
+  /// A form with no destination chosen has nothing to collide with, and must
+  /// not probe a path it has not got.
+  @Test func reportsNoCollisionWithoutAFolder() async {
+    let model = await loadedModel(fileExists: { _ in true })
+    model.folder = nil
+
+    #expect(model.destinationCollision == nil)
+  }
+
+  /// Before the video is known the name is a placeholder, so a warning about
+  /// it would be about a file this job is never going to write.
+  @Test func reportsNoCollisionBeforeTheVideoIsKnown() {
+    let model = makeModel(fileExists: { _ in true })
+    model.folder = Self.folder
+
+    #expect(model.destinationCollision == nil)
+  }
+
+  /// The engine may only destroy a file the user was warned about. This is
+  /// the one place that authorization is granted, and it is granted from the
+  /// same condition the sheet drew its warning from — so a job can never
+  /// carry permission for a warning nobody saw.
+  @Test func authorizesReplacementOnlyWhenTheWarningWasShown() async throws {
+    let warned = await loadedModel(fileExists: { _ in true })
+    #expect(try #require(warned.composedTemplate()).replacesExistingFile)
+
+    let unwarned = await loadedModel(fileExists: { _ in false })
+    #expect(try !#require(unwarned.composedTemplate()).replacesExistingFile)
+  }
+
   // MARK: - Starting over
 
   /// The bug this exists for: Add Download is one `Window` for the app's whole
@@ -176,7 +227,8 @@ struct IntakeModelTests {
   private func makeModel(
     info: VideoInfo? = IntakeModelTests.info(),
     failure: Error? = nil,
-    recorder: Recorder = Recorder())
+    recorder: Recorder = Recorder(),
+    fileExists: @escaping (URL) -> Bool = { _ in false })
     -> IntakeModel
   {
     IntakeModel(
@@ -186,7 +238,8 @@ struct IntakeModelTests {
         return info
       },
       enqueue: { recorder.templates.append((template: $0, title: $1)) },
-      calendar: Self.pacific)
+      calendar: Self.pacific,
+      fileExists: fileExists)
   }
 
   /// A model with metadata settled, a folder chosen, and `.video` as its
@@ -194,10 +247,11 @@ struct IntakeModelTests {
   private func loadedModel(
     link: String = IntakeModelTests.videoLink,
     info: VideoInfo = IntakeModelTests.info(),
-    recorder: Recorder = Recorder())
+    recorder: Recorder = Recorder(),
+    fileExists: @escaping (URL) -> Bool = { _ in false })
     async -> IntakeModel
   {
-    let model = makeModel(info: info, recorder: recorder)
+    let model = makeModel(info: info, recorder: recorder, fileExists: fileExists)
     model.linkText = link
     await model.load()
     model.folder = Self.folder

@@ -258,6 +258,68 @@ struct QueueEngineTests {
     await engine.flush()
   }
 
+  // MARK: - Delivering into an occupied destination
+
+  /// Nobody was warned, so nothing may be destroyed. A file that appeared at
+  /// the destination while a long download was running is left exactly as it
+  /// was, and the finished download lands beside it under a stepped name —
+  /// which is the name the step reports as delivered, so Show in Finder and
+  /// Get Info point at the file that actually exists.
+  @Test func deliversBesideAFileTheUserWasNeverWarnedAbout() async throws {
+    let (engine, root) = makeEngine(.succeeds)
+    let folder = URL(filePath: NSTemporaryDirectory())
+      .appending(path: "oxbow-collision-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+    defer {
+      cleanUp(root)
+      try? FileManager.default.removeItem(at: folder)
+    }
+    let destination = folder.appending(path: "out.mp4")
+    try "an older download".write(to: destination, atomically: true, encoding: .utf8)
+
+    try await engine.start()
+    await engine.enqueue(
+      JobTemplate(media: .video(VideoRequest(
+        videoID: "1", quality: "", destination: destination))),
+      title: "t")
+    try await settle(engine)
+
+    #expect(try String(contentsOf: destination, encoding: .utf8) == "an older download")
+    let job = try #require(await engine.currentJobs.first)
+    #expect(job.deliveredFiles == [folder.appending(path: "out (2).mp4")])
+    await engine.flush()
+  }
+
+  /// The intake sheet showed the warning and the user chose Replace, so
+  /// replacing is what they asked for. Stepping the name aside here would
+  /// quietly overrule them and leave the stale file as the one they find.
+  @Test func replacesTheExistingFileWhenTheUserAgreedToIt() async throws {
+    let (engine, root) = makeEngine(.succeeds)
+    let folder = URL(filePath: NSTemporaryDirectory())
+      .appending(path: "oxbow-collision-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+    defer {
+      cleanUp(root)
+      try? FileManager.default.removeItem(at: folder)
+    }
+    let destination = folder.appending(path: "out.mp4")
+    try "an older download".write(to: destination, atomically: true, encoding: .utf8)
+
+    try await engine.start()
+    await engine.enqueue(
+      JobTemplate(
+        media: .video(VideoRequest(videoID: "1", quality: "", destination: destination)),
+        replacesExistingFile: true),
+      title: "t")
+    try await settle(engine)
+
+    let job = try #require(await engine.currentJobs.first)
+    #expect(job.deliveredFiles == [destination])
+    #expect(try String(contentsOf: destination, encoding: .utf8) != "an older download")
+    #expect(!FileManager.default.fileExists(atPath: folder.appending(path: "out (2).mp4").path))
+    await engine.flush()
+  }
+
   /// Removing something still running has to kill its helper first. Dropping
   /// the row without cancelling would orphan `TwitchDownloaderCLI` and the
   /// FFmpeg it spawned, still writing into a workspace we just deleted — the

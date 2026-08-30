@@ -31,17 +31,30 @@ public struct JobTemplate: Sendable {
   /// composing a template directly should set the render's geometry itself.
   /// The intake always does.
   public var composite: CompositeRequest?
+  /// Whether the user was shown that a file already sits at this job's
+  /// destination and chose to replace it anyway.
+  ///
+  /// It records a *decision*, not a fact about the disk — which is why it is
+  /// carried on the job rather than re-derived at delivery. By the time a
+  /// long download finishes, "does a file exist there" may well have changed
+  /// answer, and the only question `QueueEngine.move` can usefully ask is
+  /// whether the user agreed to lose whatever is there. `false` means
+  /// nobody agreed to anything, so delivery steps around what it finds
+  /// instead of overwriting it.
+  public var replacesExistingFile: Bool
 
   public init(
     media: Media? = nil,
     chat: ChatRequest? = nil,
     render: RenderRequest? = nil,
-    composite: CompositeRequest? = nil)
+    composite: CompositeRequest? = nil,
+    replacesExistingFile: Bool = false)
   {
     self.media = media
     self.chat = chat
     self.render = render
     self.composite = composite
+    self.replacesExistingFile = replacesExistingFile
   }
 
   /// `nextStepID` is injected rather than calling `UUID()` directly so that
@@ -166,7 +179,12 @@ public struct JobTemplate: Sendable {
         dependsOn: [compositeStep.id]))
     }
 
-    return Job(id: id, created: created, title: title, steps: steps)
+    return Job(
+      id: id,
+      created: created,
+      title: title,
+      steps: steps,
+      replacesExistingFile: replacesExistingFile)
   }
 
   /// Seeds an implied chat request's ID from the media being downloaded

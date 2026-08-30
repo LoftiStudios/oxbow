@@ -92,6 +92,11 @@ final class IntakeModel {
   private let fetchInfo: (String) async throws -> VideoInfo
   private let enqueue: (JobTemplate, String) async -> Void
   private let calendar: Calendar
+  /// Injected so the collision rule is testable without touching a real
+  /// folder; production passes `FileManager`'s check. The app is not
+  /// sandboxed, so probing the user's chosen folder needs no further
+  /// ceremony.
+  private let fileExists: (URL) -> Bool
 
   /// Distinguishes the fetch in flight from one the user has already
   /// superseded by editing the link. Without it a slow fetch for the previous
@@ -101,11 +106,15 @@ final class IntakeModel {
   init(
     fetchInfo: @escaping (String) async throws -> VideoInfo,
     enqueue: @escaping (JobTemplate, String) async -> Void,
-    calendar: Calendar = .current)
+    calendar: Calendar = .current,
+    fileExists: @escaping (URL) -> Bool = {
+      FileManager.default.fileExists(atPath: $0.path)
+    })
   {
     self.fetchInfo = fetchInfo
     self.enqueue = enqueue
     self.calendar = calendar
+    self.fileExists = fileExists
   }
 
   convenience init(controller: QueueController, calendar: Calendar = .current) {
@@ -431,6 +440,29 @@ final class IntakeModel {
     }
   }
 
+  /// The file already sitting where this job would deliver, if there is one.
+  ///
+  /// This is what the sheet warns about and what `composedTemplate()` turns
+  /// into `JobTemplate.replacesExistingFile` — one definition, so the
+  /// warning the user is shown and the permission the job carries cannot
+  /// drift apart. A job can never authorize replacing a file over a warning
+  /// nobody saw.
+  ///
+  /// Gated on settled metadata because before that the name is a
+  /// placeholder, and a warning about a file this job will never write is
+  /// just noise. Deliberately NOT gated on `canAdd`: that is defined as
+  /// `composedTemplate()` returning something, and `composedTemplate()`
+  /// reads this — the pair would recurse forever.
+  ///
+  /// One `stat` per evaluation, on a path the user chose. Cheap enough to
+  /// stay derived rather than cached, and derived is what keeps it honest
+  /// when the name field changes under it.
+  var destinationCollision: URL? {
+    guard hasSettledMetadata, let folder else { return nil }
+    let destination = folder.appending(path: outputBaseName + OutputSuffix.video)
+    return fileExists(destination) ? destination : nil
+  }
+
   /// Exactly the condition under which `composedTemplate()` returns
   /// something — one definition, so the button's enabled state and what Add
   /// can actually build cannot drift apart.
@@ -543,7 +575,12 @@ final class IntakeModel {
         destination: destination(OutputSuffix.video))
     }
 
-    return JobTemplate(media: media, chat: chat, render: render, composite: composite)
+    return JobTemplate(
+      media: media,
+      chat: chat,
+      render: render,
+      composite: composite,
+      replacesExistingFile: destinationCollision != nil)
   }
 
   /// Adds the job. Returns whether it landed, so the sheet dismisses on a

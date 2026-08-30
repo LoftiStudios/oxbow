@@ -583,7 +583,11 @@ public actor QueueEngine {
     } else {
       // The Swift parent moves the finished file out; the helper only ever
       // writes inside our workspace.
-      switch move(context.outputFile, toDestinationFor: step.kind) {
+      switch move(
+        context.outputFile,
+        toDestinationFor: step.kind,
+        replacingExisting: job.replacesExistingFile)
+      {
       case .notApplicable:
         outcome = .succeeded(artifact: context.outputFile)
       case .moved(let destination):
@@ -1264,13 +1268,41 @@ public actor QueueEngine {
   /// The destination itself is `StepKind.deliveryDestination` — see its doc
   /// comment for why `.composite` counts as having none despite
   /// `CompositeRequest` carrying its own `destination` field.
-  private func move(_ file: URL, toDestinationFor kind: StepKind) -> MoveOutcome {
+  ///
+  /// `replacingExisting` is the user's answer to the intake sheet's warning,
+  /// not a fact about the disk. It is the only thing that can authorize
+  /// destroying a file:
+  ///
+  /// - `true` — they were shown that something was already there and chose
+  ///   to replace it, so an occupied destination is overwritten in place.
+  /// - `false` — nobody agreed to anything. A file may still have appeared
+  ///   at the destination during the download, and destroying it would be a
+  ///   loss the user was never given a chance to refuse, so delivery steps
+  ///   aside to the next free name (`OutputNaming.availableURL`) instead.
+  ///   The stepped URL is what the step reports as its artifact, so Get Info
+  ///   and Show in Finder name the file that actually exists.
+  ///
+  /// The `false` branch uses `moveItem`, which *fails* rather than replaces
+  /// when its destination is occupied — so the check and the move cannot
+  /// disagree about a file that appears between them, and the retry simply
+  /// steps again.
+  private func move(
+    _ file: URL,
+    toDestinationFor kind: StepKind,
+    replacingExisting: Bool)
+    -> MoveOutcome
+  {
     guard let destination = kind.deliveryDestination else { return .notApplicable }
 
     do {
       try FileManager.default.createDirectory(
         at: destination.deletingLastPathComponent(),
         withIntermediateDirectories: true)
+
+      guard replacingExisting else {
+        return .moved(try Delivery.moveWithoutReplacing(file, to: destination))
+      }
+
       if FileManager.default.fileExists(atPath: destination.path) {
         _ = try FileManager.default.replaceItemAt(destination, withItemAt: file)
       } else {

@@ -157,4 +157,68 @@ struct OutputNamingTests {
     let reserved = 255 - (familyCluster.utf8.count - 1) // leaves a 24-byte budget
     #expect(OutputNaming.sanitized(familyCluster, reservingSuffixBytes: reserved) == "untitled")
   }
+
+  // MARK: - Stepping around a taken name
+
+  @Test func leavesAFreeDestinationAlone() {
+    let destination = URL(filePath: "/downloads/S - 2026-08-18 - t.mp4")
+    #expect(OutputNaming.availableURL(for: destination, exists: { _ in false }) == destination)
+  }
+
+  @Test func stepsToTheNextNameWhenTheDestinationIsTaken() {
+    let destination = URL(filePath: "/downloads/v.mp4")
+    let taken: Set<URL> = [destination]
+
+    let free = OutputNaming.availableURL(for: destination, exists: { taken.contains($0) })
+
+    #expect(free == URL(filePath: "/downloads/v (2).mp4"))
+  }
+
+  /// Counting must not stop at the first step: re-downloading the same VOD a
+  /// fourth time has to find a free name, not collide with the second and
+  /// third attempts.
+  @Test func keepsCountingPastEveryTakenName() {
+    let destination = URL(filePath: "/downloads/v.mp4")
+    let taken: Set<URL> = [
+      destination,
+      URL(filePath: "/downloads/v (2).mp4"),
+      URL(filePath: "/downloads/v (3).mp4"),
+    ]
+
+    let free = OutputNaming.availableURL(for: destination, exists: { taken.contains($0) })
+
+    #expect(free == URL(filePath: "/downloads/v (4).mp4"))
+  }
+
+  /// The base name was already trimmed to fit ".mp4" and nothing more, so the
+  /// counter has to buy its own room back out of the base — otherwise a
+  /// maximum-length name steps into a filename APFS will not accept.
+  @Test func keepsTheSteppedNameWithinTheFilenameByteBudget() {
+    let base = OutputNaming.sanitized(
+      String(repeating: "a", count: 300), reservingSuffixBytes: OutputSuffixForTests.videoBytes)
+    let destination = URL(filePath: "/downloads").appending(path: base + ".mp4")
+
+    let free = OutputNaming.availableURL(for: destination, exists: { $0 == destination })
+
+    #expect(free.lastPathComponent.utf8.count <= 255)
+    #expect(free.lastPathComponent.hasSuffix(" (2).mp4"))
+  }
+
+  /// A destination with no extension must not grow one — `deletingPathExtension`
+  /// on a bare name is a no-op, and appending "." to it would invent a file
+  /// type the user never asked for.
+  @Test func stepsAroundANameThatHasNoExtension() {
+    let destination = URL(filePath: "/downloads/v")
+
+    let free = OutputNaming.availableURL(for: destination, exists: { $0 == destination })
+
+    #expect(free == URL(filePath: "/downloads/v (2)"))
+  }
+}
+
+/// The app target owns `OutputSuffix`; the package cannot see it, so the one
+/// number these tests need is restated here rather than the suite reaching
+/// across a module boundary that does not exist.
+private enum OutputSuffixForTests {
+  static let videoBytes = ".mp4".utf8.count
 }
