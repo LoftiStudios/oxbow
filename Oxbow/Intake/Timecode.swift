@@ -44,4 +44,29 @@ nonisolated enum Timecode {
   static func isBlankOrValid(_ text: String) -> Bool {
     text.trimmingCharacters(in: .whitespaces).isEmpty || parse(text) != nil
   }
+
+  /// Zero-padded `hh:mm:ss`, which is what the timeline writes into the trim
+  /// fields and therefore what `parse` above has to accept back.
+  ///
+  /// Hand-rolled rather than `duration.formatted(.time(pattern:))`, which
+  /// produces `0:10:00` — a leading zero the fields would round-trip
+  /// inconsistently, and a width the ruler's fixed-width label layout assumes
+  /// away.
+  static func format(_ duration: Duration) -> String {
+    let total = max(0, duration.components.seconds)
+    return [total / 3600, (total % 3600) / 60, total % 60]
+      .map { String(format: "%02lld", $0) }
+      .joined(separator: ":")
+  }
+
+  /// `00h 40m 00s` — the trim section's duration row. A readout, never parsed
+  /// back, so it can afford to spell its units out where the fields above
+  /// cannot: `hh:mm:ss` in a row the user cannot edit reads like a third
+  /// field they are missing.
+  static func spelled(_ duration: Duration) -> String {
+    let total = max(0, duration.components.seconds)
+    return zip([total / 3600, (total % 3600) / 60, total % 60], ["h", "m", "s"])
+      .map { String(format: "%02lld", $0.0) + $0.1 }
+      .joined(separator: " ")
+  }
 }
