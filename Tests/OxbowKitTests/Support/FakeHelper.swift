@@ -10,6 +10,13 @@ actor FakeHelper: HelperProcessing {
     /// what a helper killed mid-write leaves behind. Spec §1.5: an artifact
     /// that exists but is empty is not a success.
     case leavesAnEmptyArtifact
+    /// Exits cleanly having written a structurally valid but *frameless*
+    /// fragmented MP4 — `ftyp` and `moov`, no `moof`/`mdat` pair. This is
+    /// what a composite produces when its filter graph yields nothing, and
+    /// the file is neither missing nor zero-length, so every existence-based
+    /// success test reads it as a finished piece. Only applied to the FFmpeg
+    /// dialect; helper steps in the same job still succeed normally.
+    case writesAFramelessPiece
     /// Blocks inside `run` until `cancel()` is called, then reports as
     /// killed by SIGTERM — mirrors a real helper that keeps running until
     /// it is signalled, so a test can reliably catch the step `.running`
@@ -47,7 +54,18 @@ actor FakeHelper: HelperProcessing {
     switch behaviour {
     case .succeeds:
       // The engine's success criterion is the artifact, so produce one.
-      write(Data("x".utf8), for: launch)
+      //
+      // FFmpeg-dialect steps get a *fragmented* file carrying one frame, not
+      // a stub byte: a composite's piece is checked for declared samples, not
+      // just for existence, because a frameless piece would otherwise be
+      // concatenated as an empty segment and truncate the delivery
+      // (resume.md §12). A one-byte stub is not a shape the real tool can
+      // produce there, and standing in for real output with something the
+      // production check rejects tests the wrong thing.
+      switch launch.dialect {
+      case .ffmpeg: write(FragmentBuilder.fragmentedFile([1]), for: launch)
+      case .helper: write(Data("x".utf8), for: launch)
+      }
       return RunResult(status: .exited(0), standardError: "")
 
     case .failsWithoutArtifact(let stderr):
@@ -55,6 +73,13 @@ actor FakeHelper: HelperProcessing {
 
     case .leavesAnEmptyArtifact:
       write(Data(), for: launch)
+      return RunResult(status: .exited(0), standardError: "")
+
+    case .writesAFramelessPiece:
+      switch launch.dialect {
+      case .ffmpeg: write(FragmentBuilder.fragmentedFile([]), for: launch)
+      case .helper: write(Data("x".utf8), for: launch)
+      }
       return RunResult(status: .exited(0), standardError: "")
 
     case .hangsUntilCancelled:

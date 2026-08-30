@@ -573,8 +573,35 @@ public actor QueueEngine {
     // void, so nothing sets a meaningful exit status on its own.
     let produced = Self.isUsableArtifact(context.outputFile)
 
+    // "Exists and is non-empty" is the right criterion everywhere except a
+    // composite's piece, where it is not sufficient. A filter graph that
+    // yields nothing still writes `ftyp` and `moov`, so the file is neither
+    // missing nor zero-length — and `.assemble` would concatenate it as an
+    // empty segment and deliver a file truncated at the seam, with no error
+    // anywhere in the pipeline. That is exactly how the chat-seek defect in
+    // resume.md §12 stayed invisible: FFmpeg exited 0 and every existence
+    // check agreed.
+    //
+    // A piece declares its own sample count in each fragment's `trun`, so
+    // this is a box walk rather than a decode. Unreadable counts as frameless
+    // for the same reason `hasUsableSidecar` fails closed: a piece we cannot
+    // read is not one to hand to the concat demuxer.
+    let framelessPiece: Bool
+    if produced, case .composite = step.kind {
+      framelessPiece = ((try? FragmentedMP4.index(of: context.outputFile))?.frameCount ?? 0) == 0
+    } else {
+      framelessPiece = false
+    }
+
     let outcome: StepOutcome
-    if let failure = FailureInterpreter.interpret(
+    if framelessPiece {
+      outcome = .failed(StepFailure(
+        kind: .noArtifact,
+        summary: "The composite produced no video.",
+        detail: result.standardError.isEmpty
+          ? "FFmpeg exited successfully but the piece it wrote contains no frames."
+          : result.standardError))
+    } else if let failure = FailureInterpreter.interpret(
       exitStatus: result.status,
       standardError: result.standardError,
       artifactExists: produced)
@@ -1197,12 +1224,57 @@ public actor QueueEngine {
       let hasUsableSidecar = FileManager.default.fileExists(atPath: sidecarFile.path)
         && ((try? FragmentedMP4.hasCompleteMoov(at: sidecarFile)) ?? false)
 
+      // A chat render does not always run as long as its video — renders end
+      // at the last message — so a resume point can land past the end of the
+      // render while the video still has most of an hour left. Seeking the
+      // render there yields zero frames, `hstack` has no last frame to
+      // repeat, and the composite writes an empty piece and exits 0. Clamping
+      // to one frame inside the render's end lands the seek on its last frame
+      // instead, which is exactly what a first attempt shows at that point.
+      //
+      // `nil` whenever the answer is not both known and needed: no resume, no
+      // render input, an unreadable header, or a render long enough to seek
+      // into normally. All four mean "seek the chat with the video", which is
+      // the behaviour that was always correct for them. resume.md §12.
+      // The margin is measured in the *render's* frames, never the
+      // composite's. They are routinely different — the filter graph exists
+      // partly to normalise a 30fps render up to a 60fps video — and getting
+      // this wrong is silent: a margin of one 60fps frame (0.0167s) lands
+      // past the last frame of a 30fps render, whose final frame sits
+      // 0.0333s before the end, so the seek yields nothing and the piece
+      // comes out empty exactly as if there had been no clamp at all. That
+      // is not hypothetical; it is what the first version of this did.
+      //
+      // Two frames rather than one, so a frame of rounding either way still
+      // lands inside. The cost is that the seam replays two frames of chat
+      // (67ms at 30fps) instead of freezing on the last one; the cost of
+      // being one frame too late is the whole tail of the delivery.
+      let renderFramerate: Int? = step.dependsOn.count > 1
+        ? job.steps.first { $0.id == step.dependsOn[1] }.flatMap {
+            if case .renderChat(let render) = $0.kind { render.framerate } else { nil }
+          }
+        : nil
+      let chatResumeFrom: Duration? = {
+        guard let from = resume.from, inputs.count > 1,
+              let renderLength = try? FragmentedMP4.duration(of: inputs[1])
+        else { return nil }
+        // No render framerate to be had means no basis for a frame-sized
+        // margin, so fall back to a quarter second — comfortably more than
+        // one frame at any rate a chat is rendered at, and still a seam
+        // artefact nobody can see.
+        let margin = renderFramerate.map { 2.0 / Double($0) } ?? 0.25
+        let landing = renderLength - .seconds(margin)
+        guard landing > .zero, from > landing else { return nil }
+        return landing
+      }()
+
       return StepContext(
         stepTempDirectory: stepDirectory,
         outputFile: directory.appending(path: "piece-\(resume.index).mp4"),
         ffmpegPath: configuration.ffmpegPath,
         inputArtifacts: inputs,
         resumeFrom: resume.from,
+        chatResumeFrom: chatResumeFrom,
         hasUsableSidecar: hasUsableSidecar,
         log: StepLog(fileURL: configuration.workspace.logFile(job: job.id, step: step.id)))
     }

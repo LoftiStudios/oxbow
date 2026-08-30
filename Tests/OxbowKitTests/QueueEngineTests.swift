@@ -437,6 +437,54 @@ struct QueueEngineTests {
     await engine.flush()
   }
 
+  /// A composite that exits 0 having produced no frames must fail, not
+  /// succeed.
+  ///
+  /// This is the guard the chat-seek bug went undetected behind. FFmpeg's
+  /// exit code says nothing here — the engine already knows that, which is
+  /// why `isUsableArtifact` exists — but "exists and is non-empty" is not
+  /// enough for a piece: a filter graph that yields nothing still writes
+  /// `ftyp` and `moov`, so the file is neither missing nor zero-length and
+  /// every existence check reads it as finished. `.assemble` would then
+  /// concatenate it as an empty segment and deliver a file truncated at the
+  /// seam, with no error anywhere.
+  ///
+  /// The piece is the one artifact in the pipeline whose emptiness is
+  /// readable without decoding — `trun` declares each fragment's sample
+  /// count — so this costs a box walk, not a subprocess.
+  @Test func aCompositeThatProducesNoFramesFailsRatherThanDeliveringATruncatedFile() async throws {
+    let helper = FakeHelper(.writesAFramelessPiece)
+    let (engine, root) = makeEngine { helper }
+    defer { cleanUp(root) }
+
+    let template = JobTemplate(
+      media: .video(VideoRequest(videoID: "v", quality: "1080p60")),
+      render: RenderRequest(),
+      composite: CompositeRequest(
+        framerate: 60,
+        duration: .seconds(60),
+        destination: root.appending(path: "out.mp4")))
+
+    try await engine.start()
+    await engine.enqueue(template, title: "t")
+    try await settle(engine)
+
+    let steps = await engine.currentJobs[0].steps
+    let composite = try #require(steps.first { if case .composite = $0.kind { true } else { false } })
+
+    guard case .failed(let failure) = composite.status else {
+      Issue.record("expected a frameless piece to fail the composite, got \(composite.status)")
+      return
+    }
+    #expect(failure.kind == .noArtifact)
+
+    // And the delivery never happens: assemble must not have run on it.
+    let assemble = try #require(steps.first { if case .assemble = $0.kind { true } else { false } })
+    #expect(assemble.status == .blocked)
+
+    await engine.flush()
+  }
+
   /// The "one file out" promise the whole feature rests on: a composite job's
   /// video, chat render, AND composite are all intermediates shaped exactly
   /// like real intake output (`destination: nil`, or in the composite's case

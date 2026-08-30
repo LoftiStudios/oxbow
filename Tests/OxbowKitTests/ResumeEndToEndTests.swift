@@ -623,6 +623,24 @@ struct ResumeEndToEndTests {
               "the third input must be un-seeked, or it would capture only the tail too")
     }
 
+    // The chat render is shorter than the video here — 5s against 120s —
+    // which is not an artefact of this test's narrow chat window but the
+    // ordinary case it stands in for: renders end at the last message, so a
+    // stream that goes quiet before it ends produces one. Seeking that render
+    // to the video's resume point lands past its end, yields zero frames, and
+    // `hstack` has no last frame to repeat — the composite then writes an
+    // empty piece and exits 0. `makeContext` clamps the chat's seek for
+    // exactly this case; without the clamp, piece 1 below comes out with one
+    // frame in it and the delivery is truncated at the seam. resume.md §12.
+    let renderLength = try #require(try FragmentedMP4.duration(of: render2))
+    let chatSeek = try #require(composite2Context.chatResumeFrom)
+    print("Chat render runs \(seconds(renderLength))s against \(totalContentSeconds)s of video; "
+      + "video seeks to \(seam)s, chat to \(seconds(chatSeek))s")
+    #expect(chatSeek < renderLength,
+            "the chat's seek must land inside its own render, or the graph yields nothing")
+    #expect(seam > seconds(renderLength),
+            "this test only exercises the clamp while the resume point is past the render's end")
+
     let attempt2Start = ContinuousClock.now
     let attempt2 = try await run(.composite(compositeRequest), context: composite2Context, executable: ffmpeg)
     let attempt2Elapsed = ContinuousClock.now - attempt2Start

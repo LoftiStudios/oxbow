@@ -610,6 +610,54 @@ struct ArgumentBuilderTests {
     for index in seeks { #expect(args[index + 2] == "-i") }
   }
 
+  /// The chat render is not the video and does not always run as long.
+  ///
+  /// Chat renders end at the last message (`compositing.md` is explicit about
+  /// it — that is why there is no `shortest=1`), so a stream that goes quiet
+  /// before it ends produces a render shorter than its video. Seeking that
+  /// render past its own end yields **zero frames**, and `hstack`'s
+  /// `eof_action=repeat` has no last frame to hold, so the whole graph emits
+  /// nothing — while FFmpeg still exits 0. The piece is empty, `.assemble`
+  /// concatenates only what came before it, and the delivery is silently
+  /// truncated at the seam.
+  ///
+  /// Measured with the bundled binary: video 60s seeked to 30s beside a 5s
+  /// chat render, chat seeked to 30s → a 1,785-byte piece with no decodable
+  /// frames, exit 0. The same run with the chat's seek clamped to one frame
+  /// inside its end → 903 frames, a full piece.
+  ///
+  /// So the two seeks are separate values. `QueueEngine.makeContext` does the
+  /// clamping, because knowing the render's duration is I/O and this type is
+  /// pure.
+  @Test func aResumeBeyondTheChatRenderClampsOnlyTheChatSeek() {
+    var context = compositeContext
+    context.resumeFrom = .seconds(74.4)
+    context.chatResumeFrom = .seconds(4.966667)
+    let args = ArgumentBuilder.arguments(for: composite, context: context)
+
+    let seeks = args.indices.filter { args[$0] == "-ss" }
+    #expect(seeks.count == 2)
+    // [-ss][value][-i][path]
+    #expect(args[seeks[0] + 1] == "74.400000")
+    #expect(args[seeks[0] + 3] == "/tmp/job/video.mp4")
+    #expect(args[seeks[1] + 1] == "4.966667")
+    #expect(args[seeks[1] + 3] == "/tmp/job/render.mp4")
+  }
+
+  /// The clamp is an override, not a second thing to remember: when the chat
+  /// render is long enough — the ordinary case — both inputs seek to the same
+  /// instant, and a context that says nothing about the chat gets exactly the
+  /// behaviour it had before the clamp existed.
+  @Test func aChatRenderLongEnoughToSeekIsSeekedWithTheVideo() {
+    var context = compositeContext
+    context.resumeFrom = .seconds(74.4)
+    let args = ArgumentBuilder.arguments(for: composite, context: context)
+
+    let seeks = args.indices.filter { args[$0] == "-ss" }
+    #expect(seeks.count == 2)
+    for index in seeks { #expect(args[index + 1] == "74.400000") }
+  }
+
   @Test func aFirstAttemptDoesNotSeek() {
     #expect(!ArgumentBuilder.arguments(for: composite, context: compositeContext).contains("-ss"))
   }

@@ -19,6 +19,24 @@ public struct StepContext: Sendable {
   /// `trim=start_frame=N` and `-ss` return different frames, while input and
   /// output seek agree exactly. See docs/design/resume.md §2.1.
   public var resumeFrom: Duration?
+  /// Where the chat render's input picks up, when that must differ from
+  /// `resumeFrom`. `nil` means "the same as the video" — the ordinary case.
+  ///
+  /// The two can differ because a chat render does not always run as long as
+  /// its video: renders end at the last message, so a stream that goes quiet
+  /// before it ends produces a shorter one. Seeking that render past its own
+  /// end yields **zero frames**, and `hstack`'s `eof_action=repeat` has no
+  /// last frame to hold, so the composite emits nothing at all — while
+  /// FFmpeg exits 0. The piece is empty, `.assemble` concatenates only what
+  /// came before it, and the delivery is silently truncated at the seam.
+  ///
+  /// So this is `resumeFrom` clamped to one frame inside the render's own
+  /// end, which lands the seek on its last frame and lets `hstack` repeat it
+  /// exactly as a first attempt does. Deciding that needs the render's
+  /// duration, which is I/O, so `QueueEngine.makeContext` computes it and
+  /// hands it in — the same division of labour as `hasUsableSidecar`. See
+  /// docs/design/resume.md §12.
+  public var chatResumeFrom: Duration?
   /// Whether `resume/<job>/audio.m4a` already holds a complete, playable
   /// sidecar. Only meaningful for `.composite`; every other step ignores it.
   ///
@@ -42,6 +60,7 @@ public struct StepContext: Sendable {
     ffmpegPath: URL,
     inputArtifacts: [URL] = [],
     resumeFrom: Duration? = nil,
+    chatResumeFrom: Duration? = nil,
     hasUsableSidecar: Bool = false,
     log: StepLog? = nil)
   {
@@ -50,6 +69,7 @@ public struct StepContext: Sendable {
     self.ffmpegPath = ffmpegPath
     self.inputArtifacts = inputArtifacts
     self.resumeFrom = resumeFrom
+    self.chatResumeFrom = chatResumeFrom
     self.hasUsableSidecar = hasUsableSidecar
     self.log = log
   }

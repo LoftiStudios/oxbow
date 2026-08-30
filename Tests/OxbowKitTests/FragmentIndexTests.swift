@@ -172,4 +172,62 @@ struct FragmentIndexTests {
 
     #expect(try !FragmentedMP4.hasCompleteMoov(at: url))
   }
+
+  // MARK: - Duration
+
+  /// Reading `mvhd` is what lets a resumed composite know whether its chat
+  /// render is long enough to seek into. Doing it here rather than with a
+  /// subprocess keeps `makeContext` free of process spawning, and we bundle
+  /// no `ffprobe` to ask.
+  @Test func durationReadsTheMovieHeader() throws {
+    let url = try FragmentBuilder.write(
+      FragmentBuilder.fileWithDuration(timescale: 1000, duration: 5000))
+    defer { try? FileManager.default.removeItem(at: url) }
+
+    #expect(try FragmentedMP4.duration(of: url) == .seconds(5))
+  }
+
+  /// A 64-bit `mvhd`. Rare in files this size, but the version byte decides
+  /// the field widths and reading it with the wrong layout would not fail —
+  /// it would return a plausible, wrong number, which is the worst outcome
+  /// for a value used to clamp a seek.
+  @Test func durationReadsAVersionOneMovieHeader() throws {
+    let url = try FragmentBuilder.write(
+      FragmentBuilder.fileWithDuration(timescale: 90000, duration: 900_000, version: 1))
+    defer { try? FileManager.default.removeItem(at: url) }
+
+    #expect(try FragmentedMP4.duration(of: url) == .seconds(10))
+  }
+
+  /// No `moov`, no answer — and specifically not zero. A caller that clamps
+  /// a seek must be able to tell "the render is this long" from "I could not
+  /// find out", because those call for opposite behaviour: clamp, or leave
+  /// the seek alone.
+  @Test func durationIsNilWithoutAMovieHeader() throws {
+    let url = try FragmentBuilder.write(FragmentBuilder.box("ftyp", Data(repeating: 0, count: 8)))
+    defer { try? FileManager.default.removeItem(at: url) }
+
+    #expect(try FragmentedMP4.duration(of: url) == nil)
+  }
+
+  /// A `moov` whose `mvhd` is truncated mid-field. Same reasoning as above:
+  /// unreadable must be `nil`, never a partial number.
+  @Test func durationIsNilWhenTheMovieHeaderIsTruncated() throws {
+    var data = FragmentBuilder.box("ftyp", Data(repeating: 0, count: 8))
+    data.append(FragmentBuilder.box("moov", FragmentBuilder.box("mvhd", Data([0, 0, 0, 0, 1, 2]))))
+    let url = try FragmentBuilder.write(data)
+    defer { try? FileManager.default.removeItem(at: url) }
+
+    #expect(try FragmentedMP4.duration(of: url) == nil)
+  }
+
+  /// A zero timescale would divide by zero. Malformed rather than
+  /// impossible, and the answer is the same as any other unreadable header.
+  @Test func durationIsNilWhenTheTimescaleIsZero() throws {
+    let url = try FragmentBuilder.write(
+      FragmentBuilder.fileWithDuration(timescale: 0, duration: 5000))
+    defer { try? FileManager.default.removeItem(at: url) }
+
+    #expect(try FragmentedMP4.duration(of: url) == nil)
+  }
 }

@@ -383,6 +383,12 @@ Every element is load-bearing:
 - **No `shortest=1`.** Chat renders end at the last message. A stream that goes
   quiet for its final twenty minutes would have had its *video* truncated. This
   is a real defect in the Ruby prototype this design replaces.
+
+  **A resumed composite has to honour the same fact a second time**, and
+  `eof_action=repeat` is not enough on its own there: seeking a render past its
+  own end yields no frames at all, and `hstack` cannot repeat a frame that
+  never arrived. The chat's seek is clamped for that case — see
+  `docs/design/resume.md` §12.
 - **No `scale` on either input.** The chat is rendered at the right size by the
   render step; the video is already native. The prototype's `scale=w:h` to the
   source's own dimensions ran swscale over every frame for nothing.
