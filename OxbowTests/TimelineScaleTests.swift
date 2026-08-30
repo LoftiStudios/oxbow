@@ -99,4 +99,53 @@ struct TimelineScaleTests {
     #expect(TimelineScale(duration: .zero, width: 500).x(for: .seconds(5)) == 0)
     #expect(TimelineScale(duration: .zero, width: 500).time(atX: 10) == .zero)
   }
+
+  @Test func labelsTheMockupsFortyMinuteVODInTensOfMinutes() {
+    let labels = TimelineScale(duration: Self.fortyMinutes, width: 500).labels
+    #expect(labels.map(\.text)
+      == ["00:00:00", "00:10:00", "00:20:00", "00:30:00", "00:40:00"])
+  }
+
+  /// The outer two would hang half off the track if they were centred on their
+  /// tick, and the left one is where the start handle sits by default.
+  @Test func anchorsTheOuterLabelsToTheEdges() {
+    let labels = TimelineScale(duration: Self.fortyMinutes, width: 500).labels
+    #expect(labels.first?.anchor == .leading)
+    #expect(labels.last?.anchor == .trailing)
+    #expect(labels.dropFirst().dropLast().allSatisfy { $0.anchor == .center })
+  }
+
+  @Test func everyLabelSitsOnATickDrawnAtLabelHeight() {
+    let scale = TimelineScale(duration: .seconds(11863), width: 500)
+    let labelTicks = scale.ticks.filter { $0.height == .label }
+    #expect(scale.labels.allSatisfy { label in
+      labelTicks.contains { abs($0.x - label.x) < 0.001 }
+    })
+  }
+
+  /// Rounding the last label would invent runtime: this VOD ends at 03:17:43,
+  /// and a snapped label would read 03:17:45.
+  @Test func leavesTheEndpointLabelsUnrounded() {
+    let labels = TimelineScale(duration: .seconds(11863), width: 500).labels
+    #expect(labels.first?.text == "00:00:00")
+    #expect(labels.last?.text == "03:17:43")
+    #expect(labels.map(\.text)
+      == ["00:00:00", "00:49:30", "01:39:00", "02:28:30", "03:17:43"])
+  }
+
+  /// Never four: 72/3 = 24 is a major but not a label position, so a
+  /// four-label layout would move labels onto ticks that are not the tall
+  /// ones and the ruler would visibly restructure as the window resizes.
+  @Test func dropsLabelsOnANarrowTrackButNeverToFour() {
+    #expect(TimelineScale(duration: Self.fortyMinutes, width: 500).labels.count == 5)
+    #expect(TimelineScale(duration: Self.fortyMinutes, width: 290).labels.count == 3)
+    #expect(TimelineScale(duration: Self.fortyMinutes, width: 150).labels.count == 2)
+  }
+
+  @Test func keepsTheSurvivingLabelsOnTheirOriginalPositions() {
+    let wide = TimelineScale(duration: Self.fortyMinutes, width: 500)
+    let narrow = TimelineScale(duration: Self.fortyMinutes, width: 290)
+    #expect(narrow.labels.map(\.text) == ["00:00:00", "00:20:00", "00:40:00"])
+    #expect(wide.labels.map(\.text).contains(narrow.labels[1].text))
+  }
 }

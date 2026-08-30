@@ -90,4 +90,51 @@ nonisolated struct TimelineScale: Equatable {
     guard abs(seconds - totalSeconds) < abs(seconds - grid) else { return .seconds(Int(grid)) }
     return duration
   }
+
+  /// 11pt Monaco renders eight characters at exactly this width, measured
+  /// rather than guessed. Every fitting decision below depends on it, and on
+  /// `format` always producing eight characters.
+  static let labelWidth: CGFloat = 52.81
+  static let minLabelGap: CGFloat = 8
+
+  enum LabelAnchor: Equatable { case leading, center, trailing }
+  struct Label: Equatable {
+    let x: CGFloat
+    let text: String
+    let anchor: LabelAnchor
+  }
+
+  var labels: [Label] {
+    guard isDrawable else { return [] }
+    let steps = labelSteps
+    return steps.enumerated().map { index, step in
+      Label(
+        x: x(atStep: step),
+        text: Timecode.format(time(atStep: step)),
+        anchor: index == 0 ? .leading : (index == steps.count - 1 ? .trailing : .center))
+    }
+  }
+
+  /// The endpoints exact, everything between them snapped to the drag unit.
+  /// Snapping the endpoints too would invent runtime the video does not have:
+  /// a 3:17:43 VOD on a 30s unit rounds to 03:17:45.
+  private func time(atStep step: Int) -> Duration {
+    if step == 0 { return .zero }
+    if step == Self.subdivisions { return duration }
+    return snapped(totalSeconds * Double(step) / Double(Self.subdivisions))
+  }
+
+  /// Five, or a subset of the same five. Never four: 72/3 = 24 is a major but
+  /// not a label position, so four labels would sit on ticks that are not the
+  /// tall ones and the ruler would restructure itself as the window resizes.
+  private var labelSteps: [Int] {
+    let five = Array(stride(from: 0, through: Self.subdivisions, by: Self.labelEvery))
+    if fits(five.count) { return five }
+    if fits(3) { return [0, Self.subdivisions / 2, Self.subdivisions] }
+    return [0, Self.subdivisions]
+  }
+
+  private func fits(_ count: Int) -> Bool {
+    CGFloat(count) * Self.labelWidth + CGFloat(count - 1) * Self.minLabelGap <= width
+  }
 }
