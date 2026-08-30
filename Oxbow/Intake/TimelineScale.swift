@@ -26,8 +26,9 @@ nonisolated struct TimelineScale: Equatable {
   let duration: Duration
   let width: CGFloat
 
-  /// Both are zero at least once before geometry is measured, and dividing by
-  /// either would trap.
+  /// Both are zero at least once before geometry is measured. This guard
+  /// enables Task 3's `x(for:)` and `time(atX:)` to divide by `totalSeconds`
+  /// safely.
   var isDrawable: Bool { width > 0 && totalSeconds > 0 }
 
   var totalSeconds: Double { Double(duration.components.seconds) }

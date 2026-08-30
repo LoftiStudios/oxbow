@@ -37,4 +37,22 @@ struct TimelineScaleTests {
     #expect(TimelineScale(duration: .zero, width: 500).ticks.isEmpty)
     #expect(TimelineScale(duration: Self.fortyMinutes, width: 0).ticks.isEmpty)
   }
+
+  /// The tallies above would pass with every tick in the wrong place. This
+  /// pins the mapping itself: 18 is a multiple of both 3 and 18, which is the
+  /// property the whole scheme rests on.
+  @Test func mapsEachStepToItsHeight() {
+    #expect(TimelineScale.height(atStep: 0) == .label)
+    #expect(TimelineScale.height(atStep: 3) == .major)
+    #expect(TimelineScale.height(atStep: 18) == .label)
+    #expect(TimelineScale.height(atStep: 71) == .minor)
+    #expect(TimelineScale.height(atStep: 72) == .label)
+  }
+
+  @Test func spacesTicksEvenlyAcrossTheTrack() {
+    let ticks = TimelineScale(duration: Self.fortyMinutes, width: 720).ticks
+    #expect(ticks[18].x == 180)
+    #expect(ticks[36].x == 360)
+    #expect(ticks[54].x == 540)
+  }
 }
