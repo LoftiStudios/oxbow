@@ -55,7 +55,23 @@ struct TrimTimeline: View {
 
   var body: some View {
     ZStack(alignment: .topLeading) {
-      RoundedRectangle(cornerRadius: Metrics.corner).fill(Self.track)
+      RoundedRectangle(cornerRadius: Metrics.corner)
+        .fill(Self.track)
+        // A lit top lip and a shaded bottom one. One hairline in each
+        // direction is what gives a flat fill thickness — without it the
+        // gradient reads as a painted rectangle rather than a strip with an
+        // edge you could catch a fingernail on.
+        .overlay(
+          RoundedRectangle(cornerRadius: Metrics.corner)
+            .strokeBorder(
+              LinearGradient(
+                colors: [.white.opacity(0.5), .black.opacity(0.28)],
+                startPoint: .top,
+                endPoint: .bottom),
+              lineWidth: 1))
+        // Sits fractionally proud of the form, so the channel cut into it has
+        // something to be cut into.
+        .shadow(color: .black.opacity(0.22), radius: 1.5, x: 0, y: 1)
       selection
       ruler
       handle(.start)
