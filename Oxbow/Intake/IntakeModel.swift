@@ -100,6 +100,17 @@ final class IntakeModel {
   /// sandboxed, so probing the user's chosen folder needs no further
   /// ceremony.
   private let fileExists: (URL) -> Bool
+  /// Injected for the same reason as `fileExists`: filling a volume to test a
+  /// warning is not a test anyone runs twice.
+  private let volumeSpace: VolumeSpace
+  /// A path on the volume the job's workspace lives on.
+  ///
+  /// Only the *volume* matters — free space is a property of the volume and
+  /// every path on it shares the answer — so this is Application Support
+  /// rather than the workspace's exact directory. Deriving that exact path
+  /// here would duplicate `AppComposition`'s, and a second copy is a copy that
+  /// drifts.
+  private let workspaceVolumePath: URL
 
   /// Distinguishes the fetch in flight from one the user has already
   /// superseded by editing the link. Without it a slow fetch for the previous
@@ -112,12 +123,16 @@ final class IntakeModel {
     calendar: Calendar = .current,
     fileExists: @escaping (URL) -> Bool = {
       FileManager.default.fileExists(atPath: $0.path)
-    })
+    },
+    volumeSpace: VolumeSpace = .live,
+    workspaceVolumePath: URL = URL.applicationSupportDirectory)
   {
     self.fetchInfo = fetchInfo
     self.enqueue = enqueue
     self.calendar = calendar
     self.fileExists = fileExists
+    self.volumeSpace = volumeSpace
+    self.workspaceVolumePath = workspaceVolumePath
   }
 
   convenience init(controller: QueueController, calendar: Calendar = .current) {
@@ -536,6 +551,111 @@ final class IntakeModel {
     guard hasSettledMetadata, let folder else { return nil }
     let destination = folder.appending(path: outputBaseName + OutputSuffix.video)
     return fileExists(destination) ? destination : nil
+  }
+
+  // MARK: - Not enough room
+
+  /// A volume that will not hold this job, and the cheapest way out of it.
+  struct SpaceWarning: Equatable {
+    var needed: Int64
+    var available: Int64
+    var volumeName: String
+    /// A lower rendition that would actually fit, or nil when none would.
+    var remedy: Remedy?
+
+    struct Remedy: Equatable {
+      var qualityName: String
+      var needed: Int64
+    }
+  }
+
+  /// What this job needs against what the volume has, when the first exceeds
+  /// the second.
+  ///
+  /// **Advisory, never a gate.** `canAdd` does not read this, deliberately:
+  /// the estimate behind it is soft (`docs/design/disk-preflight.md` §3.2),
+  /// the user knows things it does not — a snapshot about to be thinned, a
+  /// drive about to be plugged in — and refusing them would be refusing on
+  /// worse information than they have. It is the same contract
+  /// `destinationCollision` carries, and having one warning that blocks and
+  /// one that does not would teach the user that neither can be trusted.
+  ///
+  /// Gated on settled metadata for the same reason as the collision warning:
+  /// before that the duration is a placeholder and any number derived from it
+  /// is fiction.
+  ///
+  /// One volume read per evaluation, on a path the user chose. Derived rather
+  /// than cached, which is what keeps it honest as the quality, trim and
+  /// output toggle move under it — all three change the answer.
+  var spaceWarning: SpaceWarning? {
+    guard hasSettledMetadata,
+          let folder,
+          let duration = effectiveDuration,
+          let quality = estimatedQuality,
+          let shortfall = shortfall(for: quality, over: duration, in: folder)
+    else { return nil }
+
+    return SpaceWarning(
+      needed: shortfall.needed,
+      available: shortfall.available,
+      volumeName: shortfall.volumeName,
+      remedy: remedy(under: quality, over: duration, in: folder))
+  }
+
+  /// The rendition this job will actually download, which is what the estimate
+  /// has to be about. A composite has its own answer already — the geometry
+  /// must parse — and a plain download takes the picker's selection, falling
+  /// back to the first on offer for "best available".
+  private var estimatedQuality: StreamQuality? {
+    switch output {
+    case .videoWithChat: return compositeQuality
+    case .video: return qualities.first { $0.name == quality } ?? qualities.first
+    }
+  }
+
+  private func estimate(for quality: StreamQuality, over duration: Duration) -> SpaceEstimate {
+    SpaceEstimate(
+      quality: quality,
+      duration: duration,
+      // A plain download renders no chat and composites nothing, so both of
+      // those terms must be absent rather than merely small.
+      composite: output == .videoWithChat ? CompositeGeometry(quality: quality) : nil)
+  }
+
+  private func shortfall(
+    for quality: StreamQuality,
+    over duration: Duration,
+    in folder: URL) -> VolumeSpace.Shortfall?
+  {
+    let estimate = estimate(for: quality, over: duration)
+    return volumeSpace.shortfall(
+      needingWorkspace: estimate.total,
+      delivered: estimate.delivered,
+      workspace: workspaceVolumePath,
+      destination: folder)
+  }
+
+  /// The largest rendition smaller than `quality` that would actually fit.
+  ///
+  /// **Offering one that also does not fit is worse than offering none** — it
+  /// costs the user a click to learn nothing — so each candidate is run
+  /// through the same check rather than assumed to help. Largest-that-fits
+  /// rather than smallest, because the point is to lose as little quality as
+  /// the disk allows.
+  private func remedy(
+    under quality: StreamQuality,
+    over duration: Duration,
+    in folder: URL) -> SpaceWarning.Remedy?
+  {
+    let current = estimate(for: quality, over: duration).total
+    let fitting = qualities
+      .filter { $0.name != quality.name }
+      .map { (candidate: $0, needed: estimate(for: $0, over: duration).total) }
+      .filter { $0.needed < current }
+      .filter { shortfall(for: $0.candidate, over: duration, in: folder) == nil }
+
+    guard let best = fitting.max(by: { $0.needed < $1.needed }) else { return nil }
+    return SpaceWarning.Remedy(qualityName: best.candidate.name, needed: best.needed)
   }
 
   /// Exactly the condition under which `composedTemplate()` returns

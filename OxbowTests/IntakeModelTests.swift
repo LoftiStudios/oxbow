@@ -194,6 +194,126 @@ struct IntakeModelTests {
   private static let clipLink = "https://clips.twitch.tv/TangibleGiantPancakeKappa"
   private static let clipSlug = "TangibleGiantPancakeKappa"
 
+
+  // MARK: - Not enough room
+
+  /// The figures every test below is calibrated against, for the default
+  /// fixture's one-hour VOD. Recomputing them by hand in each test would make
+  /// a constant change look like six unrelated failures.
+  ///
+  /// | job | source | intermediate | composite | total |
+  /// |---|---|---|---|---|
+  /// | 1080p60 + chat | 3.6 | 1.7 | 2.5 | **7.9 GB** |
+  /// | 720p60 + chat | 1.4 | 1.7 | 1.1 | **4.2 GB** |
+  /// | 1080p60 alone | 3.6 | — | — | **3.6 GB** |
+  private static let gigabyte: Int64 = 1_000_000_000
+
+  /// The whole contract, and the same one the collision warning carries:
+  /// advisory, never a gate. Two warnings in one panel where one blocks and
+  /// one does not would teach the user that neither can be trusted.
+  @Test func aSpaceWarningNeverBlocksAdd() async {
+    let model = await loadedModel(volumeSpace: Self.volume(free: Self.gigabyte))
+    model.output = .videoWithChat
+
+    #expect(model.spaceWarning != nil, "precondition: a gigabyte cannot hold this job")
+    #expect(model.canAdd, "the warning must not gate Add")
+  }
+
+  /// A machine with room says nothing at all. Stated because a warning that
+  /// fires when it need not is the failure mode that makes people stop
+  /// reading warnings.
+  @Test func noSpaceWarningWhenThereIsRoom() async {
+    let model = await loadedModel(volumeSpace: Self.volume(free: 100 * Self.gigabyte))
+    model.output = .videoWithChat
+
+    #expect(model.spaceWarning == nil)
+  }
+
+  /// Before the video is known the duration is a placeholder, so any number
+  /// computed from it is fiction. Mirrors the same gate on
+  /// `destinationCollision`.
+  @Test func noSpaceWarningBeforeMetadataSettles() {
+    let model = makeModel(volumeSpace: Self.volume(free: 1))
+    model.folder = Self.folder
+
+    #expect(model.spaceWarning == nil)
+  }
+
+  /// No destination, nothing to check, and in particular no volume to probe.
+  @Test func noSpaceWarningWithoutAFolder() async {
+    let model = await loadedModel(volumeSpace: Self.volume(free: 1))
+    model.output = .videoWithChat
+    model.folder = nil
+
+    #expect(model.spaceWarning == nil)
+  }
+
+  /// The remedy is the point of the warning. "Insufficient disk space" tells
+  /// the user something they would discover anyway; naming a rendition that
+  /// fits turns it into one click of work.
+  ///
+  /// Six gigabytes sits between the 720p job (4.2) and the 1080p one (7.9),
+  /// so exactly one rendition is a real remedy.
+  @Test func theRemedyNamesALowerRenditionThatActuallyFits() async throws {
+    let model = await loadedModel(volumeSpace: Self.volume(free: 6 * Self.gigabyte))
+    model.output = .videoWithChat
+
+    let remedy = try #require(model.spaceWarning?.remedy)
+    #expect(remedy.qualityName == "720p60")
+    #expect(remedy.needed < 6 * Self.gigabyte, "a remedy that also does not fit is not a remedy")
+  }
+
+  /// Offering a remedy that also does not fit is worse than offering none: it
+  /// costs the user a click to learn nothing.
+  @Test func noRemedyWhenEvenTheSmallestRenditionWouldNotFit() async {
+    let model = await loadedModel(volumeSpace: Self.volume(free: Self.gigabyte))
+    model.output = .videoWithChat
+
+    #expect(model.spaceWarning != nil, "precondition")
+    #expect(model.spaceWarning?.remedy == nil)
+  }
+
+  /// A plain download estimates only its source, so a volume too small for the
+  /// composite can be fine without one. Asserts the warning tracks the output
+  /// toggle rather than the video — five gigabytes holds the 3.6 GB download
+  /// but not the 7.9 GB composite.
+  @Test func switchingToVideoOnlyRecomputesTheWarning() async {
+    let model = await loadedModel(volumeSpace: Self.volume(free: 5 * Self.gigabyte))
+
+    model.output = .videoWithChat
+    #expect(model.spaceWarning != nil)
+
+    model.output = .video
+    #expect(model.spaceWarning == nil)
+  }
+
+  /// Trimming is the other half of the same remedy. A user who only wants
+  /// twenty minutes of a six-hour VOD should not be warned about six hours.
+  @Test func trimmingTheRangeShrinksTheEstimate() async {
+    let model = await loadedModel(volumeSpace: Self.volume(free: 5 * Self.gigabyte))
+    model.output = .videoWithChat
+    #expect(model.spaceWarning != nil, "precondition: the whole hour does not fit")
+
+    model.trimStartText = "0:00"
+    model.trimEndText = "10:00"
+
+    #expect(model.spaceWarning == nil, "ten minutes of it does")
+  }
+
+  /// An unreadable volume produces no warning rather than a false one. The
+  /// rule lives in `VolumeSpace`; this asserts the intake honours it instead
+  /// of treating "unknown" as "no room".
+  @Test func noSpaceWarningWhenTheVolumeCannotBeRead() async {
+    let model = await loadedModel(volumeSpace: VolumeSpace(
+      availableBytes: { _ in nil },
+      volumeRoot: { _ in nil },
+      volumeName: { _ in nil }))
+    model.output = .videoWithChat
+
+    #expect(model.spaceWarning == nil)
+  }
+
+
   private static let folder = URL(filePath: "/Users/someone/Movies")
 
   /// Deliberately just after midnight UTC: read in Pacific it is the evening
@@ -237,7 +357,8 @@ struct IntakeModelTests {
     info: VideoInfo? = IntakeModelTests.info(),
     failure: Error? = nil,
     recorder: Recorder = Recorder(),
-    fileExists: @escaping (URL) -> Bool = { _ in false })
+    fileExists: @escaping (URL) -> Bool = { _ in false },
+    volumeSpace: VolumeSpace = IntakeModelTests.volume(free: 1_000_000_000_000))
     -> IntakeModel
   {
     IntakeModel(
@@ -248,7 +369,18 @@ struct IntakeModelTests {
       },
       enqueue: { recorder.templates.append((template: $0, title: $1)) },
       calendar: Self.pacific,
-      fileExists: fileExists)
+      fileExists: fileExists,
+      volumeSpace: volumeSpace)
+  }
+
+  /// One volume with a fixed amount of room. Defaulted to a terabyte
+  /// everywhere so no pre-existing test starts seeing a space warning it was
+  /// never written to expect.
+  private static func volume(free: Int64) -> VolumeSpace {
+    VolumeSpace(
+      availableBytes: { _ in free },
+      volumeRoot: { _ in URL(filePath: "/") },
+      volumeName: { _ in "Macintosh HD" })
   }
 
   /// A model with metadata settled, a folder chosen, and `.video` as its
@@ -260,10 +392,12 @@ struct IntakeModelTests {
     link: String = IntakeModelTests.videoLink,
     info: VideoInfo = IntakeModelTests.info(),
     recorder: Recorder = Recorder(),
-    fileExists: @escaping (URL) -> Bool = { _ in false })
+    fileExists: @escaping (URL) -> Bool = { _ in false },
+    volumeSpace: VolumeSpace = IntakeModelTests.volume(free: 1_000_000_000_000))
     async -> IntakeModel
   {
-    let model = makeModel(info: info, recorder: recorder, fileExists: fileExists)
+    let model = makeModel(
+      info: info, recorder: recorder, fileExists: fileExists, volumeSpace: volumeSpace)
     model.linkText = link
     await model.load()
     model.folder = Self.folder
