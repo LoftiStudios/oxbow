@@ -21,15 +21,14 @@ as the pre-0.3.0 number it is.
 
 ## 1. What this delivers
 
-**Two checks, both advisory in tone and neither of them clever.**
+**One check.** At intake, a warning under the destination when the estimate
+exceeds what the volume has. It never blocks — `Add` stays `Add`.
 
-1. **At intake**, a warning under the destination when the estimate exceeds
-   what the volume has. It never blocks. `Add` stays `Add`.
-2. **Before the composite step is admitted**, a hard check that fails the step
-   in about a second rather than seventy minutes.
+It does not probe the network and does not run FFmpeg.
 
-Both read the same estimator. Neither probes the network, and neither runs
-FFmpeg.
+**A second check, before the composite step, was designed and then dropped.**
+§6 keeps that design and the reason, because the reason is a fact about the
+code rather than a change of mind.
 
 **What it does not deliver** is a guarantee. §9 says so at length, because the
 term that dominates the sum is the one this project has already established
@@ -37,10 +36,7 @@ cannot be predicted.
 
 ---
 
-## 2. Why the shape is warn-then-fail
-
-The two checks answer to different situations, and the difference is who is
-present.
+## 2. Why it warns rather than blocks
 
 **At intake there is a person.** They know things the estimator does not —
 that a 200 GB Time Machine snapshot is about to be thinned, that the external
@@ -54,14 +50,7 @@ named for what it does*. A warning that blocks is a different kind of object
 from one that informs, and having two kinds in one panel would teach the user
 that neither can be trusted.
 
-**Before the composite there is nobody.** The user clicked `Add` hours ago and
-left. The choice is not "refuse or permit" but "fail in one second with a
-number, or fail in seventy minutes with `ENOSPC`", and the first is strictly
-kinder. It is also not an override of their earlier `Add anyway`: that was a
-bet that space would be freed, and this check reads the disk as it actually
-is. If they freed the space, it passes.
-
-A failed step is retryable, so nothing is lost but the wait.
+That is the whole rule. There is no second, stricter mode — see §6.
 
 ---
 
@@ -240,30 +229,44 @@ fit is worse than offering none.
 
 ---
 
-## 6. Check two: before the composite
+## 6. Check two: designed, and not built
 
-In `QueueEngine`, as the `.composite` step is admitted and before the helper
-is launched. It re-reads free space — hours may have passed — and re-runs the
-estimator against what remains to be written.
+An earlier version of this document specified a second check in `QueueEngine`,
+run as the `.composite` step was admitted: re-read free space, re-estimate the
+remaining output, and fail the step in about a second rather than seventy
+minutes. The argument for it still holds — the user clicked `Add` hours ago and
+is not at the keyboard, so the choice there is not refuse-or-permit but
+fail-early or fail-late.
 
-On failure the step fails immediately with both numbers:
+**It was dropped during implementation, because the composite step has nothing
+to estimate from.**
 
-```
-Failed — not enough room on Macintosh HD
-Needs about 15 GB, 4 GB free.
-```
+`CompositeRequest` carries `framerate`, `duration` and `destination` and
+deliberately **no geometry** — `hstack` derives every dimension from its inputs
+and refuses unequal heights outright, which is the property `compositing.md` §5
+wanted. So at composite time there is no resolution, and without one there is no
+pixel rate and no estimate. Nothing else in the job supplies it either:
+`VideoRequest.quality` is a picker *name* like `1080p60`, not a `StreamQuality`
+with a resolution on it.
 
-The number is smaller than the intake's for a reason worth stating: by the time
-this runs, the source and the intermediate are already written. What remains is
-the composite output alone, so the check estimates the remainder rather than
-re-estimating the job.
+Two ways to close that were considered and both rejected as too much churn for
+the value:
 
-This is a new `StepFailure` case rather than a generic failure, because
-`FailureInterpreter` turning an exit code into prose is exactly what this
-sidesteps: the check knows precisely what is wrong and has both numbers in
-hand.
+- **Carry the estimate itself** on `CompositeRequest` as an optional
+  `Int64`, computed at intake where the geometry exists. Cheapest, and keeps
+  the no-geometry decision intact, but it adds a persisted field and a decode
+  path for jobs queued before it existed.
+- **Carry the geometry**, and re-derive in the engine. Directly contradicts the
+  documented reason that type has none, and that reasoning is still sound.
 
-The step is retryable, which is the whole reason failing early is acceptable.
+**What this costs**, stated so it is a decision rather than a gap: space that
+disappears between `Add` and the composite running is not caught. That job dies
+on `ENOSPC` at whatever percent it reaches, exactly as it does today. The intake
+check covers the common case — the disk was already too full when the job was
+created — and does not cover the disk filling underneath a queued job.
+
+If this is ever revisited, the estimate-on-the-request option is the one to
+take.
 
 ---
 
@@ -274,26 +277,18 @@ The step is retryable, which is the whole reason failing early is acceptable.
 | `SpaceEstimate` (new) | the estimator: pure, no I/O |
 | `VolumeSpace` (new) | the injected free-space read |
 | `CompositeGeometry` | `+ pixelRate` — the one number §3.1 needs |
-| `StepFailure` | `+ case insufficientSpace(needed:available:volume:)` |
 | `IntakeModel` | `+ spaceWarning`, computed like `destinationCollision` |
 | `IntakeWindow` | the warning line and its remedy |
-| `QueueEngine` | the pre-composite check |
-| `Scheduler` | **none** |
+| `QueueEngine`, `Scheduler`, `StepFailure` | **none** — see §6 |
 
-`Scheduler` staying untouched is the same signal it was in
-[`resume.md`](resume.md) §9: this is not a scheduling rule, it is a fact about
-a volume read at the moment a step starts.
+**Nothing in the queue changes at all.** No new step, no new failure case, no
+scheduling rule — the whole of this lands in front of the job being created.
+That is a smaller footprint than the first draft of this document assumed, and
+§6 is why.
 
-**The `StepFailure` case is the line to check first**, because a new case on a
-public enum is the shape `development.md` warns about: it can leave
-`swift test` green while the app target stops compiling through a
-non-exhaustive switch.
-
-Checked rather than assumed — **nothing switches on `StepFailure.Kind`
-anywhere**, in `Sources/` or in `Oxbow/`. The app presents `StepFailure.summary`
-and never inspects the kind, so this particular case is safe. Both suites are
-still required for the change, because that is the standing rule and because
-`CompositeGeometry` and `IntakeModel` are touched too.
+Both suites are still required, because `CompositeGeometry` is public and
+`SpaceEstimate` is new: a change to a public OxbowKit type can leave
+`swift test` green while the app target stops compiling.
 
 ---
 
@@ -334,13 +329,18 @@ grounds:
 sound.** It is deferred to keep this change to one reviewable piece, in the
 same spirit as the retention ceiling deferred in `resume.md` §8.
 
-**What that leaves uncovered, stated plainly:** the two checks in this design
-share one estimator, and that estimator's composite term is a median. A VOD
-landing at the busy end of the 5.3x spread will pass both checks and still run
-out of room. This design makes that rarer; it does not make it impossible, and
+**What that leaves uncovered, stated plainly.** Two things, and together they
+are most of the tail:
+
+1. **The estimate is a median.** A VOD landing at the busy end of the 5.3x
+   spread passes the check and still runs out of room.
+2. **Only the intake is checked** (§6). A disk that fills underneath an already
+   queued job is not noticed until the composite hits `ENOSPC`.
+
+This design makes running out rarer. It does not make it impossible, and
 anyone reading a passing preflight as a guarantee is reading it wrong.
 
-The live projection is the thing that would close it, because it measures
+The live projection is the thing that would close both, because it measures
 rather than predicts — and the projection is already computed for the 0.3.0
 progress UI, so what remains is a comparison, not machinery. It should be the
 next change here.
