@@ -228,7 +228,7 @@ struct QueueView: View {
   let updates = UpdateModel {
     .available(
       ReleaseVersion("0.3.0")!,
-      URL(string: "https://github.com/barclay/oxbow/releases/tag/v0.3.0")!)
+      URL(string: "https://github.com/loftiStudios/oxbow/releases/tag/v0.3.0")!)
   }
   return QueueView(content: .unavailable("No helper in this build."), updates: updates)
     .frame(width: 720, height: 420)

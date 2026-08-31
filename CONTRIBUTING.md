@@ -22,7 +22,7 @@ the submodule, and its tests are the bulk of the suite.
 You need Xcode (or a Swift 6.2 toolchain) and nothing else:
 
 ```bash
-git clone https://github.com/barclay/oxbow.git
+git clone https://github.com/loftiStudios/oxbow.git
 cd oxbow
 swift test
 ```
@@ -52,7 +52,7 @@ commit, in a mirror of upstream we add nothing to; a plain clone leaves it empty
 and the build fails confusingly.
 
 ```bash
-git clone --recurse-submodules https://github.com/barclay/oxbow.git
+git clone --recurse-submodules https://github.com/loftiStudios/oxbow.git
 ```
 
 Already cloned without it:

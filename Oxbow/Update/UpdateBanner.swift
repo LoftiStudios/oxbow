@@ -93,7 +93,7 @@ struct UpdateBanner: View {
   UpdateBanner(
     state: .available(
       ReleaseVersion("0.3.0")!,
-      URL(string: "https://github.com/barclay/oxbow/releases/tag/v0.3.0")!),
+      URL(string: "https://github.com/loftiStudios/oxbow/releases/tag/v0.3.0")!),
     onOpen: { _ in },
     onDismiss: {})
   .frame(width: 720)
@@ -104,7 +104,7 @@ struct UpdateBanner: View {
   UpdateBanner(
     state: .available(
       ReleaseVersion("0.3.0")!,
-      URL(string: "https://github.com/barclay/oxbow/releases/tag/v0.3.0")!),
+      URL(string: "https://github.com/loftiStudios/oxbow/releases/tag/v0.3.0")!),
     onOpen: { _ in },
     onDismiss: {})
   .frame(width: 720)

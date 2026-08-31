@@ -10,8 +10,9 @@ latest one is supported.
 **Please do not open a public issue for a security problem.**
 
 Report it through GitHub's private vulnerability reporting: go to the
-[Security tab](https://github.com/barclay/oxbow/security/advisories/new) and
-open a draft advisory. That channel is private between you and the maintainer.
+[Security tab](https://github.com/loftiStudios/oxbow/security/advisories/new)
+and open a draft advisory. That channel is private between you and the
+maintainer.
 
 You should get an acknowledgement within a few days. Oxbow is maintained by one
 person in their spare time, so please allow reasonable time for a fix before

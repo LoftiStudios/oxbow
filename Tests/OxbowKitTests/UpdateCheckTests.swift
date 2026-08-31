@@ -11,12 +11,12 @@ struct UpdateCheckTests {
   /// read would never prove that.
   private func payload(
     tag: String,
-    htmlURL: String = "https://github.com/barclay/oxbow/releases/tag/v0.3.0")
+    htmlURL: String = "https://github.com/loftiStudios/oxbow/releases/tag/v0.3.0")
     -> Data
   {
     Data("""
       {
-        "url": "https://api.github.com/repos/barclay/oxbow/releases/12345",
+        "url": "https://api.github.com/repos/loftiStudios/oxbow/releases/12345",
         "html_url": "\(htmlURL)",
         "tag_name": "\(tag)",
         "name": "Oxbow \(tag)",
@@ -60,7 +60,7 @@ struct UpdateCheckTests {
     let outcome = try await outcome(currentVersion: "0.2.1", body: payload(tag: "v0.3.0"))
     #expect(outcome == .available(
       try #require(ReleaseVersion("0.3.0")),
-      try #require(URL(string: "https://github.com/barclay/oxbow/releases/tag/v0.3.0"))))
+      try #require(URL(string: "https://github.com/loftiStudios/oxbow/releases/tag/v0.3.0"))))
   }
 
   @Test func staysQuietWhenTheLatestReleaseIsTheRunningVersion() async throws {
@@ -92,7 +92,7 @@ struct UpdateCheckTests {
     _ = try await outcome(body: payload(tag: "v0.2.1"), recorder: recorder)
     let request = try #require(await recorder.requests.first)
     #expect(request.url?.absoluteString
-      == "https://api.github.com/repos/barclay/oxbow/releases/latest")
+      == "https://api.github.com/repos/loftiStudios/oxbow/releases/latest")
   }
 
   /// api.github.com answers 403 to any request without a User-Agent. Without
