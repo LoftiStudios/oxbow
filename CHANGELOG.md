@@ -16,6 +16,20 @@ is the repository's commit count, stamped into the bundle at build time by
 
 ## [Unreleased]
 
+### Fixed
+
+- **The Mac no longer idles to sleep while the queue is working.** A download
+  or an encode is a child process, and a child process is not something the
+  idle timer counts — so an eighty-eight minute composite on a Mac nobody was
+  touching lost to Energy Saver about forty minutes in, and was still sitting
+  there, suspended, whenever its owner came back. Oxbow now holds a
+  `.userInitiated` activity assertion for exactly as long as it has a step in
+  flight, and gives it back the moment the queue settles, fails, is cancelled,
+  or the app quits. Deliberately not a display assertion: a long encode is no
+  reason to keep a screen lit all night. This cannot help a laptop whose lid is
+  closed with no external display — macOS forces that sleep below the level any
+  application can reach.
+
 ## [0.3.0] - 2026-08-31
 
 **This release requires macOS 26.** No hardware is dropped — Oxbow has always
