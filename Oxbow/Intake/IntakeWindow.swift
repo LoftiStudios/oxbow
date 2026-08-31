@@ -65,6 +65,11 @@ struct IntakeWindow: View {
     .background(HostWindowReader(window: $hostWindow))
     .defaultFocus($isLinkFocused, true)
     .onAppear(perform: prefillFromClipboard)
+    // Turning on chat or trim adds a section to a form whose footer is pinned,
+    // so the new section arrives below the fold — the one you just asked for is
+    // the one you cannot see. Grow the window to meet it.
+    .onChange(of: desiredContentHeight) { _, wanted in grow(toFit: wanted) }
+    .onChange(of: hostWindow) { _, _ in grow(toFit: desiredContentHeight) }
     // The scene outlives the window, so closing it has to do what dismissing
     // a sheet would have done for free. See `IntakeModel.reset()`.
     .onDisappear(perform: model.reset)
@@ -342,6 +347,44 @@ struct IntakeWindow: View {
         .keyboardShortcut(.defaultAction)
         .disabled(!model.canAdd || isAdding)
     }
+  }
+
+  // MARK: - Growing to fit
+
+  /// How much room the form wants for what is currently on screen.
+  ///
+  /// **Floors, not layout arithmetic.** These are deliberately approximate: the
+  /// window is only ever grown, never shrunk, so an over-estimate costs a
+  /// little slack under the last row and an under-estimate leaves the form
+  /// scrolling as it does today. Measuring the real content height would mean
+  /// reaching inside a `Form`'s scroll view, which SwiftUI does not offer and
+  /// which would break the moment the form style changed.
+  private var desiredContentHeight: CGFloat {
+    var height: CGFloat = 600
+    guard model.hasSettledMetadata else { return height }
+    if model.output == .videoWithChat, model.chatProblem == nil { height += 120 }
+    if model.showsTrimOptions, model.isTrimEnabled { height += 165 }
+    return height
+  }
+
+  /// Extends the window's **bottom** edge to make room, never its top.
+  ///
+  /// The title bar staying put is the point: the window appears to unfold
+  /// downward from where you left it, rather than jumping under the cursor. It
+  /// stops at the bottom of the screen and never shrinks — a window the user
+  /// has sized up is theirs, and collapsing a section is not a request to lose
+  /// that space.
+  private func grow(toFit wanted: CGFloat) {
+    guard let hostWindow, let screen = hostWindow.screen ?? NSScreen.main else { return }
+    let chrome = hostWindow.frame.height - hostWindow.contentLayoutRect.height
+    let target = min(wanted + chrome, screen.visibleFrame.height)
+    let delta = target - hostWindow.frame.height
+    guard delta > 0 else { return }
+
+    var frame = hostWindow.frame
+    frame.size.height = target
+    frame.origin.y = max(frame.origin.y - delta, screen.visibleFrame.minY)
+    hostWindow.setFrame(frame, display: true, animate: true)
   }
 
   // MARK: - Actions
