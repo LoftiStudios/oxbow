@@ -2,16 +2,18 @@
 
 ## Supported versions
 
-Oxbow is pre-alpha and has not had a release yet. Once releases begin, only the
-latest one is supported.
+Only the latest release is supported. Oxbow is pre-1.0 and ships from a single
+line of development, so a fix arrives as a new release rather than as a patch
+to an older one.
 
 ## Reporting a vulnerability
 
 **Please do not open a public issue for a security problem.**
 
 Report it through GitHub's private vulnerability reporting: go to the
-[Security tab](https://github.com/barclay/oxbow/security/advisories/new) and
-open a draft advisory. That channel is private between you and the maintainer.
+[Security tab](https://github.com/LoftiStudios/oxbow/security/advisories/new)
+and open a draft advisory. That channel is private between you and the
+maintainer.
 
 You should get an acknowledgement within a few days. Oxbow is maintained by one
 person in their spare time, so please allow reasonable time for a fix before

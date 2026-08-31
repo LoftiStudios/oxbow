@@ -7,7 +7,7 @@
 <p align="center"><strong>Twitch VODs, saved properly. For Mac.</strong></p>
 
 <p align="center">
-  <a href="https://github.com/barclay/oxbow/releases/latest"><strong>Download for macOS</strong></a>
+  <a href="https://github.com/LoftiStudios/oxbow/releases/latest"><strong>Download for macOS</strong></a>
   &nbsp;·&nbsp;
   <a href="https://getoxbow.app">getoxbow.app</a>
   &nbsp;·&nbsp;
@@ -51,7 +51,7 @@ every part of it runs end to end today.
 ## Getting started
 
 1. **Download** the DMG from the
-   [latest release](https://github.com/barclay/oxbow/releases/latest).
+   [latest release](https://github.com/LoftiStudios/oxbow/releases/latest).
 2. **Open it and drag Oxbow to Applications.** The app is signed with a
    Developer ID and notarized by Apple, so it opens on a double-click—no
    right-click-to-open, no Gatekeeper detour.
@@ -84,7 +84,7 @@ If you are only working on `OxbowKit` — the queue engine, argument builder,
 output parser, and persistence layer — you need Xcode and nothing else:
 
 ```bash
-git clone https://github.com/barclay/oxbow.git
+git clone https://github.com/LoftiStudios/oxbow.git
 cd oxbow
 swift test
 ```
@@ -99,7 +99,7 @@ unmodified plus tags that keep a pinned commit fetchable, and Oxbow adds no
 code to it. See "submodule pin policy" in [`docs/development.md`](docs/development.md).
 
 ```bash
-git clone --recurse-submodules https://github.com/barclay/oxbow.git
+git clone --recurse-submodules https://github.com/LoftiStudios/oxbow.git
 ```
 
 Already cloned without it:

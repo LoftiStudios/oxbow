@@ -50,7 +50,7 @@ public struct UpdateCheck: Sendable {
   /// and `asksForTheLatestReleaseOfTheConfiguredRepository` fails loudly if it
   /// is ever edited into something that will not parse.
   public static let defaultEndpoint = URL(
-    string: "https://api.github.com/repos/barclay/oxbow/releases/latest")!
+    string: "https://api.github.com/repos/LoftiStudios/oxbow/releases/latest")!
 
   private let currentVersion: String
   private let endpoint: URL

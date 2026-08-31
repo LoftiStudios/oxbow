@@ -29,4 +29,4 @@ CURRENT_PROJECT_VERSION = 1
 // The About window shows this, and so does the Finder's Get Info panel.
 // GENERATE_INFOPLIST_FILE turns INFOPLIST_KEY_* settings into Info.plist
 // entries, so this needs no plist file of our own.
-INFOPLIST_KEY_NSHumanReadableCopyright = © 2026 barclay loftus. MIT licensed.
+INFOPLIST_KEY_NSHumanReadableCopyright = © 2026 Lofti Studios LLC. MIT licensed.
