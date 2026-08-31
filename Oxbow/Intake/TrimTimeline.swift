@@ -118,6 +118,12 @@ struct TrimTimeline: View {
   /// top of the gradient.
   private static let ink = Color(red: 0x1C / 255, green: 0x1B / 255, blue: 0x2A / 255)
 
+  /// The timestamps, held back from the ink the ticks and handles use. They
+  /// label the scale rather than being part of it, and at full strength they
+  /// competed with the marks they were naming. Fixed like `ink`, and for the
+  /// same reason: the strip is the same colour in either appearance.
+  private static let labelInk = Color(red: 0x55 / 255, green: 0x55 / 255, blue: 0x55 / 255)
+
   /// The chosen range, as a pane of glass lying on the track.
   ///
   /// **Lighter than the strip, not darker.** Liquid Glass is a light-adding
@@ -203,7 +209,7 @@ struct TrimTimeline: View {
       }
     }
     .frame(height: Metrics.labelRow, alignment: .topLeading)
-    .foregroundStyle(Self.ink)
+    .foregroundStyle(Self.labelInk)
   }
 
   private func leftEdge(of label: TimelineScale.Label) -> CGFloat {
