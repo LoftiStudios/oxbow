@@ -16,6 +16,22 @@ public struct CompositeGeometry: Sendable, Equatable {
 
   public var outputWidth: Int { videoWidth + chatWidth }
 
+  /// Output pixels per second, over the *composite* frame rather than the
+  /// source's — video plus chat column, at the video's rate.
+  ///
+  /// This is the denominator `SpaceEstimate` divides its measured
+  /// bits-per-pixel into, and it is deliberately the same quantity as the
+  /// "pixel rate" column of `docs/design/composite-rate-control.md` §4.2, so
+  /// the constant fitted against that table transfers here unchanged:
+  /// 2280 x 1080 x 60 = 147.7M is its first row.
+  ///
+  /// `Double` rather than `Int` because it is only ever a divisor or a factor
+  /// in a byte estimate, and an exact integer count of pixels-per-second is a
+  /// precision nothing downstream has any use for.
+  public var pixelRate: Double {
+    Double(outputWidth) * Double(videoHeight) * Double(videoFramerate)
+  }
+
   /// The narrowest legible chat column.
   static let minimumChatWidth = 160
 
