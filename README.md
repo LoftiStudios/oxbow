@@ -14,7 +14,7 @@
   <a href="CHANGELOG.md">Changelog</a>
 </p>
 
-<p align="center"><sub>macOS 15+ · Apple Silicon · signed and notarized · MIT</sub></p>
+<p align="center"><sub>macOS 26+ · Apple Silicon · signed and notarized · MIT</sub></p>
 
 ---
 
@@ -66,7 +66,7 @@ every part of it runs end to end today.
 
 ## Requirements
 
-- **macOS 15 or later.**
+- **macOS 26 or later.**
 - **Apple Silicon.** Oxbow is arm64 only — Intel Macs are not supported. See
   "Scope trims for v1" in [`docs/architecture.md`](docs/architecture.md).
 

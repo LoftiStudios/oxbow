@@ -135,7 +135,7 @@ relitigate it. Open an issue instead.
 
 ## Scope
 
-Oxbow is deliberately small. v1 is arm64 only and targets macOS 15+. Some things
+Oxbow is deliberately small. v1 is arm64 only and targets macOS 26+. Some things
 are out of scope by design: cross-platform UI frameworks, Mac App Store
 distribution, and reimplementing chat rendering in Swift. See "Do not suggest"
 in [`docs/development.md`](docs/development.md).

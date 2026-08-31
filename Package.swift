@@ -3,7 +3,7 @@ import PackageDescription
 
 let package = Package(
   name: "OxbowKit",
-  platforms: [.macOS(.v15)],
+  platforms: [.macOS(.v26)],
   products: [
     .library(name: "OxbowKit", targets: ["OxbowKit"]),
   ],
