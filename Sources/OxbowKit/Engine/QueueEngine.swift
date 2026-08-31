@@ -30,19 +30,24 @@ public actor QueueEngine {
     ///   be lost to either.
     public var store: QueueStore
     public var makeProcess: @Sendable () -> HelperProcessing
+    /// Keeps the Mac awake while any step is running. Defaulted, so the only
+    /// caller that passes one is a test substituting a spy.
+    public var sleepAssertion: any SleepAsserting
 
     public init(
       helperExecutable: URL,
       ffmpegPath: URL,
       workspace: Workspace,
       store: QueueStore,
-      makeProcess: @escaping @Sendable () -> HelperProcessing)
+      makeProcess: @escaping @Sendable () -> HelperProcessing,
+      sleepAssertion: any SleepAsserting = SystemSleepAssertion())
     {
       self.helperExecutable = helperExecutable
       self.ffmpegPath = ffmpegPath
       self.workspace = workspace
       self.store = store
       self.makeProcess = makeProcess
+      self.sleepAssertion = sleepAssertion
     }
   }
 
@@ -65,7 +70,15 @@ public actor QueueEngine {
   /// is kept: the unstructured `Task` that drives it is deliberately not
   /// retained, because cancelling that task would not stop the child process
   /// — `HelperProcessing.cancel()` is the only thing that does.
-  private var running: [StepID: HelperProcessing] = [:]
+  private var running: [StepID: HelperProcessing] = [:] {
+    // The single place the sleep assertion is decided. `running` is mutated
+    // from five sites — `launch`, `finish`, `remove(jobs:)`,
+    // `abandonAlreadyFinalizedStep` and `shutDown`'s aftermath — and five
+    // hand-placed calls would be five chances for the assertion to disagree
+    // with what is actually in flight. `setActive` is idempotent precisely so
+    // this can fire on every mutation.
+    didSet { configuration.sleepAssertion.setActive(!running.isEmpty) }
+  }
   /// Last time `heartbeat` wrote a line for a step — see its doc comment.
   private var lastHeartbeatAt: [StepID: ContinuousClock.Instant] = [:]
   private var observers: [UUID: AsyncStream<[Job]>.Continuation] = [:]
@@ -334,6 +347,20 @@ public actor QueueEngine {
     }
 
     await flush()
+
+    // The one hand-placed release, and the only place `running` is a lie.
+    // Everywhere else the assertion rides `running`'s `didSet`, but shutdown
+    // deliberately leaves that dictionary populated: the entries are the kill
+    // handles, and their steps must stay `.running` in the saved queue for
+    // `Reconciler` to read as interrupted next launch. So the invariant the
+    // `didSet` maintains is one this path abandons on purpose, and the
+    // assertion has to be given back by hand.
+    //
+    // In the shipping app this is masked — the process exits moments later
+    // and the OS drops the activity with it — but that is luck rather than
+    // design, and it stops being true the first time anything calls
+    // `shutDown()` without then terminating.
+    configuration.sleepAssertion.setActive(false)
   }
 
   /// Writes any pending state immediately. Not the app-termination entry
