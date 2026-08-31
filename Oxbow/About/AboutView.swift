@@ -207,7 +207,7 @@ private struct LicenceSheet: View {
         "CFBundleName": "Oxbow",
         "CFBundleShortVersionString": "0.1.0",
         "CFBundleVersion": "73",
-        "NSHumanReadableCopyright": "© 2026 barclay loftus. MIT licensed.",
+        "NSHumanReadableCopyright": "© 2026 Lofti Studios LLC. MIT licensed.",
         "OXHelperVersion": "1.56.5+d4122d80214b08b3c7078003aae43088e601a435",
         "OXFFmpegVersion": "8.1.2",
       ],
@@ -223,7 +223,7 @@ private struct LicenceSheet: View {
         "CFBundleName": "Oxbow",
         "CFBundleShortVersionString": "0.1.0",
         "CFBundleVersion": "73",
-        "NSHumanReadableCopyright": "© 2026 barclay loftus. MIT licensed.",
+        "NSHumanReadableCopyright": "© 2026 Lofti Studios LLC. MIT licensed.",
       ],
       resource: { _ in nil }))
 }

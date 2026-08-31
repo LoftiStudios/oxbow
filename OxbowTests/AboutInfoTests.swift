@@ -13,7 +13,7 @@ struct AboutInfoTests {
     name: String? = "Oxbow",
     shortVersion: String? = "0.1.0",
     build: String? = "73",
-    copyright: String? = "© 2026 barclay loftus. MIT licensed.",
+    copyright: String? = "© 2026 Lofti Studios LLC. MIT licensed.",
     helper: String? = "1.56.5+d4122d80214b08b3c7078003aae43088e601a435",
     ffmpeg: String? = "8.1.2"
   ) -> [String: Any] {
@@ -68,7 +68,7 @@ struct AboutInfoTests {
 
   @Test func copyrightComesFromTheBundle() {
     let about = AboutInfo(infoDictionary: info(), resource: noResources)
-    #expect(about.copyright == "© 2026 barclay loftus. MIT licensed.")
+    #expect(about.copyright == "© 2026 Lofti Studios LLC. MIT licensed.")
   }
 
   // MARK: - Bundled components
