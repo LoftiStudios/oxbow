@@ -49,8 +49,17 @@ struct IntakeWindow: View {
 
         if model.hasSettledMetadata {
           naming
-          outputs
+          // Trim before Download: which part of the video you want is a
+          // property of the video, like its name, while Download is about what
+          // format to render it in. Ordering it this way also stops the chat
+          // options — which appear and disappear — from shoving the trim
+          // controls you were just setting down the window.
+          // Where it goes, before how much of it you want. The order follows
+          // the decision being made: what this is, where to put it, how much
+          // of it, then the details of how to render it.
+          saveTo
           if model.showsTrimOptions { trim }
+          outputs
         }
       }
       .formStyle(.grouped)
@@ -65,6 +74,11 @@ struct IntakeWindow: View {
     .background(HostWindowReader(window: $hostWindow))
     .defaultFocus($isLinkFocused, true)
     .onAppear(perform: prefillFromClipboard)
+    // Turning on chat or trim adds a section to a form whose footer is pinned,
+    // so the new section arrives below the fold — the one you just asked for is
+    // the one you cannot see. Grow the window to meet it.
+    .onChange(of: desiredContentHeight) { _, wanted in grow(toFit: wanted) }
+    .onChange(of: hostWindow) { _, _ in grow(toFit: desiredContentHeight) }
     // The scene outlives the window, so closing it has to do what dismissing
     // a sheet would have done for free. See `IntakeModel.reset()`.
     .onDisappear(perform: model.reset)
@@ -211,22 +225,82 @@ struct IntakeWindow: View {
     }
   }
 
+  /// The timeline needs a duration to scale against, so a VOD whose metadata
+  /// fetch failed falls back to the two fields alone — which is the state the
+  /// `Metadata failed` preview below already reaches, since `showsTrimOptions`
+  /// keys off the parsed link rather than off `info`.
   private var trim: some View {
-    Section("Trim") {
-      LabeledContent("Start") {
-        TextField("Start", text: $model.trimStartText, prompt: Text("0:00"))
-          .labelsHidden()
-      }
-      LabeledContent("End") {
-        TextField("End", text: $model.trimEndText, prompt: Text("End of video"))
-          .labelsHidden()
-      }
-      if model.trimIsInvalid {
-        Label(
-          "Use h:mm:ss, m:ss, or seconds. The end must come after the start.",
-          systemImage: "exclamationmark.triangle")
-          .font(.caption)
-          .foregroundStyle(.red)
+    Section {
+      // Closing this undoes nothing — it hides the controls and that is all.
+      // Which is why the label carries the range: a section quietly applying a
+      // trim while showing nothing would be exactly the hidden state a
+      // disclosure triangle is so easily mistaken for.
+      DisclosureGroup(isExpanded: $model.isTrimExpanded) {
+        if let duration = model.info?.duration {
+          TrimTimeline(
+            duration: duration,
+            startText: $model.trimStartText,
+            endText: $model.trimEndText,
+            isDimmed: model.trimIsInvalid)
+        }
+
+        // One row, not three. As separate `LabeledContent` rows these pushed
+        // the section below the fold of the default window, and they read as
+        // three unrelated settings rather than as the two ends of one range
+        // with its length between them.
+        HStack(spacing: 8) {
+          Text("Start")
+            .foregroundStyle(.secondary)
+          TextField("Start", text: $model.trimStartText, prompt: Text("0:00"))
+            .labelsHidden()
+            .monospacedDigit()
+            .frame(width: 88)
+
+          Spacer(minLength: 8)
+          if let selected = model.effectiveDuration {
+            // Not a field: it is derived from the two that are, and giving it
+            // a box would invite people to type into it.
+            Text(Timecode.spelled(selected))
+              .foregroundStyle(.secondary)
+              .monospacedDigit()
+          }
+          Spacer(minLength: 8)
+
+          Text("End")
+            .foregroundStyle(.secondary)
+          // Trailing-aligned and sized to its contents, unlike Start. This is
+          // the right-hand end of the range and it sits under the right-hand
+          // end of the timeline, so it stays anchored there whatever it holds
+          // — in a fixed-width box the long `End of video` placeholder reached
+          // the edge while a typed `07:13:00` stopped short of it, and the
+          // label was left stranded across a gap that changed size with the
+          // value. `minWidth` keeps a half-typed value from shrinking the
+          // field to something too small to click back into, and monospaced
+          // digits stop the label twitching as the digits change under a drag.
+          TextField("End", text: $model.trimEndText, prompt: Text("End of video"))
+            .labelsHidden()
+            .multilineTextAlignment(.trailing)
+            .monospacedDigit()
+            .fixedSize()
+            .frame(minWidth: 64, alignment: .trailing)
+        }
+        if model.trimIsInvalid {
+          Label(
+            "Use h:mm:ss, m:ss, or seconds. The end must come after the start, "
+              + "and both must fall inside the video.",
+            systemImage: "exclamationmark.triangle")
+            .font(.caption)
+            .foregroundStyle(.red)
+        }
+      } label: {
+        HStack(spacing: 8) {
+          Text("Trim")
+          if let summary = model.trimSummary {
+            Text(summary)
+              .foregroundStyle(.secondary)
+              .monospacedDigit()
+          }
+        }
       }
     }
   }
@@ -238,13 +312,18 @@ struct IntakeWindow: View {
   /// thing every download commits to — where the file goes — was below the
   /// fold exactly when the window looked most finished. Transmission pins its
   /// path row above its buttons for the same reason.
+  /// Only the buttons now. The destination moved up into the form, into the
+  /// order the decision is actually made in. Pinning it here was a guard
+  /// against it falling below the fold exactly when the form looked most
+  /// finished — which the window growing to fit its own sections now covers.
   private var footer: some View {
-    VStack(spacing: 12) {
-      destination
-      buttons
-    }
-    .padding(.horizontal, 20)
-    .padding(.vertical, 14)
+    buttons
+      .padding(.horizontal, 20)
+      .padding(.vertical, 14)
+  }
+
+  private var saveTo: some View {
+    Section { destination }
   }
 
   private var destination: some View {
@@ -293,6 +372,44 @@ struct IntakeWindow: View {
         .keyboardShortcut(.defaultAction)
         .disabled(!model.canAdd || isAdding)
     }
+  }
+
+  // MARK: - Growing to fit
+
+  /// How much room the form wants for what is currently on screen.
+  ///
+  /// **Floors, not layout arithmetic.** These are deliberately approximate: the
+  /// window is only ever grown, never shrunk, so an over-estimate costs a
+  /// little slack under the last row and an under-estimate leaves the form
+  /// scrolling as it does today. Measuring the real content height would mean
+  /// reaching inside a `Form`'s scroll view, which SwiftUI does not offer and
+  /// which would break the moment the form style changed.
+  private var desiredContentHeight: CGFloat {
+    var height: CGFloat = 600
+    guard model.hasSettledMetadata else { return height }
+    if model.output == .videoWithChat, model.chatProblem == nil { height += 120 }
+    if model.showsTrimOptions, model.isTrimExpanded { height += 165 }
+    return height
+  }
+
+  /// Extends the window's **bottom** edge to make room, never its top.
+  ///
+  /// The title bar staying put is the point: the window appears to unfold
+  /// downward from where you left it, rather than jumping under the cursor. It
+  /// stops at the bottom of the screen and never shrinks — a window the user
+  /// has sized up is theirs, and collapsing a section is not a request to lose
+  /// that space.
+  private func grow(toFit wanted: CGFloat) {
+    guard let hostWindow, let screen = hostWindow.screen ?? NSScreen.main else { return }
+    let chrome = hostWindow.frame.height - hostWindow.contentLayoutRect.height
+    let target = min(wanted + chrome, screen.visibleFrame.height)
+    let delta = target - hostWindow.frame.height
+    guard delta > 0 else { return }
+
+    var frame = hostWindow.frame
+    frame.size.height = target
+    frame.origin.y = max(frame.origin.y - delta, screen.visibleFrame.minY)
+    hostWindow.setFrame(frame, display: true, animate: true)
   }
 
   // MARK: - Actions
@@ -511,4 +628,13 @@ extension VideoInfo {
 /// two halves of the overwrite warning, which have to appear together.
 #Preview("Name already taken") {
   IntakeWindow(model: previewModel(fileExists: { _ in true }))
+}
+
+/// The timeline in the window it actually lives in, at a real VOD's length,
+/// with a trim set. The section is otherwise only reachable by clicking.
+#Preview("Video - trimmed") {
+  let model = previewModel()
+  model.isTrimExpanded = true
+  model.trimStartText = "00:02:00"
+  return IntakeWindow(model: model)
 }

@@ -170,6 +170,7 @@ final class IntakeModel {
     linkText = ""
     name = ""
     quality = ""
+    isTrimExpanded = false
     trimStartText = ""
     trimEndText = ""
     metadata = .idle
@@ -235,6 +236,14 @@ final class IntakeModel {
       // A different video: whatever quality was picked for the last one is
       // not necessarily on offer for this one.
       quality = ""
+      // And the trim with it, for the same reason but more so: a quality that
+      // does not exist is merely ignored, while a trim from a longer video
+      // fails its bounds check and leaves the window refusing to add a job it
+      // never described. Cleared explicitly — collapsing the section no longer
+      // empties it, by design, so this cannot lean on that any more.
+      trimStartText = ""
+      trimEndText = ""
+      isTrimExpanded = false
       name = OutputNaming.baseName(
         streamer: info.streamer,
         date: info.createdAt,
@@ -303,8 +312,31 @@ final class IntakeModel {
     return false
   }
 
-  var trimStart: Duration? { showsTrimOptions ? Timecode.parse(trimStartText) : nil }
-  var trimEnd: Duration? { showsTrimOptions ? Timecode.parse(trimEndText) : nil }
+  /// Off by default, and turning it off clears the fields rather than merely
+  /// ignoring them. A trim that survives behind an unchecked box is state the
+  /// window is not showing, and the job would trim for a reason nothing on
+  /// screen explains.
+  /// Whether the trim section is open. **Presentation only — a closed section
+  /// still trims.**
+  ///
+  /// It began as a switch that cleared both fields when turned off, which was
+  /// right for a checkbox and wrong for a disclosure triangle: that reads as
+  /// "hide the details", so collapsing it to reclaim window space silently
+  /// destroyed a trim the user had set. Neither does closing it *disable* the
+  /// trim, which would be worse — a set value that quietly stops applying is
+  /// hidden state, and the collapsed row shows the range precisely so there is
+  /// none. What you set is what you get; the triangle only decides whether you
+  /// can see the controls.
+  var isTrimExpanded = false
+
+  /// Both conditions, not either: a clip has no trim options at all, and an
+  /// unchecked box means the whole video.
+  /// Clips have no trim at all; a VOD always may. The section being closed is
+  /// not part of this — see `isTrimExpanded`.
+  private var isTrimming: Bool { showsTrimOptions }
+
+  var trimStart: Duration? { isTrimming ? Timecode.parse(trimStartText) : nil }
+  var trimEnd: Duration? { isTrimming ? Timecode.parse(trimEndText) : nil }
 
   /// `info.duration`, narrowed to the trim window when one is set. Every
   /// duration-based estimate — the size shown per quality here, and the
@@ -317,15 +349,36 @@ final class IntakeModel {
     return (trimEnd ?? fullDuration) - (trimStart ?? .zero)
   }
 
+  /// What the trim section says about itself when it is closed, or nil when it
+  /// is not trimming at all. The collapsed row has to carry this: a section
+  /// that is applying a range while showing nothing is exactly the hidden
+  /// state the disclosure was accused of creating.
+  var trimSummary: String? {
+    guard isTrimming, !trimIsInvalid else { return nil }
+    switch (trimStart, trimEnd) {
+    case (nil, nil): return nil
+    case (let start?, let end?): return "\(Timecode.format(start)) – \(Timecode.format(end))"
+    case (let start?, nil): return "from \(Timecode.format(start))"
+    case (nil, let end?): return "up to \(Timecode.format(end))"
+    }
+  }
+
   /// A typed trim time that is neither empty nor a time, or an end at or
   /// before the start. Either would reach the CLI as an argument that fails
   /// minutes into a download, so Add refuses first.
   var trimIsInvalid: Bool {
-    guard showsTrimOptions else { return false }
+    guard isTrimming else { return false }
     if !Timecode.isBlankOrValid(trimStartText) || !Timecode.isBlankOrValid(trimEndText) {
       return true
     }
     if let start = trimStart, let end = trimEnd, end <= start { return true }
+    // Against the video's own length, not just against each other. Without
+    // this a start past the end is "valid", Add stays enabled, and the
+    // refusal arrives from the CLI minutes into a download.
+    if let total = info?.duration {
+      if let start = trimStart, start >= total { return true }
+      if let end = trimEnd, end > total { return true }
+    }
     return false
   }
 
@@ -641,52 +694,6 @@ nonisolated enum OutputSuffix {
     let all = [video]
     return all.map(\.utf8.count).max() ?? 0
   }()
-}
-
-/// Parses the trim times the user types.
-///
-/// Accepts `ss`, `mm:ss`, and `hh:mm:ss`, which is what people paste out of a
-/// Twitch timestamp. Everything else is rejected rather than coerced: a
-/// silently-misread trim produces a download of the wrong part of a VOD,
-/// which looks like a successful job.
-nonisolated enum Timecode {
-
-  static func parse(_ text: String) -> Duration? {
-    let trimmed = text.trimmingCharacters(in: .whitespaces)
-    guard !trimmed.isEmpty else { return nil }
-
-    let parts = trimmed.split(separator: ":", omittingEmptySubsequences: false)
-    guard parts.count <= 3 else { return nil }
-
-    var total = 0
-    for (index, part) in parts.enumerated() {
-      // `Int(_:)` alone would accept "+5", " 5", and non-ASCII digits — and
-      // returns nil for a run of digits too long for `Int`, which is the
-      // first half of the overflow guard below.
-      guard !part.isEmpty, part.allSatisfy({ $0.isASCII && $0.isNumber }), let value = Int(part)
-      else { return nil }
-      // Only the leading field may exceed 59: "90" is a minute and a half,
-      // but "1:90" is not a time anybody means.
-      if index > 0 && value > 59 { return nil }
-      // Reported rather than trapping. Swift traps on integer overflow, so a
-      // plain `total * 60 + value` turns a long number pasted into the trim
-      // field into a crash — no privileged input required, just a text field
-      // and a fat thumb. Too big to be a time is invalid input like any
-      // other, and the sheet already refuses invalid input gracefully.
-      let (scaled, didScaleOverflow) = total.multipliedReportingOverflow(by: 60)
-      guard !didScaleOverflow else { return nil }
-      let (sum, didSumOverflow) = scaled.addingReportingOverflow(value)
-      guard !didSumOverflow else { return nil }
-      total = sum
-    }
-    return .seconds(total)
-  }
-
-  /// An empty field means "no trim", which is valid. Anything else has to
-  /// parse.
-  static func isBlankOrValid(_ text: String) -> Bool {
-    text.trimmingCharacters(in: .whitespaces).isEmpty || parse(text) != nil
-  }
 }
 
 extension TwitchLink.Target {

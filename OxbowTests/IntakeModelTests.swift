@@ -888,7 +888,7 @@ struct IntakeModelTests {
   /// A trimmed video rendered against the whole VOD's chat is wrong output
   /// that looks like a success, so both requests get the same window.
   @Test func trimTimesReachBothTheVideoAndItsChat() async throws {
-    let model = await loadedModel()
+    let model = await loadedModel(info: Self.info(duration: .seconds(7200)))
     model.output = .videoWithChat
     model.trimStartText = "1:00"
     model.trimEndText = "1:02:03"
@@ -954,6 +954,33 @@ struct IntakeModelTests {
     #expect(model.canAdd)
   }
 
+  /// A start past the end of the video reaches the CLI as an argument that
+  /// fails minutes into a download, which is the exact failure `trimIsInvalid`
+  /// exists to get ahead of.
+  @Test func refusesATrimPastTheEndOfTheVideo() async {
+    let model = await loadedModel(info: Self.info(duration: .seconds(2400)))
+
+    model.trimStartText = "01:00:00"
+    #expect(model.trimIsInvalid)
+
+    model.trimStartText = ""
+    model.trimEndText = "01:00:00"
+    #expect(model.trimIsInvalid)
+  }
+
+  /// An end at exactly the last frame is the whole video, which is fine. A
+  /// start there selects nothing, which is not.
+  @Test func acceptsAnEndAtTheVideosLengthButNotAStartThere() async {
+    let model = await loadedModel(info: Self.info(duration: .seconds(2400)))
+
+    model.trimEndText = "00:40:00"
+    #expect(!model.trimIsInvalid)
+
+    model.trimEndText = ""
+    model.trimStartText = "00:40:00"
+    #expect(model.trimIsInvalid)
+  }
+
   @Test func timecodesAreReadAsSecondsMinutesAndHours() {
     #expect(Timecode.parse("90") == .seconds(90))
     #expect(Timecode.parse("1:30") == .seconds(90))
@@ -987,6 +1014,103 @@ struct IntakeModelTests {
     #expect(Timecode.parse("1:") == nil)
     #expect(Timecode.parse("+5") == nil)
     #expect(Timecode.parse("１:３０") == nil, "full-width digits are not a timecode")
+  }
+
+  /// Collapsing the section hides the controls and does nothing else. It used
+  /// to clear both fields, which was right for a checkbox and wrong for a
+  /// disclosure triangle — that reads as "hide the details", so reclaiming a
+  /// little window space silently destroyed the trim.
+  @Test func collapsingTheTrimSectionKeepsTheTimes() {
+    let model = IntakeModel(fetchInfo: { _ in throw CancellationError() }, enqueue: { _, _ in })
+    model.linkText = Self.videoLink
+    model.isTrimExpanded = true
+    model.trimStartText = "00:10:00"
+    model.trimEndText = "00:20:00"
+
+    model.isTrimExpanded = false
+
+    #expect(model.trimStartText == "00:10:00")
+    #expect(model.trimEndText == "00:20:00")
+  }
+
+  /// And it keeps applying it. A set trim that quietly stops counting because
+  /// a triangle is closed is hidden state; the collapsed row carries
+  /// `trimSummary` precisely so there is none.
+  @Test func aCollapsedTrimSectionStillTrims() {
+    let model = IntakeModel(fetchInfo: { _ in throw CancellationError() }, enqueue: { _, _ in })
+    model.linkText = Self.videoLink
+    model.trimStartText = "00:10:00"
+    model.isTrimExpanded = false
+
+    #expect(model.trimStart == .seconds(600))
+    #expect(model.trimSummary == "from 00:10:00")
+  }
+
+  @Test func summarisesWhicheverEndsAreSet() {
+    let model = IntakeModel(fetchInfo: { _ in throw CancellationError() }, enqueue: { _, _ in })
+    model.linkText = Self.videoLink
+    #expect(model.trimSummary == nil)
+
+    model.trimStartText = "00:10:00"
+    model.trimEndText = "00:20:00"
+    #expect(model.trimSummary == "00:10:00 – 00:20:00")
+
+    model.trimStartText = ""
+    #expect(model.trimSummary == "up to 00:20:00")
+
+    // Nothing to summarise while the value cannot be read.
+    model.trimEndText = "half an hour"
+    #expect(model.trimSummary == nil)
+  }
+
+  /// A clip has no trim at all, so it has nothing to say about one either.
+  @Test func aClipNeverSummarisesATrim() {
+    let model = IntakeModel(fetchInfo: { _ in throw CancellationError() }, enqueue: { _, _ in })
+    model.linkText = Self.clipLink
+    model.trimStartText = "00:10:00"
+    #expect(model.trimSummary == nil)
+  }
+
+  /// `reset()` empties the window when it closes (#39), and that includes
+  /// folding the section back up — a reopened window should look like a new
+  /// one, not like the last job half-configured.
+  @Test func resettingTheWindowFoldsTheTrimSectionAway() {
+    let model = IntakeModel(fetchInfo: { _ in throw CancellationError() }, enqueue: { _, _ in })
+    model.linkText = Self.videoLink
+    model.isTrimExpanded = true
+    model.trimStartText = "00:10:00"
+
+    model.reset()
+
+    #expect(!model.isTrimExpanded)
+    #expect(model.trimStartText.isEmpty)
+  }
+
+  /// A trim is scoped to the video it was drawn against more tightly than a
+  /// quality is: `trimIsInvalid` checks the window against `info.duration`, so
+  /// a trim carried over from a longer video does not get quietly ignored the
+  /// way a stale quality selection would — it gets rejected, leaving the
+  /// timeline dimmed and Add disabled over a video the trim was never drawn
+  /// against. Pasting a new link has to clear it, not just the quality.
+  @Test func loadingADifferentVideoClearsAnyTrimFromTheLastOne() async {
+    let long = Self.info(duration: .seconds(2400))
+    let short = Self.info(duration: .seconds(300))
+    let model = IntakeModel(
+      fetchInfo: { id in id == "1111" ? long : short },
+      enqueue: { _, _ in },
+      calendar: Self.pacific)
+
+    model.linkText = "https://www.twitch.tv/videos/1111"
+    await model.load()
+    model.trimStartText = "10:00"
+    model.trimEndText = "20:00"
+
+    model.linkText = "https://www.twitch.tv/videos/2222"
+    await model.load()
+
+    #expect(!model.isTrimExpanded)
+    #expect(model.trimStartText.isEmpty)
+    #expect(model.trimEndText.isEmpty)
   }
 
   /// A superseded fetch is not a failure. `.task(id:)` cancels the previous
