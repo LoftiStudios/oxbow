@@ -2,8 +2,9 @@
 
 ## Supported versions
 
-Oxbow is pre-alpha and has not had a release yet. Once releases begin, only the
-latest one is supported.
+Only the latest release is supported. Oxbow is pre-1.0 and ships from a single
+line of development, so a fix arrives as a new release rather than as a patch
+to an older one.
 
 ## Reporting a vulnerability
 
