@@ -144,7 +144,7 @@ build.yml` asserts their presence in the assembled bundle.
 
 ## 8. Resolved since
 
-- **`MIN_MACOS` is now `15.0`**, matching the app's deployment target. These two
+- **`MIN_MACOS` is now `26.0`**, matching the app's deployment target. These two
   must stay in lockstep — a helper built for a newer minimum than the app fails
   to launch on the app's oldest supported OS.
 - **Signing confirmed.** FFmpeg contributes one Mach-O, signs with the hardened

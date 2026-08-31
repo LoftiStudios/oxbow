@@ -32,8 +32,10 @@ metadata.
   Files phase, so the "Code Sign On Copy" trap cannot occur. Building without
   `build/helper` or `build/ffmpeg` succeeds with a warning, so UI work needs
   neither the .NET nor the FFmpeg toolchain. See `docs/signing.md`.
-- **Deployment target: macOS 15.** `MIN_MACOS` in `scripts/build-ffmpeg.sh`
-  must stay in lockstep with it.
+- **Deployment target: macOS 26.** `MIN_MACOS` in `scripts/build-ffmpeg.sh`
+  must stay in lockstep with it. Raised from macOS 15 to unlock Liquid Glass;
+  Oxbow is Apple Silicon only, and every Mac that can run it can run macOS 26,
+  so nobody is locked out. No macOS 26 APIs are in use yet.
 - **OxbowKit: built and tested.** Job/step model, scheduler, queue engine,
   argument builder, status-line parser, atomic persistence with load-time
   reconciliation, per-step helper logs, and the async process wrapper.
@@ -379,5 +381,4 @@ Flag these rather than deciding unilaterally:
 
 - **Process wrapper vs. NativeAOT dylib.** Currently (A), the process wrapper.
   (B) is better long-term but is a separate project with its own C ABI design.
-- Minimum supported macOS version — not yet set.
 - Final app name. "Oxbow" is a working name; see `docs/architecture.md` §6.
