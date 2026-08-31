@@ -170,7 +170,7 @@ final class IntakeModel {
     linkText = ""
     name = ""
     quality = ""
-    isTrimEnabled = false
+    isTrimExpanded = false
     trimStartText = ""
     trimEndText = ""
     metadata = .idle
@@ -239,8 +239,11 @@ final class IntakeModel {
       // And the trim with it, for the same reason but more so: a quality that
       // does not exist is merely ignored, while a trim from a longer video
       // fails its bounds check and leaves the window refusing to add a job it
-      // never described.
-      isTrimEnabled = false
+      // never described. Cleared explicitly — collapsing the section no longer
+      // empties it, by design, so this cannot lean on that any more.
+      trimStartText = ""
+      trimEndText = ""
+      isTrimExpanded = false
       name = OutputNaming.baseName(
         streamer: info.streamer,
         date: info.createdAt,
@@ -313,17 +316,24 @@ final class IntakeModel {
   /// ignoring them. A trim that survives behind an unchecked box is state the
   /// window is not showing, and the job would trim for a reason nothing on
   /// screen explains.
-  var isTrimEnabled = false {
-    didSet {
-      guard !isTrimEnabled else { return }
-      trimStartText = ""
-      trimEndText = ""
-    }
-  }
+  /// Whether the trim section is open. **Presentation only — a closed section
+  /// still trims.**
+  ///
+  /// It began as a switch that cleared both fields when turned off, which was
+  /// right for a checkbox and wrong for a disclosure triangle: that reads as
+  /// "hide the details", so collapsing it to reclaim window space silently
+  /// destroyed a trim the user had set. Neither does closing it *disable* the
+  /// trim, which would be worse — a set value that quietly stops applying is
+  /// hidden state, and the collapsed row shows the range precisely so there is
+  /// none. What you set is what you get; the triangle only decides whether you
+  /// can see the controls.
+  var isTrimExpanded = false
 
   /// Both conditions, not either: a clip has no trim options at all, and an
   /// unchecked box means the whole video.
-  private var isTrimming: Bool { showsTrimOptions && isTrimEnabled }
+  /// Clips have no trim at all; a VOD always may. The section being closed is
+  /// not part of this — see `isTrimExpanded`.
+  private var isTrimming: Bool { showsTrimOptions }
 
   var trimStart: Duration? { isTrimming ? Timecode.parse(trimStartText) : nil }
   var trimEnd: Duration? { isTrimming ? Timecode.parse(trimEndText) : nil }
@@ -337,6 +347,20 @@ final class IntakeModel {
   var effectiveDuration: Duration? {
     guard let fullDuration = info?.duration else { return nil }
     return (trimEnd ?? fullDuration) - (trimStart ?? .zero)
+  }
+
+  /// What the trim section says about itself when it is closed, or nil when it
+  /// is not trimming at all. The collapsed row has to carry this: a section
+  /// that is applying a range while showing nothing is exactly the hidden
+  /// state the disclosure was accused of creating.
+  var trimSummary: String? {
+    guard isTrimming, !trimIsInvalid else { return nil }
+    switch (trimStart, trimEnd) {
+    case (nil, nil): return nil
+    case (let start?, let end?): return "\(Timecode.format(start)) – \(Timecode.format(end))"
+    case (let start?, nil): return "from \(Timecode.format(start))"
+    case (nil, let end?): return "up to \(Timecode.format(end))"
+    }
   }
 
   /// A typed trim time that is neither empty nor a time, or an end at or

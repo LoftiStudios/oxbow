@@ -49,8 +49,17 @@ struct IntakeWindow: View {
 
         if model.hasSettledMetadata {
           naming
-          outputs
+          // Trim before Download: which part of the video you want is a
+          // property of the video, like its name, while Download is about what
+          // format to render it in. Ordering it this way also stops the chat
+          // options — which appear and disappear — from shoving the trim
+          // controls you were just setting down the window.
+          // Where it goes, before how much of it you want. The order follows
+          // the decision being made: what this is, where to put it, how much
+          // of it, then the details of how to render it.
+          saveTo
           if model.showsTrimOptions { trim }
+          outputs
         }
       }
       .formStyle(.grouped)
@@ -222,9 +231,11 @@ struct IntakeWindow: View {
   /// keys off the parsed link rather than off `info`.
   private var trim: some View {
     Section {
-      Toggle("Trim", isOn: $model.isTrimEnabled)
-
-      if model.isTrimEnabled {
+      // Closing this undoes nothing — it hides the controls and that is all.
+      // Which is why the label carries the range: a section quietly applying a
+      // trim while showing nothing would be exactly the hidden state a
+      // disclosure triangle is so easily mistaken for.
+      DisclosureGroup(isExpanded: $model.isTrimExpanded) {
         if let duration = model.info?.duration {
           TrimTimeline(
             duration: duration,
@@ -281,6 +292,15 @@ struct IntakeWindow: View {
             .font(.caption)
             .foregroundStyle(.red)
         }
+      } label: {
+        HStack(spacing: 8) {
+          Text("Trim")
+          if let summary = model.trimSummary {
+            Text(summary)
+              .foregroundStyle(.secondary)
+              .monospacedDigit()
+          }
+        }
       }
     }
   }
@@ -292,13 +312,18 @@ struct IntakeWindow: View {
   /// thing every download commits to — where the file goes — was below the
   /// fold exactly when the window looked most finished. Transmission pins its
   /// path row above its buttons for the same reason.
+  /// Only the buttons now. The destination moved up into the form, into the
+  /// order the decision is actually made in. Pinning it here was a guard
+  /// against it falling below the fold exactly when the form looked most
+  /// finished — which the window growing to fit its own sections now covers.
   private var footer: some View {
-    VStack(spacing: 12) {
-      destination
-      buttons
-    }
-    .padding(.horizontal, 20)
-    .padding(.vertical, 14)
+    buttons
+      .padding(.horizontal, 20)
+      .padding(.vertical, 14)
+  }
+
+  private var saveTo: some View {
+    Section { destination }
   }
 
   private var destination: some View {
@@ -363,7 +388,7 @@ struct IntakeWindow: View {
     var height: CGFloat = 600
     guard model.hasSettledMetadata else { return height }
     if model.output == .videoWithChat, model.chatProblem == nil { height += 120 }
-    if model.showsTrimOptions, model.isTrimEnabled { height += 165 }
+    if model.showsTrimOptions, model.isTrimExpanded { height += 165 }
     return height
   }
 
@@ -609,7 +634,7 @@ extension VideoInfo {
 /// with a trim set. The section is otherwise only reachable by clicking.
 #Preview("Video - trimmed") {
   let model = previewModel()
-  model.isTrimEnabled = true
+  model.isTrimExpanded = true
   model.trimStartText = "00:02:00"
   return IntakeWindow(model: model)
 }
