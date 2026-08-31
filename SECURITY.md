@@ -11,7 +11,7 @@ to an older one.
 **Please do not open a public issue for a security problem.**
 
 Report it through GitHub's private vulnerability reporting: go to the
-[Security tab](https://github.com/loftiStudios/oxbow/security/advisories/new)
+[Security tab](https://github.com/LoftiStudios/oxbow/security/advisories/new)
 and open a draft advisory. That channel is private between you and the
 maintainer.
 

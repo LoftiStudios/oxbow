@@ -33,7 +33,7 @@ struct UpdateModelTests {
   private func available(_ version: String) throws -> UpdateCheck.Outcome {
     .available(
       try #require(ReleaseVersion(version)),
-      try #require(URL(string: "https://github.com/loftiStudios/oxbow/releases/tag/v\(version)")))
+      try #require(URL(string: "https://github.com/LoftiStudios/oxbow/releases/tag/v\(version)")))
   }
 
   private func model(
@@ -56,7 +56,7 @@ struct UpdateModelTests {
 
     #expect(model.state == .available(
       try #require(ReleaseVersion("0.3.0")),
-      try #require(URL(string: "https://github.com/loftiStudios/oxbow/releases/tag/v0.3.0"))))
+      try #require(URL(string: "https://github.com/LoftiStudios/oxbow/releases/tag/v0.3.0"))))
   }
 
   @Test func automaticCheckDoesNotRunAgainWithinTheInterval() async throws {
@@ -166,7 +166,7 @@ struct UpdateModelTests {
 
     #expect(second.state == .available(
       try #require(ReleaseVersion("0.3.0")),
-      try #require(URL(string: "https://github.com/loftiStudios/oxbow/releases/tag/v0.3.0"))))
+      try #require(URL(string: "https://github.com/LoftiStudios/oxbow/releases/tag/v0.3.0"))))
   }
 
   @Test func aDismissalDoesNotSuppressALaterVersion() async throws {
@@ -183,6 +183,6 @@ struct UpdateModelTests {
 
     #expect(second.state == .available(
       try #require(ReleaseVersion("0.4.0")),
-      try #require(URL(string: "https://github.com/loftiStudios/oxbow/releases/tag/v0.4.0"))))
+      try #require(URL(string: "https://github.com/LoftiStudios/oxbow/releases/tag/v0.4.0"))))
   }
 }

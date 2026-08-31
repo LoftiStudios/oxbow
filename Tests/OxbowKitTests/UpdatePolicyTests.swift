@@ -58,6 +58,6 @@ struct UpdatePolicyTests {
   private func available(_ version: String) throws -> UpdateCheck.Outcome {
     .available(
       try #require(ReleaseVersion(version)),
-      try #require(URL(string: "https://github.com/loftiStudios/oxbow/releases/tag/v\(version)")))
+      try #require(URL(string: "https://github.com/LoftiStudios/oxbow/releases/tag/v\(version)")))
   }
 }
