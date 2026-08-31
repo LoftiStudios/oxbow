@@ -75,8 +75,7 @@ struct JobInfoWindow: View {
                 .help(source.absoluteString)
             }
           }
-          LabeledContent("Status", value: JobPresentation.accessibilityStatus(of: job.status)
-            .capitalized)
+          LabeledContent("Status") { JobStatusValue(status: job.status) }
         }
 
         Section("Download") {
@@ -175,6 +174,33 @@ struct JobInfoWindow: View {
   }
 }
 
+/// The job's status, drawn the way the queue draws it: the same symbol and
+/// the same tone, not a second vocabulary for the same five states. A window
+/// opened from a row should agree with the row it was opened from — at a
+/// glance, before the word is read.
+///
+/// The word stays. The icon is the glanceable half and the word is the exact
+/// one, and this row is the only place in the app that has room for both.
+/// It is also what keeps the row legible to VoiceOver, which is why the image
+/// is hidden from it here for the same reason it is in `JobRow`.
+private struct JobStatusValue: View {
+  let status: JobStatus
+
+  @Environment(\.colorScheme) private var colorScheme
+
+  var body: some View {
+    let icon = JobPresentation.icon(for: status)
+
+    HStack(spacing: QueueMetrics.iconSpacing) {
+      Image(systemName: icon.name)
+        .foregroundStyle(icon.tone.color(for: colorScheme))
+        .accessibilityHidden(true)
+
+      Text(JobPresentation.accessibilityStatus(of: status).capitalized)
+    }
+  }
+}
+
 /// One step, as Get Info shows it: what it is, where it got to, and what the
 /// helper said.
 private struct StepInfoRow: View {
@@ -253,6 +279,24 @@ private struct StepInfoRow: View {
   }
   .formStyle(.grouped)
   .frame(width: 460, height: 520)
+}
+
+/// Every status the row can show, in one place: the five colours and glyphs
+/// are the whole point of the row, and each is otherwise reachable only by
+/// getting a real download into that state.
+#Preview("Status row - every state") {
+  Form {
+    Section {
+      ForEach(
+        [JobStatus.queued, .running, .done, .failed, .cancelled],
+        id: \.self)
+      { status in
+        LabeledContent("Status") { JobStatusValue(status: status) }
+      }
+    }
+  }
+  .formStyle(.grouped)
+  .frame(width: 460)
 }
 
 enum JobInfoPreviewData {

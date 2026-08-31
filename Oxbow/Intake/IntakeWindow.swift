@@ -164,8 +164,8 @@ struct IntakeWindow: View {
   private var outputs: some View {
     Section("Download") {
       Picker("Output", selection: $model.output) {
-        Text(isClip ? "Clip" : "Video").tag(IntakeModel.Output.video)
         Text(isClip ? "Clip + chat" : "Video + chat").tag(IntakeModel.Output.videoWithChat)
+        Text(isClip ? "Clip" : "Video").tag(IntakeModel.Output.video)
       }
       .pickerStyle(.radioGroup)
       .labelsHidden()
@@ -186,7 +186,7 @@ struct IntakeWindow: View {
         // The one control the deleted render-options form left behind (see
         // docs/design/compositing.md §4, §8): a fixed size cannot serve both
         // a laptop window and a TV across the room. "Small"/"Medium"/"Large"
-        // does not explain itself the way "Video"/"Video + chat" does above,
+        // does not explain itself the way "Video + chat"/"Video" does above,
         // so — unlike that picker — this one keeps its label on screen.
         Picker("Chat text size", selection: $model.chatSize) {
           Text("Small").tag(ChatSize.small)
@@ -204,10 +204,11 @@ struct IntakeWindow: View {
           .foregroundStyle(.secondary)
       }
 
-      // Only reachable for a clip whose parent broadcast Twitch has expired
-      // — see `IntakeModel.chatProblem`. Without this the sheet would simply
-      // grey Add out with nothing on screen saying why, which is the exact
-      // failure `compositeProblem` below exists to prevent.
+      // A clip whose parent broadcast Twitch has expired, or any video whose
+      // metadata fetch failed — see `IntakeModel.chatProblem`. Without this
+      // the sheet would simply grey Add out with nothing on screen saying
+      // why, which is the exact failure `compositeProblem` below exists to
+      // prevent.
       if let chatProblem = model.chatProblem {
         Label(chatProblem, systemImage: "exclamationmark.triangle")
           .font(.caption)
@@ -551,13 +552,14 @@ extension VideoInfo {
       """))
 }
 
-#Preview("Video") {
+/// The sheet as it opens: chat included, since that is the default.
+#Preview("Video + chat") {
   IntakeWindow(model: previewModel())
 }
 
-#Preview("Video + chat") {
+#Preview("Video") {
   let model = previewModel()
-  model.output = .videoWithChat
+  model.output = .video
   return IntakeWindow(model: model)
 }
 
@@ -567,7 +569,6 @@ extension VideoInfo {
 /// section.
 #Preview("Video + chat - large text") {
   let model = previewModel()
-  model.output = .videoWithChat
   model.chatSize = .large
   return IntakeWindow(model: model)
 }
@@ -619,6 +620,9 @@ extension VideoInfo {
   IntakeWindow(model: previewModel(link: "", info: nil, folder: nil))
 }
 
+/// Also the second half of `IntakeModel.chatProblem`: without metadata the
+/// default output cannot be built, so this preview shows the refusal and a
+/// disabled Add alongside the id-derived fallback name.
 #Preview("Metadata failed") {
   IntakeWindow(model: previewModel(info: nil))
 }
@@ -634,6 +638,7 @@ extension VideoInfo {
 /// with a trim set. The section is otherwise only reachable by clicking.
 #Preview("Video - trimmed") {
   let model = previewModel()
+  model.output = .video
   model.isTrimExpanded = true
   model.trimStartText = "00:02:00"
   return IntakeWindow(model: model)

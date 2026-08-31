@@ -58,11 +58,25 @@ are not re-assumed:
 The three independent toggles from `chat-and-render.md` §2 — Video, Chat,
 Render chat — collapse to a single two-case choice:
 
-1. **Video**
-2. **Video + chat**
+1. **Video + chat** — listed first, and the default.
+2. **Video**
 
-Applied symmetrically to clips: clip, or clip + chat. A clip composite is
+Applied symmetrically to clips: clip + chat, or clip. A clip composite is
 seconds of work, so there is no reason to withhold it.
+
+**Chat is the default** because it is the reason to reach for Oxbow rather than
+any of the video-only downloaders that already exist, and the cost of the wrong
+default is asymmetric: a user who wanted only the video clicks one radio button,
+while a user who did not know the composite existed never discovers it. The
+composite is also the only output that cannot be added after the fact — a
+`.mp4` on disk is not a job the queue can extend.
+
+One consequence, and it is the reason `IntakeModel.chatProblem` has a second
+case: when the metadata fetch fails there is no rendition to size the chat
+column against and no duration to time the encode, so the default output is
+precisely the one that cannot be built. Add would grey out on a freshly opened
+sheet with nothing on screen saying why. The refusal therefore carries its
+sentence and names *Video*, exactly as the expired-broadcast case does.
 
 There is no standalone chat render, no standalone chat file, and no chat format
 picker. The argument is the one already recorded in `architecture.md` §7: a
