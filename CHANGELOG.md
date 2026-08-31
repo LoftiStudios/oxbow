@@ -16,6 +16,149 @@ is the repository's commit count, stamped into the bundle at build time by
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-08-31
+
+**This release requires macOS 26.** No hardware is dropped — Oxbow has always
+been Apple Silicon only, and every Mac that can run it can run macOS 26 — but
+someone still on macOS 15 has to update the OS before updating Oxbow. 0.2.1
+remains the last release that runs there. The bundled FFmpeg was rebuilt with a
+matching `MIN_MACOS`, which `scripts/build-ffmpeg.sh` requires be kept in
+lockstep with the app's deployment target.
+
+Two changes account for most of what a user will notice. The intake is rebuilt
+around a trim timeline you drag rather than two text fields, and the composite
+asks its encoder for a quality instead of computing a bitrate — which is why a
+quiet stream now produces a file roughly a fifth the size it used to, at the
+same quality, while a busy one finally gets the bits it was being starved of.
+
+### Added
+
+- **A trim timeline.** Choosing part of a VOD is now a draggable range on a
+  ruler, with Start, End and the resulting duration on one row beneath it.
+  Handles snap to a unit derived from the video's length, the ruler labels its
+  exact endpoints, and both ends are adjustable from VoiceOver. The handles are
+  deliberately not in the tab chain: a slider is one tab stop on this platform,
+  never two, and the Start and End fields already carry the same two values in
+  reading order.
+- **An update check.** A banner in the queue window when a newer release
+  exists, and a "Check for Updates" menu item that is never silent — the
+  automatic check says nothing unless there is an update, so the menu item is
+  the only way to tell "up to date" from "broken". Throttled to once a day, and
+  a dismissal means "not this one" rather than "never again". It reads
+  `/releases/latest`, which excludes drafts, so a release stays invisible until
+  a human publishes it.
+- **A warning before replacing an existing file.** Finishing a download used to
+  overwrite whatever sat at the destination with no warning and no record. The
+  intake now checks the destination as the name and folder change, says so
+  under the name field, and relabels Add to Replace. Nothing is blocked —
+  re-downloading over a bad copy should stay one click — but the click is named
+  for what it does. A job that carries no such permission steps to the next free
+  name (`out (2).mp4`) instead of clobbering, and Get Info and Show in Finder
+  name the file that actually exists.
+- **The composite's projected output size**, shown while it encodes. Constant
+  quality means the size cannot be known in advance, so it is projected from
+  FFmpeg's own `total_size` — withheld below 2% complete, where the opening
+  I-frames over a tiny denominator produce a number that visibly collapses
+  rather than converges. It is the only warning a runaway encode gives while
+  there is still time to cancel it.
+- The status icon in Get Info, so the window and the queue row it was opened
+  from cannot disagree about what a status looks like. The word stays: the icon
+  is the glanceable half and the word the exact one.
+- `scripts/bench-composite.sh`, which measures a machine's composite encode
+  ceiling in output megapixels per second. `docs/composite-performance.md` §5
+  predicts any job's wall clock from that one constant, and it was measured on
+  one machine; this makes re-deriving it runnable rather than a page of
+  commands needing a checkout and a built FFmpeg.
+
+### Changed
+
+- **The composite asks for a quality, not a bitrate.** `-q:v 50` replaces a
+  computed `-b:v`. Measured across sixteen VOD and clip samples, one quality
+  setting holds the chat column within 1.9 dB while the bitrate it chooses
+  spans 5.3x, and beats a fixed target by +6.3 dB at the *same* bitrate —
+  because a fixed target spreads bits evenly through time and the chat column's
+  difficulty is not. Over six hours that is about 9 GB instead of 48 for a 2D
+  RPG, and 41 instead of 48 for the busiest content measured.
+
+  The bitrate this replaces was not merely imprecise, it was pointed the wrong
+  way: it took the source's advertised `BANDWIDTH` as its primary term, and
+  across four VODs that term is anti-correlated with need — the two whose chat
+  columns were visibly starved advertised the *lower* bandwidth. `-maxrate` is
+  deliberately absent; it reads as the obvious guard against a runaway and does
+  the opposite, taking ordinary content from 5.0 to 19.3 Mbps because it
+  switches the encoder out of quality mode rather than bounding it. See
+  `docs/design/composite-rate-control.md`.
+- **Chat is included by default.** "Video + chat" is now the first and default
+  choice at intake. Chat is the reason to reach for Oxbow over the video-only
+  downloaders that already exist, and the cost of the wrong default is
+  asymmetric: a user who wanted only the video clicks one radio button, while a
+  user who did not know the composite existed never discovers it. The composite
+  is also the only output that cannot be added after the fact.
+- **The intake is ordered by the decision being made** — what this is, where to
+  put it, how much of it, then how to render it. Save to moves out of the
+  pinned footer and into the form, and the window now unfolds downward when a
+  section opens, so the section you just asked for does not arrive below the
+  fold. It never shrinks: a window the user has sized up is theirs.
+- The queue list gets the system's alternating row backgrounds. Rows are not
+  uniform heights — a collapsed job is one line and an expanded composite is
+  five — so with several downloads listed nothing said where one job ended and
+  the next began.
+- Progress bars and the running status icon move off the system accent onto two
+  brand values, `#62658E` in light and `#7A7DA3` in dark. A progress bar is the
+  longest-lived colour on screen; a six-hour VOD means six hours of it.
+- Queued steps get their own tone instead of the orange one that also means
+  "something is wrong". An expanded composite put three or four orange clocks
+  on screen at once, so the steps still to come read as a list of problems.
+  Three states mean "not running" and they are not equivalent — a queued step
+  is going to run, a blocked or cancelled one never will — so they now take two
+  distinguishable greys rather than one.
+
+### Fixed
+
+- **A trimmed download came out with its audio about a second late.** The
+  download was not at fault: a stream copy can only start video on a keyframe,
+  so a trimmed VOD honestly records a leading video offset that every player
+  honours. The composite threw it away — `setpts=PTS-STARTPTS` zeroed the
+  video's start timestamp while the audio, remuxed untouched, kept its own, so
+  the two halves of one source were rebased by different amounts. Padding the
+  head instead of shifting the track takes a measured 24-frame lag to zero. The
+  bug was always present at two frames; it took a trim landing off a part
+  boundary to grow it to a keyframe interval and make it audible.
+- **A resumed composite could deliver a file truncated at the seam.** A resume
+  seeks both inputs to the same instant, which is right for the video and wrong
+  for the chat render — renders end at the last message, so a stream that goes
+  quiet before it ends produces a short one, and seeking past its end yields
+  zero frames while FFmpeg still exits 0. The chat's seek is now clamped inside
+  the render's own end, measured in the *render's* frame rate rather than the
+  composite's, since the two are routinely different. Separately, a composite
+  piece is now checked for declared samples and a frameless one fails the step:
+  a graph that yields nothing still writes a header, so every existence check
+  agreed and the empty segment was concatenated in.
+- **Add Download showed the first link again on every subsequent opening.** The
+  clipboard was not being misread, it was not being read: the window is one
+  scene for the app's whole run, so its model outlived the window and nothing
+  ever reset it. The leftover link short-circuited the guard that exists to stop
+  a re-focus overwriting something half-typed. Where files go, and the chat text
+  size, deliberately survive the reset — those describe how the user works, not
+  this video.
+- **A clip whose parent broadcast is gone is now refused at intake**, with a
+  sentence saying why and pointing at video-only, which still works. A clip
+  carries no chat of its own; it is reconstructed from the broadcast it was cut
+  from. Waiting for that to fail mid-job was expensive in a non-obvious way: the
+  chat step claims the network slot first and fails in seconds, the video
+  downloads in full anyway into a workspace with no destination, and everything
+  else sits blocked behind the failure — so the user waited out an entire
+  download and received nothing.
+- A trim left over from a previous video is cleared when a new link is pasted.
+  It failed its bounds check against the new duration and left the window stuck
+  with a dimmed timeline and a disabled Add button.
+- The launch-time update check no longer runs during `xcodebuild test`. Tests
+  run inside the app, so every test invocation made a live request to
+  api.github.com and wrote to the real preferences domain. Nothing failed, which
+  is why it survived a green CI run — the automatic path is silent about its own
+  errors by design, so an unwanted request that succeeds and one that 403s look
+  identical from outside.
+
 ## [0.2.1] - 2026-08-28
 
 Ships work that was finished before 0.2.0 went out but did not reach it. The
