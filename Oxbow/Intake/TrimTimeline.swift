@@ -44,6 +44,13 @@ struct TrimTimeline: View {
     /// into one.
     static let selectionInset: CGFloat = 6
     static let selectionCorner: CGFloat = 4
+    /// The lollipops run from just above the timestamps down to exactly the
+    /// selection's own bottom edge — derived from `selectionInset` rather than
+    /// written out, so the two cannot drift apart when either is tuned. They
+    /// are allowed to overlap the timestamps: they mark where the range ends,
+    /// which is worth more than an unbroken label.
+    static let handleTop: CGFloat = 12
+    static var handleBottom: CGFloat { trackHeight - selectionInset }
   }
 
   private var scale: TimelineScale {
@@ -111,20 +118,23 @@ struct TrimTimeline: View {
   /// top of the gradient.
   private static let ink = Color(red: 0x1C / 255, green: 0x1B / 255, blue: 0x2A / 255)
 
-  /// The chosen range, as a channel recessed into the track.
+  /// The chosen range, as a pane of glass lying on the track.
   ///
-  /// **Multiplied rather than laid on top.** A flat translucent fill covers the
-  /// gradient and flattens it; multiplying darkens what is already there, so
-  /// the same light-to-dark wash runs through the selection and the two read as
-  /// one surface at two depths. The inner shadow is what sells the depth — it
-  /// is the only thing here that says "cut into" rather than "painted on".
+  /// **Lighter than the strip, not darker.** Liquid Glass is a light-adding
+  /// material; every attempt to make it a dark recess fought that and came out
+  /// as grey mud. Lifting the selection instead lets it behave the way it was
+  /// built to, and matches how selection reads everywhere else in the system —
+  /// the chosen thing is the lit one.
+  ///
+  /// `.clear` rather than `.regular`: the ruler underneath has to stay legible,
+  /// and the heavier material desaturates the strip's violet toward grey. What
+  /// the glass buys over a hand-rolled wash is the specular lip along its
+  /// bottom edge, which is a real edge highlight rather than an approximation
+  /// of one.
   private var selection: some View {
     let start = viewX(startTime), end = viewX(endTime)
-    return RoundedRectangle(cornerRadius: Metrics.selectionCorner)
-      .fill(
-        Self.selectionTint.shadow(
-          .inner(color: .black.opacity(0.45), radius: 2.5, x: 0, y: 1)))
-      .blendMode(.multiply)
+    return Color.clear
+      .glassEffect(.clear, in: .rect(cornerRadius: Metrics.selectionCorner))
       .frame(width: max(0, end - start))
       // The top inset clears the timestamps rather than matching the bottom.
       // Multiplied through, the channel darkens the strip enough that the dark
@@ -140,18 +150,6 @@ struct TrimTimeline: View {
       // track's own rounded ends.
       .clipShape(.rect(cornerRadius: Metrics.corner))
   }
-
-  /// Darkens the track's own colour rather than introducing a new one — a
-  /// desaturated violet from the same family as the gradient above. The system
-  /// accent was tried here and fought it: a blue wash over a violet strip reads
-  /// as two unrelated materials.
-  ///
-  /// Light, for a multiply. The ruler is drawn over the channel in the same
-  /// dark ink it uses outside it, and a heavier tint sank the ticks inside the
-  /// selection far enough that the scale stopped reading continuously across
-  /// the two.
-  private static let selectionTint = Color(
-    red: 0xA6 / 255, green: 0xA4 / 255, blue: 0xC0 / 255)
 
   /// Drawn over the selection fill, not under it, so the ruler reads
   /// continuously across the whole track. One `Canvas` rather than 73 shape
@@ -221,13 +219,11 @@ struct TrimTimeline: View {
     return ZStack {
       Capsule()
         .fill(Self.ink)
-        // Starts below the timestamps rather than spanning the whole track:
-        // a handle parked under a label would otherwise draw a line straight
-        // through the text.
-        .frame(width: Metrics.line, height: Metrics.trackHeight - Metrics.labelRow)
-        .offset(y: Metrics.labelRow / 2)
+        .frame(width: Metrics.line, height: Metrics.handleBottom - Metrics.handleTop)
+        .offset(
+          y: (Metrics.handleTop + Metrics.handleBottom) / 2 - Metrics.trackHeight / 2)
       Circle().fill(Self.ink).frame(width: Metrics.dot, height: Metrics.dot)
-        .offset(y: -Metrics.trackHeight / 2 + Metrics.labelRow + Metrics.dot / 2)
+        .offset(y: Metrics.handleTop + Metrics.dot / 2 - Metrics.trackHeight / 2)
     }
     // Both children are positioned by an offset from this box's centre, so it
     // has to be the full track height — sizing it to the tallest child would
