@@ -101,6 +101,15 @@ struct IntakeModelTests {
     #expect(!model.hasSettledMetadata)
   }
 
+  /// Chat is on by default: it is the output that distinguishes Oxbow, and a
+  /// user who wants only the video is one click from it. Pinned because every
+  /// other test in this file sets `output` explicitly, so nothing else here
+  /// would notice the default flipping back.
+  @Test func chatIsIncludedByDefault() {
+    #expect(IntakeModel.Output.allCases.first == .videoWithChat, "and listed first")
+    #expect(makeModel().output == .videoWithChat)
+  }
+
   /// The other half of the same decision, and the one a tidy-up would undo:
   /// a reset that also cleared these would re-ask where files go on every
   /// single download, which is exactly what `defaultDestination` removed.
@@ -243,7 +252,10 @@ struct IntakeModelTests {
   }
 
   /// A model with metadata settled, a folder chosen, and `.video` as its
-  /// output — the minimum state in which Add is legal.
+  /// output — the minimum state in which Add is legal. Video-only is set
+  /// explicitly rather than relied on: the sheet's default is
+  /// `.videoWithChat`, and a helper that silently followed it would turn
+  /// every test below into a composite test.
   private func loadedModel(
     link: String = IntakeModelTests.videoLink,
     info: VideoInfo = IntakeModelTests.info(),
@@ -255,6 +267,7 @@ struct IntakeModelTests {
     model.linkText = link
     await model.load()
     model.folder = Self.folder
+    model.output = .video
     return model
   }
 
@@ -656,7 +669,6 @@ struct IntakeModelTests {
     let model = await loadedModel(link: Self.clipLink, info: Self.info(qualities: qualities))
     model.quality = "720p0-1"
 
-    #expect(model.output == .video, "the default")
     #expect(model.compositeProblem == nil)
   }
 
@@ -737,7 +749,6 @@ struct IntakeModelTests {
       link: Self.clipLink,
       info: Self.info(hasDownloadableChat: false))
 
-    #expect(model.output == .video, "the default")
     #expect(model.chatProblem == nil, "video-only has no chat to explain away")
     #expect(model.canAdd)
   }
@@ -1155,13 +1166,36 @@ struct IntakeModelTests {
     #expect(failure.contains("Unable to get information about VOD"), "the helper's own sentence")
     #expect(!failure.contains("at Foo.Bar()"), "but not its stack trace")
 
-    // The fallback: named from the id, and still addable.
+    // The fallback: named from the id, and still addable as video-only.
     #expect(model.name == Self.videoID)
+    model.output = .video
     #expect(model.canAdd)
     let template = try #require(model.composedTemplate())
     #expect(videoRequest(of: template)?.destination?.lastPathComponent == "2844548319.mp4")
     #expect(model.qualities.isEmpty)
     #expect(model.quality == "", "with no quality list, best available is the only honest choice")
+  }
+
+  /// The default output is the one metadata failure takes away: a composite
+  /// has no rendition to size its chat column against and no duration to
+  /// time its encode. Refusing it silently would grey Add out on a freshly
+  /// opened sheet with nothing on screen saying why, so the refusal comes
+  /// with the sentence and with the output that still works.
+  @Test func aMetadataFailureExplainsWhyChatIsUnavailable() async throws {
+    let model = makeModel(
+      failure: VideoInfoFetchError.helperFailed(status: .exited(1), standardError: "nope"))
+    model.linkText = Self.videoLink
+    await model.load()
+    model.folder = Self.folder
+
+    #expect(model.output == .videoWithChat, "the default, and the one that cannot be built")
+    #expect(!model.canAdd)
+    let problem = try #require(model.chatProblem)
+    #expect(problem.contains("\"Video\""), "names the output that still works")
+
+    model.output = .video
+    #expect(model.chatProblem == nil)
+    #expect(model.canAdd)
   }
 
   @Test func aClipsMetadataFailureNamesFromTheSlug() async {

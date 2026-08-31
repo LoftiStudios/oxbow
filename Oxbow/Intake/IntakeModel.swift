@@ -42,11 +42,14 @@ final class IntakeModel {
   /// composite is what makes it worth producing at all. See
   /// docs/design/compositing.md §3.
   enum Output: CaseIterable, Hashable {
-    case video
     case videoWithChat
+    case video
   }
 
-  var output: Output = .video
+  /// Chat included by default, and listed first: it is the reason to reach
+  /// for Oxbow rather than any of the video-only downloaders, and a user who
+  /// wanted only the video loses nothing but one click.
+  var output: Output = .videoWithChat
 
   /// How large the composited chat text is. Only meaningful for
   /// `.videoWithChat` — a plain video has no render to size — and only shown
@@ -452,15 +455,25 @@ final class IntakeModel {
       """
   }
 
-  /// Why `.videoWithChat` cannot be added for this clip, or nil when it can
+  /// Why `.videoWithChat` cannot be added for this video, or nil when it can
   /// (and always nil for `.video`, which needs no chat at all).
   ///
-  /// A clip carries no chat of its own — it is reconstructed from the
-  /// broadcast the clip was cut from — so when Twitch has expired that
-  /// broadcast there is nothing to download. `VideoInfo.hasDownloadableChat`
-  /// reads upstream's own predicate off the same `info` payload the chat
-  /// downloader will read, so this is a refusal on the facts rather than a
-  /// guess about them.
+  /// Two reasons, both refusals on the facts rather than guesses about them.
+  ///
+  /// **The metadata fetch failed.** The composite is derived from metadata
+  /// end to end — a rendition to size the chat column against, a duration to
+  /// report encoding progress against — so without it there is nothing to
+  /// build. The sheet stays usable for `.video`, which is the whole point of
+  /// the id-derived fallback name: the download still works, only the chat
+  /// does not. This case matters more since `.videoWithChat` became the
+  /// default (docs/design/compositing.md §3): before, a failed fetch left
+  /// the sheet sitting on an output that still worked.
+  ///
+  /// **The clip's broadcast is gone.** A clip carries no chat of its own — it
+  /// is reconstructed from the broadcast the clip was cut from — so when
+  /// Twitch has expired that broadcast there is nothing to download.
+  /// `VideoInfo.hasDownloadableChat` reads upstream's own predicate off the
+  /// same `info` payload the chat downloader will read.
   ///
   /// **Refusing up front is worth more here than explaining afterwards.**
   /// `JobTemplate.makeJob` appends the chat step first, deliberately, so it
@@ -476,7 +489,16 @@ final class IntakeModel {
   /// choices still works is the difference between an explanation and a dead
   /// end — the same reason `compositeProblem` ends in "Pick another quality".
   var chatProblem: String? {
-    guard output == .videoWithChat, let info, !info.hasDownloadableChat else { return nil }
+    guard output == .videoWithChat else { return nil }
+
+    if metadataFailure != nil {
+      return """
+        Without this video's details, Oxbow cannot size the chat column or \
+        time the encode. Choose "Video" to download the video itself.
+        """
+    }
+
+    guard let info, !info.hasDownloadableChat else { return nil }
     return """
       This clip's original broadcast is no longer on Twitch, so its chat \
       cannot be downloaded. Choose "Video" to download the clip itself.
