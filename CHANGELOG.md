@@ -16,6 +16,18 @@ is the repository's commit count, stamped into the bundle at build time by
 
 ## [Unreleased]
 
+### Added
+
+- **A warning when a job will not fit.** The intake now estimates what a
+  download needs — the source, the chat render, and the composite — and says so
+  under the destination when the volume does not have room, naming a lower
+  rendition that would fit. It never blocks: the estimate is approximate, and
+  someone who knows a drive is about to be plugged in knows more than it does.
+  It is also not a guarantee. The composite's size is chosen by the encoder
+  rather than requested, and varies more than fivefold with how busy the
+  content is, so a stream at the busy end can pass the check and still run out.
+  `docs/design/disk-preflight.md` §9 records what that leaves uncovered.
+
 ### Fixed
 
 - **The Mac no longer idles to sleep while the queue is working.** A download
