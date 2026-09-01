@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// One appearance's worth of the update banner: the two ends of its gradient
@@ -100,6 +101,31 @@ nonisolated enum Brand {
   static func progressFill(for scheme: ColorScheme) -> Color {
     scheme == .dark ? progressDark : progressLight
   }
+
+  /// What the dock tile's progress bar fills with.
+  ///
+  /// **Not `progressLight` or `progressDark`.** Those two are chosen against a
+  /// window — one darker than white, one lighter than near-black — and the
+  /// dock bar sits on neither. It sits on the app icon, whose appearance the
+  /// user controls (Default, Dark, Clear, Tinted), so there is no background
+  /// to tune a value against.
+  ///
+  /// **What it is measured against is the track, not the icon.** The fill sits
+  /// on a near-white track, so contrast with *that* is what decides whether
+  /// the bar can be read at a dock icon's size — a couple of hundred square
+  /// points at most, seen in passing.
+  ///
+  /// This started as the gold of the icon's own download arrow, sampled from
+  /// the rendered tile (`#D2BA54`). It was a tidy argument — the bar wearing a
+  /// colour the icon already draws — and it was too faint to read: a mid-value
+  /// yellow on white is close to the lowest-contrast pair the palette could
+  /// have produced. `#3B3F73` is dark against the same track, and darker than
+  /// `progressLight`, which is tuned to sit on a white *window* rather than
+  /// inside a 6pt bar.
+  ///
+  /// `NSColor`, not `Color`: the dock tile is drawn with AppKit, and a
+  /// `Color` would have to be converted at every fill.
+  static let dockProgress = NSColor(srgbRed: 0.231, green: 0.247, blue: 0.451, alpha: 1)
 }
 
 nonisolated extension Color {

@@ -16,6 +16,17 @@ final class QueueController {
   /// Set when `start()` fails. The queue is unusable; the UI says why.
   private(set) var startFailure: String?
 
+  /// Called with every snapshot the engine publishes, after `jobs` is
+  /// updated. The Dock and Notification Center read from here rather than
+  /// opening a second subscription to the engine, so what they show and what
+  /// the window shows can never come from different snapshots.
+  var onSnapshot: (([Job]) -> Void)?
+
+  /// Called when a job is admitted to the queue. Distinct from "a snapshot
+  /// containing a new job", which is also what launch looks like — see
+  /// `docs/design/status.md` §7.2 for why the notifier needs the difference.
+  var onEnqueue: (() -> Void)?
+
   private let engine: QueueEngine
   /// Threaded through from `AppComposition` via `configuration`, rather than
   /// re-derived here, so there is exactly one place that resolves the
@@ -40,6 +51,7 @@ final class QueueController {
     observation = Task { [engine] in
       for await snapshot in await engine.makeSnapshots() {
         jobs = snapshot
+        onSnapshot?(snapshot)
       }
     }
 
@@ -76,6 +88,9 @@ final class QueueController {
   /// engine holds the job makes "it is queued" a fact the sheet can act on.
   func enqueue(_ template: JobTemplate, title: String) async {
     await engine.enqueue(template, title: title)
+    // After the await, deliberately: same reason this method is `async` at
+    // all — a caller must never be told about a job that did not land.
+    onEnqueue?()
   }
 
   /// The tail of a step's captured helper output, for the detail disclosure.

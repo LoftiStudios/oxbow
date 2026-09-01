@@ -14,8 +14,8 @@ app says about itself, not three features that happen to be near each other.
 ## 1. What this delivers
 
 **A dock tile that carries the queue's state**: a progress bar for the step
-running now, a white badge counting outstanding jobs, and a red `!` when
-something has failed.
+running now, a white badge counting outstanding jobs, and the app's own red
+warning triangle when something has failed.
 
 **A notification when a job reaches a terminal state**, with an action that
 reveals the delivered files.
@@ -84,10 +84,22 @@ on screen and the probe concluding nothing. The stripe proves `draw(_:)` ran.
 
 **Result: the probe icon renders in the same Clear glass material as the
 control.** Not the purple opaque icon. Over a 400x250 screen crop at 2x, 2.53%
-of pixels differ, clustered entirely on our icon: the marker stripe accounts
-for the band at y≈200, and the remainder is a scale difference — the probe drew
-into full `bounds` while the system insets the icon within the tile. See §5.1,
-where that inset stops being an error and becomes a budget.
+of pixels differ, clustered entirely on our icon.
+
+**The scale difference this section originally reported was not real, and is
+retracted.** The first probe concluded that the remaining pixel difference was
+the system insetting the icon within the tile while we drew into full
+`bounds`. §5.2's measurement disproved it: with the content view outlining its
+own bounds, our icon body and the system's occupy *identical* columns —
+`438...507` in a tile spanning `414...531`, in both captures. The apparent
+difference came from cropping two captures taken minutes apart at the same
+screen coordinates, between which the Dock's contents had shifted, so the two
+crops were not of the same region.
+
+The lesson is worth more than the retraction: **a screenshot comparison with no
+fiducial in the frame cannot tell a real difference from a misalignment.** The
+fix was to make the content view draw its own bounds, so both measurements
+share a coordinate system that is visible in the image.
 
 ### 2.4 What the probe did not answer
 
@@ -120,7 +132,14 @@ worse than no badge.
 | nothing outstanding | none |
 | one job outstanding | none |
 | two or more outstanding | white, count of `.queued` + `.running` jobs |
-| **any job failed** | **red `!`, overriding the count** |
+| **any job failed** | **`exclamationmark.triangle.fill` in system red, overriding the count** |
+
+**Failure wears the app's own glyph**, `exclamationmark.triangle.fill` in
+system red — the same symbol `JobPresentation.icon(for:)` puts on a failed row,
+so the Dock and the window say one thing rather than two dialects of it. The
+shape differing from the count's disc is deliberate: a circle answers "how
+many" and a triangle says "something is wrong", both legible before either is
+read, where two states differing only in colour would need looking at.
 
 **Failure is sticky and wins outright.** It persists until the user retries or
 removes the job, which is the only thing that resolves it. It overrides the
@@ -194,33 +213,64 @@ timer whose only job is to fight a mechanism we chose deliberately.
 
 ## 5. Drawing
 
-### 5.1 The inset is the badge's budget
+### 5.1 The icon is drawn edge to edge, and the badge overlaps it
 
-The system draws the app icon **inset** within the dock tile — the scale
-difference §2.3 measured. That inset is not padding to be reclaimed; it is the
-room the badge needs to overflow the icon's corner the way Apple's own
-`badgeLabel` does.
+**There is no icon inset to reproduce.** `NSApp.applicationIconImage` carries
+its own padding, so drawing it into the content view's full `bounds` places the
+visible icon body exactly where the system places it. Measured: identical
+columns, `438...507` inside a tile spanning `414...531`, for our drawing and
+the system's alike.
 
-Draw the icon at the system's inset and the badge lands where the platform puts
-badges. Draw it into full `bounds`, as the probe did, and either the badge is
-clipped or it sits inside the icon and reads as a sticker.
+An earlier draft of this section claimed the opposite — that the system insets
+the icon, and that the inset was "the badge's budget," the room the badge needs
+to overflow the icon's corner. **Both halves were wrong.** There is no inset,
+and the badge needs no budget: it simply draws on top of the icon's top-right
+corner, which is what Apple's own badge does on every app in the Dock. Look at
+any badged icon there and the badge is over the artwork, not beside it.
 
 ### 5.2 Measure Apple's badge, do not guess at it
 
-Badge geometry — diameter relative to icon width, corner inset, cap height,
-font weight — has no published metric, because the badge is system-drawn.
+Badge geometry has no published metric, because the badge is system-drawn. So
+it was measured, on macOS 26.6.2 (25G83), by installing a content view that
+outlines its own bounds and marks deciles along the top and right edges, then
+setting `badgeLabel` and letting the system draw over it. One capture then
+carries both the badge and the coordinate frame it must be expressed in.
 
-**Measure it the same way §2.3 measured the icon**: set a `badgeLabel` on a
-control build, screenshot the tile at several dock sizes, and match the
-numbers. Then diverge on colour only.
+**Measuring against the Dock's icon pitch instead is wrong**, and was the first
+attempt. The pitch is the spacing between icon centres; it is not the tile, and
+every ratio derived from it is scaled by an unknown factor. The fiducial
+removes the guess. (In this configuration they coincidentally agreed at 118px,
+which is exactly the sort of accident that would have validated a bad method.)
+
+Results, in the tile's own coordinate space:
+
+| quantity | measured |
+|---|---|
+| `NSApp.dockTile.size` | **128 x 128 pt, always** — independent of the Dock size preference |
+| tile as rendered | 118 x 118 px at the Dock size tested (0.922 px/pt) |
+| badge diameter | 46 px = **0.3906 of tile width** = 50 pt of 128 |
+| badge centre, from right edge | 24.4 pt |
+| badge centre, from top edge | 24.4 pt |
+
+The two centre offsets are equal, and each is one radius. **The badge is
+tangent to the top-right corner** — it exactly fills the corner square of side
+50 pt. That is the whole geometry, in one number, and it lands on a round
+number of points in the 128 pt space, which is a good sign it is the real value
+rather than an artefact of the capture.
 
 Geometry is what makes a badge read as native; colour is where our meaning
-lives. Guessing at the geometry is the one part of this feature that would look
-subtly wrong in a way nobody could name and everybody would feel.
+lives, and colour is the only axis on which we deliberately diverge.
 
-**Everything scales off the tile's actual bounds**, never a constant. Dock icon
-size is a user preference with real range. A bar height that is right at one
-size is a fat stripe at another and a hairline at a third.
+**A consequence worth stating, because it inverts an assumption elsewhere in
+this document:** the tile's drawing space is a *fixed* 128 pt square whatever
+the user's Dock size, and the system scales the result. Coordinates therefore
+never need to adapt. What still does is legibility — at a small Dock size a bar
+5% of 128 pt is under two rendered pixels tall, so the bar's proportions are a
+design question even though its arithmetic is not.
+
+The bar's own numbers — `barWidth`, `barHeight`, `barBottomInset` — are ours
+rather than the platform's, and are chosen, not measured. §11 records where
+they ended up after being looked at.
 
 ### 5.3 The content view is installed only while there is something to draw
 
@@ -262,8 +312,8 @@ composite job would fire five.
 
 | terminal status | notification | action |
 |---|---|---|
-| `.done` | "Finished — *title*" | reveals `job.deliveredFiles` |
-| `.failed` | "Failed — *title*" | activates the app |
+| `.done` | "Download finished — *title*", with the chime (§7.2) | reveals `job.deliveredFiles` |
+| `.failed` | "Download failed — *title*", silent | activates the app |
 | `.cancelled` | **none** | — |
 
 Cancellation is silent because the user did it. Telling someone that the thing
@@ -283,7 +333,92 @@ interrupted run fires notifications for something that happened yesterday.
 Job removal is not a transition either. A job that disappears from the snapshot
 did not finish; it was deleted.
 
-### 7.2 Authorization is requested on first enqueue
+### 7.2 The chime is played by the app, not by the notification
+
+`content.sound` is left nil and the audio is played directly with `NSSound`.
+That is a worse design than the platform path and it is chosen anyway, because
+the platform path produced no audio at all.
+
+**What was measured**, on macOS 26.6.2 with `authorizationStatus` reading
+`.authorized`, `soundSetting` reading `.enabled`, alert volume at 99, output
+unmuted, and `center.add` reporting success: four probe notifications — the
+system default, our file by two names, and a no-sound control — were silent
+alike. The same file through `NSSound` in the same process plays. So the app
+can reach the speakers; only the notification-sound path cannot. Why is
+unresolved and may be specific to that machine.
+
+**Two costs, both real:**
+
+- **Focus and Do Not Disturb no longer silence it.** The system enforces those
+  when it owns the sound. It cannot when we do, and there is no public API for
+  Focus state — so under Focus the banner is suppressed and the chime is not.
+  If `UNNotificationSound` is ever found to work, this should go back to it: a
+  sound a user's Focus mode cannot stop is worse behaved than one occasionally
+  missed.
+- **The per-app sound preference has to be checked by hand.** It is, before
+  every play, so switching sound off for Oxbow still works.
+
+**It is played where the notification is posted, not from `willPresent`.**
+That delegate method runs only while the app is frontmost; in the background
+the system presents the banner without consulting it. The first implementation
+put the chime there and it never made a sound — silent in exactly the case the
+chime exists for.
+
+### 7.3 The chime's level was calibrated against the system's own sounds
+
+The supplied file peaked at **-0.6 dBFS** — mastered like music. The eight
+sounds in `/System/Library/Sounds` peak between -5.4 and -13.6 dBFS, so it was
+roughly ten decibels hotter in peak than anything macOS ships, and it startled
+the first person it fired at.
+
+Apple's HIG covers sound qualitatively and gives no dB targets. The system
+sounds are the usable calibration, so the file was matched to one: **-4.5 dB,
+landing at -5.1 dBFS peak and -25.8 LUFS**, the same perceived loudness as
+`Glass.aiff`. Regenerated from the original master rather than attenuating the
+shipped file, so the gain is applied once.
+
+The master is kept at `docs/design/assets/ding-source.mp3` — deliberately
+outside `Oxbow/`, so it is not copied into the bundle — and this is what
+produced the shipped file, trim, fade, gain and all:
+
+```bash
+ffmpeg -i docs/design/assets/ding-source.mp3 \
+  -t 1.15 -af "afade=t=out:st=1.05:d=0.10,volume=-4.5dB" \
+  -ar 44100 -ac 2 -c:a pcm_s16le /tmp/ding.wav
+afconvert -f caff -d LEI16@44100 /tmp/ding.wav Oxbow/Resources/ding.caf
+```
+
+### 7.4 Notifications require a real signature
+
+An ad-hoc signed build (`CODE_SIGNING_ALLOWED=NO`) cannot register for
+notifications at all: `requestAuthorization` fails with `UNErrorDomain Code=1`,
+and `codesign` shows the bundle as `Identifier=Oxbow` with no team rather than
+`studio.lofti.Oxbow`. Signing with the Developer ID identity fixes it.
+
+**This matters for anyone testing this feature by hand.** A debug build with
+signing disabled is the natural thing to reach for and it makes the whole
+notification path structurally impossible, in a way that looks like the feature
+being broken. Worse, the failed attempt appears to leave a *denied* record
+behind: the first correctly-signed launch afterwards read `.denied`, and
+authorization is one-shot, so it could not re-prompt. Recovering meant enabling
+Oxbow by hand in System Settings > Notifications.
+
+**None of that reflects what a real user sees**, and that was confirmed rather
+than assumed. The development machine could no longer answer the question — it
+holds a record for the bundle id and cannot un-see it — so a notarized Release
+build was installed on a second Mac that had never run Oxbow. The prompt
+appeared at first enqueue exactly as §7.5 intends, and the first completed job
+delivered its banner and chime with nothing enabled by hand.
+
+So the manual step was an artefact of the unsigned build, not a missing call.
+Also worth knowing for future hand-testing: a signed but **un-notarized** build
+arriving with a quarantine flag can run under App Translocation, from a
+randomised read-only mount. That changes the app's path and therefore how
+LaunchServices identifies it, which is the machinery notification registration
+depends on — so a first-run test under translocation is not a trustworthy
+first-run test. Notarize and staple, or copy in a way that sets no quarantine.
+
+### 7.5 Authorization is requested on first enqueue
 
 Not at first launch: the user has no idea yet what the app does or why it would
 want to notify them, and a permission prompt is the worst possible first
@@ -313,7 +448,7 @@ this app does not do ceremony.
 
 The obvious implementation, and it cannot express this design. `badgeLabel` is
 a red pill containing a string: no bar, no second element, no colour control.
-A white count and a red `!` are both out of reach.
+A white count and a red warning triangle are both out of reach.
 
 More to the point, **it does not avoid the content view**. There is no way to
 draw a progress bar on a dock icon without one, so the appearance-treatment
@@ -420,3 +555,70 @@ coverage is worth.
   `@AppStorage` anywhere yet. When that lands, notifications are an obvious
   first inhabitant; building half a preferences system here to hold one
   checkbox is not.
+
+---
+
+## 11. What has been verified, and what has not
+
+Recorded because `docs/twitch-metadata.md` §7 is this project's standing
+argument that an exit code is not verification — and "it looked right" is a
+weaker claim still. This section is the honest boundary of what anyone has
+actually seen.
+
+Two machines, both macOS 26.6.2 (25G83): the development Mac, and a second Mac
+that had never run Oxbow, given a notarized Release build so its first launch
+was a true first launch.
+
+**Verified by hand:**
+
+- The observers attach and receive every snapshot — established by
+  instrumenting the path, not by reading it. See §11.1.
+- The bar advances through a running step and resets when the next step of the
+  same job begins. That reset is §4's accepted cost, working as designed.
+- `.indeterminate` renders as a track with no fill.
+- The count badge, with two jobs outstanding at once.
+- The alert triangle, when a job fails.
+- The idle handoff (§5.3): with the queue drained, the icon follows a change of
+  icon appearance, which is only possible because `contentView` is cleared.
+- The live tile under Clear while a job runs — our drawing, not the system's,
+  still carrying the glass treatment.
+- **Silent seeding (§7.1)**, constructed rather than waited for: a persisted
+  step set to `.running`, exactly as `shutDown()` leaves one, then relaunched.
+  The reconciler marked it interrupted and the first snapshot arrived
+  `baseline=0`, statuses `[failed, done, done]`, **`events=0`**. Nothing fired
+  for a job that failed before launch.
+- The authorization prompt at first enqueue, on the second Mac, with nothing
+  enabled by hand.
+- The banner, the chime, and Show in Finder from a banner.
+- The chime's level, measured against `/System/Library/Sounds` (§7.3).
+
+**Not verified:**
+
+- **The Tinted icon appearance.** Default, Dark and Clear have all been seen;
+  Tinted has not.
+- **Any Mac configuration other than these two** — in particular other Dock
+  sizes. §5.2's badge geometry was measured at one Dock size and derived as
+  ratios of a tile whose drawing space is a fixed 128pt, so it should hold, but
+  "should" is the operative word.
+- **A denied-authorization run.** The code path is written to go quiet, and
+  nobody has watched it do so.
+
+### 11.1 The bug this section exists to remember
+
+The dock tile never updated at all on the first hand-run, and the cause was
+ordering: `attachStatusObservers(to:)` is called from the scene's `.task`,
+while the observers were built in `applicationDidFinishLaunching`. **SwiftUI
+runs `.task` first.** The attach found both observers `nil`, took its early
+return, and wired nothing.
+
+Two lessons worth more than the fix:
+
+- **It failed into silence.** An optional that is `nil`, a guard that returns,
+  and no surface anywhere saying so. A feature that cannot work looked
+  identical to a queue with nothing to report.
+- **Reading the code did not find it, twice.** The order was asserted from
+  memory of the lifecycle and was backwards. One instrumented launch settled
+  it. When a question is about *when* something runs, instrument it — the
+  answer is not in the source.
+
+The observers are `lazy` now, so neither call site depends on arriving first.

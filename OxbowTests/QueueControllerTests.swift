@@ -244,4 +244,57 @@ struct QueueControllerTests {
     // call may ever surface in the queue list.
     #expect(controller.jobs.isEmpty)
   }
+
+  /// A reference type, so the escaping observer closures mutate one place
+  /// under strict concurrency instead of capturing locals.
+  @MainActor private final class Recorder {
+    var snapshots: [[Job]] = []
+    /// False the moment an observer is handed a snapshot the controller's own
+    /// `jobs` has not caught up to.
+    var jobsAlwaysMatchedTheSnapshot = true
+    var enqueues = 0
+  }
+
+  /// The Dock and Notification Center read from here, so a snapshot the
+  /// window sees and one they see can never be different snapshots.
+  ///
+  /// The second assertion is the one with teeth: it reads `controller.jobs`
+  /// from inside the observer, so swapping the two statements in `start()`
+  /// fails this test. Asserting only on the closure's argument would pass
+  /// under either ordering.
+  @Test func republishesEverySnapshotToTheStatusObserver() async throws {
+    let (controller, root) = try makeController(.succeeds)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let recorder = Recorder()
+    controller.onSnapshot = { [weak controller] snapshot in
+      recorder.snapshots.append(snapshot)
+      if controller?.jobs != snapshot { recorder.jobsAlwaysMatchedTheSnapshot = false }
+    }
+
+    await controller.start()
+    await controller.enqueue(
+      videoTemplate(id: "1", destination: root.appending(path: "out.mp4")),
+      title: "t")
+    try await waitFor(controller) { $0.count == 1 }
+
+    #expect(recorder.snapshots.contains { $0.count == 1 })
+    #expect(recorder.jobsAlwaysMatchedTheSnapshot)
+  }
+
+  /// Spec §7.2: authorization is requested on first enqueue, which needs a
+  /// signal that is an enqueue rather than a snapshot that happens to
+  /// contain a new job — at launch those look identical.
+  @Test func announcesAnEnqueue() async throws {
+    let (controller, root) = try makeController(.succeeds)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let recorder = Recorder()
+    controller.onEnqueue = { recorder.enqueues += 1 }
+
+    await controller.start()
+    await controller.enqueue(
+      videoTemplate(id: "1", destination: root.appending(path: "out.mp4")),
+      title: "t")
+
+    #expect(recorder.enqueues == 1)
+  }
 }
