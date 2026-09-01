@@ -88,6 +88,8 @@ final class QueueController {
   /// engine holds the job makes "it is queued" a fact the sheet can act on.
   func enqueue(_ template: JobTemplate, title: String) async {
     await engine.enqueue(template, title: title)
+    // After the await, deliberately: same reason this method is `async` at
+    // all — a caller must never be told about a job that did not land.
     onEnqueue?()
   }
 
