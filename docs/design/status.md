@@ -575,10 +575,16 @@ macOS 26.6.2 (25G83), Dock size as configured on the development machine
   delivered file. The chime in particular — `UNNotificationSound` falls back
   to the system sound rather than failing when it cannot resolve a file, so
   "a sound played" is not evidence that *our* sound played.
-- **Silent seeding (§7.1)** — quit with a job running, relaunch, and confirm
-  the reconciler's `.failed(.interrupted)` fires no notification. This is the
-  single most likely thing here to be wrong, because it is the one behaviour
-  whose correct outcome is *nothing happening*.
+**Verified since:**
+
+- **Silent seeding (§7.1).** Constructed directly rather than waited for: a
+  step in the persisted queue was set to `.running`, exactly as `shutDown()`
+  leaves one, and the app relaunched. The reconciler marked it interrupted and
+  the first snapshot arrived as `baseline=0`, statuses `[failed, done, done]`,
+  **`events=0`**. No notification fired for a job that failed before launch.
+- **The notification itself**, its banner, and the chime, on a real completed
+  job.
+- **The chime's level**, against `/System/Library/Sounds` (§7.3).
 
 ### 11.1 The bug this section exists to remember
 
