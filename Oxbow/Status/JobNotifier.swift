@@ -17,6 +17,16 @@ final class JobNotifier: NSObject, UNUserNotificationCenterDelegate {
   nonisolated private static let finishedCategory = "studio.lofti.Oxbow.finished"
   nonisolated private static let filesKey = "files"
 
+  /// The completion chime, in `Contents/Resources`.
+  ///
+  /// **Not the `.mp3` it arrived as.** `UNNotificationSound` reads `aiff`,
+  /// `wav` and `caf` only, and fails by falling back to the default sound
+  /// rather than by complaining — so a wrong extension here is a bug that
+  /// sounds like a working feature. Converted with `afconvert` and trimmed
+  /// first: the original carried 2.96s of trailing silence after 1.07s of
+  /// audio, which a notification would have held open for no reason.
+  nonisolated private static let dingFile = "ding.caf"
+
   private var baseline: [JobID: JobStatus] = [:]
   private var hasRequestedAuthorization = false
 
@@ -73,11 +83,15 @@ final class JobNotifier: NSObject, UNUserNotificationCenterDelegate {
         content.title = "Download finished"
         content.categoryIdentifier = Self.finishedCategory
         content.userInfo = [Self.filesKey: event.files.map(\.path)]
+        content.sound = UNNotificationSound(named: UNNotificationSoundName(Self.dingFile))
       case .failed:
         content.title = "Download failed"
+        // The system sound, not the chime. The chime says "your file is
+        // ready"; playing it for a failure would be the app congratulating
+        // itself on the thing that went wrong.
+        content.sound = .default
       }
       content.body = event.title
-      content.sound = .default
 
       center.add(UNNotificationRequest(
         identifier: event.job.rawValue.uuidString,
