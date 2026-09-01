@@ -28,15 +28,24 @@ nonisolated struct DockTileMetrics: Equatable {
 
   // MARK: Chosen by us
 
+  /// The bar's numbers are ours, not the platform's — chosen by looking,
+  /// then re-tuned once (§11).
+  ///
+  /// **They are relative to the tile, but they have to land inside the
+  /// *icon*, which is a smaller thing.** `applicationIconImage` carries its
+  /// own padding: the artwork occupies roughly the middle three-quarters of
+  /// the tile, spanning about 0.13...0.87. The first values put the bar at a
+  /// 0.13 bottom inset, which is exactly the icon's lower edge, so it drew
+  /// half on the artwork and half on transparent tile below it.
   let barWidth: Double
   let barHeight: Double
   let barBottomInset: Double
 
   static let standard = DockTileMetrics(
     badgeDiameter: 50.0 / 128,
-    barWidth: 0.62,
-    barHeight: 0.055,
-    barBottomInset: 0.13)
+    barWidth: 0.48,
+    barHeight: 0.052,
+    barBottomInset: 0.20)
 
   struct Resolved: Equatable {
     let iconRect: CGRect
