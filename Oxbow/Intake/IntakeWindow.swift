@@ -324,7 +324,48 @@ struct IntakeWindow: View {
   }
 
   private var saveTo: some View {
-    Section { destination }
+    Section {
+      destination
+    } footer: {
+      if let warning = model.spaceWarning {
+        VStack(alignment: .leading, spacing: 2) {
+          // Orange, matching the overwrite caution under the name field:
+          // nothing is wrong and nothing is blocked. Red belongs to
+          // `addFailure`, where the sheet is actually refusing.
+          Label(spaceWarningText(warning), systemImage: "externaldrive.badge.exclamationmark")
+            .font(.caption)
+            .foregroundStyle(.orange)
+          if let remedy = warning.remedy {
+            // The actionable half, and the reason this is a warning worth
+            // showing at all. Indented under the label's text rather than its
+            // icon so the two read as one block.
+            Text(remedyText(remedy))
+              .font(.caption)
+              .foregroundStyle(.secondary)
+              .padding(.leading, 18)
+          }
+        }
+        .fixedSize(horizontal: false, vertical: true)
+        .frame(maxWidth: .infinity, alignment: .leading)
+      }
+    }
+  }
+
+  /// Both figures on one line, and the volume named rather than called "the
+  /// disk" — a Mac with an external drive attached has more than one, and
+  /// which one is short is the first thing the user needs to know.
+  ///
+  /// "About", because it is: `docs/design/disk-preflight.md` §3.2 is explicit
+  /// that the composite term is a median of four samples. Stating a soft
+  /// number as though it were exact is how a warning earns distrust.
+  private func spaceWarningText(_ warning: IntakeModel.SpaceWarning) -> String {
+    let needed = warning.needed.formatted(.byteCount(style: .file))
+    let available = warning.available.formatted(.byteCount(style: .file))
+    return "Needs about \(needed) · \(available) free on \(warning.volumeName)"
+  }
+
+  private func remedyText(_ remedy: IntakeModel.SpaceWarning.Remedy) -> String {
+    "\(remedy.qualityName) would need about \(remedy.needed.formatted(.byteCount(style: .file)))"
   }
 
   private var destination: some View {
@@ -520,7 +561,8 @@ private func previewModel(
   link: String = "https://www.twitch.tv/videos/2844548319",
   info: VideoInfo? = .previewVOD,
   folder: URL? = URL(filePath: "/Users/you/Downloads"),
-  fileExists: @escaping (URL) -> Bool = { _ in false })
+  fileExists: @escaping (URL) -> Bool = { _ in false },
+  volumeSpace: VolumeSpace = .previewFull(free: 10_000_000_000_000))
   -> IntakeModel
 {
   let model = IntakeModel(
@@ -529,10 +571,24 @@ private func previewModel(
       return info
     },
     enqueue: { _, _ in },
-    fileExists: fileExists)
+    fileExists: fileExists,
+    volumeSpace: volumeSpace)
   model.linkText = link
   model.folder = folder
   return model
+}
+
+extension VolumeSpace {
+  /// A volume with a fixed amount of room. Every preview uses one rather than
+  /// `.live`, so a preview renders the same way on a full laptop and an empty
+  /// one — a canvas that changes with the developer's disk is a canvas nobody
+  /// can review.
+  fileprivate static func previewFull(free: Int64) -> VolumeSpace {
+    VolumeSpace(
+      availableBytes: { _ in free },
+      volumeRoot: { _ in URL(filePath: "/") },
+      volumeName: { _ in "Macintosh HD" })
+  }
 }
 
 extension VideoInfo {
@@ -632,6 +688,20 @@ extension VideoInfo {
 /// two halves of the overwrite warning, which have to appear together.
 #Preview("Name already taken") {
   IntakeWindow(model: previewModel(fileExists: { _ in true }))
+}
+
+/// A destination that cannot hold the job, with a lower rendition that can.
+/// Unreachable in a preview without a genuinely full disk, which is exactly
+/// why it needs one — this is the layout nobody would otherwise look at until
+/// a user hit it.
+#Preview("Not enough room - with a remedy") {
+  IntakeWindow(model: previewModel(volumeSpace: .previewFull(free: 900_000_000)))
+}
+
+/// The same warning with no way out: every rendition on offer is too big, so
+/// the second line is absent and the first has to stand on its own.
+#Preview("Not enough room - no remedy") {
+  IntakeWindow(model: previewModel(volumeSpace: .previewFull(free: 1_000_000)))
 }
 
 /// The timeline in the window it actually lives in, at a real VOD's length,
