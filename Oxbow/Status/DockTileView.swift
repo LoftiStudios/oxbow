@@ -97,9 +97,15 @@ final class DockTileView: NSView {
   private func draw(badge: QueueStatus.Badge?, in layout: DockTileMetrics.Resolved) {
     guard let badge else { return }
 
-    let (background, foreground, text): (NSColor, NSColor, String) = switch badge {
-    case .count(let n): (.white, .black, "\(n)")
-    case .alert: (.systemRed, .white, "!")
+    // The alert's weight is deliberately heavier than the count's. A digit and
+    // an exclamation mark do not carry the same weight at the same nominal
+    // one: "!" is a single narrow stem, so it reads lighter than an "8" set
+    // identically. Matching them numerically would leave the state that wants
+    // attention looking like the state that does not.
+    let (background, foreground, text, weight):
+      (NSColor, NSColor, String, NSFont.Weight) = switch badge {
+    case .count(let n): (.white, .black, "\(n)", .semibold)
+    case .alert: (.systemRed, .white, "!", .heavy)
     }
 
     // A hairline ring, so a white badge still reads as a badge against a pale
@@ -113,15 +119,15 @@ final class DockTileView: NSView {
 
     let size = layout.badgeRect.width
       * Self.badgeCapHeightRatio / Self.capHeightOfSystemFont
+    let font = NSFont.systemFont(ofSize: size, weight: weight)
     let string = NSAttributedString(string: text, attributes: [
-      .font: NSFont.systemFont(ofSize: size, weight: .semibold),
+      .font: font,
       .foregroundColor: foreground])
 
     // Centre on the cap height rather than the line box: a line box carries
     // descender space the glyphs here never use ("8" and "!" have none), so
     // centring on it sits the text visibly high in the disc.
     let measured = string.size()
-    let font = NSFont.systemFont(ofSize: size, weight: .semibold)
     string.draw(at: NSPoint(
       x: layout.badgeRect.midX - measured.width / 2,
       y: layout.badgeRect.midY - font.capHeight / 2 + font.descender))
