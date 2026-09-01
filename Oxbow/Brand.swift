@@ -110,14 +110,22 @@ nonisolated enum Brand {
   /// user controls (Default, Dark, Clear, Tinted), so there is no background
   /// to tune a value against.
   ///
-  /// This is the gold of the icon's own download arrow, sampled from the
-  /// rendered tile rather than picked: mean `#D2BA54` over the arrow's pixels.
-  /// The bar is then the same colour as the thing the icon already draws,
-  /// which is the one relationship that holds in every appearance.
+  /// **What it is measured against is the track, not the icon.** The fill sits
+  /// on a near-white track, so contrast with *that* is what decides whether
+  /// the bar can be read at a dock icon's size — a couple of hundred square
+  /// points at most, seen in passing.
+  ///
+  /// This started as the gold of the icon's own download arrow, sampled from
+  /// the rendered tile (`#D2BA54`). It was a tidy argument — the bar wearing a
+  /// colour the icon already draws — and it was too faint to read: a mid-value
+  /// yellow on white is close to the lowest-contrast pair the palette could
+  /// have produced. `#3B3F73` is dark against the same track, and darker than
+  /// `progressLight`, which is tuned to sit on a white *window* rather than
+  /// inside a 6pt bar.
   ///
   /// `NSColor`, not `Color`: the dock tile is drawn with AppKit, and a
   /// `Color` would have to be converted at every fill.
-  static let dockProgress = NSColor(srgbRed: 0.825, green: 0.729, blue: 0.329, alpha: 1)
+  static let dockProgress = NSColor(srgbRed: 0.231, green: 0.247, blue: 0.451, alpha: 1)
 }
 
 nonisolated extension Color {

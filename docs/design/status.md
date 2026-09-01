@@ -504,9 +504,12 @@ macOS 26.6.2 (25G83), Dock size as configured on the development machine
 - **The idle handoff** — that clearing `contentView` returns the icon to the
   system, and that the user's icon appearance setting then applies. This is
   §5.3's whole justification.
-- **The icon under Clear or Tinted while a job runs.** §2.4 already flagged
-  that only `ClearDark` was tested, and that was with the §2.3 probe rather
-  than with `DockTileView`.
+- **The icon under Clear or Tinted on the live dock tile while a job runs.**
+  Partly closed: `DockTileView` was rendered offscreen with the system set to
+  `ClearDark` and drew the glass treatment, not a baked image — so the drawing
+  path does get the treated icon. What that does not cover is the live tile:
+  how it composites in the Dock, and whether it picks up an appearance change
+  made mid-job. Tinted is still untested entirely.
 - **Every notification behaviour**: the authorization prompt on first enqueue,
   a banner while Oxbow is in the background, silence while it is frontmost,
   and Show in Finder revealing the delivered file.
