@@ -14,8 +14,8 @@ app says about itself, not three features that happen to be near each other.
 ## 1. What this delivers
 
 **A dock tile that carries the queue's state**: a progress bar for the step
-running now, a white badge counting outstanding jobs, and a red `!` when
-something has failed.
+running now, a white badge counting outstanding jobs, and the app's own red
+warning triangle when something has failed.
 
 **A notification when a job reaches a terminal state**, with an action that
 reveals the delivered files.
@@ -132,7 +132,14 @@ worse than no badge.
 | nothing outstanding | none |
 | one job outstanding | none |
 | two or more outstanding | white, count of `.queued` + `.running` jobs |
-| **any job failed** | **red `!`, overriding the count** |
+| **any job failed** | **`exclamationmark.triangle.fill` in system red, overriding the count** |
+
+**Failure wears the app's own glyph**, `exclamationmark.triangle.fill` in
+system red — the same symbol `JobPresentation.icon(for:)` puts on a failed row,
+so the Dock and the window say one thing rather than two dialects of it. The
+shape differing from the count's disc is deliberate: a circle answers "how
+many" and a triangle says "something is wrong", both legible before either is
+read, where two states differing only in colour would need looking at.
 
 **Failure is sticky and wins outright.** It persists until the user retries or
 removes the job, which is the only thing that resolves it. It overrides the
@@ -356,7 +363,7 @@ this app does not do ceremony.
 
 The obvious implementation, and it cannot express this design. `badgeLabel` is
 a red pill containing a string: no bar, no second element, no colour control.
-A white count and a red `!` are both out of reach.
+A white count and a red warning triangle are both out of reach.
 
 More to the point, **it does not avoid the content view**. There is no way to
 draw a progress bar on a dock icon without one, so the appearance-treatment
