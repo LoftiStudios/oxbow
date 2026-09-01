@@ -104,14 +104,24 @@ final class JobNotifier: NSObject, UNUserNotificationCenterDelegate {
 
   // MARK: - UNUserNotificationCenterDelegate
 
-  /// Suppressed while Oxbow is frontmost — the queue row already said it.
-  /// This is the platform default, spelled out because the delegate has to
-  /// exist for the reveal action anyway.
+  /// **The chime always plays; the banner is suppressed while Oxbow is
+  /// frontmost.**
+  ///
+  /// The two are separate decisions and were first written as one. A banner
+  /// over the window that already shows the finished row adds nothing — that
+  /// much is the platform's own default. But the sound is what carries when
+  /// your attention is elsewhere on screen, or when you are not at the desk at
+  /// all, and suppressing it alongside the banner made this app's one audible
+  /// signal silent in the case where the window happened to be in front.
+  ///
+  /// Focus and Do Not Disturb still silence it, which is correct and is not
+  /// something to work around: an eighty-eight minute composite finishing is
+  /// not an emergency.
   nonisolated func userNotificationCenter(
     _ center: UNUserNotificationCenter,
     willPresent notification: UNNotification) async -> UNNotificationPresentationOptions
   {
-    await MainActor.run { NSApp.isActive ? [] : [.banner, .sound] }
+    await MainActor.run { NSApp.isActive ? [.sound] : [.banner, .sound] }
   }
 
   nonisolated func userNotificationCenter(

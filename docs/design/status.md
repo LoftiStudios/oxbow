@@ -511,8 +511,11 @@ macOS 26.6.2 (25G83), Dock size as configured on the development machine
   how it composites in the Dock, and whether it picks up an appearance change
   made mid-job. Tinted is still untested entirely.
 - **Every notification behaviour**: the authorization prompt on first enqueue,
-  a banner while Oxbow is in the background, silence while it is frontmost,
-  and Show in Finder revealing the delivered file.
+  a banner while Oxbow is in the background, the chime in both cases with the
+  banner suppressed while Oxbow is frontmost, and Show in Finder revealing the
+  delivered file. The chime in particular — `UNNotificationSound` falls back
+  to the system sound rather than failing when it cannot resolve a file, so
+  "a sound played" is not evidence that *our* sound played.
 - **Silent seeding (§7.1)** — quit with a job running, relaunch, and confirm
   the reconciler's `.failed(.interrupted)` fires no notification. This is the
   single most likely thing here to be wrong, because it is the one behaviour
