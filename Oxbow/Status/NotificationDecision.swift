@@ -40,9 +40,18 @@ nonisolated enum NotificationDecision {
       guard let was = previous[job.id], was != job.status else { return nil }
 
       let outcome: Outcome
+      let files: [URL]
       switch job.status {
-      case .done: outcome = .finished
-      case .failed: outcome = .failed
+      case .done:
+        outcome = .finished
+        files = job.deliveredFiles
+      case .failed:
+        outcome = .failed
+        // `Job.deliveredFiles` gates per step, not per job: an earlier step
+        // can have delivered a file before a later one failed. A failed job
+        // reveals nothing, so this is dropped deliberately rather than
+        // inherited from whatever `deliveredFiles` happens to contain.
+        files = []
       // Cancellation is the user's own doing, and queued/running are not
       // terminal.
       case .cancelled, .queued, .running: return nil
@@ -52,7 +61,7 @@ nonisolated enum NotificationDecision {
         job: job.id,
         title: job.title,
         outcome: outcome,
-        files: job.deliveredFiles)
+        files: files)
     }
   }
 }

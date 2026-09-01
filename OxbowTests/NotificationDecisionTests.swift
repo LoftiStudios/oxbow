@@ -94,12 +94,27 @@ struct NotificationDecisionTests {
     #expect(NotificationDecision.events(from: [alpha: .running], to: []).isEmpty)
   }
 
-  /// Retry puts a failed job back to work; failing again is a new event.
+  /// Retry puts a failed job back to work. Going back to `.running` is not an
+  /// event; failing a second time is.
   @Test func aRetriedJobFailingAgainNotifies() {
-    let events = NotificationDecision.events(
+    let backToWork = NotificationDecision.events(
+      from: [alpha: .failed],
+      to: [job(alpha, [step(.running)])])
+    #expect(backToWork.isEmpty)
+
+    let failedAgain = NotificationDecision.events(
       from: [alpha: .running],
       to: [job(alpha, [step(.failed(failure))])])
-    #expect(events.count == 1)
+    #expect(failedAgain.count == 1)
+  }
+
+  /// The mutant this kills: an implementation that fires on every status
+  /// change rather than only on terminal ones. Starting work is not news.
+  @Test func aJobStartingWorkNotifiesNothing() {
+    let events = NotificationDecision.events(
+      from: [alpha: .queued],
+      to: [job(alpha, [step(.running)])])
+    #expect(events.isEmpty)
   }
 
   @Test func severalJobsSettlingAtOnceEachNotify() {
@@ -125,6 +140,19 @@ struct NotificationDecisionTests {
     let events = NotificationDecision.events(
       from: [alpha: .running],
       to: [job(alpha, [step(.failed(failure))])])
+    #expect(events.first?.files.isEmpty == true)
+  }
+
+  /// The case that makes the contract real rather than coincidental: an
+  /// earlier step delivered a file, a later one failed. `Job.deliveredFiles`
+  /// still lists that file, because it gates on the step rather than the job
+  /// — so a `.failed` event must drop it deliberately, not by luck.
+  @Test func aFailedEventCarriesNoFilesEvenWhenAnEarlierStepDelivered() {
+    let delivered = URL(filePath: "/out/a.mp4")
+    let events = NotificationDecision.events(
+      from: [alpha: .running],
+      to: [job(alpha, [step(.done, artifact: delivered), step(.failed(failure))])])
+    #expect(events.first?.outcome == .failed)
     #expect(events.first?.files.isEmpty == true)
   }
 }
