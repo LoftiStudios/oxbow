@@ -87,8 +87,7 @@ final class JobNotifier: NSObject, UNUserNotificationCenterDelegate {
     hasRequestedAuthorization = true
     // Silent on denial, like the update check: a user who says no gets an app
     // that behaves exactly as it did before this feature existed.
-    center.requestAuthorization(options: [.alert, .sound]) { granted, error in
-    }
+    center.requestAuthorization(options: [.alert, .sound]) { _, _ in }
   }
 
   func apply(_ jobs: [Job]) {
@@ -96,10 +95,7 @@ final class JobNotifier: NSObject, UNUserNotificationCenterDelegate {
 
     // A job absent from `baseline` never fires, which is what makes the first
     // snapshot seed silently — see `NotificationDecision.events(from:to:)`.
-    let produced = NotificationDecision.events(from: baseline, to: jobs)
-    if !produced.isEmpty {
-    }
-    for event in produced {
+    for event in NotificationDecision.events(from: baseline, to: jobs) {
       let content = UNMutableNotificationContent()
       switch event.outcome {
       case .finished:
@@ -109,17 +105,15 @@ final class JobNotifier: NSObject, UNUserNotificationCenterDelegate {
       case .failed:
         content.title = "Download failed"
       }
-      // `content.sound` is deliberately left nil throughout — the chime is
-      // played by `willPresent` instead. See `chime`.
       content.body = event.title
-
+      // `content.sound` is deliberately left nil throughout: the chime is
+      // played here instead, by us. See `chime` and `playChimeIfAllowed()`.
       if event.outcome == .finished { playChimeIfAllowed() }
 
       center.add(UNNotificationRequest(
         identifier: event.job.rawValue.uuidString,
         content: content,
-        trigger: nil)) { error in
-        }
+        trigger: nil))
     }
 
     baseline = NotificationDecision.statuses(of: jobs)
