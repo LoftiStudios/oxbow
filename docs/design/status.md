@@ -377,6 +377,17 @@ landing at -5.1 dBFS peak and -25.8 LUFS**, the same perceived loudness as
 `Glass.aiff`. Regenerated from the original master rather than attenuating the
 shipped file, so the gain is applied once.
 
+The master is kept at `docs/design/assets/ding-source.mp3` — deliberately
+outside `Oxbow/`, so it is not copied into the bundle — and this is what
+produced the shipped file, trim, fade, gain and all:
+
+```bash
+ffmpeg -i docs/design/assets/ding-source.mp3 \
+  -t 1.15 -af "afade=t=out:st=1.05:d=0.10,volume=-4.5dB" \
+  -ar 44100 -ac 2 -c:a pcm_s16le /tmp/ding.wav
+afconvert -f caff -d LEI16@44100 /tmp/ding.wav Oxbow/Resources/ding.caf
+```
+
 ### 7.4 Notifications require a real signature
 
 An ad-hoc signed build (`CODE_SIGNING_ALLOWED=NO`) cannot register for
