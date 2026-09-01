@@ -392,6 +392,21 @@ behind: the first correctly-signed launch afterwards read `.denied`, and
 authorization is one-shot, so it could not re-prompt. Recovering meant enabling
 Oxbow by hand in System Settings > Notifications.
 
+**None of that reflects what a real user sees**, and that was confirmed rather
+than assumed. The development machine could no longer answer the question — it
+holds a record for the bundle id and cannot un-see it — so a notarized Release
+build was installed on a second Mac that had never run Oxbow. The prompt
+appeared at first enqueue exactly as §7.5 intends, and the first completed job
+delivered its banner and chime with nothing enabled by hand.
+
+So the manual step was an artefact of the unsigned build, not a missing call.
+Also worth knowing for future hand-testing: a signed but **un-notarized** build
+arriving with a quarantine flag can run under App Translocation, from a
+randomised read-only mount. That changes the app's path and therefore how
+LaunchServices identifies it, which is the machinery notification registration
+depends on — so a first-run test under translocation is not a trustworthy
+first-run test. Notarize and staple, or copy in a way that sets no quarantine.
+
 ### 7.5 Authorization is requested on first enqueue
 
 Not at first launch: the user has no idea yet what the app does or why it would
@@ -539,52 +554,43 @@ argument that an exit code is not verification — and "it looked right" is a
 weaker claim still. This section is the honest boundary of what anyone has
 actually seen.
 
-macOS 26.6.2 (25G83), Dock size as configured on the development machine
-(tile rendered 118px), `AppleIconAppearanceTheme = RegularDark`.
+Two machines, both macOS 26.6.2 (25G83): the development Mac, and a second Mac
+that had never run Oxbow, given a notarized Release build so its first launch
+was a true first launch.
 
-**Exercised against a real job, by hand:**
+**Verified by hand:**
 
-- The observers attach and receive every snapshot. Confirmed by instrumenting
-  the path, not by reading it — see §11.1.
-- The bar advances through a running step, 0 to ~1, and resets when the next
-  step of the same job starts. That reset is the accepted cost of §4's choice
-  and is working as designed, not a defect.
-- `.indeterminate` renders as a track with no fill, on a step carrying no
-  fraction.
-- The alert badge appears when a job fails.
-- The badge geometry, drawing, and colours (§5), reviewed on rendered tiles at
-  256pt.
+- The observers attach and receive every snapshot — established by
+  instrumenting the path, not by reading it. See §11.1.
+- The bar advances through a running step and resets when the next step of the
+  same job begins. That reset is §4's accepted cost, working as designed.
+- `.indeterminate` renders as a track with no fill.
+- The count badge, with two jobs outstanding at once.
+- The alert triangle, when a job fails.
+- The idle handoff (§5.3): with the queue drained, the icon follows a change of
+  icon appearance, which is only possible because `contentView` is cleared.
+- The live tile under Clear while a job runs — our drawing, not the system's,
+  still carrying the glass treatment.
+- **Silent seeding (§7.1)**, constructed rather than waited for: a persisted
+  step set to `.running`, exactly as `shutDown()` leaves one, then relaunched.
+  The reconciler marked it interrupted and the first snapshot arrived
+  `baseline=0`, statuses `[failed, done, done]`, **`events=0`**. Nothing fired
+  for a job that failed before launch.
+- The authorization prompt at first enqueue, on the second Mac, with nothing
+  enabled by hand.
+- The banner, the chime, and Show in Finder from a banner.
+- The chime's level, measured against `/System/Library/Sounds` (§7.3).
 
-**Not yet verified by anyone:**
+**Not verified:**
 
-- **The count badge.** Every observed run had at most one outstanding job, so
-  a white disc with a number in it has never appeared outside an offscreen
-  render.
-- **The idle handoff** — that clearing `contentView` returns the icon to the
-  system, and that the user's icon appearance setting then applies. This is
-  §5.3's whole justification.
-- **The icon under Clear or Tinted on the live dock tile while a job runs.**
-  Partly closed: `DockTileView` was rendered offscreen with the system set to
-  `ClearDark` and drew the glass treatment, not a baked image — so the drawing
-  path does get the treated icon. What that does not cover is the live tile:
-  how it composites in the Dock, and whether it picks up an appearance change
-  made mid-job. Tinted is still untested entirely.
-- **Every notification behaviour**: the authorization prompt on first enqueue,
-  a banner while Oxbow is in the background, the chime in both cases with the
-  banner suppressed while Oxbow is frontmost, and Show in Finder revealing the
-  delivered file. The chime in particular — `UNNotificationSound` falls back
-  to the system sound rather than failing when it cannot resolve a file, so
-  "a sound played" is not evidence that *our* sound played.
-**Verified since:**
-
-- **Silent seeding (§7.1).** Constructed directly rather than waited for: a
-  step in the persisted queue was set to `.running`, exactly as `shutDown()`
-  leaves one, and the app relaunched. The reconciler marked it interrupted and
-  the first snapshot arrived as `baseline=0`, statuses `[failed, done, done]`,
-  **`events=0`**. No notification fired for a job that failed before launch.
-- **The notification itself**, its banner, and the chime, on a real completed
-  job.
-- **The chime's level**, against `/System/Library/Sounds` (§7.3).
+- **The Tinted icon appearance.** Default, Dark and Clear have all been seen;
+  Tinted has not.
+- **Any Mac configuration other than these two** — in particular other Dock
+  sizes. §5.2's badge geometry was measured at one Dock size and derived as
+  ratios of a tile whose drawing space is a fixed 128pt, so it should hold, but
+  "should" is the operative word.
+- **A denied-authorization run.** The code path is written to go quiet, and
+  nobody has watched it do so.
 
 ### 11.1 The bug this section exists to remember
 
