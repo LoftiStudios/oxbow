@@ -463,3 +463,67 @@ coverage is worth.
   `@AppStorage` anywhere yet. When that lands, notifications are an obvious
   first inhabitant; building half a preferences system here to hold one
   checkbox is not.
+
+---
+
+## 11. What has been verified, and what has not
+
+Recorded because `docs/twitch-metadata.md` §7 is this project's standing
+argument that an exit code is not verification — and "it looked right" is a
+weaker claim still. This section is the honest boundary of what anyone has
+actually seen.
+
+macOS 26.6.2 (25G83), Dock size as configured on the development machine
+(tile rendered 118px), `AppleIconAppearanceTheme = RegularDark`.
+
+**Exercised against a real job, by hand:**
+
+- The observers attach and receive every snapshot. Confirmed by instrumenting
+  the path, not by reading it — see §11.1.
+- The bar advances through a running step, 0 to ~1, and resets when the next
+  step of the same job starts. That reset is the accepted cost of §4's choice
+  and is working as designed, not a defect.
+- `.indeterminate` renders as a track with no fill, on a step carrying no
+  fraction.
+- The alert badge appears when a job fails.
+- The badge geometry, drawing, and colours (§5), reviewed on rendered tiles at
+  256pt.
+
+**Not yet verified by anyone:**
+
+- **The count badge.** Every observed run had at most one outstanding job, so
+  a white disc with a number in it has never appeared outside an offscreen
+  render.
+- **The idle handoff** — that clearing `contentView` returns the icon to the
+  system, and that the user's icon appearance setting then applies. This is
+  §5.3's whole justification.
+- **The icon under Clear or Tinted while a job runs.** §2.4 already flagged
+  that only `ClearDark` was tested, and that was with the §2.3 probe rather
+  than with `DockTileView`.
+- **Every notification behaviour**: the authorization prompt on first enqueue,
+  a banner while Oxbow is in the background, silence while it is frontmost,
+  and Show in Finder revealing the delivered file.
+- **Silent seeding (§7.1)** — quit with a job running, relaunch, and confirm
+  the reconciler's `.failed(.interrupted)` fires no notification. This is the
+  single most likely thing here to be wrong, because it is the one behaviour
+  whose correct outcome is *nothing happening*.
+
+### 11.1 The bug this section exists to remember
+
+The dock tile never updated at all on the first hand-run, and the cause was
+ordering: `attachStatusObservers(to:)` is called from the scene's `.task`,
+while the observers were built in `applicationDidFinishLaunching`. **SwiftUI
+runs `.task` first.** The attach found both observers `nil`, took its early
+return, and wired nothing.
+
+Two lessons worth more than the fix:
+
+- **It failed into silence.** An optional that is `nil`, a guard that returns,
+  and no surface anywhere saying so. A feature that cannot work looked
+  identical to a queue with nothing to report.
+- **Reading the code did not find it, twice.** The order was asserted from
+  memory of the lifecycle and was backwards. One instrumented launch settled
+  it. When a question is about *when* something runs, instrument it — the
+  answer is not in the source.
+
+The observers are `lazy` now, so neither call site depends on arriving first.
