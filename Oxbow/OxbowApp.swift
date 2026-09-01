@@ -176,6 +176,7 @@ struct OxbowApp: App {
         let controller = QueueController(configuration: configuration)
         content = .ready(controller)
         appDelegate.controller = controller
+        appDelegate.attachStatusObservers(to: controller)
         await controller.start()
       case .helperMissing(let message):
         content = .unavailable(message)
@@ -273,6 +274,35 @@ private struct AboutCommand: View {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
   var controller: QueueController?
+
+  /// Built at launch rather than in `setUp()`, so `JobNotifier` registers as
+  /// the notification centre's delegate as early as the app can manage: a
+  /// response arriving before the delegate exists is a response that goes
+  /// nowhere.
+  ///
+  /// Both stay `nil` under `xcodebuild test` — `OxbowTests` is hosted by this
+  /// app, and a permission prompt during a test run is a modal that hangs CI.
+  private var dock: DockPresenter?
+  private var notifier: JobNotifier?
+
+  func applicationDidFinishLaunching(_ notification: Notification) {
+    guard AppComposition.isUserSession else { return }
+    dock = DockPresenter()
+    notifier = JobNotifier()
+  }
+
+  /// Wires the status surfaces to the queue. Call **before** `start()`, so
+  /// they see the first reconciled snapshot and seed from it rather than
+  /// missing it — `NotificationDecision` relies on that first snapshot to
+  /// establish a baseline silently.
+  func attachStatusObservers(to controller: QueueController) {
+    guard let dock, let notifier else { return }
+    controller.onSnapshot = { jobs in
+      dock.apply(jobs)
+      notifier.apply(jobs)
+    }
+    controller.onEnqueue = { notifier.requestAuthorizationIfNeeded() }
+  }
 
   func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
     guard let controller else { return .terminateNow }
