@@ -275,20 +275,30 @@ private struct AboutCommand: View {
 final class AppDelegate: NSObject, NSApplicationDelegate {
   var controller: QueueController?
 
-  /// Built at launch rather than in `setUp()`, so `JobNotifier` registers as
-  /// the notification centre's delegate as early as the app can manage: a
-  /// response arriving before the delegate exists is a response that goes
-  /// nowhere.
+  /// **`lazy`, so neither depends on when it is first reached.**
+  ///
+  /// These were originally built in `applicationDidFinishLaunching`, on the
+  /// assumption that it precedes the scene's `.task`. It does not: SwiftUI
+  /// runs `.task` *first*, so `attachStatusObservers(to:)` found both nil,
+  /// took its early return, and wired nothing. The dock never updated and
+  /// nothing said why.
+  ///
+  /// Reordering would only move the assumption. Built on first use instead,
+  /// whichever call site gets there first.
   ///
   /// Both stay `nil` under `xcodebuild test` — `OxbowTests` is hosted by this
   /// app, and a permission prompt during a test run is a modal that hangs CI.
-  private var dock: DockPresenter?
-  private var notifier: JobNotifier?
+  private lazy var dock: DockPresenter? =
+    AppComposition.isUserSession ? DockPresenter() : nil
+  private lazy var notifier: JobNotifier? =
+    AppComposition.isUserSession ? JobNotifier() : nil
 
+  /// Touches `notifier` so it registers as the notification centre's delegate
+  /// as early as the app can manage — a response arriving before the delegate
+  /// exists is a response that goes nowhere. If `.task` beat us to it, this is
+  /// a no-op, which is the point.
   func applicationDidFinishLaunching(_ notification: Notification) {
-    guard AppComposition.isUserSession else { return }
-    dock = DockPresenter()
-    notifier = JobNotifier()
+    _ = notifier
   }
 
   /// Wires the status surfaces to the queue. Call **before** `start()`, so
@@ -296,6 +306,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   /// missing it — `NotificationDecision` relies on that first snapshot to
   /// establish a baseline silently.
   func attachStatusObservers(to controller: QueueController) {
+    // Nil only under `xcodebuild test`, where both are deliberately absent.
     guard let dock, let notifier else { return }
     controller.onSnapshot = { jobs in
       dock.apply(jobs)
