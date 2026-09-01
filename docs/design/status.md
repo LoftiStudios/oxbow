@@ -312,8 +312,8 @@ composite job would fire five.
 
 | terminal status | notification | action |
 |---|---|---|
-| `.done` | "Finished — *title*" | reveals `job.deliveredFiles` |
-| `.failed` | "Failed — *title*" | activates the app |
+| `.done` | "Download finished — *title*", with the chime (§7.2) | reveals `job.deliveredFiles` |
+| `.failed` | "Download failed — *title*", silent | activates the app |
 | `.cancelled` | **none** | — |
 
 Cancellation is silent because the user did it. Telling someone that the thing
@@ -333,7 +333,66 @@ interrupted run fires notifications for something that happened yesterday.
 Job removal is not a transition either. A job that disappears from the snapshot
 did not finish; it was deleted.
 
-### 7.2 Authorization is requested on first enqueue
+### 7.2 The chime is played by the app, not by the notification
+
+`content.sound` is left nil and the audio is played directly with `NSSound`.
+That is a worse design than the platform path and it is chosen anyway, because
+the platform path produced no audio at all.
+
+**What was measured**, on macOS 26.6.2 with `authorizationStatus` reading
+`.authorized`, `soundSetting` reading `.enabled`, alert volume at 99, output
+unmuted, and `center.add` reporting success: four probe notifications — the
+system default, our file by two names, and a no-sound control — were silent
+alike. The same file through `NSSound` in the same process plays. So the app
+can reach the speakers; only the notification-sound path cannot. Why is
+unresolved and may be specific to that machine.
+
+**Two costs, both real:**
+
+- **Focus and Do Not Disturb no longer silence it.** The system enforces those
+  when it owns the sound. It cannot when we do, and there is no public API for
+  Focus state — so under Focus the banner is suppressed and the chime is not.
+  If `UNNotificationSound` is ever found to work, this should go back to it: a
+  sound a user's Focus mode cannot stop is worse behaved than one occasionally
+  missed.
+- **The per-app sound preference has to be checked by hand.** It is, before
+  every play, so switching sound off for Oxbow still works.
+
+**It is played where the notification is posted, not from `willPresent`.**
+That delegate method runs only while the app is frontmost; in the background
+the system presents the banner without consulting it. The first implementation
+put the chime there and it never made a sound — silent in exactly the case the
+chime exists for.
+
+### 7.3 The chime's level was calibrated against the system's own sounds
+
+The supplied file peaked at **-0.6 dBFS** — mastered like music. The eight
+sounds in `/System/Library/Sounds` peak between -5.4 and -13.6 dBFS, so it was
+roughly ten decibels hotter in peak than anything macOS ships, and it startled
+the first person it fired at.
+
+Apple's HIG covers sound qualitatively and gives no dB targets. The system
+sounds are the usable calibration, so the file was matched to one: **-4.5 dB,
+landing at -5.1 dBFS peak and -25.8 LUFS**, the same perceived loudness as
+`Glass.aiff`. Regenerated from the original master rather than attenuating the
+shipped file, so the gain is applied once.
+
+### 7.4 Notifications require a real signature
+
+An ad-hoc signed build (`CODE_SIGNING_ALLOWED=NO`) cannot register for
+notifications at all: `requestAuthorization` fails with `UNErrorDomain Code=1`,
+and `codesign` shows the bundle as `Identifier=Oxbow` with no team rather than
+`studio.lofti.Oxbow`. Signing with the Developer ID identity fixes it.
+
+**This matters for anyone testing this feature by hand.** A debug build with
+signing disabled is the natural thing to reach for and it makes the whole
+notification path structurally impossible, in a way that looks like the feature
+being broken. Worse, the failed attempt appears to leave a *denied* record
+behind: the first correctly-signed launch afterwards read `.denied`, and
+authorization is one-shot, so it could not re-prompt. Recovering meant enabling
+Oxbow by hand in System Settings > Notifications.
+
+### 7.5 Authorization is requested on first enqueue
 
 Not at first launch: the user has no idea yet what the app does or why it would
 want to notify them, and a permission prompt is the worst possible first

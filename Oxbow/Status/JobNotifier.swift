@@ -25,7 +25,26 @@ final class JobNotifier: NSObject, UNUserNotificationCenterDelegate {
   /// sounds like a working feature. Converted with `afconvert` and trimmed
   /// first: the original carried 2.96s of trailing silence after 1.07s of
   /// audio, which a notification would have held open for no reason.
-  nonisolated private static let dingFile = "ding.caf"
+  nonisolated private static let dingFile = "ding"
+
+  /// **The chime is played by us, not by `UNNotificationSound`.**
+  ///
+  /// Setting `content.sound` produced no audio on macOS 26.6.2 — not with the
+  /// bundled file and not with `.default` either, while `authorizationStatus`
+  /// read `.authorized`, `soundSetting` read `.enabled`, alert volume was 99,
+  /// and `center.add` reported success. Four probe notifications covering
+  /// default, our file by two names, and no sound at all were silent alike.
+  /// The same file through `NSSound` in the same process plays, so the app can
+  /// reach the speakers; only the notification-sound path cannot.
+  ///
+  /// Why that path is silent is unresolved and may be specific to this
+  /// machine. What is certain is that a feature which depends on it does not
+  /// work here, and one that does not is available — so this plays the sound
+  /// directly and asks the system for none, which also means the two can never
+  /// double up if that path starts working.
+  private lazy var chime: NSSound? = Bundle.main
+    .url(forResource: Self.dingFile, withExtension: "caf")
+    .flatMap { NSSound(contentsOf: $0, byReference: false) }
 
   private var baseline: [JobID: JobStatus] = [:]
   private var hasRequestedAuthorization = false
@@ -68,7 +87,8 @@ final class JobNotifier: NSObject, UNUserNotificationCenterDelegate {
     hasRequestedAuthorization = true
     // Silent on denial, like the update check: a user who says no gets an app
     // that behaves exactly as it did before this feature existed.
-    center.requestAuthorization(options: [.alert, .sound]) { _, _ in }
+    center.requestAuthorization(options: [.alert, .sound]) { granted, error in
+    }
   }
 
   func apply(_ jobs: [Job]) {
@@ -76,27 +96,30 @@ final class JobNotifier: NSObject, UNUserNotificationCenterDelegate {
 
     // A job absent from `baseline` never fires, which is what makes the first
     // snapshot seed silently — see `NotificationDecision.events(from:to:)`.
-    for event in NotificationDecision.events(from: baseline, to: jobs) {
+    let produced = NotificationDecision.events(from: baseline, to: jobs)
+    if !produced.isEmpty {
+    }
+    for event in produced {
       let content = UNMutableNotificationContent()
       switch event.outcome {
       case .finished:
         content.title = "Download finished"
         content.categoryIdentifier = Self.finishedCategory
         content.userInfo = [Self.filesKey: event.files.map(\.path)]
-        content.sound = UNNotificationSound(named: UNNotificationSoundName(Self.dingFile))
       case .failed:
         content.title = "Download failed"
-        // The system sound, not the chime. The chime says "your file is
-        // ready"; playing it for a failure would be the app congratulating
-        // itself on the thing that went wrong.
-        content.sound = .default
       }
+      // `content.sound` is deliberately left nil throughout — the chime is
+      // played by `willPresent` instead. See `chime`.
       content.body = event.title
+
+      if event.outcome == .finished { playChimeIfAllowed() }
 
       center.add(UNNotificationRequest(
         identifier: event.job.rawValue.uuidString,
         content: content,
-        trigger: nil))
+        trigger: nil)) { error in
+        }
     }
 
     baseline = NotificationDecision.statuses(of: jobs)
@@ -104,24 +127,58 @@ final class JobNotifier: NSObject, UNUserNotificationCenterDelegate {
 
   // MARK: - UNUserNotificationCenterDelegate
 
-  /// **The chime always plays; the banner is suppressed while Oxbow is
-  /// frontmost.**
+  /// The banner is suppressed while Oxbow is frontmost — over the window that
+  /// already shows the finished row it would only repeat it.
   ///
-  /// The two are separate decisions and were first written as one. A banner
-  /// over the window that already shows the finished row adds nothing — that
-  /// much is the platform's own default. But the sound is what carries when
-  /// your attention is elsewhere on screen, or when you are not at the desk at
-  /// all, and suppressing it alongside the banner made this app's one audible
-  /// signal silent in the case where the window happened to be in front.
-  ///
-  /// Focus and Do Not Disturb still silence it, which is correct and is not
-  /// something to work around: an eighty-eight minute composite finishing is
-  /// not an emergency.
+  /// **This method decides the banner and nothing else.** It is called only
+  /// while the app is frontmost, so it cannot be where the chime lives; see
+  /// `playChimeIfAllowed()`.
   nonisolated func userNotificationCenter(
     _ center: UNUserNotificationCenter,
     willPresent notification: UNNotification) async -> UNNotificationPresentationOptions
   {
-    await MainActor.run { NSApp.isActive ? [.sound] : [.banner, .sound] }
+    // Banner only. The chime is played when the notification is posted — see
+    // `playChimeIfAllowed()` for why it cannot live here. No `.sound` is
+    // requested, so the two can never double up.
+    return await MainActor.run { NSApp.isActive ? [] : [.banner] }
+  }
+
+  /// Plays the chime, if the user has not turned sound off for Oxbow.
+  ///
+  /// **Called where the notification is posted, not from `willPresent`.**
+  /// `willPresent` runs only while the app is frontmost — when Oxbow is in the
+  /// background the system presents the banner without consulting the
+  /// delegate, so a chime played from there is silent in precisely the case
+  /// the chime exists for. That was the first implementation and it never
+  /// made a sound.
+  ///
+  /// **The cost of owning the sound: Focus and Do Not Disturb no longer
+  /// silence it.** When `content.sound` carries the audio, the system honours
+  /// those for us; playing it ourselves puts us outside that. The per-app
+  /// sound preference is checked here because it can be, but there is no
+  /// public API for Focus state, so under Focus the banner is suppressed and
+  /// the chime is not.
+  ///
+  /// That is a real regression against the platform path and it is accepted
+  /// only because the platform path produced no audio at all (see `chime`). If
+  /// `UNNotificationSound` is ever found to work, this should go back to it —
+  /// a sound the user's Focus mode cannot stop is worse behaved than one that
+  /// is occasionally missed.
+  private func playChimeIfAllowed() {
+    guard let center else { return }
+    Task { [weak self] in
+      let allowed = await center.notificationSettings().soundSetting == .enabled
+      guard allowed else { return }
+      await MainActor.run {
+        self?.playChime()
+      }
+    }
+  }
+
+  private func playChime() {
+    guard let chime else { return }
+    if chime.isPlaying { chime.stop() }
+    chime.play()
   }
 
   nonisolated func userNotificationCenter(
