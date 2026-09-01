@@ -97,21 +97,22 @@ final class DockTileView: NSView {
   private func draw(badge: QueueStatus.Badge?, in layout: DockTileMetrics.Resolved) {
     guard let badge else { return }
 
-    // The alert's weight is deliberately heavier than the count's. A digit and
-    // an exclamation mark do not carry the same weight at the same nominal
-    // one: "!" is a single narrow stem, so it reads lighter than an "8" set
-    // identically. Matching them numerically would leave the state that wants
-    // attention looking like the state that does not.
-    let (background, foreground, text, weight):
-      (NSColor, NSColor, String, NSFont.Weight) = switch badge {
-    case .count(let n): (.white, .black, "\(n)", .semibold)
-    case .alert: (.systemRed, .white, "!", .heavy)
+    // Failure is the app's own warning glyph, not a disc with a mark in it.
+    //
+    // Two reasons. It is the same symbol the queue window puts on a failed row
+    // (`JobPresentation.icon(for:)`), in the same system red, so the Dock and
+    // the window say one thing rather than two dialects of it. And a shape
+    // that differs from the count's disc is legible before either is read: a
+    // circle answers "how many", a triangle says "something is wrong". Two
+    // states that differ only in colour would need looking at.
+    guard case .count(let n) = badge else {
+      drawAlert(in: layout.badgeRect)
+      return
     }
-
-    // A hairline ring, so a white badge still reads as a badge against a pale
-    // icon and a red one still reads against a dark Dock.
+    // A hairline ring, so a white disc still reads as a badge rather than as a
+    // hole when the icon behind it is pale — Tinted and Clear both allow that.
     let circle = NSBezierPath(ovalIn: layout.badgeRect.insetBy(dx: 1, dy: 1))
-    background.setFill()
+    NSColor.white.setFill()
     circle.fill()
     NSColor.black.withAlphaComponent(0.18).setStroke()
     circle.lineWidth = max(1, layout.badgeRect.width * 0.03)
@@ -119,17 +120,47 @@ final class DockTileView: NSView {
 
     let size = layout.badgeRect.width
       * Self.badgeCapHeightRatio / Self.capHeightOfSystemFont
-    let font = NSFont.systemFont(ofSize: size, weight: weight)
-    let string = NSAttributedString(string: text, attributes: [
+    let font = NSFont.systemFont(ofSize: size, weight: .semibold)
+    let string = NSAttributedString(string: "\(n)", attributes: [
       .font: font,
-      .foregroundColor: foreground])
+      .foregroundColor: NSColor.black])
 
     // Centre on the cap height rather than the line box: a line box carries
-    // descender space the glyphs here never use ("8" and "!" have none), so
-    // centring on it sits the text visibly high in the disc.
+    // descender space digits never use, so centring on it sits the number
+    // visibly high in the disc.
     let measured = string.size()
     string.draw(at: NSPoint(
       x: layout.badgeRect.midX - measured.width / 2,
       y: layout.badgeRect.midY - font.capHeight / 2 + font.descender))
+  }
+
+  /// `exclamationmark.triangle.fill`, red with a white mark.
+  ///
+  /// **The palette's layer order is `[mark, triangle]`, not the reverse.**
+  /// Getting it backwards paints the triangle the same colour as whatever sits
+  /// behind it, and it vanishes leaving only a floating exclamation mark —
+  /// which looks like a deliberate design rather than a bug, so it is worth
+  /// stating.
+  ///
+  /// Inset and nudged off the corner because a triangle inscribed in a square
+  /// tangent to the tile's edge overruns it and gets clipped along the right.
+  private func drawAlert(in rect: CGRect) {
+    let box = rect
+      .insetBy(dx: rect.width * 0.04, dy: rect.height * 0.04)
+      .offsetBy(dx: -rect.width * 0.04, dy: -rect.height * 0.04)
+    let configuration = NSImage.SymbolConfiguration(paletteColors: [.white, .systemRed])
+      .applying(NSImage.SymbolConfiguration(pointSize: box.width, weight: .semibold))
+    guard let image = NSImage(
+      systemSymbolName: "exclamationmark.triangle.fill",
+      accessibilityDescription: "failed")?.withSymbolConfiguration(configuration)
+    else { return }
+
+    let scale = min(box.width / image.size.width, box.height / image.size.height)
+    let drawn = NSSize(width: image.size.width * scale, height: image.size.height * scale)
+    image.draw(in: NSRect(
+      x: box.midX - drawn.width / 2,
+      y: box.midY - drawn.height / 2,
+      width: drawn.width,
+      height: drawn.height))
   }
 }
