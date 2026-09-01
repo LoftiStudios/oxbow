@@ -84,10 +84,22 @@ on screen and the probe concluding nothing. The stripe proves `draw(_:)` ran.
 
 **Result: the probe icon renders in the same Clear glass material as the
 control.** Not the purple opaque icon. Over a 400x250 screen crop at 2x, 2.53%
-of pixels differ, clustered entirely on our icon: the marker stripe accounts
-for the band at y≈200, and the remainder is a scale difference — the probe drew
-into full `bounds` while the system insets the icon within the tile. See §5.1,
-where that inset stops being an error and becomes a budget.
+of pixels differ, clustered entirely on our icon.
+
+**The scale difference this section originally reported was not real, and is
+retracted.** The first probe concluded that the remaining pixel difference was
+the system insetting the icon within the tile while we drew into full
+`bounds`. §5.2's measurement disproved it: with the content view outlining its
+own bounds, our icon body and the system's occupy *identical* columns —
+`438...507` in a tile spanning `414...531`, in both captures. The apparent
+difference came from cropping two captures taken minutes apart at the same
+screen coordinates, between which the Dock's contents had shifted, so the two
+crops were not of the same region.
+
+The lesson is worth more than the retraction: **a screenshot comparison with no
+fiducial in the frame cannot tell a real difference from a misalignment.** The
+fix was to make the content view draw its own bounds, so both measurements
+share a coordinate system that is visible in the image.
 
 ### 2.4 What the probe did not answer
 
@@ -194,33 +206,64 @@ timer whose only job is to fight a mechanism we chose deliberately.
 
 ## 5. Drawing
 
-### 5.1 The inset is the badge's budget
+### 5.1 The icon is drawn edge to edge, and the badge overlaps it
 
-The system draws the app icon **inset** within the dock tile — the scale
-difference §2.3 measured. That inset is not padding to be reclaimed; it is the
-room the badge needs to overflow the icon's corner the way Apple's own
-`badgeLabel` does.
+**There is no icon inset to reproduce.** `NSApp.applicationIconImage` carries
+its own padding, so drawing it into the content view's full `bounds` places the
+visible icon body exactly where the system places it. Measured: identical
+columns, `438...507` inside a tile spanning `414...531`, for our drawing and
+the system's alike.
 
-Draw the icon at the system's inset and the badge lands where the platform puts
-badges. Draw it into full `bounds`, as the probe did, and either the badge is
-clipped or it sits inside the icon and reads as a sticker.
+An earlier draft of this section claimed the opposite — that the system insets
+the icon, and that the inset was "the badge's budget," the room the badge needs
+to overflow the icon's corner. **Both halves were wrong.** There is no inset,
+and the badge needs no budget: it simply draws on top of the icon's top-right
+corner, which is what Apple's own badge does on every app in the Dock. Look at
+any badged icon there and the badge is over the artwork, not beside it.
 
 ### 5.2 Measure Apple's badge, do not guess at it
 
-Badge geometry — diameter relative to icon width, corner inset, cap height,
-font weight — has no published metric, because the badge is system-drawn.
+Badge geometry has no published metric, because the badge is system-drawn. So
+it was measured, on macOS 26.6.2 (25G83), by installing a content view that
+outlines its own bounds and marks deciles along the top and right edges, then
+setting `badgeLabel` and letting the system draw over it. One capture then
+carries both the badge and the coordinate frame it must be expressed in.
 
-**Measure it the same way §2.3 measured the icon**: set a `badgeLabel` on a
-control build, screenshot the tile at several dock sizes, and match the
-numbers. Then diverge on colour only.
+**Measuring against the Dock's icon pitch instead is wrong**, and was the first
+attempt. The pitch is the spacing between icon centres; it is not the tile, and
+every ratio derived from it is scaled by an unknown factor. The fiducial
+removes the guess. (In this configuration they coincidentally agreed at 118px,
+which is exactly the sort of accident that would have validated a bad method.)
+
+Results, in the tile's own coordinate space:
+
+| quantity | measured |
+|---|---|
+| `NSApp.dockTile.size` | **128 x 128 pt, always** — independent of the Dock size preference |
+| tile as rendered | 118 x 118 px at the Dock size tested (0.922 px/pt) |
+| badge diameter | 46 px = **0.3906 of tile width** = 50 pt of 128 |
+| badge centre, from right edge | 24.4 pt |
+| badge centre, from top edge | 24.4 pt |
+
+The two centre offsets are equal, and each is one radius. **The badge is
+tangent to the top-right corner** — it exactly fills the corner square of side
+50 pt. That is the whole geometry, in one number, and it lands on a round
+number of points in the 128 pt space, which is a good sign it is the real value
+rather than an artefact of the capture.
 
 Geometry is what makes a badge read as native; colour is where our meaning
-lives. Guessing at the geometry is the one part of this feature that would look
-subtly wrong in a way nobody could name and everybody would feel.
+lives, and colour is the only axis on which we deliberately diverge.
 
-**Everything scales off the tile's actual bounds**, never a constant. Dock icon
-size is a user preference with real range. A bar height that is right at one
-size is a fat stripe at another and a hairline at a third.
+**A consequence worth stating, because it inverts an assumption elsewhere in
+this document:** the tile's drawing space is a *fixed* 128 pt square whatever
+the user's Dock size, and the system scales the result. Coordinates therefore
+never need to adapt. What still does is legibility — at a small Dock size a bar
+5% of 128 pt is under two rendered pixels tall, so the bar's proportions are a
+design question even though its arithmetic is not.
+
+The bar's own numbers — `barWidth`, `barHeight`, `barBottomInset` — are ours
+rather than the platform's, and are chosen, not measured. §11 records where
+they ended up after being looked at.
 
 ### 5.3 The content view is installed only while there is something to draw
 
