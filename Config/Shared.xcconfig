@@ -17,7 +17,7 @@
 // MARKETING_VERSION is CFBundleShortVersionString: the semver users read, and
 // the one CHANGELOG.md tracks. Bump it by hand, here, as part of the release
 // commit.
-MARKETING_VERSION = 0.3.0
+MARKETING_VERSION = 0.4.0
 
 // CURRENT_PROJECT_VERSION is CFBundleVersion, which must increase
 // monotonically across shipped builds. The value below is only a fallback:

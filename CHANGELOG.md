@@ -14,10 +14,38 @@ there as part of the release commit. The build number is not tracked here — it
 is the repository's commit count, stamped into the bundle at build time by
 `scripts/stamp-version.sh`.
 
-## [Unreleased]
+## [0.4.0] - 2026-09-01
+
+Oxbow is built to be walked away from — an eighty-eight minute composite is the
+normal case, not the tail — and for the whole of that time the app said nothing
+to anyone who was not watching its window. This release is mostly about that.
+The Dock carries the queue's state, a job announces itself when it finishes,
+and the Mac no longer falls asleep partway through the work it was given.
 
 ### Added
 
+- **The Dock carries the queue's state.** A progress bar for the step running
+  now, a white badge counting the jobs still outstanding, and the app's red
+  warning triangle — overriding the count — when something has failed. The bar
+  measures the active step rather than the whole queue, which means it resets
+  between the steps of a single composite job: glancing at the Dock tells you
+  how far through the current piece of work you are, and the badge is what
+  carries how much is left. Whole-queue progress was tried first and reversed,
+  because with several jobs outstanding it crawls, and a bar that does not
+  visibly move is a bar nobody looks at twice. Oxbow draws the tile itself and
+  still gets macOS 26's icon treatment, Clear included;
+  `docs/design/status.md` §2 records the spike that established that, since
+  installing a dock tile content view replaces the system's icon rather than
+  overlaying it.
+- **A notification when a job finishes**, with a chime, and an action that
+  reveals the delivered files in the Finder. One notification per job rather
+  than per step, so a five-step composite still announces itself once. A
+  failure notifies silently and brings the app forward instead of revealing
+  anything; a cancellation says nothing at all, because the user is the one who
+  did it. Authorization is asked for at the first enqueue rather than at
+  launch, so the prompt arrives attached to a reason. Notifications need a real
+  signature to work — a build with signing disabled cannot register for them at
+  all, which is worth knowing before concluding the feature is broken.
 - **A warning when a job will not fit.** The intake now estimates what a
   download needs — the source, the chat render, and the composite — and says so
   under the destination when the volume does not have room, naming a lower
@@ -27,6 +55,17 @@ is the repository's commit count, stamped into the bundle at build time by
   rather than requested, and varies more than fivefold with how busy the
   content is, so a stream at the busy end can pass the check and still run out.
   `docs/design/disk-preflight.md` §9 records what that leaves uncovered.
+
+### Changed
+
+- **The project is held under Lofti Studios LLC**, which is what the About
+  window and the Finder's Get Info panel now show, and what LICENSE now names
+  alongside the unchanged "and Oxbow contributors" clause. The app has shipped
+  as `studio.lofti.Oxbow` since the project was created; this closes the gap in
+  the direction the bundle identifier already chose. The reason to hold it in
+  an entity is liability rather than vanity: a rightsholder comes after the
+  repository and the website, so the entity that answers a notice should be the
+  one that owns them.
 
 ### Fixed
 
