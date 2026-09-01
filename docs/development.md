@@ -19,9 +19,11 @@ the renderer is not the problem, four plausible fixes are measured at
 approximately zero, and the bitrate a composite needs spans 7.5x across real
 content with nothing in the metadata predicting it.
 
-**Current state:** the app works end to end. It downloads a VOD or clip, its
-chat, and a rendered chat video, into files named from the stream's own
-metadata.
+**Current state: shipping.** 0.3.0 is out, as a signed, notarized DMG built by
+`.github/workflows/release.yml` from a `v*` tag. The app downloads a VOD or
+clip, its chat, and a rendered chat video, and can composite the video and the
+chat column into a single file — all into names derived from the stream's own
+metadata, over a range trimmed on a timeline in the intake.
 
 - **FFmpeg sourcing: resolved.** `./scripts/build-ffmpeg.sh` produces a verified
   LGPL 2.1+ arm64 binary. See `docs/ffmpeg.md`.
@@ -35,50 +37,75 @@ metadata.
 - **Deployment target: macOS 26.** `MIN_MACOS` in `scripts/build-ffmpeg.sh`
   must stay in lockstep with it. Raised from macOS 15 to unlock Liquid Glass;
   Oxbow is Apple Silicon only, and every Mac that can run it can run macOS 26,
-  so nobody is locked out. No macOS 26 APIs are in use yet.
-- **OxbowKit: built and tested.** Job/step model, scheduler, queue engine,
-  argument builder, status-line parser, atomic persistence with load-time
-  reconciliation, per-step helper logs, and the async process wrapper.
-- **The app: built and working.** Single window, queue list with expandable
-  multi-step jobs, and an intake that takes a VOD or clip link, fetches the
-  video's metadata, and derives filenames from it. Designs live in
-  `docs/design/`.
+  so nobody is locked out. Exactly one call site uses it so far
+  (`Oxbow/Intake/TrimTimeline.swift`).
+- **OxbowKit: built and tested**, at 94%+ line coverage with a floor in CI.
+  Job/step model, scheduler, queue engine, argument builder, status-line parser,
+  atomic persistence with load-time reconciliation, per-step helper logs, the
+  async process wrapper, composite geometry and rate control, resume of an
+  interrupted composite, the update check, the sleep assertion, and the intake's
+  disk-space estimate.
+- **The app: built, shipped, and used.** Single window, queue list with
+  expandable multi-step jobs, an intake that takes a VOD or clip link, fetches
+  the video's metadata and offers a trim range, an About box, and an
+  update banner. Designs live in `docs/design/`.
+- **Release infrastructure: complete but for the Homebrew tap.**
+  `scripts/package-dmg.sh` builds the disk image and can sign, notarize and
+  staple it; the release workflow does the whole chain from a tag.
+  `scripts/build.sh` and `scripts/notarize.sh` were never written — the release
+  workflow absorbed both, and a second copy of that logic that only runs
+  locally would be a copy that silently drifts. The submodule pin is no longer
+  a blocker: it sits on the `oxbow-pin-1.56.5-12-gd4122d8` anchor tag in the
+  mirror (see **Upstream** below).
 
-Verified against the real bundled binaries, not only in tests: a chat + render
-job run to completion, delivering a valid chat JSON and a playable h264 render
-under metadata-derived names. Chat render matters most here — it is the reason
-`docs/architecture.md` §3.5 keeps that part in C#, and our LGPL FFmpeg renders
-it correctly with `h264_videotoolbox`.
+Verified against the real bundled binaries, not only in tests: chat, render and
+composite jobs run to completion, delivering valid chat JSON and playable h264
+output under metadata-derived names. Chat render matters most here — it is the
+reason `docs/architecture.md` §3.5 keeps that part in C#, and our LGPL FFmpeg
+renders it correctly with `h264_videotoolbox`.
 
-**Not verified by anyone clicking it:** nothing in the SwiftUI layer has been
-exercised by hand at the time of writing. `IntakeModel` carries the intake's
-logic and is unit-tested; the views are not.
+**The SwiftUI layer is verified by hand, not by tests.** `IntakeModel` carries
+the intake's logic and is unit-tested; the views are not, and the coverage gate
+deliberately scopes to `Sources/OxbowKit` for that reason. A change to a view is
+a change nothing will catch for you — click it.
 
 ### Next
 
-UI polish and native feel. Release infrastructure now exists:
-`scripts/package-dmg.sh` builds the disk image and can sign, notarize and
-staple it, and `.github/workflows/release.yml` does the whole chain from a
-`v*` tag. `scripts/build.sh` and `scripts/notarize.sh` were never written —
-the release workflow absorbed both, and a second copy of that logic that only
-runs locally would be a copy that silently drifts.
+**The "make it good" phase.** The app does its job; what it does not yet do is
+feel like a Mac app you leave running. It has no notifications, no dock badge,
+no drag-and-drop, no URL scheme and no Settings window — there is no `Settings`
+scene and no `@AppStorage` anywhere, so every job re-asks for destination,
+quality and chat.
 
-Two things still block a first release. The submodule needs re-pinning to an
-upstream release tag (the workflow refuses to publish otherwise), and no
-Homebrew tap exists yet.
+In rough order of delight per hour:
 
-The About box is done (`Oxbow/About/`), and with it real versioning: the
-marketing version is `MARKETING_VERSION` in `Config/Shared.xcconfig`, bumped
-by hand as part of a release commit, and `CFBundleVersion` is the repository's
-commit count, stamped into the built `Info.plist` by
-`scripts/stamp-version.sh` on every build, local and CI alike. That script
-also records the helper's `1.56.5+<sha>` string and the FFmpeg version as
-`OXHelperVersion` and `OXFFmpegVersion`, which is where the About box reads
-them from.
+1. **Status in the Dock and Notification Center** — a badge carrying queue
+   depth, a progress bar on the dock tile for the running step, and a
+   notification when a job finishes. `QueueEngine.running` is the authority on
+   what is in flight; step status is not, because `shutDown()` deliberately
+   leaves steps `.running` so the reconciler can call them interrupted.
+2. **Clipboard hand-off.** Focus the app with a Twitch link on the clipboard and
+   the intake is already filled in. `TwitchLink` already decides whether a
+   string is a link worth offering.
+3. **A Settings window.** Default destination, quality, chat on/off, chat text
+   size. Note `IntakeModel.defaultDestination`: persisting "last used folder"
+   was deliberately *not* done, and that reasoning applies to every field here.
+4. **The live disk projection.** `docs/design/composite-rate-control.md` §6.1
+   argues for it and `docs/design/disk-preflight.md` §9 records the two gaps it
+   closes. The projection is already computed for the progress UI.
 
-Local prerequisites, all now in place: .NET 10 SDK (`brew install --cask
+Then the Homebrew tap, and the native-renderer spike, which wants its own
+design doc before any code.
+
+Local prerequisites, all in place: .NET 10 SDK (`brew install --cask
 dotnet-sdk`), a `Developer ID Application` certificate for team `M9WJGEJKBF`, and
-notary credentials in the keychain as profile `oxbow-notary`.
+notary credentials in the keychain as profile `oxbow-notary`. The marketing
+version is `MARKETING_VERSION` in `Config/Shared.xcconfig`, bumped by hand as
+part of a release commit; `CFBundleVersion` is the repository's commit count,
+stamped into the built `Info.plist` by `scripts/stamp-version.sh` on every
+build, local and CI alike. That script also records the helper's `1.56.5+<sha>`
+string and the FFmpeg version as `OXHelperVersion` and `OXFFmpegVersion`, which
+is where the About box reads them from.
 
 **Workflow: changes land via PRs, not direct pushes to main.** CI (tests +
 unsigned app build) must be green before merging. The repo is public; history
