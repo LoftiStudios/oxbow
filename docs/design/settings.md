@@ -43,17 +43,13 @@ existing Trim disclosure, with a checkbox at the bottom:
 
 ```
 ⌄ Download Options
-    Download        Video + chat  ⌄
-    ────────────────────────────────
-    Quality         Best available  ⌄
-    ────────────────────────────────
-    Chat text size  Medium  ⌄
-
-    Save to         Downloads      Choose…
-
-    ☐ Make these settings my defaults
-    Chat is rendered in a column beside the video and encoded into
-    one file. This takes roughly as long as the stream itself.
+   Download        Video + chat  ⌄
+   Quality         Best available  ⌄
+   Chat text size  Medium  ⌄
+   Save to         Downloads      Choose…
+   ☐ Make these settings my defaults
+   Chat is rendered in a column beside the video and encoded into
+   one file. This takes roughly as long as the stream itself.
 ```
 
 Thin rules separate `Download`, `Quality` and `Chat text size` — three rows of
@@ -138,16 +134,16 @@ collapsed state safe to leave collapsed.
 
 **Not every warning gets that cover, so not every warning lives inside the
 panel.** `IntakeModel.destinationFellBack` (§4.2's own warning) stays inside
-the `DisclosureGroup`: the summary above is a real mitigation for it, because
+the collapsible rows: the summary above is a real mitigation for it, because
 it names the folder Oxbow actually used, not the one that vanished. The disk
 space warning (`IntakeModel.spaceWarning`, `docs/design/disk-preflight.md`
 §2-3) has no such cover — the summary carries output, quality cap and folder,
-nothing about what is free — so it renders in the panel `Section`'s own
-footer, outside the `DisclosureGroup`, visible whether the panel is open or
-collapsed. So do the delivered filename and the collision warning, which used
-to sit under the deleted `Name` section (§2.8) and now share this footer with
-`spaceWarning` for the identical reason: none of the three is something a
-collapsed panel should be allowed to hide. Neither joins
+nothing about what is free — so it renders in its own `Section` below the
+panel, visible whether the panel is open or collapsed. The collision warning
+shares that section for the identical reason: neither is something a
+collapsed panel should be allowed to hide. That section is emitted only when
+one of them has something to say, because an empty `Section` still draws its
+box in a grouped `Form` and read as a stray empty panel. Neither joins
 `chatProblem`/`compositeProblem` in forcing the panel open (§2.7): they are
 advisory and do not gate Add, so nothing about them demands the drawer
 itself, only that they stay visible. Moving `spaceWarning` back inside the
@@ -206,6 +202,41 @@ Someone who genuinely wants a video-only default is not blocked; they set it in
 Settings, or on the next video that has chat. That is a small price for
 removing a trap that would otherwise be sprung by accident.
 
+### 2.9 The disclosures are rows, not `DisclosureGroup`s
+
+Both collapsible sections went through three controls before one felt right,
+and the reasons are worth keeping so nobody re-tries the first two.
+
+**`DisclosureGroup` inside a `Form` was wrong.** It is for inline disclosure
+within a row, not for collapsing a section. Nesting the option rows in one
+suppressed the grouped `Form`'s own separators and row metrics, which is why
+that version needed five hand-added `Divider()`s that never matched the
+platform's insets. The Settings window is the control: identical rows, no
+manual dividers, correct spacing — the only difference is that its rows sit
+directly in a `Form` section.
+
+**`Section(isExpanded:)` was right about layout and wrong about
+interaction.** It restores every bit of the native treatment, but in a
+`.grouped` `Form` on macOS its header does not respond to clicks, and the
+chevron it draws sits outside the header's content bounds. Measured by
+clicking across the row: the label toggled, a point 150pt to its right
+toggled, the triangle — the one thing anybody aims at — did nothing. A tap
+gesture over the header fixed the target and introduced a new problem, since
+a gesture inside a scrolling `Form` only fires after winning a
+disambiguation race against the scroll, so clicks landed late or not at all.
+
+**What ships is a header row inside the section's own box:** a plain `Form`
+row, so a `Button` filling it is clickable end to end, with a chevron drawn
+and rotated here rather than by the section. Rotated, not swapped for
+`chevron.down`, because a swap pops between two glyphs where the rest of the
+disclosure is continuous.
+
+**Opening and closing drive the content and the window together**, from one
+call on one duration (`disclosureDuration`). Toggling used to animate the
+content and then let `.onChange` notice the new height a render later and
+move the window on AppKit's own duration and curve — two animations on two
+clocks for one click, which is what read as sluggish.
+
 ### 2.8 Naming happens in the Save panel
 
 There is no `Name` field in the intake any more. `Choose…` used to open an
@@ -232,12 +263,15 @@ is a new way to set `model.name`, not a bypass of what reads it.
 
 The window still shows one row for the destination, `Save to`, with the same
 folder icon, truncated path and `Choose…` button as before (§2.1) — only what
-the button opens changed. The delivered filename itself moved out of a field
-and into a caption: the options panel's footer now shows what this job will
-actually write, so a name picked in the Save panel is confirmed on screen
-without reopening it. The collision warning that used to sit under the `Name`
-field moved down into that same footer, unchanged in every other respect —
-still orange, still worded by `collisionWarning(for:)`, still visible whether
+the button opens changed. **The filename is not repeated anywhere else.** A
+caption showing it briefly lived under the panel and was removed: the Save
+panel is where the name is chosen and shown, so restating it on the sheet
+told the user something they had just typed, and it was the one row in this
+window whose height nothing could predict — it wraps with the stream's own
+title, and it was clipping mid-line. The collision warning that used to sit
+under the `Name` field moved into the warnings section below the panel,
+unchanged in every other respect — still orange, still worded by
+`collisionWarning(for:)`, still visible whether
 the options panel is open or collapsed.
 
 ---
