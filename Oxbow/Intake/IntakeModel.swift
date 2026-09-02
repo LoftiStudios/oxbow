@@ -755,7 +755,8 @@ final class IntakeModel {
   ///
   /// One `stat` per evaluation, on a path the user chose. Cheap enough to
   /// stay derived rather than cached, and derived is what keeps it honest
-  /// when the name field changes under it.
+  /// when `name` changes under it — from a fresh `load()`, or from a name
+  /// picked in the Save panel (`IntakeWindow.chooseFolder()`).
   var destinationCollision: URL? {
     guard hasSettledMetadata, let folder else { return nil }
     let destination = folder.appending(path: outputBaseName + OutputSuffix.video)

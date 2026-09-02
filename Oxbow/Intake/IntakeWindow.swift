@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 import OxbowKit
 
 /// Paste a link, see what it is, choose which of its outputs you want, and
@@ -48,7 +49,6 @@ struct IntakeWindow: View {
         source
 
         if model.hasSettledMetadata {
-          naming
           // Trim before Download Options: which part of the video you want is
           // a property of the video, like its name, while the options panel
           // is about what to do with it — including where it lands, folded
@@ -118,9 +118,11 @@ struct IntakeWindow: View {
           .font(.callout)
           .foregroundStyle(.red)
       } else if let failure = model.metadataFailure {
-        // A failure, not a dead end: the name below has fallen back to the id
-        // or slug and the window still works. The card keeps its place so the
-        // failure does not also collapse the layout.
+        // A failure, not a dead end: `model.name` has fallen back to the id
+        // or slug — visible in the delivered-filename caption further down,
+        // in the options panel's footer — and the window still works. The
+        // card keeps its place so the failure does not also collapse the
+        // layout.
         VideoCard(.unavailable(title: model.name))
         Label(failure, systemImage: "exclamationmark.triangle")
           .font(.callout)
@@ -136,30 +138,10 @@ struct IntakeWindow: View {
     }
   }
 
-  private var naming: some View {
-    Section {
-      TextField("Name", text: $model.name)
-    } footer: {
-      VStack(alignment: .leading, spacing: 4) {
-        // What this job will actually write, so the name field is not a guess.
-        Text(exampleFilenames)
-          .font(.caption)
-          .foregroundStyle(.secondary)
-        if let collision = model.destinationCollision {
-          // Orange, not red: nothing is wrong and nothing is blocked. Red is
-          // reserved for `addFailure` below, where the sheet is refusing.
-          Label(collisionWarning(for: collision), systemImage: "exclamationmark.triangle")
-            .font(.caption)
-            .foregroundStyle(.orange)
-            .fixedSize(horizontal: false, vertical: true)
-        }
-      }
-      .frame(maxWidth: .infinity, alignment: .leading)
-    }
-  }
-
   /// Names the folder rather than saying "the destination", so the sentence
-  /// is checkable at a glance against the folder row further down.
+  /// is checkable at a glance against wherever the folder itself is showing
+  /// — the `Save to` row inside the panel above this footer when it is
+  /// expanded, or the collapsed header's own summary when it is not.
   private func collisionWarning(for collision: URL) -> String {
     let folder = collision.deletingLastPathComponent().lastPathComponent
     return "A file with this name is already in \(folder) — adding this will replace it."
@@ -197,17 +179,24 @@ struct IntakeWindow: View {
   /// `docs/design/disk-preflight.md` §2 grounds the whole warn-don't-block
   /// design on "at intake there is a person" who sees the estimate and
   /// decides; a warning nobody sees collapses back into that document's own
-  /// §1 failure mode. So it lives in the `Section`'s footer instead, next to
-  /// the collision warning under the name field, which never moved into the
-  /// panel to begin with. `destinationFellBack` stays inside deliberately —
-  /// see its own comment below.
+  /// §1 failure mode. So it lives in the `Section`'s footer instead, now
+  /// alongside the delivered-filename caption and the collision warning —
+  /// both used to sit under the now-deleted Name section (§1) and have moved
+  /// down into this same footer, rather than into the drawer, for the
+  /// identical reason: none of the three is something a collapsed panel
+  /// should be allowed to hide. `destinationFellBack` stays inside
+  /// deliberately — see its own comment below.
   ///
-  /// **The encode-duration note joins it in the footer, for the identical
-  /// reason.** `.videoWithChat` is the factory default and collapsed is the
-  /// steady state, so a note that only rendered inside the drawer was hidden
-  /// on the default path through this window — nobody told that a composite
-  /// takes roughly as long as the stream itself, on the one run where they
-  /// never opened the panel to find out.
+  /// **The encode-duration note does NOT join them, unlike an earlier version
+  /// of this panel.** It used to: `.videoWithChat` is the factory default and
+  /// collapsed is the steady state, so a note only rendered inside the drawer
+  /// was hidden on the default path through this window. That reasoning was
+  /// sound, and it is reversed here anyway, on the app's author's own
+  /// explicit instruction — the note reads as an in-the-moment explanation of
+  /// what the checkbox above it is about to commit to, not a standing warning
+  /// about the destination the way `spaceWarning` is, and it now sits below
+  /// the checkbox, inside the drawer. The cost is real and accepted: it is
+  /// invisible on the collapsed path, which is most downloads (§2.6).
   private var options: some View {
     Section {
       DisclosureGroup(isExpanded: $model.isOptionsEffectivelyExpandedBinding) {
@@ -228,6 +217,11 @@ struct IntakeWindow: View {
           Text(isClip ? "Clip" : "Video").tag(DownloadOutput.video)
         }
 
+        // Thin rules between the panel's own rows, matching the mockup —
+        // `Form`'s grouped style draws nothing between two `Picker`s in the
+        // same `Section` on its own.
+        Divider()
+
         // Directly under the picker: the quality is a property of the media
         // download, and nothing else on this sheet reads it. Bound through
         // `selectQuality` rather than `$model.quality` directly — a bare
@@ -245,18 +239,20 @@ struct IntakeWindow: View {
         // for chat that cannot be downloaded, above a row explaining that it
         // cannot, is a control for something that will never happen.
         if model.output == .videoWithChat, model.chatProblem == nil {
+          Divider()
+
           // The one control the deleted render-options form left behind (see
           // docs/design/compositing.md §4, §8): a fixed size cannot serve
-          // both a laptop window and a TV across the room. "Small"/"Medium"/
-          // "Large" does not explain itself the way "Video + chat"/"Video"
-          // does above, so — unlike that picker — this one keeps its label
-          // on screen.
+          // both a laptop window and a TV across the room. Rendered as a
+          // pulldown now, matching `Download` and `Quality` above — it was a
+          // segmented control until the mockup asked for `Medium ⌄` like
+          // every other row in this panel, so it drops the explicit
+          // `.pickerStyle` and takes the same default menu style they do.
           Picker("Chat text size", selection: $model.chatSize) {
             Text("Small").tag(ChatSize.small)
             Text("Medium").tag(ChatSize.medium)
             Text("Large").tag(ChatSize.large)
           }
-          .pickerStyle(.segmented)
         }
 
         destination
@@ -299,12 +295,37 @@ struct IntakeWindow: View {
             .foregroundStyle(.red)
         }
 
-        // Checkbox, not a switch. A switch communicates a persistent mode that
-        // stays where you left it; this is a one-shot action applied once when
-        // Add is pressed (design doc §2.2). The default switch style would
-        // contradict the affordance.
-        Toggle("Make these settings my defaults", isOn: $model.wantsToSaveDefaults)
+        // Built as its own leading-aligned `HStack` with a trailing
+        // `Spacer`, rather than left as a bare labeled `Toggle` row. A `Form`
+        // row normally splits a control's label into the row's leading
+        // label column and puts only the control itself in the trailing
+        // column — right where `Download`, `Quality` and `Chat text size`
+        // put their pulldowns above. A lone checkbox glyph in that column
+        // reads as centred, floating under the values above it rather than
+        // under their labels. Wrapping the checkbox and its own text as one
+        // unit is what actually left-aligns it with those labels, per the
+        // mockup (§4).
+        HStack {
+          // Checkbox, not a switch. A switch communicates a persistent mode
+          // that stays where you left it; this is a one-shot action applied
+          // once when Add is pressed (design doc §2.2). The default switch
+          // style would contradict the affordance.
+          Toggle(isOn: $model.wantsToSaveDefaults) {
+            Text("Make these settings my defaults")
+          }
           .toggleStyle(.checkbox)
+          Spacer(minLength: 0)
+        }
+
+        // Back inside the drawer, below the checkbox — see the doc comment
+        // above `options` for why this reverses where an earlier version of
+        // this panel put it.
+        if model.output == .videoWithChat, model.chatProblem == nil {
+          Text("Chat is rendered in a column beside the video and encoded into "
+            + "one file. This takes roughly as long as the stream itself.")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
 
         if model.wantsToSaveDefaults {
           Text(saveNote)
@@ -326,28 +347,33 @@ struct IntakeWindow: View {
       }
     } footer: {
       // Outside the `DisclosureGroup` on purpose — see the doc comment
-      // above `options`. Visible whether the panel is open or shut, the
-      // same treatment the collision warning under the name field gets.
+      // above `options`. Visible whether the panel is open or shut: this is
+      // where the deleted Name section's own footer content now lives
+      // (§1) — the delivered filename and the collision warning — alongside
+      // `spaceWarning`, which was already here.
       VStack(alignment: .leading, spacing: 8) {
-        // Not decoration: a six-hour stream is roughly 75 minutes of
-        // encoding, and a user who is not told that reads a busy queue as a
-        // hang. `.videoWithChat` is the factory default and collapsed is the
-        // steady state (§2.6), so the default path used to be exactly the
-        // one where nobody saw this — moved out here, alongside
-        // `spaceWarning` below, for the same reason that one lives outside
-        // the drawer.
-        if model.output == .videoWithChat, model.chatProblem == nil {
-          Text("Chat is rendered in a column beside the video and encoded into "
-            + "one file. This takes roughly as long as the stream itself.")
+        // What this job will actually write, now that naming an output
+        // happens in the Save panel (§2) rather than in a text field on
+        // this screen — so this caption is not a guess, it is the name
+        // `model.name` already holds.
+        Text(exampleFilenames)
+          .font(.caption)
+          .foregroundStyle(.secondary)
+
+        if let collision = model.destinationCollision {
+          // Orange, not red: nothing is wrong and nothing is blocked. Red is
+          // reserved for `addFailure` below, where the sheet is refusing.
+          Label(collisionWarning(for: collision), systemImage: "exclamationmark.triangle")
             .font(.caption)
-            .foregroundStyle(.secondary)
+            .foregroundStyle(.orange)
+            .fixedSize(horizontal: false, vertical: true)
         }
 
         if let warning = model.spaceWarning {
           VStack(alignment: .leading, spacing: 2) {
-            // Orange, matching the overwrite caution under the name field:
-            // nothing is wrong and nothing is blocked. Red belongs to
-            // `addFailure`, where the sheet is actually refusing.
+            // Orange, matching the overwrite caution above: nothing is
+            // wrong and nothing is blocked. Red belongs to `addFailure`,
+            // where the sheet is actually refusing.
             Label(spaceWarningText(warning), systemImage: "externaldrive.badge.exclamationmark")
               .font(.caption)
               .foregroundStyle(.orange)
@@ -565,18 +591,22 @@ struct IntakeWindow: View {
   /// reaching inside a `Form`'s scroll view, which SwiftUI does not offer and
   /// which would break the moment the form style changed.
   private var desiredContentHeight: CGFloat {
-    var height: CGFloat = 600
+    // Raised from the old horizontal card's 600: the thumbnail now spans the
+    // form's width at 16:9 instead of sitting fixed at 90pt tall beside the
+    // title, which is the single biggest addition to what's on screen by
+    // default — a floor, like the rest of this function, not a measurement.
+    var height: CGFloat = 720
     guard model.hasSettledMetadata else { return height }
-    if model.output == .videoWithChat, model.chatProblem == nil {
-      // The encode-duration note now lives in the `Section` footer, visible
-      // whether the panel is open or collapsed — so it claims room
-      // regardless of `isOptionsEffectivelyExpanded`, unlike the picker below.
-      height += 40
-      // The chat text size picker, by contrast, only occupies space while
-      // `options` is actually expanded — the same way the trim bump below is
-      // gated on `isTrimExpanded` — so growing the window for it while the
-      // panel is collapsed would open a gap under a closed drawer.
-      if model.isOptionsEffectivelyExpanded { height += 80 }
+    if model.output == .videoWithChat, model.chatProblem == nil,
+       model.isOptionsEffectivelyExpanded
+    {
+      // The chat text size picker and the encode-duration note both live
+      // inside the drawer (the note moved back in below the checkbox — see
+      // the doc comment above `options`), so both only claim room while
+      // `options` is actually expanded — the same way the trim bump below
+      // is gated on `isTrimExpanded`. Growing the window for either while
+      // the panel is collapsed would open a gap under a closed drawer.
+      height += 120
     }
     if model.showsTrimOptions, model.isTrimExpanded { height += 165 }
     return height
@@ -642,15 +672,25 @@ struct IntakeWindow: View {
     model.linkText = text.trimmingCharacters(in: .whitespacesAndNewlines)
   }
 
+  /// A Save panel, not an Open panel — this is where a Mac user expects to
+  /// name a file, not just pick the folder it lands in (§2). The window
+  /// still only ever shows one row for it, `Save to`, so this single dialog
+  /// now does what a directory-only `NSOpenPanel` and the deleted Name field
+  /// (§1) used to do between them.
+  ///
+  /// `nameFieldStringValue` mirrors `.OK`'s own write-back below: it is
+  /// `outputBaseName + OutputSuffix.video`, the exact `.mp4` this job
+  /// delivers, restricted to that one type via `allowedContentTypes` so the
+  /// panel cannot offer to save a name Oxbow would never produce.
+  /// `directoryURL` opens on the folder already chosen (`model.folder`),
+  /// not a hard-coded `~/Downloads` — the panel should open where the job is
+  /// already headed, not reset it.
   private func chooseFolder() {
-    let panel = NSOpenPanel()
-    panel.canChooseDirectories = true
-    panel.canChooseFiles = false
+    let panel = NSSavePanel()
+    panel.nameFieldStringValue = model.outputBaseName + OutputSuffix.video
+    panel.directoryURL = model.folder
     panel.canCreateDirectories = true
-    panel.allowsMultipleSelection = false
-    panel.prompt = "Choose"
-    panel.directoryURL = try? FileManager.default.url(
-      for: .downloadsDirectory, in: .userDomainMask, appropriateFor: nil, create: false)
+    panel.allowedContentTypes = [.mpeg4Movie]
 
     // A sheet on the sheet. `runModal()` here would stack an app-modal panel
     // on top of a sheet — it appears detached from the window it belongs to,
@@ -658,12 +698,26 @@ struct IntakeWindow: View {
     guard let hostWindow else {
       // Only if the window has not been read back yet, which cannot happen
       // once the sheet is on screen and the user has clicked a button in it.
-      if panel.runModal() == .OK { model.folder = panel.url }
+      if panel.runModal() == .OK, let url = panel.url {
+        applyChosenDestination(url)
+      }
       return
     }
     panel.beginSheetModal(for: hostWindow) { response in
-      if response == .OK { model.folder = panel.url }
+      guard response == .OK, let url = panel.url else { return }
+      applyChosenDestination(url)
     }
+  }
+
+  /// Splits the Save panel's one URL back into the two fields it replaced:
+  /// the folder `Save to` has always shown, and `model.name`, which still
+  /// carries every reader it always had — `outputBaseName` re-sanitizes and
+  /// re-reserves suffix bytes over whatever the user typed here exactly as
+  /// it does over a name `load()` derived from metadata, so a name picked in
+  /// this panel goes through the same rules rather than bypassing them.
+  private func applyChosenDestination(_ url: URL) {
+    model.folder = url.deletingLastPathComponent()
+    model.name = url.deletingPathExtension().lastPathComponent
   }
 
   // MARK: - Text
@@ -675,7 +729,9 @@ struct IntakeWindow: View {
   // property, said "Clip + chat". One answer now, on the model.
   private var isClip: Bool { model.isClip }
 
-  /// What this job will actually write, so the name field is not a guess.
+  /// What this job will actually write. Naming happens in the Save panel
+  /// now (§2), not in a text field on this screen, so this caption is what
+  /// tells the user the name they typed there survived intact.
   ///
   /// One line always: `.video` and `.videoWithChat` both produce exactly one
   /// file, sharing the same suffix — a composite replaces the video it
@@ -883,8 +939,9 @@ extension VideoInfo {
 }
 
 /// A name whose file is already sitting in the chosen folder. Exercises the
-/// caution line under the name field and the Add button's relabelling — the
-/// two halves of the overwrite warning, which have to appear together.
+/// caution line in the options panel's footer and the Add button's
+/// relabelling — the two halves of the overwrite warning, which have to
+/// appear together.
 #Preview("Name already taken") {
   IntakeWindow(model: previewModel(fileExists: { _ in true }))
 }
