@@ -307,7 +307,7 @@ Choose…, quality as the five rungs, chat as the same two-option control the
 intake uses, chat text size as the existing three-way control.
 
 The chat control is **not** a toggle, however much "chat on/off" invites one.
-The store holds `IntakeModel.Output`, the intake renders it as `Video + chat` /
+The store holds `DownloadOutput`, the intake renders it as `Video + chat` /
 `Video`, and a Settings window rendering the same value as `Include chat ☑`
 would be two vocabularies for one preference — the drift this document objects
 to everywhere else. Changes write immediately — no Save button, which
