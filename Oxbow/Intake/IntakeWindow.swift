@@ -199,7 +199,23 @@ struct IntakeWindow: View {
   /// invisible on the collapsed path, which is most downloads (§2.6).
   @ViewBuilder
   private var options: some View {
-    Section(isExpanded: $model.isOptionsEffectivelyExpandedBinding) {
+    Section {
+      disclosureHeader(
+        "Download Options",
+        isExpanded: model.isOptionsEffectivelyExpanded,
+        trailing: {
+          // Only when collapsed: an expanded panel already shows every one
+          // of these values in full, so a summary here too would just be
+          // saying the same thing twice.
+          if !model.isOptionsEffectivelyExpanded {
+            Text(model.optionsSummary)
+              .font(.caption)
+              .foregroundStyle(.secondary)
+          }
+        },
+        toggle: { model.isOptionsEffectivelyExpandedBinding.toggle() })
+
+      if model.isOptionsEffectivelyExpanded {
         // Two choices, not three independent toggles: a chat render in
         // isolation has little use, and the composite is what makes it worth
         // producing at all (design doc §3). `DownloadOutput` already
@@ -328,31 +344,7 @@ struct IntakeWindow: View {
             .font(.caption)
             .foregroundStyle(.secondary)
         }
-    } header: {
-        // **The header is made tappable by hand.** `Section(isExpanded:)`
-        // draws the chevron and animates the content, but in a `.grouped`
-        // `Form` on macOS its header is not itself interactive — verified by
-        // clicking one and watching nothing happen. Without this the only
-        // hit area is the chevron glyph, which is a hard target and the
-        // single biggest reason this panel felt fiddly.
-        //
-        // `Spacer` + `contentShape` is what makes the whole strip clickable
-        // rather than just the text: a bare `HStack` of two labels is only
-        // as wide as its labels.
-        HStack {
-          Text("Download Options")
-          // Only when collapsed: an expanded panel already shows every one
-          // of these values in full, so a summary next to the header too
-          // would just be saying the same thing twice.
-          if !model.isOptionsEffectivelyExpanded {
-            Text(model.optionsSummary)
-              .font(.caption)
-              .foregroundStyle(.secondary)
-          }
-          Spacer(minLength: 0)
-        }
-        .contentShape(Rectangle())
-        .onTapGesture { model.isOptionsEffectivelyExpandedBinding.toggle() }
+      }
     }
 
     // Was the options `Section`'s `footer:`. `Section(isExpanded:)` has no
@@ -442,7 +434,20 @@ struct IntakeWindow: View {
     // Which is why the header carries the range: a section quietly applying a
     // trim while showing nothing would be exactly the hidden state a
     // disclosure triangle is so easily mistaken for.
-    Section(isExpanded: $model.isTrimExpanded) {
+    Section {
+      disclosureHeader(
+        "Trim",
+        isExpanded: model.isTrimExpanded,
+        trailing: {
+          if let summary = model.trimSummary {
+            Text(summary)
+              .foregroundStyle(.secondary)
+              .monospacedDigit()
+          }
+        },
+        toggle: { model.isTrimExpanded.toggle() })
+
+      if model.isTrimExpanded {
         if let duration = model.info?.duration {
           TrimTimeline(
             duration: duration,
@@ -499,19 +504,7 @@ struct IntakeWindow: View {
             .font(.caption)
             .foregroundStyle(.red)
         }
-    } header: {
-      // Same hand-rolled hit area as `options` — see the comment there.
-      HStack(spacing: 8) {
-        Text("Trim")
-        if let summary = model.trimSummary {
-          Text(summary)
-            .foregroundStyle(.secondary)
-            .monospacedDigit()
-        }
-        Spacer(minLength: 0)
       }
-      .contentShape(Rectangle())
-      .onTapGesture { model.isTrimExpanded.toggle() }
     }
   }
 
@@ -676,6 +669,65 @@ struct IntakeWindow: View {
   /// stops at the bottom of the screen and never shrinks — a window the user
   /// has sized up is theirs, and collapsing a section is not a request to lose
   /// that space.
+  /// A section's own header row: the whole width of the box, and the chevron
+  /// with it.
+  ///
+  /// **We draw the chevron rather than letting `Section(isExpanded:)` draw
+  /// it.** Its chevron sits outside the header's content bounds and does not
+  /// respond to clicks, so the one thing a person actually aims at was the
+  /// one dead spot on the row — measured by clicking across it: the label
+  /// toggled, a point 150pt to its right toggled, the triangle did nothing.
+  /// A row inside the section is a plain `Form` row, so a `Button` filling it
+  /// is clickable end to end, triangle included.
+  private func disclosureHeader(
+    _ title: String,
+    isExpanded: Bool,
+    @ViewBuilder trailing: () -> some View,
+    toggle: @escaping () -> Void)
+    -> some View
+  {
+    Button {
+      toggleDisclosure(toggle)
+    } label: {
+      HStack(spacing: 6) {
+        Image(systemName: "chevron.right")
+          .font(.caption.weight(.semibold))
+          .foregroundStyle(.secondary)
+          // Rotated rather than swapped for `chevron.down`: a swap pops
+          // between two glyphs, a rotation is the same continuous motion the
+          // rest of the disclosure makes.
+          .rotationEffect(.degrees(isExpanded ? 90 : 0))
+          .frame(width: 10)
+        Text(title)
+        trailing()
+        Spacer(minLength: 0)
+      }
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .contentShape(Rectangle())
+    }
+    .buttonStyle(.plain)
+  }
+
+  /// How long a disclosure takes to open or close, shared by the content
+  /// animation and the window's own frame change.
+  ///
+  /// **They have to be one number.** Toggling a section used to animate the
+  /// content immediately and then resize the window from `.onChange`, a
+  /// render later, with `NSWindow`'s own duration and curve. Two animations
+  /// on two clocks for one click is what read as sluggish next to an app
+  /// that does it in one move.
+  private static let disclosureDuration: Double = 0.22
+
+  /// Opens or closes a section and resizes the window in the same breath.
+  ///
+  /// Reading `desiredContentHeight` *after* the toggle is what makes this
+  /// work: it is a computed property over the model, so it already reflects
+  /// the new state by the time the window is asked to move.
+  private func toggleDisclosure(_ toggle: () -> Void) {
+    withAnimation(.easeInOut(duration: Self.disclosureDuration)) { toggle() }
+    resize(toFit: desiredContentHeight)
+  }
+
   /// Sizes the window to what the form currently wants — in both directions.
   ///
   /// **Shrinking matters as much as growing now that both sections are
@@ -703,7 +755,16 @@ struct IntakeWindow: View {
     var frame = hostWindow.frame
     frame.size.height = target
     frame.origin.y = max(frame.origin.y - delta, screen.visibleFrame.minY)
-    hostWindow.setFrame(frame, display: true, animate: true)
+
+    // `NSAnimationContext` rather than `setFrame(display:animate:)`, whose
+    // duration is chosen by AppKit from the size of the change — so a big
+    // section and a small one moved the window at different speeds, and
+    // neither matched the content animating inside it.
+    NSAnimationContext.runAnimationGroup { context in
+      context.duration = Self.disclosureDuration
+      context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+      hostWindow.animator().setFrame(frame, display: true)
+    }
   }
 
   // MARK: - Actions
