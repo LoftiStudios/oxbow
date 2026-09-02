@@ -260,10 +260,19 @@ struct FilmstripThumbnail: View {
 
   private static let frameDwellSeconds: Double = 2.5
   private static let crossFadeDuration: Double = 0.6
-  /// "About 1.05" per the brief: enough that the frame visibly settles
-  /// somewhere different by the end of a 2.5s dwell, subtle enough that nothing
-  /// about it should be legible as motion within any single instant of it.
-  private static let maxScale: CGFloat = 1.05
+  /// How far a frame drifts over its dwell.
+  ///
+  /// **Deliberately smaller than it wants to be.** The drift exists to stop
+  /// four stills reading as a slideshow, and it has done its job the moment
+  /// the card feels like footage — anything past that is an animation
+  /// competing for attention with the title beside it and the form below it,
+  /// in a window whose whole purpose is a decision about a download.
+  ///
+  /// Started at 1.05, which was legible as movement at a glance rather than
+  /// only on inspection. At 1.025 over a 2.5s dwell the frame still settles
+  /// somewhere visibly different by the end, and nothing about any single
+  /// instant of it reads as motion.
+  private static let maxScale: CGFloat = 1.025
 
   var body: some View {
     Group {
