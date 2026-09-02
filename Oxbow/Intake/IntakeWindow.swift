@@ -299,7 +299,12 @@ struct IntakeWindow: View {
             .foregroundStyle(.red)
         }
 
+        // Checkbox, not a switch. A switch communicates a persistent mode that
+        // stays where you left it; this is a one-shot action applied once when
+        // Add is pressed (design doc §2.2). The default switch style would
+        // contradict the affordance.
         Toggle("Make these settings my defaults", isOn: $model.wantsToSaveDefaults)
+          .toggleStyle(.checkbox)
 
         if model.wantsToSaveDefaults {
           Text(saveNote)
