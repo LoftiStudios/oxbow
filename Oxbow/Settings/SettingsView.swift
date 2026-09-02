@@ -56,27 +56,24 @@ struct SettingsView: View {
       // `DownloadOutput`, the intake renders exactly these two labels, and a
       // Settings window with a different vocabulary for the same preference
       // is the drift design §5 exists to prevent.
-      Picker("Download", selection: $output) {
+      Picker("Download", selection: outputBinding) {
         Text("Video + chat").tag(DownloadOutput.videoWithChat)
         Text("Video").tag(DownloadOutput.video)
       }
-      .onChange(of: output) { _, newValue in preferences.output = newValue }
 
       // The five rungs, in the order `QualityCap.allCases` already declares
       // them (best to worst) — no re-sorting needed here.
-      Picker("Quality", selection: $qualityCap) {
+      Picker("Quality", selection: qualityCapBinding) {
         ForEach(QualityCap.allCases, id: \.self) { cap in
           Text(cap.label).tag(cap)
         }
       }
-      .onChange(of: qualityCap) { _, newValue in preferences.qualityCap = newValue }
 
-      Picker("Chat text size", selection: $chatSize) {
+      Picker("Chat text size", selection: chatSizeBinding) {
         Text("Small").tag(ChatSize.small)
         Text("Medium").tag(ChatSize.medium)
         Text("Large").tag(ChatSize.large)
       }
-      .onChange(of: chatSize) { _, newValue in preferences.chatSize = newValue }
 
       LabeledContent("Save to") {
         HStack(spacing: 8) {
@@ -97,9 +94,16 @@ struct SettingsView: View {
       Section {
         Button("Restore Defaults") {
           preferences.restoreDefaults()
-          // `restoreDefaults()` clears the store; re-read every mirror from
-          // it rather than hard-coding factory values here, so this stays
-          // correct if the factory values themselves ever change.
+          // Reassigning the mirrors here writes nothing back to the store —
+          // see `outputBinding` and its siblings below for why. If this were
+          // still a plain `$output`-style binding backed by `.onChange`,
+          // this reassignment would fire it and immediately re-set
+          // `hasSavedDefaults` to true for every field that actually
+          // changed, undoing everything this button exists to undo.
+          //
+          // Re-read every mirror from the store rather than hard-coding
+          // factory values here, so this stays correct if the factory
+          // values themselves ever change.
           destination = preferences.destination
           qualityCap = preferences.qualityCap
           output = preferences.output
@@ -116,12 +120,54 @@ struct SettingsView: View {
     .background(HostWindowReader(window: $hostWindow))
   }
 
-  /// A sheet on this window, never `runModal()`. `IntakeWindow.chooseFolder()`
+  // MARK: - Bindings that write through on a user's pick, and only then
+  //
+  // **Not `$output` plus `.onChange(of:)`.** That was the first version, and
+  // it was wrong: `.onChange` fires on *any* change to the `@State` mirror,
+  // including Restore Defaults reassigning it back from the now-cleared
+  // store, and `Preferences`' setters all call `recordSave()`. So Restore
+  // Defaults' own reassignment of a field the user had actually changed
+  // would re-trigger `.onChange`, write that value straight back to the
+  // store, and set `hasSavedDefaults` to true again — undoing the one flag
+  // (§2.4) this window is supposed to be able to undo, silently, because
+  // nothing reads that flag yet to surface the bug.
+  //
+  // An explicit `Binding` whose setter writes both halves — the same shape
+  // `IntakeWindow.qualityBinding` already uses — draws exactly the
+  // distinction that matters: a `Picker` selection calls this setter, a
+  // plain `@State` reassignment from Restore Defaults does not.
+  //
+  // Binding straight through to `preferences` instead, with no mirror at
+  // all, was also considered and does not work: `Preferences`'s setters
+  // write `UserDefaults` without mutating the struct's own storage, so
+  // `@State` observes no change and the view never redraws.
+  private var outputBinding: Binding<DownloadOutput> {
+    Binding(get: { output }, set: { output = $0; preferences.output = $0 })
+  }
+
+  private var qualityCapBinding: Binding<QualityCap> {
+    Binding(get: { qualityCap }, set: { qualityCap = $0; preferences.qualityCap = $0 })
+  }
+
+  private var chatSizeBinding: Binding<ChatSize> {
+    Binding(get: { chatSize }, set: { chatSize = $0; preferences.chatSize = $0 })
+  }
+
+  /// A sheet on this window, the normal path — never `runModal()` for the
+  /// case where `hostWindow` is already known. `IntakeWindow.chooseFolder()`
   /// carries the comment explaining why: an app-modal panel appears detached
   /// from the window it belongs to and spins a nested runloop underneath
   /// SwiftUI. Same mechanism, reused rather than reinvented.
+  ///
+  /// **The nil-`hostWindow` fallback mirrors `IntakeWindow.chooseFolder()`
+  /// exactly, for the same narrow race.** `HostWindowReader` assigns
+  /// `hostWindow` via `DispatchQueue.main.async`, so there is a brief window
+  /// after the view first appears where it is still nil; that cannot happen
+  /// once the button below has actually been clicked; `runModal()` here is
+  /// the same last-resort fallback `IntakeWindow` uses in that role, not a
+  /// second competing mechanism — without it, a Choose… button pressed
+  /// during that race would silently do nothing.
   private func chooseFolder() {
-    guard let hostWindow else { return }
     let panel = NSOpenPanel()
     panel.canChooseDirectories = true
     panel.canChooseFiles = false
@@ -129,6 +175,14 @@ struct SettingsView: View {
     panel.allowsMultipleSelection = false
     panel.prompt = "Choose"
     panel.directoryURL = destination
+
+    guard let hostWindow else {
+      if panel.runModal() == .OK, let url = panel.url {
+        destination = url
+        preferences.destination = url
+      }
+      return
+    }
     panel.beginSheetModal(for: hostWindow) { response in
       guard response == .OK, let url = panel.url else { return }
       destination = url
