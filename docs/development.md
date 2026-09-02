@@ -18,6 +18,10 @@ renderer, its arguments, the intermediate encode, or the composite's bitrate:
 the renderer is not the problem, four plausible fixes are measured at
 approximately zero, and the bitrate a composite needs spans 7.5x across real
 content with nothing in the metadata predicting it.
+`docs/design/settings.md` records why a default quality is stored as a *cap*
+rather than a rendition name — renditions are named per video and some carry
+no resolution, so no name is stable across two videos — and why saving
+defaults is an explicit opt-in rather than last-used-wins.
 
 **Current state: shipping.** 0.3.0 is out, as a signed, notarized DMG built by
 `.github/workflows/release.yml` from a `v*` tag. The app downloads a VOD or
@@ -71,28 +75,23 @@ a change nothing will catch for you — click it.
 
 ### Next
 
-**The "make it good" phase.** The app does its job; what it does not yet do is
-feel like a Mac app you leave running. It has no notifications, no dock badge,
-no drag-and-drop, no URL scheme and no Settings window — there is no `Settings`
-scene and no `@AppStorage` anywhere, so every job re-asks for destination,
-quality and chat.
+**The "make it good" phase.** The app does its job. Status in the Dock and
+Notification Center shipped in 0.4.0, and defaults now stick: `Preferences`
+in `Sources/OxbowKit` stores destination, a quality cap, chat on/off and chat
+text size over an **injected** `UserDefaults` — deliberately not `@AppStorage`,
+which reaches `.standard` and would have every `xcodebuild test` writing the
+real domain. What it still has no answer for is drag-and-drop and a URL scheme.
 
 In rough order of delight per hour:
 
-1. **Status in the Dock and Notification Center** — a badge carrying queue
-   depth, a progress bar on the dock tile for the running step, and a
-   notification when a job finishes. `QueueEngine.running` is the authority on
-   what is in flight; step status is not, because `shutDown()` deliberately
-   leaves steps `.running` so the reconciler can call them interrupted.
-2. **Clipboard hand-off.** Focus the app with a Twitch link on the clipboard and
-   the intake is already filled in. `TwitchLink` already decides whether a
+1. **Clipboard hand-off.** Focus the app with a Twitch link on the clipboard
+   and the intake is already filled in. `TwitchLink` already decides whether a
    string is a link worth offering.
-3. **A Settings window.** Default destination, quality, chat on/off, chat text
-   size. Note `IntakeModel.defaultDestination`: persisting "last used folder"
-   was deliberately *not* done, and that reasoning applies to every field here.
-4. **The live disk projection.** `docs/design/composite-rate-control.md` §6.1
+2. **The live disk projection.** `docs/design/composite-rate-control.md` §6.1
    argues for it and `docs/design/disk-preflight.md` §9 records the two gaps it
    closes. The projection is already computed for the progress UI.
+3. **Drag-and-drop and a URL scheme.** Drop a link on the window or the Dock
+   icon; register `oxbow://` so a browser extension or a Shortcut can hand off.
 
 Then the Homebrew tap, and the native-renderer spike, which wants its own
 design doc before any code.
