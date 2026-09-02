@@ -880,10 +880,10 @@ extension VideoInfo {
       StreamQuality(name: "720p60", resolution: "1280x720", bitsPerSecond: 3_411_940),
       StreamQuality(name: "480p30", resolution: "852x480", bitsPerSecond: 1_427_697),
     ],
-    thumbnailURL: URL(string: """
+    thumbnailURLs: [URL(string: """
       https://static-cdn.jtvnw.net/cf_vods/d2nvs31859zcd8/\
       5652d9d62faa525b5c68_leighxp_317872278872_1786573193//thumb/thumb0-320x180.jpg
-      """))
+      """)!])
 }
 
 /// The sheet as it opens: chat included, since that is the default.
@@ -921,7 +921,7 @@ extension VideoInfo {
     qualities: [
       StreamQuality(name: "1080p60", resolution: "1920x1080", bitsPerSecond: 6_264_272),
     ],
-    thumbnailURL: nil,
+    thumbnailURLs: [],
     hasDownloadableChat: false)
   let model = previewModel(
     link: "https://clips.twitch.tv/AdorableStylishPotatoPlanking-5UAS4GFYHTkDW4xX",
@@ -943,7 +943,7 @@ extension VideoInfo {
     qualities: [
       StreamQuality(name: "720p0-1", resolution: "", bitsPerSecond: 0),
     ],
-    thumbnailURL: nil)
+    thumbnailURLs: [])
   let model = previewModel(link: "https://clips.twitch.tv/TangibleGiantPancakeKappa", info: clipInfo)
   model.output = .videoWithChat
   model.quality = "720p0-1"
@@ -1036,7 +1036,7 @@ extension VideoInfo {
     qualities: [
       StreamQuality(name: "1080p60", resolution: "1920x1080", bitsPerSecond: 6_184_466),
     ],
-    thumbnailURL: nil)
+    thumbnailURLs: [])
   let model = previewModel(info: info, optionsExpanded: true)
   model.qualityCap = .p720
   model.wantsToSaveDefaults = true
@@ -1059,7 +1059,7 @@ extension VideoInfo {
     qualities: [
       StreamQuality(name: "1080p60", resolution: "1920x1080", bitsPerSecond: 6_264_272),
     ],
-    thumbnailURL: nil,
+    thumbnailURLs: [],
     hasDownloadableChat: false)
   let model = previewModel(
     link: "https://clips.twitch.tv/AdorableStylishPotatoPlanking-5UAS4GFYHTkDW4xX",
