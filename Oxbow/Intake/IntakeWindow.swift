@@ -84,8 +84,8 @@ struct IntakeWindow: View {
     // Turning on chat or trim adds a section to a form whose footer is pinned,
     // so the new section arrives below the fold — the one you just asked for is
     // the one you cannot see. Grow the window to meet it.
-    .onChange(of: desiredContentHeight) { _, wanted in grow(toFit: wanted) }
-    .onChange(of: hostWindow) { _, _ in grow(toFit: desiredContentHeight) }
+    .onChange(of: desiredContentHeight) { _, wanted in resize(toFit: wanted) }
+    .onChange(of: hostWindow) { _, _ in resize(toFit: desiredContentHeight) }
     // The scene outlives the window, so closing it has to do what dismissing
     // a sheet would have done for free. See `IntakeModel.reset()` — and, for
     // the open half of the same problem, `reseedFromPreferences()` above.
@@ -362,19 +362,14 @@ struct IntakeWindow: View {
       }
     } footer: {
       // Outside the `DisclosureGroup` on purpose — see the doc comment
-      // above `options`. Visible whether the panel is open or shut: this is
-      // where the deleted Name section's own footer content now lives
-      // (§1) — the delivered filename and the collision warning — alongside
-      // `spaceWarning`, which was already here.
+      // above `options`. Visible whether the panel is open or shut: the
+      // collision warning belongs here alongside `spaceWarning`, which was
+      // already here. The delivered filename used to sit above them and no
+      // longer does — the Save panel is where a name is chosen and shown,
+      // and repeating it here restated something the user had just typed
+      // while being the one row in this window whose height nobody could
+      // predict, because it wraps with the stream's own title.
       VStack(alignment: .leading, spacing: 8) {
-        // What this job will actually write, now that naming an output
-        // happens in the Save panel (§2) rather than in a text field on
-        // this screen — so this caption is not a guess, it is the name
-        // `model.name` already holds.
-        Text(exampleFilenames)
-          .font(.caption)
-          .foregroundStyle(.secondary)
-
         if let collision = model.destinationCollision {
           // Orange, not red: nothing is wrong and nothing is blocked. Red is
           // reserved for `addFailure` below, where the sheet is refusing.
@@ -603,25 +598,35 @@ struct IntakeWindow: View {
     }
   }
 
-  // MARK: - Growing to fit
+  // MARK: - Sizing to fit
 
   /// How much room the form wants for what is currently on screen.
   ///
-  /// **Floors, not layout arithmetic.** These are deliberately approximate: the
-  /// window is only ever grown, never shrunk, so an over-estimate costs a
-  /// little slack under the last row and an under-estimate leaves the form
-  /// scrolling as it does today. Measuring the real content height would mean
-  /// reaching inside a `Form`'s scroll view, which SwiftUI does not offer and
-  /// which would break the moment the form style changed.
+  /// **Estimates, not layout arithmetic** — but they are now load-bearing in
+  /// both directions. They began as floors, back when the window only ever
+  /// grew: an over-estimate cost a little slack under the last row and cost
+  /// nothing else. Now that closing a disclosure shrinks the window again,
+  /// an over-estimate is a visible gap above the buttons and an
+  /// under-estimate leaves the form scrolling, so each number below is worth
+  /// checking on screen rather than reasoning about.
+  ///
+  /// Measuring the real content height instead would mean reaching inside a
+  /// `Form`'s scroll view, which SwiftUI does not offer and which would break
+  /// the moment the form style changed. That is still the right answer if
+  /// these numbers ever start needing per-state special cases.
   private var desiredContentHeight: CGFloat {
     // Raised from the old horizontal card's 600: the thumbnail now spans the
     // form's width at 16:9 instead of sitting fixed at 90pt tall beside the
     // title, which is the single biggest addition to what's on screen by
     // default — a floor, like the rest of this function, not a measurement.
-    var height: CGFloat = 720
+    // Measured on screen against a two-line title, not derived: with both
+    // disclosures shut, the form ends here and the buttons sit directly
+    // under it. A one-line title leaves a little slack, which is the right
+    // way round — slack is a small gap, a shortfall is a clipped row.
+    var height: CGFloat = 640
     // **As soon as the link parses, not once metadata settles.** Everything
     // below is a floor for content that appears when the fetch answers — but
-    // `grow(toFit:)` animates, so waiting for the answer meant the window
+    // `resize(toFit:)` animates, so waiting for the answer meant the window
     // resized twice for one paste: once as the loading card appeared, then
     // again 120pt taller a second later as the options drawer arrived. Two
     // animated resizes for one action read as the window rendering twice.
@@ -630,9 +635,9 @@ struct IntakeWindow: View {
     // expansion comes from preferences, and `chatProblem` is nil until there
     // is an `info` or a failure to make it otherwise — so the branch below
     // evaluates the same before and after. A link that then fails, or whose
-    // chat turns out to be unavailable, leaves the window 120pt taller than
-    // it strictly needs; `grow(toFit:)` never shrinks anyway, so that was
-    // already true the moment any drawer opened once.
+    // chat turns out to be unavailable, is 120pt taller than it strictly
+    // needs until something else changes the height — the cost of sizing
+    // once per paste rather than twice.
     guard model.target != nil else { return height }
     if model.output == .videoWithChat, model.chatProblem == nil,
        model.isOptionsEffectivelyExpanded
@@ -643,9 +648,16 @@ struct IntakeWindow: View {
       // `options` is actually expanded — the same way the trim bump below
       // is gated on `isTrimExpanded`. Growing the window for either while
       // the panel is collapsed would open a gap under a closed drawer.
-      height += 120
+      // Measured the same way, and much larger than the 120 it replaced:
+      // that number dates from when the drawer held only the chat-size
+      // picker and the encode note. The destination row and the defaults
+      // checkbox moved inside it since, and nobody re-measured.
+      height += 200
     }
-    if model.showsTrimOptions, model.isTrimExpanded { height += 165 }
+    // 100, not the 165 this started at: measured on screen with both
+    // disclosures open, where 165 left a visible band of empty window above
+    // the buttons. The timeline and its two labels are all that opens here.
+    if model.showsTrimOptions, model.isTrimExpanded { height += 100 }
     return height
   }
 
@@ -656,12 +668,29 @@ struct IntakeWindow: View {
   /// stops at the bottom of the screen and never shrinks — a window the user
   /// has sized up is theirs, and collapsing a section is not a request to lose
   /// that space.
-  private func grow(toFit wanted: CGFloat) {
+  /// Sizes the window to what the form currently wants — in both directions.
+  ///
+  /// **Shrinking matters as much as growing now that both sections are
+  /// disclosures.** While this only grew, opening Trim and then closing it
+  /// again left the window 165pt taller than its contents forever, and a
+  /// window that ratchets up every time you look inside something is worse
+  /// than one that never resizes at all.
+  ///
+  /// The origin moves by the same delta so the **title bar stays put** and
+  /// the window grows and shrinks from its bottom edge. Growing downward is
+  /// what a window opening a section should do; growing upward would walk the
+  /// window up the screen a section at a time.
+  ///
+  /// This does override a height the user dragged to themselves, which is the
+  /// price of sizing to content at all — it was already true of growing, and
+  /// making it symmetric does not make it more true.
+  private func resize(toFit wanted: CGFloat) {
     guard let hostWindow, let screen = hostWindow.screen ?? NSScreen.main else { return }
     let chrome = hostWindow.frame.height - hostWindow.contentLayoutRect.height
     let target = min(wanted + chrome, screen.visibleFrame.height)
     let delta = target - hostWindow.frame.height
-    guard delta > 0 else { return }
+    // A point either way is not worth an animation.
+    guard abs(delta) > 1 else { return }
 
     var frame = hostWindow.frame
     frame.size.height = target
@@ -765,17 +794,6 @@ struct IntakeWindow: View {
   // said "Video + chat" while its own expanded picker, reading this
   // property, said "Clip + chat". One answer now, on the model.
   private var isClip: Bool { model.isClip }
-
-  /// What this job will actually write. Naming happens in the Save panel
-  /// now (§2), not in a text field on this screen, so this caption is what
-  /// tells the user the name they typed there survived intact.
-  ///
-  /// One line always: `.video` and `.videoWithChat` both produce exactly one
-  /// file, sharing the same suffix — a composite replaces the video it
-  /// stacks rather than accompanying it.
-  private var exampleFilenames: String {
-    model.outputBaseName + OutputSuffix.video
-  }
 
 }
 
