@@ -219,12 +219,19 @@ private func thumbnailPlaceholderSymbol(_ name: String) -> some View {
 /// **Why a drift, not just a fade.** A still that only cross-fades reads as
 /// a slideshow. A still that also scales and pans very slightly reads as
 /// footage, which is the entire point of showing a VOD's own sampled frames
-/// instead of a single static thumbnail. `scaleEffect`'s `anchor` alternates
-/// between `.leading` and `.trailing` frame to frame — zooming toward one
-/// edge and then the other — so a four-frame loop never settles into a
-/// visible bias toward one side. Linear easing within a frame's dwell,
-/// because an ease-in-out here reads as the image breathing rather than
-/// drifting.
+/// instead of a single static thumbnail. Linear easing within a frame's
+/// dwell, because an ease-in-out here reads as the image breathing rather
+/// than drifting.
+///
+/// **One anchor for every frame, not an alternating one.** The first version
+/// flipped `scaleEffect`'s `anchor` between `.leading` and `.trailing` frame
+/// to frame, on the theory that always zooming toward the same edge would
+/// give a four-frame loop a visible bias to one side. It does — and that
+/// bias is cheaper than the alternative, because flipping the direction at
+/// every cut is a second source of movement on top of the cut and the drift,
+/// and the eye catches a reversal far more readily than a constant slow
+/// travel. A consistent `.leading` reads as one unhurried push in one
+/// direction; the alternating version read as fidgeting.
 ///
 /// **Why `.task`, not a `Timer`.** The loop has to stop the moment this view
 /// leaves the hierarchy — a closed intake window must not leave a repeating
@@ -283,7 +290,7 @@ struct FilmstripThumbnail: View {
               frameContent(loadedFrames[index])
                 .scaleEffect(
                   index < frameScales.count ? frameScales[index] : 1,
-                  anchor: index.isMultiple(of: 2) ? .leading : .trailing)
+                  anchor: .leading)
                 .opacity(index == currentFrame ? 1 : 0)
             }
           }
