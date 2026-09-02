@@ -142,6 +142,73 @@ struct IntakeModelTests {
     #expect(model.destinationFellBack)
   }
 
+  // MARK: - Reseeding on open
+
+  /// The bug: Add Download is one `Window` for the app's whole run, seeded
+  /// once at construction and re-seeded only by `reset()`, which fires once
+  /// per *close*. A Settings change made between a close and the next open —
+  /// the ordinary sequence, not an edge case — never reaches the model until
+  /// `reseedFromPreferences()` reads the store again on open.
+  @Test func reseedFromPreferencesPicksUpAStoreChangedSinceConstruction() {
+    let suite = UserDefaults(suiteName: "Reseed-\(UUID().uuidString)")!
+    var store = Preferences(
+      defaults: suite, homeDirectory: URL(filePath: "/Users/t"),
+      directoryExists: { _ in true })
+    store.qualityCap = .best
+    store.output = .videoWithChat
+    store.chatSize = .medium
+    store.destination = URL(filePath: "/Users/someone/Movies")
+    store.optionsPanelIsExpanded = true
+
+    let model = makeModel(preferences: store)
+    #expect(model.qualityCap == .best, "precondition: seeded at construction")
+
+    // Stands in for Settings writing to the same store while this window is
+    // closed — a second `Preferences` value over the same suite, the same
+    // technique `resetRereadsDestinationFellBackFromTheStoreRatherThanKeeping-
+    // InitsAnswer` above uses for the identical reason.
+    var mutator = store
+    mutator.qualityCap = .p480
+    mutator.output = .video
+    mutator.chatSize = .small
+    mutator.destination = URL(filePath: "/Users/someone/Archive")
+    mutator.optionsPanelIsExpanded = false
+
+    model.reseedFromPreferences()
+
+    #expect(model.qualityCap == .p480)
+    #expect(model.output == .video)
+    #expect(model.chatSize == .small)
+    #expect(model.folder == URL(filePath: "/Users/someone/Archive"))
+    #expect(model.isOptionsExpanded == false)
+  }
+
+  /// `reseedFromPreferences()` is deliberately narrower than `reset()`: it
+  /// runs on *open*, where a link may already be typed or a fetch already
+  /// settled, and clobbering that would trade one bug for another. Every
+  /// field `reset()` clears is asserted here to survive untouched instead.
+  @Test func reseedFromPreferencesLeavesTheInProgressVideoAlone() async {
+    let model = await loadedModel()
+    model.trimStartText = "00:01:00"
+    model.trimEndText = "00:02:00"
+    model.wantsToSaveDefaults = true
+    let linkBefore = model.linkText
+    let nameBefore = model.name
+    let qualityBefore = model.quality
+    #expect(!linkBefore.isEmpty, "precondition")
+    #expect(model.hasSettledMetadata, "precondition")
+
+    model.reseedFromPreferences()
+
+    #expect(model.linkText == linkBefore)
+    #expect(model.name == nameBefore)
+    #expect(model.quality == qualityBefore)
+    #expect(model.trimStartText == "00:01:00")
+    #expect(model.trimEndText == "00:02:00")
+    #expect(model.wantsToSaveDefaults)
+    #expect(model.hasSettledMetadata, "metadata is untouched, not idled the way reset() idles it")
+  }
+
   // MARK: - Quality, both directions
 
   @Test func metadataResolvesTheCapIntoARendition() async {

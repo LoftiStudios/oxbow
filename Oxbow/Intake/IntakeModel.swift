@@ -268,7 +268,8 @@ final class IntakeModel {
   /// are the same bug, and this is the one place that fixes both.
   ///
   /// `folder`, `output`, `chatSize`, `qualityCap` and `isOptionsExpanded`
-  /// come back from the preference store rather than surviving in place.
+  /// come back from the preference store rather than surviving in place —
+  /// see `reseedFromPreferences()`, which is what actually does that read.
   /// They used to be preserved here with a paragraph explaining that they
   /// answer how the user works rather than anything about this video — which
   /// was right, and which this is the conclusion of: that was a
@@ -278,12 +279,7 @@ final class IntakeModel {
     linkText = ""
     name = ""
     quality = ""
-    qualityCap = preferences.qualityCap
-    output = preferences.output
-    chatSize = preferences.chatSize
-    folder = preferences.destination
-    destinationFellBack = preferences.storedDestinationIsMissing
-    isOptionsExpanded = preferences.optionsPanelIsExpanded
+    reseedFromPreferences()
     wantsToSaveDefaults = false
     isTrimExpanded = false
     trimStartText = ""
@@ -294,6 +290,43 @@ final class IntakeModel {
     // Invalidates a fetch still in flight the same way a new link does, so a
     // late arrival cannot settle metadata into the form it just emptied.
     generation += 1
+  }
+
+  /// Re-reads the four standing preferences — plus the panel's own persisted
+  /// expansion and the stale-destination flag derived from it — from the
+  /// store, touching nothing about whatever video is currently on screen.
+  ///
+  /// **Why `reset()` on close is not enough by itself.** Add Download is a
+  /// `Window`, not a `WindowGroup` (see `reset()`'s own comment), so it is
+  /// only ever seeded once, at construction, and re-seeded whenever `reset()`
+  /// fires — which is `.onDisappear`, i.e. once per *close*. That reseeds a
+  /// window that is about to show a blank form for its next video, which is
+  /// exactly right when the next thing to happen is a fresh Add. But it does
+  /// nothing for the ordinary sequence of close the intake, open Settings,
+  /// change something, close Settings, reopen the intake: the reseed already
+  /// happened at the first close, nothing re-runs it before the second open,
+  /// and the model sits on the Settings change every field it seeded from
+  /// still describes the value *before* that edit. `IntakeWindow` calls this
+  /// from `.onAppear`, before the clipboard prefill, so every open re-reads
+  /// the store regardless of whether anything changed.
+  ///
+  /// **Deliberately narrower than `reset()`.** `reset()` also clears
+  /// `linkText`, `name`, `quality`, the trim fields and
+  /// `wantsToSaveDefaults` — all correct there, because `reset()` only ever
+  /// runs between one video and the next. An open, by contrast, can land on
+  /// a window that already has a link typed or a fetch in flight (the
+  /// window does not always start from a close), and clobbering that would
+  /// be a second bug in the same neighbourhood as the one this fixes. So this
+  /// touches only the fields a fresh video does not own: the four
+  /// preferences, the panel's persisted expansion, and the fallback flag
+  /// that is a pure function of the destination the store just handed back.
+  func reseedFromPreferences() {
+    qualityCap = preferences.qualityCap
+    output = preferences.output
+    chatSize = preferences.chatSize
+    folder = preferences.destination
+    destinationFellBack = preferences.storedDestinationIsMissing
+    isOptionsExpanded = preferences.optionsPanelIsExpanded
   }
 
   // MARK: - The link

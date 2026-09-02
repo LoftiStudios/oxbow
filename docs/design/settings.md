@@ -505,6 +505,22 @@ Would need dirty-field tracking on every field to avoid overwriting what the
 user just typed, to fix a situation that requires opening Settings while a
 half-filled intake is up. Preferences take effect at the next reset.
 
+That rejection is about the intake staying open while Settings changes
+something out from under it — it says nothing about the far more ordinary
+sequence: close the intake, open Settings, change a default, close Settings,
+reopen the intake. `reset()` alone does not cover that either, because it
+only fires `.onDisappear`, once per close — it reseeds the window for its
+*next* video, not for its *next open*, and those are different moments
+whenever Settings is what happened in between. `IntakeModel.reseedFromPreferences()`
+is the fix: `IntakeWindow` calls it `.onAppear`, before the clipboard prefill,
+so every open re-reads the store regardless of whether the previous close
+already had. This is not the live-sync this section rejects — it never runs
+while the window is open and a video is mid-flight, only at the moment a new
+open begins, and it touches none of the fields a fresh video owns (link,
+name, quality, trim, the checkbox) the way `reset()` does. No dirty-field
+tracking is needed because nothing on screen is ever overwritten while it is
+being looked at.
+
 ### 10.6 Per-field save checkboxes
 
 See §4.1.

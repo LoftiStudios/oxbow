@@ -70,14 +70,25 @@ struct IntakeWindow: View {
     .frame(minWidth: 460, minHeight: 320)
     .background(HostWindowReader(window: $hostWindow))
     .defaultFocus($isLinkFocused, true)
-    .onAppear(perform: prefillFromClipboard)
+    // Re-reads the four standing preferences before anything else runs, so a
+    // Settings change made while the window was closed is on screen the
+    // moment it reopens rather than only after the *next* close — see
+    // `IntakeModel.reseedFromPreferences()`. Ordered before the clipboard
+    // prefill below on general principle (seed from the store, then let the
+    // clipboard override the one field it owns), though the two do not
+    // actually touch overlapping fields today.
+    .onAppear {
+      model.reseedFromPreferences()
+      prefillFromClipboard()
+    }
     // Turning on chat or trim adds a section to a form whose footer is pinned,
     // so the new section arrives below the fold — the one you just asked for is
     // the one you cannot see. Grow the window to meet it.
     .onChange(of: desiredContentHeight) { _, wanted in grow(toFit: wanted) }
     .onChange(of: hostWindow) { _, _ in grow(toFit: desiredContentHeight) }
     // The scene outlives the window, so closing it has to do what dismissing
-    // a sheet would have done for free. See `IntakeModel.reset()`.
+    // a sheet would have done for free. See `IntakeModel.reset()` — and, for
+    // the open half of the same problem, `reseedFromPreferences()` above.
     .onDisappear(perform: model.reset)
     // Debounced here rather than in the model so the model stays synchronous
     // to test: `.task(id:)` already cancels the previous fetch when the link
