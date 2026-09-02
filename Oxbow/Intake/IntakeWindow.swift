@@ -165,7 +165,7 @@ struct IntakeWindow: View {
   /// `isOptionsEffectivelyExpandedBinding`, which is what keeps the forced,
   /// transient expansion from ever reaching the stored preference.
   ///
-  /// **`spaceWarning` is deliberately NOT inside the `DisclosureGroup`.**
+  /// **`spaceWarning` is deliberately NOT inside the collapsible section.**
   /// It started there, reasoning that because it is advisory
   /// — it does not gate Add, so it should not join `chatProblem` and
   /// `compositeProblem` in forcing the panel open — it was fine to leave it
@@ -197,9 +197,9 @@ struct IntakeWindow: View {
   /// about the destination the way `spaceWarning` is, and it now sits below
   /// the checkbox, inside the drawer. The cost is real and accepted: it is
   /// invisible on the collapsed path, which is most downloads (§2.6).
+  @ViewBuilder
   private var options: some View {
-    Section {
-      DisclosureGroup(isExpanded: $model.isOptionsEffectivelyExpandedBinding) {
+    Section(isExpanded: $model.isOptionsEffectivelyExpandedBinding) {
         // Two choices, not three independent toggles: a chat render in
         // isolation has little use, and the composite is what makes it worth
         // producing at all (design doc §3). `DownloadOutput` already
@@ -216,12 +216,6 @@ struct IntakeWindow: View {
           Text(isClip ? "Clip + chat" : "Video + chat").tag(DownloadOutput.videoWithChat)
           Text(isClip ? "Clip" : "Video").tag(DownloadOutput.video)
         }
-        .padding(.vertical, 4)
-
-        // Thin rules between the panel's own rows, matching the mockup —
-        // `Form`'s grouped style draws nothing between two `Picker`s in the
-        // same `Section` on its own.
-        Divider()
 
         // Directly under the picker: the quality is a property of the media
         // download, and nothing else on this sheet reads it. Bound through
@@ -235,14 +229,11 @@ struct IntakeWindow: View {
             Text(model.label(for: quality)).tag(quality.name)
           }
         }
-        .padding(.vertical, 4)
 
         // `chatProblem == nil` as well as the output: offering a text size
         // for chat that cannot be downloaded, above a row explaining that it
         // cannot, is a control for something that will never happen.
         if model.output == .videoWithChat, model.chatProblem == nil {
-          Divider()
-
           // The one control the deleted render-options form left behind (see
           // docs/design/compositing.md §4, §8): a fixed size cannot serve
           // both a laptop window and a TV across the room. Rendered as a
@@ -255,19 +246,9 @@ struct IntakeWindow: View {
             Text("Medium").tag(ChatSize.medium)
             Text("Large").tag(ChatSize.large)
           }
-          .padding(.vertical, 4)
         }
 
-        // Carries the same rule and padding treatment as the three rows
-        // above, rather than stopping at `Chat text size` — `Save to` is a
-        // fourth row of the same shape (§2.1's mockup), not an appendix to
-        // the pickers above it.
-        Divider()
-
         destination
-          .padding(.vertical, 4)
-
-        Divider()
 
         // Stays inside the drawer, unlike `spaceWarning` below — §2.6 names
         // this exact user (a saved destination that has since vanished) and
@@ -347,7 +328,17 @@ struct IntakeWindow: View {
             .font(.caption)
             .foregroundStyle(.secondary)
         }
-      } label: {
+    } header: {
+        // **The header is made tappable by hand.** `Section(isExpanded:)`
+        // draws the chevron and animates the content, but in a `.grouped`
+        // `Form` on macOS its header is not itself interactive — verified by
+        // clicking one and watching nothing happen. Without this the only
+        // hit area is the chevron glyph, which is a hard target and the
+        // single biggest reason this panel felt fiddly.
+        //
+        // `Spacer` + `contentShape` is what makes the whole strip clickable
+        // rather than just the text: a bare `HStack` of two labels is only
+        // as wide as its labels.
         HStack {
           Text("Download Options")
           // Only when collapsed: an expanded panel already shows every one
@@ -358,10 +349,24 @@ struct IntakeWindow: View {
               .font(.caption)
               .foregroundStyle(.secondary)
           }
+          Spacer(minLength: 0)
         }
-      }
-    } footer: {
-      // Outside the `DisclosureGroup` on purpose — see the doc comment
+        .contentShape(Rectangle())
+        .onTapGesture { model.isOptionsEffectivelyExpandedBinding.toggle() }
+    }
+
+    // Was the options `Section`'s `footer:`. `Section(isExpanded:)` has no
+    // footer variant, and these belong outside the drawer anyway — a warning
+    // that scrolls away with the section it hangs off is a warning that gets
+    // missed.
+    //
+    // Conditional on there being something to say: a `Section` with no
+    // visible content still draws its box in a grouped `Form`, which read as
+    // an empty panel hanging under the options for the common case where
+    // nothing is wrong.
+    if model.destinationCollision != nil || model.spaceWarning != nil {
+      Section {
+      // Outside the collapsible section on purpose — see the doc comment
       // above `options`. Visible whether the panel is open or shut: the
       // collision warning belongs here alongside `spaceWarning`, which was
       // already here. The delivered filename used to sit above them and no
@@ -398,9 +403,10 @@ struct IntakeWindow: View {
             }
           }
         }
+        }
+        .fixedSize(horizontal: false, vertical: true)
+        .frame(maxWidth: .infinity, alignment: .leading)
       }
-      .fixedSize(horizontal: false, vertical: true)
-      .frame(maxWidth: .infinity, alignment: .leading)
     }
   }
 
@@ -432,12 +438,11 @@ struct IntakeWindow: View {
   /// `Metadata failed` preview below already reaches, since `showsTrimOptions`
   /// keys off the parsed link rather than off `info`.
   private var trim: some View {
-    Section {
-      // Closing this undoes nothing — it hides the controls and that is all.
-      // Which is why the label carries the range: a section quietly applying a
-      // trim while showing nothing would be exactly the hidden state a
-      // disclosure triangle is so easily mistaken for.
-      DisclosureGroup(isExpanded: $model.isTrimExpanded) {
+    // Closing this undoes nothing — it hides the controls and that is all.
+    // Which is why the header carries the range: a section quietly applying a
+    // trim while showing nothing would be exactly the hidden state a
+    // disclosure triangle is so easily mistaken for.
+    Section(isExpanded: $model.isTrimExpanded) {
         if let duration = model.info?.duration {
           TrimTimeline(
             duration: duration,
@@ -494,16 +499,19 @@ struct IntakeWindow: View {
             .font(.caption)
             .foregroundStyle(.red)
         }
-      } label: {
-        HStack(spacing: 8) {
-          Text("Trim")
-          if let summary = model.trimSummary {
-            Text(summary)
-              .foregroundStyle(.secondary)
-              .monospacedDigit()
-          }
+    } header: {
+      // Same hand-rolled hit area as `options` — see the comment there.
+      HStack(spacing: 8) {
+        Text("Trim")
+        if let summary = model.trimSummary {
+          Text(summary)
+            .foregroundStyle(.secondary)
+            .monospacedDigit()
         }
+        Spacer(minLength: 0)
       }
+      .contentShape(Rectangle())
+      .onTapGesture { model.isTrimExpanded.toggle() }
     }
   }
 
@@ -652,7 +660,7 @@ struct IntakeWindow: View {
       // that number dates from when the drawer held only the chat-size
       // picker and the encode note. The destination row and the defaults
       // checkbox moved inside it since, and nobody re-measured.
-      height += 200
+      height += 230
     }
     // 100, not the 165 this started at: measured on screen with both
     // disclosures open, where 165 left a visible band of empty window above
