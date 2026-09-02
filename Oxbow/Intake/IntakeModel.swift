@@ -719,6 +719,16 @@ final class IntakeModel {
     return !info.hasDownloadableChat
   }
 
+  /// Spec §3.7's shape, for a different field: the chat text size picker only
+  /// renders while `output == .videoWithChat` (see `IntakeWindow`), so
+  /// saving it while `.video` is selected would write a value from a control
+  /// nobody on screen can currently see. Unlike `withholdsOutputFromSave`,
+  /// this reads the plain `output` on screen rather than accounting for
+  /// `chatProblem` — there is no equivalent workaround case here: switching
+  /// to `.video` because of a refusal hides the same picker for the same
+  /// reason a deliberate switch does, so one condition covers both.
+  var withholdsChatSizeFromSave: Bool { output != .videoWithChat }
+
   /// True once *this link's* fetch has settled either way. `.failed` counts:
   /// the sheet stays usable, with a name derived from the id or slug.
   var hasSettledMetadata: Bool {
@@ -1000,8 +1010,13 @@ final class IntakeModel {
   /// user did not complete.
   func saveDefaultsIfRequested() {
     guard wantsToSaveDefaults else { return }
+    // Read before any of the writes below — they all call
+    // `Preferences.recordSave()`, which flips `hasSavedDefaults` to true, so
+    // reading it after even one of them would make every save look like the
+    // first.
+    let isFirstSave = !preferences.hasSavedDefaults
     if let folder { preferences.destination = folder }
-    preferences.chatSize = chatSize
+    if !withholdsChatSizeFromSave { preferences.chatSize = chatSize }
     if !withholdsOutputFromSave { preferences.output = output }
     // Writes `qualityCap` itself, never a recomputation from `quality`.
     // `selectQuality` is the only thing that ever changes `qualityCap`, and
@@ -1014,9 +1029,12 @@ final class IntakeModel {
     // it with that rendition's own bucket.
     preferences.qualityCap = qualityCap
     // The visible payoff for opting in, tied to an explicit act so it reads
-    // as cause and effect rather than as the app moving furniture. Once only:
-    // after this the panel is whatever the user last left it.
-    isOptionsExpanded = false
+    // as cause and effect rather than as the app moving furniture. Once
+    // only, on the save that first sets `hasSavedDefaults` — a later save
+    // must leave the panel exactly where the user put it, or every
+    // subsequent Add would quietly re-collapse a panel someone had
+    // deliberately reopened.
+    if isFirstSave { isOptionsExpanded = false }
   }
 
   // MARK: - Failure text

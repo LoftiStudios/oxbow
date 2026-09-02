@@ -135,6 +135,14 @@ about it demands the drawer itself, only that it stay visible. Moving it back
 inside the panel silently reintroduces the exact failure `disk-preflight.md`
 §1 opens with, aimed at precisely the person §2.5 collapses the panel for.
 
+The encode-duration note ("Chat is rendered in a column beside the video and
+encoded into one file. This takes roughly as long as the stream itself.")
+lives in the same footer, for the same reason. `.videoWithChat` is the
+factory default, so the note explaining that a composite takes as long as
+the stream itself has to survive the one place most downloads actually take
+— collapsed, chat included — or nobody sees it until the queue has already
+sat "in progress" long enough to look stuck.
+
 ### 2.7 A collapsed panel must not hide a refusal
 
 Some videos cannot deliver what the default asks for. A clip carries no chat of
@@ -269,6 +277,15 @@ reaches the picker with an empty `resolution`. There is no size to bucket.
 Save the other three fields, leave the stored cap untouched, and say which one
 did not save. Blocking the whole checkbox over one unbucketable field would
 punish the user for Twitch's metadata.
+
+The same rule applies to chat text size, for a different reason: the picker
+that sets it only renders while `output == .videoWithChat` (§2.1's mockup), so
+once `.video` is selected there is no control on screen to have produced a
+value worth saving. Saving whatever `chatSize` last held anyway would write
+from a control the user cannot see and the checkbox's footnote never
+mentioned — `IntakeModel.withholdsChatSizeFromSave` withholds it, saves the
+other three, and the footnote says which one did not save, the same shape as
+the unbucketable-quality case above.
 
 ### 3.8 The bucket is shown at the moment it is chosen
 

@@ -201,6 +201,13 @@ struct IntakeWindow: View {
   /// the collision warning under the name field, which never moved into the
   /// panel to begin with. `destinationFellBack` stays inside deliberately —
   /// see its own comment below.
+  ///
+  /// **The encode-duration note joins it in the footer, for the identical
+  /// reason.** `.videoWithChat` is the factory default and collapsed is the
+  /// steady state, so a note that only rendered inside the drawer was hidden
+  /// on the default path through this window — nobody told that a composite
+  /// takes roughly as long as the stream itself, on the one run where they
+  /// never opened the panel to find out.
   private var options: some View {
     Section {
       DisclosureGroup(isExpanded: $model.isOptionsEffectivelyExpandedBinding) {
@@ -250,14 +257,6 @@ struct IntakeWindow: View {
             Text("Large").tag(ChatSize.large)
           }
           .pickerStyle(.segmented)
-
-          // Not decoration: a six-hour stream is roughly 75 minutes of
-          // encoding, and a user who is not told that reads a busy queue as a
-          // hang.
-          Text("Chat is rendered in a column beside the video and encoded into "
-            + "one file. This takes roughly as long as the stream itself.")
-            .font(.caption)
-            .foregroundStyle(.secondary)
         }
 
         destination
@@ -324,27 +323,43 @@ struct IntakeWindow: View {
       // Outside the `DisclosureGroup` on purpose — see the doc comment
       // above `options`. Visible whether the panel is open or shut, the
       // same treatment the collision warning under the name field gets.
-      if let warning = model.spaceWarning {
-        VStack(alignment: .leading, spacing: 2) {
-          // Orange, matching the overwrite caution under the name field:
-          // nothing is wrong and nothing is blocked. Red belongs to
-          // `addFailure`, where the sheet is actually refusing.
-          Label(spaceWarningText(warning), systemImage: "externaldrive.badge.exclamationmark")
+      VStack(alignment: .leading, spacing: 8) {
+        // Not decoration: a six-hour stream is roughly 75 minutes of
+        // encoding, and a user who is not told that reads a busy queue as a
+        // hang. `.videoWithChat` is the factory default and collapsed is the
+        // steady state (§2.6), so the default path used to be exactly the
+        // one where nobody saw this — moved out here, alongside
+        // `spaceWarning` below, for the same reason that one lives outside
+        // the drawer.
+        if model.output == .videoWithChat, model.chatProblem == nil {
+          Text("Chat is rendered in a column beside the video and encoded into "
+            + "one file. This takes roughly as long as the stream itself.")
             .font(.caption)
-            .foregroundStyle(.orange)
-          if let remedy = warning.remedy {
-            // The actionable half, and the reason this is a warning worth
-            // showing at all. Indented under the label's text rather than its
-            // icon so the two read as one block.
-            Text(remedyText(remedy))
+            .foregroundStyle(.secondary)
+        }
+
+        if let warning = model.spaceWarning {
+          VStack(alignment: .leading, spacing: 2) {
+            // Orange, matching the overwrite caution under the name field:
+            // nothing is wrong and nothing is blocked. Red belongs to
+            // `addFailure`, where the sheet is actually refusing.
+            Label(spaceWarningText(warning), systemImage: "externaldrive.badge.exclamationmark")
               .font(.caption)
-              .foregroundStyle(.secondary)
-              .padding(.leading, 18)
+              .foregroundStyle(.orange)
+            if let remedy = warning.remedy {
+              // The actionable half, and the reason this is a warning worth
+              // showing at all. Indented under the label's text rather than
+              // its icon so the two read as one block.
+              Text(remedyText(remedy))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .padding(.leading, 18)
+            }
           }
         }
-        .fixedSize(horizontal: false, vertical: true)
-        .frame(maxWidth: .infinity, alignment: .leading)
       }
+      .fixedSize(horizontal: false, vertical: true)
+      .frame(maxWidth: .infinity, alignment: .leading)
     }
   }
 
@@ -363,6 +378,9 @@ struct IntakeWindow: View {
     if let rung = model.savedQualityNote { parts.append("Saved as \(rung.label).") }
     if model.withholdsOutputFromSave {
       parts.append("Whether to include chat will not be saved from this video.")
+    }
+    if model.withholdsChatSizeFromSave {
+      parts.append("Chat text size will not be saved from this video.")
     }
     parts.append("You can change these any time in Settings.")
     return parts.joined(separator: " ")
@@ -544,15 +562,16 @@ struct IntakeWindow: View {
   private var desiredContentHeight: CGFloat {
     var height: CGFloat = 600
     guard model.hasSettledMetadata else { return height }
-    // Gated on the panel actually being open, the same way the trim bump
-    // below is gated on `isTrimExpanded` — the chat text size picker and its
-    // note only occupy space while `options` is expanded, so growing the
-    // window for them while the panel is collapsed would open a gap under a
-    // closed drawer.
-    if model.output == .videoWithChat, model.chatProblem == nil,
-       model.isOptionsEffectivelyExpanded
-    {
-      height += 120
+    if model.output == .videoWithChat, model.chatProblem == nil {
+      // The encode-duration note now lives in the `Section` footer, visible
+      // whether the panel is open or collapsed — so it claims room
+      // regardless of `isOptionsEffectivelyExpanded`, unlike the picker below.
+      height += 40
+      // The chat text size picker, by contrast, only occupies space while
+      // `options` is actually expanded — the same way the trim bump below is
+      // gated on `isTrimExpanded` — so growing the window for it while the
+      // panel is collapsed would open a gap under a closed drawer.
+      if model.isOptionsEffectivelyExpanded { height += 80 }
     }
     if model.showsTrimOptions, model.isTrimExpanded { height += 165 }
     return height

@@ -281,6 +281,10 @@ struct IntakeModelTests {
   @Test func aTickedBoxWritesEveryFieldOnSave() async {
     let store = Self.store()
     let model = await loadedModel(preferences: store)
+    // `.videoWithChat`, not `loadedModel`'s own `.video` — the chat text
+    // size picker this test wants to save from only exists on screen while
+    // chat is selected (§3.7's `withholdsChatSizeFromSave`).
+    model.output = .videoWithChat
     model.selectQuality("720p60")
     model.chatSize = .large
     model.folder = URL(filePath: "/Volumes/Archive")
@@ -349,6 +353,12 @@ struct IntakeModelTests {
   /// legal (the id-derived fallback name), so switching to it is a
   /// workaround for this video's missing details, not a preference — saving
   /// it must not overwrite a stored `.videoWithChat` default.
+  ///
+  /// `chatSize` is withheld here too, but for the unrelated reason §3.7
+  /// documents for `withholdsChatSizeFromSave`: its own picker is hidden
+  /// once `output == .video`, workaround or not. `destination` is the field
+  /// that actually isolates "does withholding `output` touch anything else",
+  /// since nothing hides its control.
   @Test func outputIsWithheldWhileMetadataFailed() async {
     let store = Self.store { $0.output = .videoWithChat }
     let model = makeModel(
@@ -367,8 +377,8 @@ struct IntakeModelTests {
     model.saveDefaultsIfRequested()
 
     #expect(store.output == .videoWithChat, "not overwritten by the workaround")
-    #expect(store.chatSize == .large, "the other fields still save")
-    #expect(store.destination == URL(filePath: "/Volumes/Archive"))
+    #expect(store.chatSize == .medium, "withheld too — its picker is hidden while output is .video")
+    #expect(store.destination == URL(filePath: "/Volumes/Archive"), "unrelated field still saves")
   }
 
   /// Spec §3.7. Nothing to bucket, so the other three still save.
@@ -379,6 +389,10 @@ struct IntakeModelTests {
       info: Self.info(qualities: [
         StreamQuality(name: "720p0-1", resolution: "", bitsPerSecond: 0),
       ]))
+    // `.videoWithChat` so the chat text size picker this test also wants to
+    // save from is actually on screen (`withholdsChatSizeFromSave`) —
+    // otherwise this would conflate two different withholding rules.
+    model.output = .videoWithChat
     model.selectQuality("720p0-1")
     model.chatSize = .small
     model.wantsToSaveDefaults = true
@@ -391,8 +405,11 @@ struct IntakeModelTests {
 
   /// Spec §2.7. The trap this rule exists to disarm: one expired clip would
   /// otherwise turn chat off for every future download, from a single tick.
-  /// Asserts all three of the other fields, not just `chatSize` — the claim
-  /// is that withholding `output` does not touch anything else.
+  /// Asserts the two fields that isolate "does withholding `output` touch
+  /// anything else" — `destination` and `qualityCap`, neither of which has a
+  /// control that output hides. `chatSize` is asserted separately below: it
+  /// is withheld here too, but for §3.7's unrelated reason (its own picker
+  /// disappears once `output == .video`), not because of this rule.
   @Test func outputIsWithheldWhileChatIsUnavailable() async {
     let store = Self.store { $0.output = .videoWithChat }
     let model = await loadedModel(
@@ -409,9 +426,40 @@ struct IntakeModelTests {
     model.saveDefaultsIfRequested()
 
     #expect(store.output == .videoWithChat, "withheld: not overwritten by the workaround")
-    #expect(store.chatSize == .large)
+    #expect(store.chatSize == .medium, "withheld too — its picker is hidden while output is .video")
     #expect(store.destination == Self.folder)
     #expect(store.qualityCap == .p720)
+  }
+
+  /// §3.7's shape, applied to `chatSize`: its picker only renders while
+  /// `output == .videoWithChat`, so once `.video` is selected the value on
+  /// screen is stale by construction and must not be written.
+  @Test func chatSizeIsWithheldWhileVideoOnlyIsSelected() async {
+    let store = Self.store { $0.chatSize = .small }
+    let model = await loadedModel(preferences: store)
+    model.output = .video
+    #expect(model.withholdsChatSizeFromSave)
+
+    model.chatSize = .large
+    model.wantsToSaveDefaults = true
+    model.saveDefaultsIfRequested()
+
+    #expect(store.chatSize == .small, "untouched — the picker that would have set this is hidden")
+  }
+
+  /// The positive control: with `.videoWithChat` selected, the picker is on
+  /// screen and a save must write what it shows.
+  @Test func chatSizeSavesNormallyWithVideoAndChatSelected() async {
+    let store = Self.store()
+    let model = await loadedModel(preferences: store)
+    model.output = .videoWithChat
+    #expect(!model.withholdsChatSizeFromSave)
+
+    model.chatSize = .large
+    model.wantsToSaveDefaults = true
+    model.saveDefaultsIfRequested()
+
+    #expect(store.chatSize == .large)
   }
 
   // MARK: - Options panel
@@ -479,6 +527,26 @@ struct IntakeModelTests {
     model.saveDefaultsIfRequested()
 
     #expect(model.isOptionsExpanded)
+  }
+
+  /// §2.5's "once", the other half: collapsing the panel is the payoff for
+  /// the *first* save, not a side effect the app repeats on every Add
+  /// afterward. A user who reopens the panel after configuring their
+  /// defaults, then adds another job with the box still ticked, must not
+  /// find it collapsed again out from under them.
+  @Test func aLaterSaveLeavesThePanelAlone() async {
+    let store = Self.store()
+    let model = await loadedModel(preferences: store)
+    model.wantsToSaveDefaults = true
+    model.saveDefaultsIfRequested()
+    #expect(model.isOptionsExpanded == false, "precondition: the first save collapsed it")
+    #expect(store.hasSavedDefaults, "precondition: defaults are now configured")
+
+    model.isOptionsExpanded = true
+    model.wantsToSaveDefaults = true
+    model.saveDefaultsIfRequested()
+
+    #expect(model.isOptionsExpanded, "a later save must not re-collapse a reopened panel")
   }
 
   /// §2.7: both refusals force the panel open, whatever `isOptionsExpanded`
