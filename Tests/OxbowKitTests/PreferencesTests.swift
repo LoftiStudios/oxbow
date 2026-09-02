@@ -51,6 +51,29 @@ struct PreferencesTests {
     #expect(reader.chatSize == .large)
   }
 
+  // MARK: - optionsPanelIsExpanded
+
+  @Test func optionsPanelIsExpandedDefaultsToTrue() throws {
+    #expect(store(try defaults()).optionsPanelIsExpanded)
+  }
+
+  @Test func optionsPanelIsExpandedRoundTrips() throws {
+    let defaults = try defaults()
+    var writer = store(defaults)
+    writer.optionsPanelIsExpanded = false
+    #expect(store(defaults).optionsPanelIsExpanded == false)
+  }
+
+  /// Spec: collapsing the panel is not expressing a preference about
+  /// downloads, so it must not set the same flag a real save does — or the
+  /// Settings window would start claiming defaults nobody chose.
+  @Test func settingOptionsPanelIsExpandedDoesNotSetHasSavedDefaults() throws {
+    let defaults = try defaults()
+    var writer = store(defaults)
+    writer.optionsPanelIsExpanded = false
+    #expect(store(defaults).hasSavedDefaults == false)
+  }
+
   // MARK: - hasSavedDefaults
 
   /// Spec §2.4. Saving values identical to the factory ones still counts as
@@ -86,6 +109,7 @@ struct PreferencesTests {
     store.qualityCap = .p360
     store.output = .video
     store.chatSize = .large
+    store.optionsPanelIsExpanded = false
 
     store.restoreDefaults()
 
@@ -93,6 +117,7 @@ struct PreferencesTests {
     #expect(store.qualityCap == .best)
     #expect(store.output == .videoWithChat)
     #expect(store.chatSize == .medium)
+    #expect(store.optionsPanelIsExpanded)
     #expect(store.hasSavedDefaults == false)
   }
 

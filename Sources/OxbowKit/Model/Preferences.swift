@@ -20,6 +20,7 @@ public struct Preferences {
     static let output = "defaultOutput"
     static let chatSize = "defaultChatSize"
     static let hasSavedDefaults = "hasSavedDefaults"
+    static let optionsExpanded = "intakeOptionsExpanded"
   }
 
   private let defaults: UserDefaults
@@ -98,6 +99,19 @@ public struct Preferences {
     }
   }
 
+  /// Whether the intake's options panel opens expanded.
+  ///
+  /// **Its own stored value, not derived from `hasSavedDefaults`.** Deriving
+  /// it means someone who never opts in gets the panel forced open on every
+  /// launch with no way to stop it, which turns informative into nagging.
+  ///
+  /// Deliberately does **not** call `recordSave()`: collapsing a panel is not
+  /// expressing a preference about downloads.
+  public var optionsPanelIsExpanded: Bool {
+    get { defaults.object(forKey: Key.optionsExpanded) as? Bool ?? true }
+    set { defaults.set(newValue, forKey: Key.optionsExpanded) }
+  }
+
   // MARK: - Whether anything has been expressed
 
   /// **Stored, never inferred by comparing against the factory values.**
@@ -121,7 +135,7 @@ public struct Preferences {
 
   public mutating func restoreDefaults() {
     for key in [Key.destination, Key.qualityCap, Key.output, Key.chatSize,
-                Key.hasSavedDefaults] {
+                Key.hasSavedDefaults, Key.optionsExpanded] {
       defaults.removeObject(forKey: key)
     }
   }

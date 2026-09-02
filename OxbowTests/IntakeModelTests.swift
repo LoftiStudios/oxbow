@@ -24,12 +24,14 @@ struct IntakeModelTests {
       $0.qualityCap = .p720
       $0.output = .video
       $0.chatSize = .large
+      $0.optionsPanelIsExpanded = false
     })
 
     #expect(model.folder == URL(filePath: "/Volumes/Archive"))
     #expect(model.qualityCap == .p720)
     #expect(model.output == .video)
     #expect(model.chatSize == .large)
+    #expect(model.isOptionsExpanded == false)
   }
 
   /// Spec §2.2. Including the first run — an unticked box makes the same
@@ -43,18 +45,29 @@ struct IntakeModelTests {
   /// Every stored value here differs from both its factory default and the
   /// value the model is mutated to below, so a `reset()` that hardcoded
   /// factory constants — or one that simply left the mutations in place and
-  /// touched nothing — could not pass this by accident. The destination is
-  /// deliberately the one the store no longer has, so `destinationFellBack`
-  /// has a real, store-derived answer to reseed to as well.
+  /// touched nothing — could not pass this by accident.
+  ///
+  /// **The destination is deliberately one that exists and is not the
+  /// factory `~/Downloads`.** An earlier version of this test used a missing
+  /// destination, which resolves to `~/Downloads` — indistinguishable from
+  /// what a `reset()` that hardcoded the factory constant, rather than
+  /// reading `preferences.destination`, would also produce. `/Volumes/Archive`
+  /// here is a value only a real read of the store can produce.
+  /// `destinationFellBack` and its own store-derived recomputation on
+  /// `reset()` are covered separately below, by
+  /// `resetRereadsDestinationFellBackFromTheStoreRatherThanKeepingInitsAnswer`
+  /// — a destination that is present throughout, as this one is, cannot
+  /// distinguish "recomputed on reset" from "never touched since init".
   @Test func resetReseedsFromTheStoreAndUnticksTheBox() {
     let suite = UserDefaults(suiteName: "ResetReseed-\(UUID().uuidString)")!
     var store = Preferences(
       defaults: suite, homeDirectory: URL(filePath: "/Users/t"),
-      directoryExists: { $0.path != "/Volumes/Gone" })
-    store.destination = URL(filePath: "/Volumes/Gone")
+      directoryExists: { _ in true })
+    store.destination = URL(filePath: "/Volumes/Archive")
     store.qualityCap = .p480
     store.output = .video
     store.chatSize = .large
+    store.optionsPanelIsExpanded = false
 
     let model = makeModel(preferences: store)
     model.output = .videoWithChat
@@ -62,15 +75,58 @@ struct IntakeModelTests {
     model.qualityCap = .p1080
     model.folder = URL(filePath: "/Users/someone/Movies")
     model.wantsToSaveDefaults = true
+    // Not mutated here the way the fields above are: `isOptionsExpanded`
+    // writes straight through to `store` on every assignment (§2.5), so
+    // setting it here would overwrite the very value this test wants
+    // `reset()` to reseed from, rather than leaving something for `reset()`
+    // to overwrite. See `resetRereadsIsOptionsExpandedFromTheStore` below for
+    // the version of this that mutates the store instead of the model.
 
     model.reset()
 
     #expect(model.output == .video)
     #expect(model.chatSize == .large)
     #expect(model.qualityCap == .p480)
-    #expect(model.folder == URL(filePath: "/Users/t/Downloads"), "the stored destination is gone")
-    #expect(model.destinationFellBack)
+    #expect(
+      model.folder == URL(filePath: "/Volumes/Archive"),
+      "a reset() that hardcoded ~/Downloads would also pass a missing-destination test")
+    #expect(model.destinationFellBack == false)
+    #expect(model.isOptionsExpanded == false)
     #expect(model.wantsToSaveDefaults == false)
+  }
+
+  /// Pins the one line in `reset()` nothing else in this file exercises
+  /// meaningfully: `destinationFellBack = preferences.storedDestinationIsMissing`.
+  /// Every other test either never reaches `reset()` with a destination that
+  /// changes, or (like the test above, before this one existed) uses a store
+  /// whose missing-ness never changes between construction and `reset()` — so
+  /// `destinationFellBack` starts and ends at the same value regardless of
+  /// whether `reset()` actually reads the store fresh or just leaves init's
+  /// answer sitting there. Deleting the line changes nothing observable
+  /// without this test.
+  ///
+  /// Here the store's destination is switched from present to missing
+  /// *between* construction and `reset()`, through a second `Preferences`
+  /// value over the same suite — standing in for whatever else in the app
+  /// (Settings, a later task) might change the destination mid-session. A
+  /// stale, uncomputed `destinationFellBack` and a freshly recomputed one
+  /// give different answers here; only the real line makes this pass.
+  @Test func resetRereadsDestinationFellBackFromTheStoreRatherThanKeepingInitsAnswer() {
+    let suite = UserDefaults(suiteName: "ResetFellBack-\(UUID().uuidString)")!
+    var store = Preferences(
+      defaults: suite, homeDirectory: URL(filePath: "/Users/t"),
+      directoryExists: { $0.path != "/Volumes/NowGone" })
+    store.destination = URL(filePath: "/Volumes/StillHere")
+
+    let model = makeModel(preferences: store)
+    #expect(model.destinationFellBack == false, "precondition: the destination resolves at construction")
+
+    var mutator = store
+    mutator.destination = URL(filePath: "/Volumes/NowGone")
+
+    model.reset()
+
+    #expect(model.destinationFellBack, "reset() must re-read the store, not keep init's answer")
   }
 
   @Test func aMissingStoredDestinationSeedsTheFallbackAndFlagsIt() {
@@ -289,6 +345,153 @@ struct IntakeModelTests {
     #expect(store.chatSize == .large)
     #expect(store.destination == Self.folder)
     #expect(store.qualityCap == .p720)
+  }
+
+  // MARK: - Options panel
+
+  @Test func isOptionsExpandedWritesThroughToTheStore() async {
+    let store = Self.store { $0.optionsPanelIsExpanded = true }
+    let model = await loadedModel(preferences: store)
+
+    model.isOptionsExpanded = false
+
+    #expect(store.optionsPanelIsExpanded == false)
+  }
+
+  /// The `reset()` counterpart to `resetRereadsDestinationFellBackFrom-
+  /// TheStoreRatherThanKeepingInitsAnswer` above, for the same reason: the
+  /// obvious way to test "reset() reseeds `isOptionsExpanded`" is to mutate
+  /// the model and then reset it, but `isOptionsExpanded` writes straight
+  /// through on every assignment (§2.5) — mutating the model *is* mutating
+  /// the store, so there is nothing left for `reset()` to overwrite. The
+  /// store has to change out from under the model instead, through a second
+  /// `Preferences` value over the same suite, the way the destination does in
+  /// the test above.
+  @Test func resetRereadsIsOptionsExpandedFromTheStore() async {
+    let store = Self.store { $0.optionsPanelIsExpanded = true }
+    let model = await loadedModel(preferences: store)
+    #expect(model.isOptionsExpanded, "precondition: seeded expanded")
+
+    var mutator = store
+    mutator.optionsPanelIsExpanded = false
+
+    model.reset()
+
+    #expect(model.isOptionsExpanded == false, "reset() must re-read the store, not keep init's answer")
+  }
+
+  /// §2.5. Collapsing the panel is not a statement about downloads, so it
+  /// must not set the same flag a real save sets — otherwise the Settings
+  /// window would start claiming defaults nobody chose from one triangle
+  /// click.
+  @Test func collapsingThePanelDoesNotSetHasSavedDefaults() async {
+    let store = Self.store()
+    let model = await loadedModel(preferences: store)
+
+    model.isOptionsExpanded = false
+
+    #expect(store.hasSavedDefaults == false)
+  }
+
+  /// §2.5's "collapses it once" — the visible payoff for opting in, tied to
+  /// the explicit act of adding.
+  @Test func savingCollapsesThePanel() async {
+    let model = await loadedModel()
+    model.isOptionsExpanded = true
+    model.wantsToSaveDefaults = true
+
+    model.saveDefaultsIfRequested()
+
+    #expect(model.isOptionsExpanded == false)
+  }
+
+  @Test func notSavingLeavesThePanelAlone() async {
+    let model = await loadedModel()
+    model.isOptionsExpanded = true
+
+    model.saveDefaultsIfRequested()
+
+    #expect(model.isOptionsExpanded)
+  }
+
+  /// §2.7: both refusals force the panel open, whatever `isOptionsExpanded`
+  /// itself says — a closed panel would grey Add out with the explanation
+  /// sealed inside it.
+  @Test func chatProblemForcesThePanelOpen() async {
+    let model = await loadedModel(info: Self.info(hasDownloadableChat: false))
+    model.output = .videoWithChat
+    model.isOptionsExpanded = false
+
+    #expect(model.chatProblem != nil, "precondition")
+    #expect(model.isOptionsEffectivelyExpanded)
+  }
+
+  @Test func compositeProblemForcesThePanelOpen() async {
+    let model = await loadedModel(
+      info: Self.info(qualities: [
+        StreamQuality(name: "720p0-1", resolution: "", bitsPerSecond: 0),
+      ]))
+    model.output = .videoWithChat
+    model.selectQuality("720p0-1")
+    model.isOptionsExpanded = false
+
+    #expect(model.compositeProblem != nil, "precondition")
+    #expect(model.isOptionsEffectivelyExpanded)
+  }
+
+  /// The transient half of §2.7: the forced expansion must never reach the
+  /// stored preference, or a clip whose broadcast Twitch has expired would
+  /// permanently reopen the drawer on every future launch — the store is read
+  /// through a fresh instance here for exactly the reason
+  /// `resetRereadsDestinationFellBackFromTheStoreRatherThanKeepingInitsAnswer`
+  /// does: `model.isOptionsExpanded` alone cannot prove the store was never
+  /// written to, only that the model's own copy of it looks right.
+  @Test func theForcedExpansionNeverReachesTheStore() async {
+    let store = Self.store { $0.optionsPanelIsExpanded = false }
+    let model = await loadedModel(
+      preferences: store, info: Self.info(hasDownloadableChat: false))
+    model.output = .videoWithChat
+    #expect(model.isOptionsExpanded == false, "precondition: never touched, still collapsed")
+
+    #expect(model.isOptionsEffectivelyExpanded, "forced open by chatProblem")
+    #expect(store.optionsPanelIsExpanded == false, "but the store never heard about it")
+  }
+
+  /// The binding a `DisclosureGroup` actually reads and writes: its getter is
+  /// `isOptionsEffectivelyExpanded`, its setter is `isOptionsExpanded`. A user
+  /// tapping the triangle while a refusal is showing writes through the
+  /// setter exactly like any other collapse — only the forced-open path
+  /// above, which nothing in the view ever assigns *to*, skips the store.
+  @Test func theEffectiveBindingReadsForcedExpansionAndWritesTheRealField() async {
+    let model = await loadedModel(info: Self.info(hasDownloadableChat: false))
+    model.output = .videoWithChat
+    model.isOptionsExpanded = false
+
+    #expect(model.isOptionsEffectivelyExpandedBinding, "reads the forced-open value")
+
+    model.isOptionsEffectivelyExpandedBinding = false
+
+    #expect(model.isOptionsExpanded == false)
+  }
+
+  /// §2.6. The collapsed header's whole reason to exist: a summary the user
+  /// can trust without opening the drawer.
+  @Test func optionsSummaryDescribesOutputQualityAndFolder() async {
+    let model = await loadedModel()
+    model.output = .video
+    model.qualityCap = .p720
+    model.folder = URL(filePath: "/Users/t/Movies")
+
+    #expect(model.optionsSummary == "Video · Up to 720p · Movies")
+  }
+
+  @Test func optionsSummaryNamesTheChatOutputAndAMissingFolder() async {
+    let model = await loadedModel()
+    model.output = .videoWithChat
+    model.qualityCap = .best
+    model.folder = nil
+
+    #expect(model.optionsSummary == "Video + chat · Best available · No folder")
   }
 
   // MARK: - An occupied destination

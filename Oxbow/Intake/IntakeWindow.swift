@@ -49,17 +49,14 @@ struct IntakeWindow: View {
 
         if model.hasSettledMetadata {
           naming
-          // Trim before Download: which part of the video you want is a
-          // property of the video, like its name, while Download is about what
-          // format to render it in. Ordering it this way also stops the chat
-          // options — which appear and disappear — from shoving the trim
-          // controls you were just setting down the window.
-          // Where it goes, before how much of it you want. The order follows
-          // the decision being made: what this is, where to put it, how much
-          // of it, then the details of how to render it.
-          saveTo
+          // Trim before Download Options: which part of the video you want is
+          // a property of the video, like its name, while the options panel
+          // is about what to do with it — including where it lands, folded
+          // in as of §2.1. Ordering it this way also stops the chat controls
+          // inside that panel, which appear and disappear, from shoving the
+          // trim section you were just setting down the window.
           if model.showsTrimOptions { trim }
-          outputs
+          options
         }
       }
       .formStyle(.grouped)
@@ -157,73 +154,167 @@ struct IntakeWindow: View {
     return "A file with this name is already in \(folder) — adding this will replace it."
   }
 
-  /// Two choices, not three independent toggles: a chat render in isolation
-  /// has little use, and the composite is what makes it worth producing at
-  /// all (design doc §3). `DownloadOutput` already narrowed to this pair;
-  /// this is just its rendering.
-  private var outputs: some View {
-    Section("Download") {
-      Picker("Output", selection: $model.output) {
-        Text(isClip ? "Clip + chat" : "Video + chat").tag(DownloadOutput.videoWithChat)
-        Text(isClip ? "Clip" : "Video").tag(DownloadOutput.video)
-      }
-      .pickerStyle(.radioGroup)
-      .labelsHidden()
-
-      // Directly under the picker: the quality is a property of the media
-      // download, and nothing else on this sheet reads it.
-      Picker("Quality", selection: $model.quality) {
-        Text("Best available").tag("")
-        ForEach(model.qualities, id: \.name) { quality in
-          Text(model.label(for: quality)).tag(quality.name)
+  /// Everything that used to be two sections — `Download` and `Save to` —
+  /// folded into one collapsible panel with the opt-in checkbox at the
+  /// bottom (design doc §2.1). They belong together: both are the same
+  /// decision, what this job does and where it lands, and splitting them
+  /// across separate always-open sections is what let the destination sit
+  /// two screens above the box that claims to remember it.
+  ///
+  /// **Collapsed is the steady state** (§2.6): the header carries a summary
+  /// so a closed drawer never hides where the file is actually going.
+  ///
+  /// **Forced open whenever `chatProblem` or `compositeProblem` is showing**
+  /// (§2.7) — both render inside this panel and both disable Add, so a
+  /// closed panel would grey Add out with the explanation sealed inside it.
+  /// That forcing is `IntakeModel.isOptionsEffectivelyExpanded`'s job, not
+  /// this view's: the view only reads and writes through
+  /// `isOptionsEffectivelyExpandedBinding`, which is what keeps the forced,
+  /// transient expansion from ever reaching the stored preference.
+  private var options: some View {
+    Section {
+      DisclosureGroup(isExpanded: $model.isOptionsEffectivelyExpandedBinding) {
+        // Two choices, not three independent toggles: a chat render in
+        // isolation has little use, and the composite is what makes it worth
+        // producing at all (design doc §3). `DownloadOutput` already
+        // narrowed to this pair; this is just its rendering.
+        Picker("Download", selection: $model.output) {
+          Text(isClip ? "Clip + chat" : "Video + chat").tag(DownloadOutput.videoWithChat)
+          Text(isClip ? "Clip" : "Video").tag(DownloadOutput.video)
         }
-      }
 
-      // `chatProblem == nil` as well as the output: offering a text size for
-      // chat that cannot be downloaded, above a row explaining that it
-      // cannot, is a control for something that will never happen.
-      if model.output == .videoWithChat, model.chatProblem == nil {
-        // The one control the deleted render-options form left behind (see
-        // docs/design/compositing.md §4, §8): a fixed size cannot serve both
-        // a laptop window and a TV across the room. "Small"/"Medium"/"Large"
-        // does not explain itself the way "Video + chat"/"Video" does above,
-        // so — unlike that picker — this one keeps its label on screen.
-        Picker("Chat text size", selection: $model.chatSize) {
-          Text("Small").tag(ChatSize.small)
-          Text("Medium").tag(ChatSize.medium)
-          Text("Large").tag(ChatSize.large)
+        // Directly under the picker: the quality is a property of the media
+        // download, and nothing else on this sheet reads it. Bound through
+        // `selectQuality` rather than `$model.quality` directly — a bare
+        // binding would leave `qualityCap` sitting at whatever seeded it, so
+        // an explicit pick here would quietly fail to survive into the next
+        // save (§3.3).
+        Picker("Quality", selection: qualityBinding) {
+          Text("Best available").tag("")
+          ForEach(model.qualities, id: \.name) { quality in
+            Text(model.label(for: quality)).tag(quality.name)
+          }
         }
-        .pickerStyle(.segmented)
 
-        // Not decoration: a six-hour stream is roughly 75 minutes of
-        // encoding, and a user who is not told that reads a busy queue as a
-        // hang.
-        Text("Chat is rendered in a column beside the video and encoded into "
-          + "one file. This takes roughly as long as the stream itself.")
-          .font(.caption)
-          .foregroundStyle(.secondary)
-      }
+        // `chatProblem == nil` as well as the output: offering a text size
+        // for chat that cannot be downloaded, above a row explaining that it
+        // cannot, is a control for something that will never happen.
+        if model.output == .videoWithChat, model.chatProblem == nil {
+          // The one control the deleted render-options form left behind (see
+          // docs/design/compositing.md §4, §8): a fixed size cannot serve
+          // both a laptop window and a TV across the room. "Small"/"Medium"/
+          // "Large" does not explain itself the way "Video + chat"/"Video"
+          // does above, so — unlike that picker — this one keeps its label
+          // on screen.
+          Picker("Chat text size", selection: $model.chatSize) {
+            Text("Small").tag(ChatSize.small)
+            Text("Medium").tag(ChatSize.medium)
+            Text("Large").tag(ChatSize.large)
+          }
+          .pickerStyle(.segmented)
 
-      // A clip whose parent broadcast Twitch has expired, or any video whose
-      // metadata fetch failed — see `IntakeModel.chatProblem`. Without this
-      // the sheet would simply grey Add out with nothing on screen saying
-      // why, which is the exact failure `compositeProblem` below exists to
-      // prevent.
-      if let chatProblem = model.chatProblem {
-        Label(chatProblem, systemImage: "exclamationmark.triangle")
-          .font(.caption)
-          .foregroundStyle(.red)
-      }
+          // Not decoration: a six-hour stream is roughly 75 minutes of
+          // encoding, and a user who is not told that reads a busy queue as a
+          // hang.
+          Text("Chat is rendered in a column beside the video and encoded into "
+            + "one file. This takes roughly as long as the stream itself.")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
 
-      // Only reachable for a clip whose selected rendition Twitch never
-      // recorded pixel dimensions for — see `IntakeModel.compositeProblem`.
-      // Shown the same way the trim section shows its own refusal reason.
-      if let compositeProblem = model.compositeProblem {
-        Label(compositeProblem, systemImage: "exclamationmark.triangle")
-          .font(.caption)
-          .foregroundStyle(.red)
+        destination
+
+        if model.destinationFellBack {
+          Label(
+            "The folder you last chose is not available, so Oxbow will use "
+              + "Downloads.",
+            systemImage: "exclamationmark.triangle")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
+
+        if let warning = model.spaceWarning {
+          // Same treatment `saveTo`'s footer used to give this: orange,
+          // matching the overwrite caution under the name field, since
+          // nothing is wrong and nothing is blocked (`spaceWarning` is
+          // advisory — see its doc comment — so it does not join
+          // `chatProblem`/`compositeProblem` in forcing the panel open).
+          VStack(alignment: .leading, spacing: 2) {
+            Label(spaceWarningText(warning), systemImage: "externaldrive.badge.exclamationmark")
+              .font(.caption)
+              .foregroundStyle(.orange)
+            if let remedy = warning.remedy {
+              Text(remedyText(remedy))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .padding(.leading, 18)
+            }
+          }
+          .fixedSize(horizontal: false, vertical: true)
+          .frame(maxWidth: .infinity, alignment: .leading)
+        }
+
+        // A clip whose parent broadcast Twitch has expired, or any video
+        // whose metadata fetch failed — see `IntakeModel.chatProblem`.
+        // Without this the sheet would simply grey Add out with nothing on
+        // screen saying why, which is the exact failure `compositeProblem`
+        // below exists to prevent, and the exact failure the whole panel is
+        // forced open to prevent (§2.7).
+        if let chatProblem = model.chatProblem {
+          Label(chatProblem, systemImage: "exclamationmark.triangle")
+            .font(.caption)
+            .foregroundStyle(.red)
+        }
+
+        // Only reachable for a clip whose selected rendition Twitch never
+        // recorded pixel dimensions for — see `IntakeModel.compositeProblem`.
+        if let compositeProblem = model.compositeProblem {
+          Label(compositeProblem, systemImage: "exclamationmark.triangle")
+            .font(.caption)
+            .foregroundStyle(.red)
+        }
+
+        Toggle("Make these settings my defaults", isOn: $model.wantsToSaveDefaults)
+
+        if model.wantsToSaveDefaults {
+          Text(saveNote)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
+      } label: {
+        HStack {
+          Text("Download Options")
+          // Only when collapsed: an expanded panel already shows every one
+          // of these values in full, so a summary next to the header too
+          // would just be saying the same thing twice.
+          if !model.isOptionsEffectivelyExpanded {
+            Text(model.optionsSummary)
+              .font(.caption)
+              .foregroundStyle(.secondary)
+          }
+        }
       }
     }
+  }
+
+  /// Routed through the model so a pick re-derives the cap (§3.3).
+  private var qualityBinding: Binding<String> {
+    Binding(get: { model.quality }, set: { model.selectQuality($0) })
+  }
+
+  /// What the checkbox's footnote says once it is ticked. Always ends with
+  /// the same reassurance — this is not a one-way door — and leads with
+  /// whatever this particular save would do differently from a literal
+  /// reading of the screen, so the two footnotes above it only appear when
+  /// they have something to say.
+  private var saveNote: String {
+    var parts: [String] = []
+    if let rung = model.savedQualityNote { parts.append("Saved as \(rung.label).") }
+    if model.withholdsOutputFromSave {
+      parts.append("Whether to include chat will not be saved from this video.")
+    }
+    parts.append("You can change these any time in Settings.")
+    return parts.joined(separator: " ")
   }
 
   /// The timeline needs a duration to scale against, so a VOD whose metadata
@@ -306,49 +397,22 @@ struct IntakeWindow: View {
     }
   }
 
-  /// The destination and the buttons, pinned below the form.
+  /// Just the buttons, pinned below the form.
   ///
   /// **Outside the scroll view, deliberately.** As a `Section` at the bottom
   /// of the form it scrolled away the moment a thumbnail loaded, so the one
   /// thing every download commits to — where the file goes — was below the
   /// fold exactly when the window looked most finished. Transmission pins its
-  /// path row above its buttons for the same reason.
-  /// Only the buttons now. The destination moved up into the form, into the
-  /// order the decision is actually made in. Pinning it here was a guard
-  /// against it falling below the fold exactly when the form looked most
-  /// finished — which the window growing to fit its own sections now covers.
+  /// path row above its buttons for the same reason. The destination itself
+  /// has since moved up into `options`, into the order the decision is
+  /// actually made in — pinning it here was a guard against it falling below
+  /// the fold exactly when the form looked most finished, which the window
+  /// growing to fit its own sections now covers, and which the collapsed
+  /// panel's own summary (§2.6) covers a second time.
   private var footer: some View {
     buttons
       .padding(.horizontal, 20)
       .padding(.vertical, 14)
-  }
-
-  private var saveTo: some View {
-    Section {
-      destination
-    } footer: {
-      if let warning = model.spaceWarning {
-        VStack(alignment: .leading, spacing: 2) {
-          // Orange, matching the overwrite caution under the name field:
-          // nothing is wrong and nothing is blocked. Red belongs to
-          // `addFailure`, where the sheet is actually refusing.
-          Label(spaceWarningText(warning), systemImage: "externaldrive.badge.exclamationmark")
-            .font(.caption)
-            .foregroundStyle(.orange)
-          if let remedy = warning.remedy {
-            // The actionable half, and the reason this is a warning worth
-            // showing at all. Indented under the label's text rather than its
-            // icon so the two read as one block.
-            Text(remedyText(remedy))
-              .font(.caption)
-              .foregroundStyle(.secondary)
-              .padding(.leading, 18)
-          }
-        }
-        .fixedSize(horizontal: false, vertical: true)
-        .frame(maxWidth: .infinity, alignment: .leading)
-      }
-    }
   }
 
   /// Both figures on one line, and the volume named rather than called "the
@@ -429,7 +493,16 @@ struct IntakeWindow: View {
   private var desiredContentHeight: CGFloat {
     var height: CGFloat = 600
     guard model.hasSettledMetadata else { return height }
-    if model.output == .videoWithChat, model.chatProblem == nil { height += 120 }
+    // Gated on the panel actually being open, the same way the trim bump
+    // below is gated on `isTrimExpanded` — the chat text size picker and its
+    // note only occupy space while `options` is expanded, so growing the
+    // window for them while the panel is collapsed would open a gap under a
+    // closed drawer.
+    if model.output == .videoWithChat, model.chatProblem == nil,
+       model.isOptionsEffectivelyExpanded
+    {
+      height += 120
+    }
     if model.showsTrimOptions, model.isTrimExpanded { height += 165 }
     return height
   }
@@ -458,13 +531,23 @@ struct IntakeWindow: View {
 
   /// Dismisses only once the job is in the engine. `model.add()` awaits the
   /// enqueue all the way in and reports whether it landed; a refusal leaves
-  /// the sheet open with its reason on screen.
+  /// the sheet open with its reason on screen. The checkbox's own save is
+  /// gated on that same success (§2.3), so it lands here rather than inside
+  /// `model.add()` itself.
   private func add() {
     isAdding = true
     Task {
       let didAdd = await model.add()
       isAdding = false
-      if didAdd { dismiss() }
+      if didAdd {
+        // After the enqueue succeeds and never before it (§2.3) —
+        // `addFailure` is the path where Add refused and the window
+        // deliberately stays open on a job that was never composed, and
+        // saving there would persist the settings of a job that does not
+        // exist.
+        model.saveDefaultsIfRequested()
+        dismiss()
+      }
     }
   }
 
@@ -725,5 +808,72 @@ extension VideoInfo {
   model.output = .video
   model.isTrimExpanded = true
   model.trimStartText = "00:02:00"
+  return IntakeWindow(model: model)
+}
+
+// MARK: - The options panel (§2.1, §2.5-§2.7)
+
+/// Collapsed is the steady state (§2.6), so this is the one most people see
+/// most of the time. `isOptionsExpanded` is set explicitly rather than left
+/// to whatever `OxbowPreviews` happens to hold — that suite is a real
+/// `UserDefaults` domain on disk and other previews in this file write
+/// through it too, so a canvas that only trusted the ambient value could
+/// render differently between runs.
+#Preview("Options panel - collapsed") {
+  let model = previewModel()
+  model.isOptionsExpanded = false
+  return IntakeWindow(model: model)
+}
+
+/// Expanded, with the checkbox ticked and the quality footnote showing.
+///
+/// `900p30` is not a rung `QualityLadder` ever produces — it is an inexact
+/// rendition of `.p720` (`shortSide` 900, that rung's own ceiling 720) — so
+/// `selectQuality` buckets it to `.p720` and `savedQualityNote` disagrees
+/// with what is on screen. The footnote is what keeps that gap from being
+/// silent: "Saved as Up to 720p" next to a visibly different selection
+/// (§3.8).
+#Preview("Options panel - expanded, ticked, bucket footnote") {
+  let info = VideoInfo(
+    streamer: "LeighXP",
+    title: "indie horror + something else later?? ٩(◕‿◕)۶",
+    createdAt: .now,
+    duration: .seconds(991),
+    qualities: [
+      StreamQuality(name: "1080p60", resolution: "1920x1080", bitsPerSecond: 6_184_466),
+      StreamQuality(name: "900p30", resolution: "1600x900", bitsPerSecond: 4_000_000),
+      StreamQuality(name: "480p30", resolution: "852x480", bitsPerSecond: 1_427_697),
+    ],
+    thumbnailURL: nil)
+  let model = previewModel(info: info)
+  model.selectQuality("900p30")
+  model.wantsToSaveDefaults = true
+  model.isOptionsExpanded = true
+  return IntakeWindow(model: model)
+}
+
+/// The forced-open case (§2.7). `isOptionsExpanded` is set to `false` here —
+/// the same collapsed state as the first preview above — so what actually
+/// props the panel open is `chatProblem` alone, exactly the mechanism
+/// `isOptionsEffectivelyExpandedBinding` exists for. A regression that made
+/// the panel respect only the stored flag again would show this preview
+/// collapsed, with Add greyed out and no explanation on screen — the failure
+/// this whole feature exists to prevent.
+#Preview("Options panel - forced open by chatProblem") {
+  let clipInfo = VideoInfo(
+    streamer: "f00xtr0t323",
+    title: "This dude jumped off the ledge.",
+    createdAt: .now,
+    duration: .seconds(30),
+    qualities: [
+      StreamQuality(name: "1080p60", resolution: "1920x1080", bitsPerSecond: 6_264_272),
+    ],
+    thumbnailURL: nil,
+    hasDownloadableChat: false)
+  let model = previewModel(
+    link: "https://clips.twitch.tv/AdorableStylishPotatoPlanking-5UAS4GFYHTkDW4xX",
+    info: clipInfo)
+  model.output = .videoWithChat
+  model.isOptionsExpanded = false
   return IntakeWindow(model: model)
 }

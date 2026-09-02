@@ -78,6 +78,42 @@ final class IntakeModel {
   /// a silent fallback would change what its estimate means.
   private(set) var destinationFellBack = false
 
+  /// Whether the options panel is open.
+  ///
+  /// Writes through to the store, so a collapse sticks — except the
+  /// transient expansion in `isOptionsEffectivelyExpanded`, which must not.
+  var isOptionsExpanded: Bool {
+    didSet { preferences.optionsPanelIsExpanded = isOptionsExpanded }
+  }
+
+  /// What the panel actually shows.
+  ///
+  /// Forced open whenever a refusal is on screen. Both `chatProblem` and
+  /// `compositeProblem` render inside this panel and both disable Add, so a
+  /// closed panel would grey Add out with the explanation sealed inside it —
+  /// the exact failure those messages exist to prevent. Transient by
+  /// construction: it never reaches `isOptionsExpanded`, so a clip with an
+  /// expired broadcast cannot permanently reopen the drawer.
+  var isOptionsEffectivelyExpanded: Bool {
+    isOptionsExpanded || chatProblem != nil || compositeProblem != nil
+  }
+
+  /// Reads the effective value, writes the stored one. A user's collapse
+  /// sticks; a refusal's forced expansion does not.
+  var isOptionsEffectivelyExpandedBinding: Bool {
+    get { isOptionsEffectivelyExpanded }
+    set { isOptionsExpanded = newValue }
+  }
+
+  /// The collapsed header's summary. Collapsed is the steady state, so a
+  /// header that says only "Download Options" hides where the file is going
+  /// on most downloads.
+  var optionsSummary: String {
+    let chat = output == .videoWithChat ? "Video + chat" : "Video"
+    let folderName = folder?.lastPathComponent ?? "No folder"
+    return "\(chat) · \(qualityCap.label) · \(folderName)"
+  }
+
   private var preferences: Preferences
 
   /// Trim times as typed, parsed by `Timecode`. Kept as text rather than
@@ -153,6 +189,7 @@ final class IntakeModel {
     self.chatSize = preferences.chatSize
     self.folder = preferences.destination
     self.destinationFellBack = preferences.storedDestinationIsMissing
+    self.isOptionsExpanded = preferences.optionsPanelIsExpanded
   }
 
   /// Wires the real collaborators. Everything about where a freshly opened
@@ -191,12 +228,13 @@ final class IntakeModel {
   /// from reading the clipboard *at all*. The staleness and the dead prefill
   /// are the same bug, and this is the one place that fixes both.
   ///
-  /// `folder`, `output`, `chatSize` and `qualityCap` come back from the
-  /// preference store rather than surviving in place. They used to be
-  /// preserved here with a paragraph explaining that they answer how the user
-  /// works rather than anything about this video — which was right, and which
-  /// this is the conclusion of: that was a within-one-run approximation of a
-  /// preference store, and there is a real one now.
+  /// `folder`, `output`, `chatSize`, `qualityCap` and `isOptionsExpanded`
+  /// come back from the preference store rather than surviving in place.
+  /// They used to be preserved here with a paragraph explaining that they
+  /// answer how the user works rather than anything about this video — which
+  /// was right, and which this is the conclusion of: that was a
+  /// within-one-run approximation of a preference store, and there is a real
+  /// one now.
   func reset() {
     linkText = ""
     name = ""
@@ -206,6 +244,7 @@ final class IntakeModel {
     chatSize = preferences.chatSize
     folder = preferences.destination
     destinationFellBack = preferences.storedDestinationIsMissing
+    isOptionsExpanded = preferences.optionsPanelIsExpanded
     wantsToSaveDefaults = false
     isTrimExpanded = false
     trimStartText = ""
@@ -902,6 +941,10 @@ final class IntakeModel {
     // rendition sits above or below the seeded cap would silently overwrite
     // it with that rendition's own bucket.
     preferences.qualityCap = qualityCap
+    // The visible payoff for opting in, tied to an explicit act so it reads
+    // as cause and effect rather than as the app moving furniture. Once only:
+    // after this the panel is whatever the user last left it.
+    isOptionsExpanded = false
   }
 
   // MARK: - Failure text
