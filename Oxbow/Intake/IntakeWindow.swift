@@ -689,10 +689,17 @@ struct IntakeWindow: View {
     Button {
       toggleDisclosure(toggle)
     } label: {
-      HStack(spacing: 6) {
+      // **`.firstTextBaseline`, not the default centre.** The title is body
+      // text and the summary beside it is `.caption`; centred, two different
+      // point sizes sit on two different baselines and the smaller one reads
+      // as floating. The chevron is a glyph rather than text, so it carries
+      // its own guide below to keep it optically centred on the title rather
+      // than sitting on the baseline with its tail hanging under it.
+      HStack(alignment: .firstTextBaseline, spacing: 6) {
         Image(systemName: "chevron.right")
           .font(.caption.weight(.semibold))
           .foregroundStyle(.secondary)
+          .alignmentGuide(.firstTextBaseline) { $0[VerticalAlignment.center] + 4 }
           // Rotated rather than swapped for `chevron.down`: a swap pops
           // between two glyphs, a rotation is the same continuous motion the
           // rest of the disclosure makes.

@@ -306,22 +306,22 @@ private func thumbnailPlaceholderSymbol(_ name: String) -> some View {
 /// zero-frame case never reaches here at all, since `VideoThumbnail` keeps
 /// its placeholder treatment for that.
 ///
-/// **Why a drift, not just a fade.** A still that only cross-fades reads as
-/// a slideshow. A still that also scales and pans very slightly reads as
-/// footage, which is the entire point of showing a VOD's own sampled frames
-/// instead of a single static thumbnail. Linear easing within a frame's
-/// dwell, because an ease-in-out here reads as the image breathing rather
-/// than drifting.
+/// **A fade and nothing else.** An earlier version drifted each frame with a
+/// slow Ken Burns scale, on the theory that a still which only cross-fades
+/// reads as a slideshow while one that moves reads as footage. That is true
+/// and it was still wrong here: this plays continuously beside a title
+/// somebody is reading and a form they are filling in, and any motion that
+/// is legible at a glance competes with both. Two rounds of toning it down
+/// (halving the scale, then dropping the direction alternation) ended with
+/// the honest answer being none of it.
 ///
-/// **One anchor for every frame, not an alternating one.** The first version
-/// flipped `scaleEffect`'s `anchor` between `.leading` and `.trailing` frame
-/// to frame, on the theory that always zooming toward the same edge would
-/// give a four-frame loop a visible bias to one side. It does — and that
-/// bias is cheaper than the alternative, because flipping the direction at
-/// every cut is a second source of movement on top of the cut and the drift,
-/// and the eye catches a reversal far more readily than a constant slow
-/// travel. A consistent `.leading` reads as one unhurried push in one
-/// direction; the alternating version read as fidgeting.
+/// **The outgoing frame is not faded out, only covered.** Cross-fading both
+/// at once means each sits near half opacity at the midpoint, and whatever
+/// is behind them shows through the gap — with the colour bars still
+/// mounted, they visibly flashed between frames. Holding the previous frame
+/// at full opacity and fading the next in over it keeps the picture opaque
+/// end to end, which is also why the bars can be dropped entirely once the
+/// frames arrive.
 ///
 /// **Why `.task`, not a `Timer`.** The loop has to stop the moment this view
 /// leaves the hierarchy — a closed intake window must not leave a repeating
@@ -353,33 +353,17 @@ struct FilmstripThumbnail: View {
   /// opacity, and the fade would never be seen.
   @State private var framesVisible = false
   @State private var currentFrame = 0
-  /// One entry per frame: how far into its own Ken Burns drift it has
-  /// animated, from 1 (no scale) toward `maxScale`. Indexed rather than a
-  /// single shared value so the frame fading out during a cross-fade keeps
-  /// the scale it had reached, instead of snapping back to 1 the instant the
-  /// next frame's dwell begins resetting *its* entry.
-  @State private var frameScales: [CGFloat] = []
-
+  /// The frame sitting underneath at full opacity while `currentFrame` fades
+  /// in over it. Equal to `currentFrame` except during a transition.
+  @State private var previousFrame = 0
+  /// How far `currentFrame` has faded in over `previousFrame`.
+  @State private var fade: Double = 1
   /// How long the first frame takes to fade up over the colour bars. Longer
-  /// than the cross-fade between frames: that one is a cut inside a running
+  /// than the crossing between frames: that one is a cut inside a running
   /// picture, this one is the picture arriving.
   private static let tuneInDuration: Double = 0.5
   private static let frameDwellSeconds: Double = 2.5
   private static let crossFadeDuration: Double = 0.6
-  /// How far a frame drifts over its dwell.
-  ///
-  /// **Deliberately smaller than it wants to be.** The drift exists to stop
-  /// four stills reading as a slideshow, and it has done its job the moment
-  /// the card feels like footage — anything past that is an animation
-  /// competing for attention with the title beside it and the form below it,
-  /// in a window whose whole purpose is a decision about a download.
-  ///
-  /// Started at 1.05, which was legible as movement at a glance rather than
-  /// only on inspection. At 1.025 over a 2.5s dwell the frame still settles
-  /// somewhere visibly different by the end, and nothing about any single
-  /// instant of it reads as motion.
-  private static let maxScale: CGFloat = 1.025
-
   var body: some View {
     // A `ZStack` with the bars first, **not** `.background(TestPattern())`.
     // `background` takes its size from the primary view, and the primary
@@ -388,25 +372,25 @@ struct FilmstripThumbnail: View {
     // to be filling it. In a `ZStack` the bars are a sibling that carries
     // the size themselves, so the frame is 16:9 from the first instant.
     ZStack {
-      TestPattern()
+      // Dropped the moment the frames are visible. It is only ever a
+      // placeholder, and leaving it mounted underneath meant any gap in the
+      // picture above — a mid-fade dip, a frame that failed to decode — let
+      // colour bars flash through a loaded thumbnail.
+      if !framesVisible {
+        TestPattern()
+      }
 
       Group {
         if let loadedFrames {
         if loadedFrames.count >= 2, !reduceMotion {
           ZStack {
-            ForEach(loadedFrames.indices, id: \.self) { index in
-              frameContent(loadedFrames[index])
-                .scaleEffect(
-                  index < frameScales.count ? frameScales[index] : 1,
-                  anchor: .leading)
-                .opacity(index == currentFrame ? 1 : 0)
-            }
+            // The frame being left behind, held at full opacity. Never
+            // faded out — see the doc comment: fading both at once leaves a
+            // translucent midpoint that shows whatever is underneath.
+            frameContent(loadedFrames[previousFrame])
+            frameContent(loadedFrames[currentFrame])
+              .opacity(fade)
           }
-          // Ties the cross-fade to `currentFrame` alone, not to
-          // `frameScales` — the drift below is animated explicitly with its
-          // own linear curve, and letting this catch it too would round its
-          // continuous ramp down to the fade's easeInOut.
-          .animation(.easeInOut(duration: Self.crossFadeDuration), value: currentFrame)
         } else {
           // Fewer than two frames, or Reduce Motion: frame 0, statically,
           // with no scale effect applied at all. `loadedFrames` is never
@@ -433,8 +417,9 @@ struct FilmstripThumbnail: View {
       framesVisible = false
       let loaded = await Self.loadAllFrames(originalURLs)
       guard !Task.isCancelled else { return }
-      frameScales = Array(repeating: 1, count: loaded.count)
       currentFrame = 0
+      previousFrame = 0
+      fade = 1
       loadedFrames = loaded
       withAnimation(.easeInOut(duration: Self.tuneInDuration)) {
         framesVisible = true
@@ -453,30 +438,31 @@ struct FilmstripThumbnail: View {
     }
   }
 
-  /// Cycles `currentFrame` forever, dwelling on each with a linear scale
-  /// ramp before cross-fading to the next. Exits as soon as the surrounding
-  /// `.task` is cancelled — checked both before starting a new dwell and
-  /// immediately after every `Task.sleep`, since cancellation can land at
-  /// either point.
+  /// Cycles `currentFrame` forever, dwelling on each and then fading the
+  /// next in over it. Exits as soon as the surrounding `.task` is cancelled —
+  /// checked both before starting a new dwell and immediately after every
+  /// `Task.sleep`, since cancellation can land at either point.
   private func runLoop(frameCount: Int) async {
     while !Task.isCancelled {
-      withAnimation(.linear(duration: Self.frameDwellSeconds)) {
-        frameScales[currentFrame] = Self.maxScale
-      }
       try? await Task.sleep(for: .seconds(Self.frameDwellSeconds))
       guard !Task.isCancelled else { return }
 
-      let next = (currentFrame + 1) % frameCount
-      // Snap the *upcoming* frame's scale back to 1 before it becomes
-      // visible, disabling animation for just this write — otherwise it
-      // would visibly ease down from wherever its last lap left it, right as
-      // it fades in.
-      var reset = Transaction()
-      reset.disablesAnimations = true
-      withTransaction(reset) {
-        frameScales[next] = 1
+      // Put the next frame above the current one at zero opacity, then fade
+      // it up. `previousFrame` stays put and opaque for the whole crossing.
+      previousFrame = currentFrame
+      var instant = Transaction()
+      instant.disablesAnimations = true
+      withTransaction(instant) {
+        currentFrame = (currentFrame + 1) % frameCount
+        fade = 0
       }
-      currentFrame = next
+      withAnimation(.easeInOut(duration: Self.crossFadeDuration)) { fade = 1 }
+
+      try? await Task.sleep(for: .seconds(Self.crossFadeDuration))
+      guard !Task.isCancelled else { return }
+      // The crossing is over; collapse the two layers back onto one so the
+      // next lap starts from a clean state.
+      withTransaction(instant) { previousFrame = currentFrame }
     }
   }
 
