@@ -23,7 +23,7 @@ rather than a rendition name — renditions are named per video and some carry
 no resolution, so no name is stable across two videos — and why saving
 defaults is an explicit opt-in rather than last-used-wins.
 
-**Current state: shipping.** 0.3.0 is out, as a signed, notarized DMG built by
+**Current state: shipping.** 0.4.0 is out, as a signed, notarized DMG built by
 `.github/workflows/release.yml` from a `v*` tag. The app downloads a VOD or
 clip, its chat, and a rendered chat video, and can composite the video and the
 chat column into a single file — all into names derived from the stream's own
