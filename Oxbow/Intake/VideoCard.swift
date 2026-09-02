@@ -175,8 +175,9 @@ struct VideoThumbnail: View {
     switch source {
     case .loading:
       // No spinner. The card around this is redacted while it loads, and a
-      // spinner inside a placeholder reads as a second, competing state.
-      Color.clear
+      // spinner inside a placeholder reads as a second, competing state —
+      // the bars say "nothing here yet" without claiming to be progress.
+      TestPattern()
 
     case .frames(let urls):
       if urls.isEmpty {
@@ -197,6 +198,95 @@ struct VideoThumbnail: View {
 /// SF Symbol treatment for every "there is no image here" case, so a missing
 /// thumbnail and a failed frame within the filmstrip read as the same kind
 /// of absence rather than two different ones.
+/// Colour bars, for the slot before there is anything to put in it.
+///
+/// **Why a picture rather than nothing.** The frame's *shape* was always
+/// reserved, so nothing below it ever moved — but the slot went flat grey,
+/// then a spinner, then snapped to a photograph, and three unrelated
+/// appearances in a row read as a jump even though no geometry changed. Bars
+/// are one appearance that belongs in a video window, and a frame fading up
+/// over them reads as a picture tuning in rather than as a placeholder being
+/// replaced.
+///
+/// **Drawn, not shipped.** Seven rectangles and a few lines cost less than an
+/// asset, scale to any width the window is dragged to without a `@2x` set,
+/// and need no light/dark variants — the bars are the same bars in both.
+///
+/// Not SMPTE-accurate and not trying to be: this is furniture, so it is the
+/// pattern everyone recognises rather than one anybody could calibrate to.
+private struct TestPattern: View {
+  /// SwiftUI has no `Color.magenta`, so it is spelled out. Everything else
+  /// here is a system colour on purpose — these are the primaries and their
+  /// complements, not brand colours to be tuned.
+  private static let magenta = Color(red: 1, green: 0, blue: 1)
+
+  private static let topBars: [Color] = [
+    Color(white: 0.78), .yellow, .cyan, .green, magenta, .red, .blue,
+  ]
+  /// The middle strip inverts the top row's order, which is what makes the
+  /// pattern read as the real thing at a glance rather than as seven stripes.
+  private static let middleBars: [Color] = [
+    .blue, .black, magenta, .black, .cyan, .black, Color(white: 0.78),
+  ]
+
+  /// Full-strength bars are very loud against this app's dark window, and
+  /// this is a placeholder rather than the subject. One number to turn up if
+  /// it reads as too timid.
+  private static let strength: Double = 0.55
+
+  var body: some View {
+    GeometryReader { proxy in
+      let height = proxy.size.height
+      VStack(spacing: 0) {
+        bars(Self.topBars).frame(height: height * 0.72)
+        bars(Self.middleBars).frame(height: height * 0.10)
+        bottom
+      }
+      .opacity(Self.strength)
+      .overlay(scanlines)
+    }
+  }
+
+  private func bars(_ colors: [Color]) -> some View {
+    HStack(spacing: 0) {
+      ForEach(Array(colors.enumerated()), id: \.offset) { _, colour in
+        colour.frame(maxWidth: .infinity, maxHeight: .infinity)
+      }
+    }
+  }
+
+  /// The bottom band's blocks are deliberately uneven — an even seventh row
+  /// three times over would read as a striped flag.
+  private var bottom: some View {
+    GeometryReader { proxy in
+      let width = proxy.size.width
+      HStack(spacing: 0) {
+        Color(red: 0.05, green: 0.07, blue: 0.30).frame(width: width * 0.22)
+        Color.white.frame(width: width * 0.17)
+        Color(red: 0.20, green: 0.09, blue: 0.42).frame(width: width * 0.17)
+        Color.black
+      }
+    }
+  }
+
+  /// The horizontal banding of a CRT. Drawn in a `Canvas` rather than as a
+  /// stack of hairline views: at this size that is a few dozen lines either
+  /// way, and one canvas is one draw instead of a few dozen layout passes.
+  private var scanlines: some View {
+    Canvas { context, size in
+      let spacing: CGFloat = 3
+      var y: CGFloat = 0
+      while y < size.height {
+        context.fill(
+          Path(CGRect(x: 0, y: y, width: size.width, height: 1)),
+          with: .color(.black.opacity(0.16)))
+        y += spacing
+      }
+    }
+    .allowsHitTesting(false)
+  }
+}
+
 private func thumbnailPlaceholderSymbol(_ name: String) -> some View {
   Image(systemName: name)
     .font(.title2)
@@ -257,6 +347,11 @@ struct FilmstripThumbnail: View {
   /// a frame that has not arrived yet would flash the placeholder mid-loop,
   /// which reads as a glitch rather than as loading.
   @State private var loadedFrames: [Image?]?
+  /// Drives the fade of the loaded frames up over the colour-bar background.
+  /// Separate from `loadedFrames` being non-nil, and set one step later on
+  /// purpose: flipping both at once would insert the frames already at full
+  /// opacity, and the fade would never be seen.
+  @State private var framesVisible = false
   @State private var currentFrame = 0
   /// One entry per frame: how far into its own Ken Burns drift it has
   /// animated, from 1 (no scale) toward `maxScale`. Indexed rather than a
@@ -265,6 +360,10 @@ struct FilmstripThumbnail: View {
   /// next frame's dwell begins resetting *its* entry.
   @State private var frameScales: [CGFloat] = []
 
+  /// How long the first frame takes to fade up over the colour bars. Longer
+  /// than the cross-fade between frames: that one is a cut inside a running
+  /// picture, this one is the picture arriving.
+  private static let tuneInDuration: Double = 0.5
   private static let frameDwellSeconds: Double = 2.5
   private static let crossFadeDuration: Double = 0.6
   /// How far a frame drifts over its dwell.
@@ -306,10 +405,13 @@ struct FilmstripThumbnail: View {
           // non-empty `originalURLs`, and `loadAllFrames` preserves count.
           frameContent(loadedFrames[0])
         }
-      } else {
-        ProgressView().controlSize(.small)
       }
     }
+    // The frames fade up *over* the bars rather than replacing them, which
+    // is why the pattern is a background rather than an `else` branch: there
+    // is no instant where the slot is empty, and no swap to catch the eye.
+    .opacity(framesVisible ? 1 : 0)
+    .background(TestPattern())
     // Belt and suspenders with the rounded-rect `clipShape` already on
     // `VideoThumbnail.body`: that clip already contains anything drawn
     // inside this view's own bounds, but this makes the "must not bleed past
@@ -317,11 +419,18 @@ struct FilmstripThumbnail: View {
     // combination with its parent.
     .clipped()
     .task(id: originalURLs) {
+      // A new link's frames start hidden again, so the bars cover the old
+      // video's picture while the new one loads rather than leaving it on
+      // screen under a title that has already changed.
+      framesVisible = false
       let loaded = await Self.loadAllFrames(originalURLs)
       guard !Task.isCancelled else { return }
       frameScales = Array(repeating: 1, count: loaded.count)
       currentFrame = 0
       loadedFrames = loaded
+      withAnimation(.easeInOut(duration: Self.tuneInDuration)) {
+        framesVisible = true
+      }
       guard loaded.count >= 2, !reduceMotion else { return }
       await runLoop(frameCount: loaded.count)
     }
