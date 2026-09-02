@@ -177,7 +177,7 @@ struct QueueActionButtons: View {
       Button(role: .destructive) {
         actions.remove(completed)
       } label: {
-        Label("Remove Completed", systemImage: "eraser")
+        Label("Remove Completed", systemImage: "text.badge.minus")
       }
       .disabled(completed.isEmpty)
       .keyboardShortcut(KeyboardShortcut(.delete, modifiers: [.command, .option]))

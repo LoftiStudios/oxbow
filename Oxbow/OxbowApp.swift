@@ -201,9 +201,13 @@ private struct AddDownloadCommand: View {
   @Environment(\.openWindow) private var openWindow
 
   var body: some View {
-    Button("Add Download…") { openWindow(id: OxbowApp.intakeWindowID) }
-      .keyboardShortcut("n")
-      .disabled(!isEnabled)
+    Button {
+      openWindow(id: OxbowApp.intakeWindowID)
+    } label: {
+      Label("Add Download…", systemImage: "plus")
+    }
+    .keyboardShortcut("n")
+    .disabled(!isEnabled)
   }
 }
 
@@ -218,9 +222,11 @@ private struct CheckForUpdatesCommand: View {
   @Environment(\.openWindow) private var openWindow
 
   var body: some View {
-    Button("Check for Updates…") {
+    Button {
       openWindow(id: OxbowApp.queueWindowID)
       Task { await updates.checkManually() }
+    } label: {
+      Label("Check for Updates…", systemImage: "arrow.triangle.2.circlepath")
     }
   }
 }
@@ -235,7 +241,11 @@ private struct AboutCommand: View {
   @Environment(\.openWindow) private var openWindow
 
   var body: some View {
-    Button("About \(applicationName)") { openWindow(id: OxbowApp.aboutWindowID) }
+    Button {
+      openWindow(id: OxbowApp.aboutWindowID)
+    } label: {
+      Label("About \(applicationName)", systemImage: "info.circle")
+    }
   }
 }
 
