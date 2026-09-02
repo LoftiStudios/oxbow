@@ -134,20 +134,31 @@ public struct VideoInfo: Sendable, Equatable {
   public var createdAt: Date
   public var duration: Duration
   public var qualities: [StreamQuality]
-  /// The video's own preview image, for the intake sheet to show.
+  /// Every preview frame Twitch gave us, in order.
   ///
-  /// Optional because Twitch does not always have one: a VOD still processing
+  /// **A VOD carries four, a clip exactly one.** Measured against the live
+  /// CDN on VOD 2859050150: the four VOD frames are genuinely different
+  /// images (distinct SHAs, 12-14 KB each at Twitch's default 320x180), not
+  /// one frame repeated — the CLI's GraphQL query hardcodes
+  /// `thumbnailURLs(height:180,width:320)`, so 320x180 is what arrives here,
+  /// whatever size the sheet later asks the CDN to rewrite it to (see
+  /// `StreamThumbnail`). A clip's array always has exactly one element,
+  /// already full-size (1920x1080 on a modern clip) because it comes from the
+  /// asset's own single `thumbnailURL` rather than a sampled list.
+  ///
+  /// Empty, not absent, when Twitch has nothing: a VOD still processing
   /// arrives with an empty `thumbnailURLs`, and a clip whose assets are
   /// missing has no preview either. Both are states the sheet already handles
   /// for the rest of the metadata, so this is one more thing that may be
-  /// absent rather than a reason to fail the parse.
-  ///
-  /// **The two shapes give us different sizes.** A VOD's is 320x180 — the CLI
-  /// hardcodes `thumbnailURLs(height:180,width:320)` in its GraphQL query, so
-  /// there is no larger one to ask for. A clip's is the asset's full-size
-  /// preview, 1920x1080 on a modern clip. The smaller of the two is what caps
-  /// how large the sheet may draw it.
-  public var thumbnailURL: URL?
+  /// empty rather than a reason to fail the parse.
+  public var thumbnailURLs: [URL]
+
+  /// The frame upstream's own WPF pages show (`PageVodDownload.xaml.cs` reads
+  /// the first of the same list) — computed rather than stored, so there is
+  /// only one place `thumbnailURLs` can disagree with the single image
+  /// everything outside `VideoCard`'s filmstrip still wants, notably
+  /// `Oxbow/Info/JobInfoWindow.swift`.
+  public var thumbnailURL: URL? { thumbnailURLs.first }
 
   /// Whether this video's chat can be downloaded at all.
   ///
@@ -179,16 +190,17 @@ public struct VideoInfo: Sendable, Equatable {
   /// fine.
   public var hasDownloadableChat: Bool
 
-  /// `thumbnailURL` defaults to nil: it adorns the intake sheet and nothing
-  /// else derives from it, so the tests and previews that build a `VideoInfo`
-  /// for its name, duration or qualities should not have to name one.
+  /// `thumbnailURLs` defaults to empty: it adorns the intake sheet and
+  /// nothing else derives from it, so the tests and previews that build a
+  /// `VideoInfo` for its name, duration or qualities should not have to name
+  /// any frames.
   public init(
     streamer: String,
     title: String,
     createdAt: Date,
     duration: Duration,
     qualities: [StreamQuality],
-    thumbnailURL: URL? = nil,
+    thumbnailURLs: [URL] = [],
     hasDownloadableChat: Bool = true)
   {
     self.streamer = streamer
@@ -196,7 +208,7 @@ public struct VideoInfo: Sendable, Equatable {
     self.createdAt = createdAt
     self.duration = duration
     self.qualities = qualities
-    self.thumbnailURL = thumbnailURL
+    self.thumbnailURLs = thumbnailURLs
     self.hasDownloadableChat = hasDownloadableChat
   }
 
@@ -223,10 +235,11 @@ public struct VideoInfo: Sendable, Equatable {
         duration: .seconds(video.lengthSeconds),
         // The m3u8 master playlist follows the JSON lines, and only for a VOD.
         qualities: Self.parseQualities(from: lines[(jsonLineIndex + 1)...]),
-        // One URL per preview frame, in order. The first is the one upstream's
-        // own WPF pages show (`PageVodDownload.xaml.cs`), so it is the one a
-        // person recognises as "that VOD's thumbnail".
-        thumbnailURL: video.thumbnailURLs?.first.flatMap(URL.init(string:)))
+        // Every frame, in the order Twitch returned them. `compactMap` rather
+        // than failing the whole parse over one bad URL string — not observed
+        // in practice, but a malformed entry here should cost one frame, not
+        // the video's title and duration too.
+        thumbnailURLs: (video.thumbnailURLs ?? []).compactMap(URL.init(string:)))
     }
 
     if let envelope = try? decoder.decode(ClipInfoEnvelope.self, from: jsonData) {
@@ -237,7 +250,9 @@ public struct VideoInfo: Sendable, Equatable {
         createdAt: clip.createdAt,
         duration: .seconds(clip.durationSeconds),
         qualities: Self.clipQualities(of: clip),
-        thumbnailURL: Self.clipThumbnailURL(of: clip),
+        // A clip yields a one-element array from its existing single URL —
+        // there is no sampled list to draw more frames from.
+        thumbnailURLs: Self.clipThumbnailURL(of: clip).map { [$0] } ?? [],
         // Upstream's exact condition, negated. Both fields, not just
         // `video`: upstream checks both, and a payload carrying one without
         // the other would abort the chat download just the same.

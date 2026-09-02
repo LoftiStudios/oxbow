@@ -118,8 +118,19 @@ struct VideoInfoTests {
     #expect(thumbnail.absoluteString.hasSuffix("/thumb/thumb0-320x180.jpg"))
   }
 
+  /// The fixture's payload carries all four of Twitch's sampled frames, not
+  /// just the first — `VideoCard`'s filmstrip needs every one of them, in
+  /// the order Twitch returned them, to play them in sequence.
+  @Test func readsAllFourVodThumbnailFrames() throws {
+    let info = try #require(VideoInfo.parse(try fixture()))
+    #expect(info.thumbnailURLs.count == 4)
+    #expect(info.thumbnailURLs.map(\.lastPathComponent) == [
+      "thumb0-320x180.jpg", "thumb1-320x180.jpg", "thumb2-320x180.jpg", "thumb3-320x180.jpg",
+    ])
+  }
+
   /// A VOD still processing, or one whose previews Twitch has not generated,
-  /// arrives with the key absent or its list empty. Nil, not a broken URL:
+  /// arrives with the key absent or its list empty. Empty, not a broken URL:
   /// the sheet draws a placeholder rather than an image that will 404.
   @Test func hasNoThumbnailWhenTwitchOffersNone() throws {
     let output = """
@@ -131,6 +142,7 @@ struct VideoInfoTests {
 
     let info = try #require(VideoInfo.parse(output))
     #expect(info.thumbnailURL == nil)
+    #expect(info.thumbnailURLs.isEmpty)
   }
 
   @Test func pixelSizeParsesLandscape() {
@@ -387,6 +399,15 @@ struct ClipInfoTests {
     let info = try #require(VideoInfo.parse(try fixture()))
     let thumbnail = try #require(info.thumbnailURL)
     #expect(thumbnail.absoluteString.contains("/landscape/"))
+  }
+
+  /// A clip has no sampled frame list — `thumbnailURLs` has to come back as
+  /// exactly one element, the same URL `thumbnailURL` already reads, not an
+  /// empty array (no preview) or a multi-frame one (nothing to sample from).
+  @Test func thumbnailURLsIsASingleElementArrayForAClip() throws {
+    let info = try #require(VideoInfo.parse(try fixture()))
+    #expect(info.thumbnailURLs.count == 1)
+    #expect(info.thumbnailURLs.first == info.thumbnailURL)
   }
 
   /// A vertical clip has no landscape asset at all, so the portrait preview is
