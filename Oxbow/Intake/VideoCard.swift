@@ -177,7 +177,14 @@ struct VideoThumbnail: View {
       // No spinner. The card around this is redacted while it loads, and a
       // spinner inside a placeholder reads as a second, competing state —
       // the bars say "nothing here yet" without claiming to be progress.
-      TestPattern()
+      //
+      // `.unredacted()` because the bars ARE this slot's placeholder, and
+      // `.redacted(.placeholder)` on the card would otherwise mask them to
+      // the same flat grey block it gives the title and date. The earlier
+      // drawn version was `Color` shapes, which redaction leaves alone; an
+      // `Image` it does not, so this became load-bearing the moment the
+      // pattern became an asset.
+      TestPattern().unredacted()
 
     case .frames(let urls):
       if urls.isEmpty {
@@ -208,82 +215,32 @@ struct VideoThumbnail: View {
 /// over them reads as a picture tuning in rather than as a placeholder being
 /// replaced.
 ///
-/// **Drawn, not shipped.** Seven rectangles and a few lines cost less than an
-/// asset, scale to any width the window is dragged to without a `@2x` set,
-/// and need no light/dark variants — the bars are the same bars in both.
+/// **An asset, not seven rectangles.** The first version drew the bars in
+/// SwiftUI, which scaled to any width with no `@2x` set and needed no
+/// light/dark variants — but it was an approximation of the artwork rather
+/// than the artwork, and the pattern is a design decision rather than a
+/// primitive. As an image, changing it — to a monochrome pattern, say — is
+/// replacing a file in the asset catalog and touching nothing here.
 ///
-/// Not SMPTE-accurate and not trying to be: this is furniture, so it is the
-/// pattern everyone recognises rather than one anybody could calibrate to.
+/// The asset is single-scale, so it is used at its natural pixel size
+/// whatever the display: at 1146x648 it covers this card's ~490 physical
+/// pixels twice over, with headroom for a much wider window.
 private struct TestPattern: View {
-  /// SwiftUI has no `Color.magenta`, so it is spelled out. Everything else
-  /// here is a system colour on purpose — these are the primaries and their
-  /// complements, not brand colours to be tuned.
-  private static let magenta = Color(red: 1, green: 0, blue: 1)
-
-  private static let topBars: [Color] = [
-    Color(white: 0.78), .yellow, .cyan, .green, magenta, .red, .blue,
-  ]
-  /// The middle strip inverts the top row's order, which is what makes the
-  /// pattern read as the real thing at a glance rather than as seven stripes.
-  private static let middleBars: [Color] = [
-    .blue, .black, magenta, .black, .cyan, .black, Color(white: 0.78),
-  ]
-
   /// Full-strength bars are very loud against this app's dark window, and
-  /// this is a placeholder rather than the subject. One number to turn up if
-  /// it reads as too timid.
+  /// this is a placeholder rather than the subject. Set to 1 to show the
+  /// asset exactly as authored.
   private static let strength: Double = 0.55
 
   var body: some View {
-    GeometryReader { proxy in
-      let height = proxy.size.height
-      VStack(spacing: 0) {
-        bars(Self.topBars).frame(height: height * 0.72)
-        bars(Self.middleBars).frame(height: height * 0.10)
-        bottom
-      }
+    Image("TestPattern")
+      .resizable()
+      // `.fill`, not `.fit`: the asset is 1146x648 (1.768:1) against a 16:9
+      // (1.778:1) frame, so fitting would letterbox it by a hair and leave
+      // two slivers of background at the sides. The overflow it crops
+      // instead is well under a pixel at this size.
+      .aspectRatio(contentMode: .fill)
       .opacity(Self.strength)
-      .overlay(scanlines)
-    }
-  }
-
-  private func bars(_ colors: [Color]) -> some View {
-    HStack(spacing: 0) {
-      ForEach(Array(colors.enumerated()), id: \.offset) { _, colour in
-        colour.frame(maxWidth: .infinity, maxHeight: .infinity)
-      }
-    }
-  }
-
-  /// The bottom band's blocks are deliberately uneven — an even seventh row
-  /// three times over would read as a striped flag.
-  private var bottom: some View {
-    GeometryReader { proxy in
-      let width = proxy.size.width
-      HStack(spacing: 0) {
-        Color(red: 0.05, green: 0.07, blue: 0.30).frame(width: width * 0.22)
-        Color.white.frame(width: width * 0.17)
-        Color(red: 0.20, green: 0.09, blue: 0.42).frame(width: width * 0.17)
-        Color.black
-      }
-    }
-  }
-
-  /// The horizontal banding of a CRT. Drawn in a `Canvas` rather than as a
-  /// stack of hairline views: at this size that is a few dozen lines either
-  /// way, and one canvas is one draw instead of a few dozen layout passes.
-  private var scanlines: some View {
-    Canvas { context, size in
-      let spacing: CGFloat = 3
-      var y: CGFloat = 0
-      while y < size.height {
-        context.fill(
-          Path(CGRect(x: 0, y: y, width: size.width, height: 1)),
-          with: .color(.black.opacity(0.16)))
-        y += spacing
-      }
-    }
-    .allowsHitTesting(false)
+      .allowsHitTesting(false)
   }
 }
 
