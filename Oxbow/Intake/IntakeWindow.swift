@@ -216,6 +216,7 @@ struct IntakeWindow: View {
           Text(isClip ? "Clip + chat" : "Video + chat").tag(DownloadOutput.videoWithChat)
           Text(isClip ? "Clip" : "Video").tag(DownloadOutput.video)
         }
+        .padding(.vertical, 4)
 
         // Thin rules between the panel's own rows, matching the mockup —
         // `Form`'s grouped style draws nothing between two `Picker`s in the
@@ -234,6 +235,7 @@ struct IntakeWindow: View {
             Text(model.label(for: quality)).tag(quality.name)
           }
         }
+        .padding(.vertical, 4)
 
         // `chatProblem == nil` as well as the output: offering a text size
         // for chat that cannot be downloaded, above a row explaining that it
@@ -253,9 +255,19 @@ struct IntakeWindow: View {
             Text("Medium").tag(ChatSize.medium)
             Text("Large").tag(ChatSize.large)
           }
+          .padding(.vertical, 4)
         }
 
+        // Carries the same rule and padding treatment as the three rows
+        // above, rather than stopping at `Chat text size` — `Save to` is a
+        // fourth row of the same shape (§2.1's mockup), not an appendix to
+        // the pickers above it.
+        Divider()
+
         destination
+          .padding(.vertical, 4)
+
+        Divider()
 
         // Stays inside the drawer, unlike `spaceWarning` below — §2.6 names
         // this exact user (a saved destination that has since vanished) and
@@ -319,12 +331,15 @@ struct IntakeWindow: View {
 
         // Back inside the drawer, below the checkbox — see the doc comment
         // above `options` for why this reverses where an earlier version of
-        // this panel put it.
+        // this panel put it. `.padding(.top, 4)` pulls it away from the
+        // checkbox above so it reads as a footnote about the panel, not as
+        // a second line of the checkbox's own label.
         if model.output == .videoWithChat, model.chatProblem == nil {
           Text("Chat is rendered in a column beside the video and encoded into "
             + "one file. This takes roughly as long as the stream itself.")
             .font(.caption)
             .foregroundStyle(.secondary)
+            .padding(.top, 4)
         }
 
         if model.wantsToSaveDefaults {
@@ -534,8 +549,16 @@ struct IntakeWindow: View {
 
   private var destination: some View {
     HStack(spacing: 8) {
+      // Not `.secondary`, unlike `folder`'s own "No folder chosen" fallback
+      // below. This is a row label, the same job `Download`, `Quality` and
+      // `Chat text size` do with their own `Picker` labels — all rendered at
+      // the default (primary) style. `destination` is a plain `HStack`, not
+      // a `LabeledContent`, so nothing styles this label but this modifier;
+      // it dates from when `Save to` lived in its own `Section` below the
+      // pickers, where dimming it read as secondary information rather than
+      // as disabled. Inside one group of option rows it reads as disabled,
+      // so it goes.
       Text("Save to")
-        .foregroundStyle(.secondary)
 
       if let folder = model.folder {
         // The real Finder icon for the real folder: a faster read than the
