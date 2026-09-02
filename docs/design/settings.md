@@ -457,9 +457,12 @@ an empty list, the documented non-round-trip in §3.3, and that resolution under
 `.videoWithChat` skips a rendition `CompositeGeometry` cannot parse (§3.4)
 while an explicit pick of the same rendition still reaches
 `compositeProblem`. `IntakeModel` seeding,
-the stale-destination fallback, that a save happens on successful Add and does
-not happen on `addFailure`, and that `output` is withheld from a save while
-`chatProblem` is showing (§2.7).
+the stale-destination fallback, and that `output` is withheld from a save
+while `chatProblem` is showing (§2.7). What `saveDefaultsIfRequested()` itself
+writes is tested directly; the ordering in §2.3 — that it is called only
+*after* a successful enqueue, never on `addFailure` — is not, because that
+call sits in `IntakeWindow.add()`, view code the coverage floor deliberately
+does not reach (see "The views are not tested" below).
 
 **The views are not tested, as usual.** The panel's expansion — including the
 transient expansion in §2.7, and that it leaves the stored preference alone —

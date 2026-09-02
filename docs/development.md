@@ -82,15 +82,16 @@ text size over an **injected** `UserDefaults` — deliberately not `@AppStorage`
 which reaches `.standard` and would have every `xcodebuild test` writing the
 real domain. What it still has no answer for is drag-and-drop and a URL scheme.
 
+Clipboard hand-off already ships: `IntakeWindow` focuses the link field on
+open and, if the clipboard holds a Twitch address, prefills it —
+`TwitchLink` is what decides a string is worth offering.
+
 In rough order of delight per hour:
 
-1. **Clipboard hand-off.** Focus the app with a Twitch link on the clipboard
-   and the intake is already filled in. `TwitchLink` already decides whether a
-   string is a link worth offering.
-2. **The live disk projection.** `docs/design/composite-rate-control.md` §6.1
+1. **The live disk projection.** `docs/design/composite-rate-control.md` §6.1
    argues for it and `docs/design/disk-preflight.md` §9 records the two gaps it
    closes. The projection is already computed for the progress UI.
-3. **Drag-and-drop and a URL scheme.** Drop a link on the window or the Dock
+2. **Drag-and-drop and a URL scheme.** Drop a link on the window or the Dock
    icon; register `oxbow://` so a browser extension or a Shortcut can hand off.
 
 Then the Homebrew tap, and the native-renderer spike, which wants its own
