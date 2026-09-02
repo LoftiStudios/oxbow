@@ -178,6 +178,21 @@ struct QualityLadderTests {
     }
   }
 
+  /// Stored in preferences, so the wire names are load-bearing. Driving the
+  /// round trip off `allCases` catches a new case automatically; the literal
+  /// strings are what actually catch a rename — a loop alone would round-trip
+  /// happily even after one.
+  @Test func rawValuesArePersistedAndPinned() {
+    for cap in QualityCap.allCases {
+      #expect(QualityCap(rawValue: cap.rawValue) == cap)
+    }
+    #expect(QualityCap.best.rawValue == "best")
+    #expect(QualityCap.p1080.rawValue == "p1080")
+    #expect(QualityCap.p720.rawValue == "p720")
+    #expect(QualityCap.p480.rawValue == "p480")
+    #expect(QualityCap.p360.rawValue == "p360")
+  }
+
   // MARK: - Unpinned behaviours
 
   /// An all-unparseable list on the non-composite path.

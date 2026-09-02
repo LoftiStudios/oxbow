@@ -5,6 +5,13 @@ import Foundation
 /// Renditions are named per video — `1080p60`, `480p30-1`, `720p0-1`,
 /// `1080p60-Portrait-1` — and some carry no resolution at all, so no name is
 /// stable across two videos and none is worth storing. A ceiling is.
+///
+/// `Preferences` persists this enum's raw values in `UserDefaults`. Renaming
+/// a case is therefore a storage-format change, not a refactor — it silently
+/// orphans every saved preference, which falls back to the factory value with
+/// no error anywhere. `QualityLadderTests.rawValuesArePersistedAndPinned`
+/// pins the exact strings on purpose; if it fails after a rename, fix the
+/// case name, not the test.
 public enum QualityCap: String, Codable, CaseIterable, Sendable {
   case best
   case p1080
