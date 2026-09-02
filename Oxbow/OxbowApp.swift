@@ -146,6 +146,25 @@ struct OxbowApp: App {
     // Nothing here is worth restoring, and an About box reappearing on launch
     // is the same unasked-for window intake would be.
     .restorationBehavior(.disabled)
+
+    // ⌘, and the app-menu item, for free — this is the whole scene.
+    // `SettingsView` reads and writes `Preferences()`'s default `.standard`
+    // domain itself; nothing here needs to be threaded through.
+    //
+    // macOS 26 auto-icons *system-provided* menu items (design doc §7.1):
+    // `About Oxbow` and `Check for Updates…` above both needed an explicit
+    // `Label` because they are ours, not the system's, and drew bare without
+    // one. `Settings…` is a scene macOS itself generates the menu item for,
+    // the same way it generates `Quit` and `Hide` — so it may already be
+    // auto-iconed, unlike those two. **Unverified**: this cannot be checked
+    // without opening the built app's menu bar, which this change does not
+    // do. If it turns out to draw bare, replace this scene's content with
+    // `CommandGroup(replacing: .appSettings) { ... Label("Settings…",
+    // systemImage: "gearshape") ... }`, the same shape as the `CommandGroup`
+    // above, plus an `@Environment(\.openSettings)` action.
+    Settings {
+      SettingsView()
+    }
   }
 
   /// The id the About menu item opens.

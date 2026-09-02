@@ -658,7 +658,13 @@ struct IntakeWindow: View {
 /// affects nothing it is placed behind; the state write is deferred a turn
 /// because `makeNSView` runs during a view update, and `view.window` is nil
 /// until the view is in a window anyway.
-private struct HostWindowReader: NSViewRepresentable {
+///
+/// **Not `private`.** `SettingsView` needs the identical mechanism for the
+/// identical reason — its own folder panel has to be a sheet, never a
+/// `runModal()` — and duplicating this `NSViewRepresentable` in a second file
+/// would be the second mechanism its own doc comment warns against. Internal,
+/// not public: nothing outside the app target has a window to capture.
+struct HostWindowReader: NSViewRepresentable {
   @Binding var window: NSWindow?
 
   func makeNSView(context: Context) -> NSView {
