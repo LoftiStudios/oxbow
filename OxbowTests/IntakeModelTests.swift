@@ -7,24 +7,177 @@ import OxbowKit
 @Suite("Intake model")
 struct IntakeModelTests {
 
-  // MARK: - The default destination
+  // MARK: - Seeding
 
-  /// Add used to be disabled on a freshly opened window until you clicked
-  /// Choose…, every time, on every download. A Twitch VOD going to
-  /// ~/Downloads is the overwhelmingly common case, so it is the default and
-  /// Choose… is the override.
-  @Test func offersTheDownloadsFolderAsTheDefaultDestination() throws {
-    let destination = try #require(IntakeModel.defaultDestination)
-    #expect(destination.lastPathComponent == "Downloads")
+  /// The rule survives the arrival of a preference store: a model whose
+  /// folder has been cleared still refuses to compose a job. Only the way a
+  /// model *gets* a folder changed.
+  @Test func composingRefusesOnceTheFolderIsCleared() async {
+    let model = await loadedModel()
+    model.folder = nil
+    #expect(model.composedTemplate() == nil)
   }
 
-  /// The default is applied where the window builds its model, not inside the
-  /// rules: `composedTemplate()` still refuses without a folder, and the tests
-  /// that assert that refusal build a model with none. A default baked into
-  /// every `IntakeModel` would make that rule untestable.
-  @Test func aModelBuiltWithoutADestinationStillHasNone() {
-    let model = IntakeModel(fetchInfo: { _ in throw CancellationError() }, enqueue: { _, _ in })
-    #expect(model.folder == nil)
+  @Test func seedsEveryFieldFromTheStore() {
+    let model = makeModel(preferences: Self.store {
+      $0.destination = URL(filePath: "/Volumes/Archive")
+      $0.qualityCap = .p720
+      $0.output = .video
+      $0.chatSize = .large
+    })
+
+    #expect(model.folder == URL(filePath: "/Volumes/Archive"))
+    #expect(model.qualityCap == .p720)
+    #expect(model.output == .video)
+    #expect(model.chatSize == .large)
+  }
+
+  /// Spec §2.2. Including the first run — an unticked box makes the same
+  /// promise every time, so nobody has to remember what state it was left in.
+  @Test func theCheckboxIsUntickedOnAFreshStoreAndOnAConfiguredOne() {
+    #expect(makeModel(preferences: Self.store()).wantsToSaveDefaults == false)
+    #expect(makeModel(preferences: Self.store { $0.qualityCap = .p480 })
+      .wantsToSaveDefaults == false)
+  }
+
+  @Test func resetReseedsFromTheStoreAndUnticksTheBox() {
+    let model = makeModel(preferences: Self.store { $0.output = .videoWithChat })
+
+    model.output = .video
+    model.chatSize = .small
+    model.wantsToSaveDefaults = true
+    model.reset()
+
+    #expect(model.output == .videoWithChat)
+    #expect(model.chatSize == .medium)
+    #expect(model.wantsToSaveDefaults == false)
+  }
+
+  @Test func aMissingStoredDestinationSeedsTheFallbackAndFlagsIt() {
+    let suite = UserDefaults(suiteName: "Gone-\(UUID().uuidString)")!
+    var store = Preferences(
+      defaults: suite, homeDirectory: URL(filePath: "/Users/t"),
+      directoryExists: { $0.path != "/Volumes/Unplugged" })
+    store.destination = URL(filePath: "/Volumes/Unplugged")
+
+    let model = makeModel(preferences: store)
+
+    #expect(model.folder == URL(filePath: "/Users/t/Downloads"))
+    #expect(model.destinationFellBack)
+  }
+
+  // MARK: - Quality, both directions
+
+  @Test func metadataResolvesTheCapIntoARendition() async {
+    let model = makeModel(preferences: Self.store { $0.qualityCap = .p720 })
+    model.linkText = Self.videoLink
+    await model.load()
+
+    #expect(model.quality == "720p60")
+  }
+
+  /// Spec §3.3. The cap is first-class state, so a video that only offers
+  /// more than the cap cannot quietly raise the user's standing preference.
+  @Test func anUntouchedPickerLeavesTheCapExactlyAsSeeded() async {
+    let model = makeModel(
+      preferences: Self.store { $0.qualityCap = .p720 },
+      info: Self.info(qualities: [
+        StreamQuality(name: "1080p60", resolution: "1920x1080", bitsPerSecond: 8_000_000),
+      ]))
+    model.linkText = Self.videoLink
+    await model.load()
+
+    #expect(model.quality == "1080p60")
+    #expect(model.qualityCap == .p720)
+  }
+
+  @Test func pickingARenditionRederivesTheCap() async {
+    let model = await loadedModel()
+    model.selectQuality("720p60")
+
+    #expect(model.quality == "720p60")
+    #expect(model.qualityCap == .p720)
+  }
+
+  /// Spec §3.8. The bucket is shown at the moment it is chosen, and only when
+  /// the pick is not already a rung.
+  @Test func theFootnoteAppearsOnlyForAnInexactPick() async {
+    let model = await loadedModel(info: Self.info(qualities: [
+      StreamQuality(name: "900p30", resolution: "1600x900", bitsPerSecond: 5_000_000),
+      StreamQuality(name: "720p60", resolution: "1280x720", bitsPerSecond: 3_000_000),
+    ]))
+
+    model.selectQuality("900p30")
+    #expect(model.savedQualityNote == .p720)
+
+    model.selectQuality("720p60")
+    #expect(model.savedQualityNote == nil)
+  }
+
+  // MARK: - Saving
+
+  @Test func aTickedBoxWritesEveryFieldOnSave() async {
+    let store = Self.store()
+    let model = await loadedModel(preferences: store)
+    model.selectQuality("720p60")
+    model.chatSize = .large
+    model.folder = URL(filePath: "/Volumes/Archive")
+    model.wantsToSaveDefaults = true
+
+    model.saveDefaultsIfRequested()
+
+    #expect(store.qualityCap == .p720)
+    #expect(store.chatSize == .large)
+    #expect(store.destination == URL(filePath: "/Volumes/Archive"))
+    #expect(store.hasSavedDefaults)
+  }
+
+  @Test func anUntickedBoxWritesNothing() async {
+    let store = Self.store()
+    let model = await loadedModel(preferences: store)
+    model.chatSize = .large
+
+    model.saveDefaultsIfRequested()
+
+    #expect(store.hasSavedDefaults == false)
+  }
+
+  /// Spec §3.7. Nothing to bucket, so the other three still save.
+  @Test func aRenditionWithNoDimensionsWithholdsOnlyQuality() async {
+    let store = Self.store { $0.qualityCap = .p1080 }
+    let model = await loadedModel(
+      preferences: store,
+      info: Self.info(qualities: [
+        StreamQuality(name: "720p0-1", resolution: "", bitsPerSecond: 0),
+      ]))
+    model.selectQuality("720p0-1")
+    model.chatSize = .small
+    model.wantsToSaveDefaults = true
+
+    model.saveDefaultsIfRequested()
+
+    #expect(store.qualityCap == .p1080)
+    #expect(store.chatSize == .small)
+  }
+
+  /// Spec §2.7. The trap this rule exists to disarm: one expired clip would
+  /// otherwise turn chat off for every future download, from a single tick.
+  @Test func outputIsWithheldWhileChatIsUnavailable() async {
+    let store = Self.store { $0.output = .videoWithChat }
+    let model = await loadedModel(
+      preferences: store, info: Self.info(hasDownloadableChat: false))
+    model.output = .videoWithChat
+
+    #expect(model.chatProblem != nil)
+    model.output = .video
+    #expect(model.withholdsOutputFromSave)
+
+    model.chatSize = .large
+    model.wantsToSaveDefaults = true
+    model.saveDefaultsIfRequested()
+
+    #expect(store.output == .videoWithChat)
+    #expect(store.chatSize == .large)
   }
 
   // MARK: - An occupied destination
@@ -110,22 +263,6 @@ struct IntakeModelTests {
     #expect(makeModel().output == .videoWithChat)
   }
 
-  /// The other half of the same decision, and the one a tidy-up would undo:
-  /// a reset that also cleared these would re-ask where files go on every
-  /// single download, which is exactly what `defaultDestination` removed.
-  @Test func resetKeepsTheAnswersThatAreNotAboutThisVideo() async {
-    let model = await loadedModel()
-    model.output = .videoWithChat
-    model.chatSize = .large
-    let folder = model.folder
-
-    model.reset()
-
-    #expect(model.folder == folder)
-    #expect(model.output == .videoWithChat)
-    #expect(model.chatSize == .large)
-  }
-
   /// A reset while a fetch is in flight must invalidate it, or the reply lands
   /// in the emptied form and names the next download after the last one.
   ///
@@ -143,7 +280,8 @@ struct IntakeModelTests {
         return IntakeModelTests.info()
       },
       enqueue: { _, _ in },
-      calendar: Self.pacific)
+      calendar: Self.pacific,
+      preferences: Self.store())
     model.linkText = Self.videoLink
 
     async let loading: Void = model.load()
@@ -353,7 +491,27 @@ struct IntakeModelTests {
     var templates: [(template: JobTemplate, title: String)] = []
   }
 
+  /// A store over a suite nobody else uses, so a test never sees another
+  /// test's values and never touches the real preferences domain.
+  private static func store(
+    _ configure: (inout Preferences) -> Void = { _ in }) -> Preferences
+  {
+    let suite = UserDefaults(suiteName: "IntakeModelTests-\(UUID().uuidString)")!
+    // `directoryExists` is stubbed true because these destinations are
+    // fictional. With the real FileManager predicate, `Preferences.destination`
+    // correctly decides /Volumes/Archive is missing and hands back
+    // ~/Downloads — and every seeding assertion below fails for a reason that
+    // has nothing to do with what it is testing.
+    var store = Preferences(
+      defaults: suite,
+      homeDirectory: URL(filePath: "/Users/t"),
+      directoryExists: { _ in true })
+    configure(&store)
+    return store
+  }
+
   private func makeModel(
+    preferences: Preferences = IntakeModelTests.store(),
     info: VideoInfo? = IntakeModelTests.info(),
     failure: Error? = nil,
     recorder: Recorder = Recorder(),
@@ -370,7 +528,8 @@ struct IntakeModelTests {
       enqueue: { recorder.templates.append((template: $0, title: $1)) },
       calendar: Self.pacific,
       fileExists: fileExists,
-      volumeSpace: volumeSpace)
+      volumeSpace: volumeSpace,
+      preferences: preferences)
   }
 
   /// One volume with a fixed amount of room. Defaulted to a terabyte
@@ -390,6 +549,7 @@ struct IntakeModelTests {
   /// every test below into a composite test.
   private func loadedModel(
     link: String = IntakeModelTests.videoLink,
+    preferences: Preferences = IntakeModelTests.store(),
     info: VideoInfo = IntakeModelTests.info(),
     recorder: Recorder = Recorder(),
     fileExists: @escaping (URL) -> Bool = { _ in false },
@@ -397,7 +557,8 @@ struct IntakeModelTests {
     async -> IntakeModel
   {
     let model = makeModel(
-      info: info, recorder: recorder, fileExists: fileExists, volumeSpace: volumeSpace)
+      preferences: preferences, info: info, recorder: recorder, fileExists: fileExists,
+      volumeSpace: volumeSpace)
     model.linkText = link
     await model.load()
     model.folder = Self.folder
@@ -1166,7 +1327,9 @@ struct IntakeModelTests {
   /// disclosure triangle — that reads as "hide the details", so reclaiming a
   /// little window space silently destroyed the trim.
   @Test func collapsingTheTrimSectionKeepsTheTimes() {
-    let model = IntakeModel(fetchInfo: { _ in throw CancellationError() }, enqueue: { _, _ in })
+    let model = IntakeModel(
+      fetchInfo: { _ in throw CancellationError() }, enqueue: { _, _ in },
+      preferences: Self.store())
     model.linkText = Self.videoLink
     model.isTrimExpanded = true
     model.trimStartText = "00:10:00"
@@ -1182,7 +1345,9 @@ struct IntakeModelTests {
   /// a triangle is closed is hidden state; the collapsed row carries
   /// `trimSummary` precisely so there is none.
   @Test func aCollapsedTrimSectionStillTrims() {
-    let model = IntakeModel(fetchInfo: { _ in throw CancellationError() }, enqueue: { _, _ in })
+    let model = IntakeModel(
+      fetchInfo: { _ in throw CancellationError() }, enqueue: { _, _ in },
+      preferences: Self.store())
     model.linkText = Self.videoLink
     model.trimStartText = "00:10:00"
     model.isTrimExpanded = false
@@ -1192,7 +1357,9 @@ struct IntakeModelTests {
   }
 
   @Test func summarisesWhicheverEndsAreSet() {
-    let model = IntakeModel(fetchInfo: { _ in throw CancellationError() }, enqueue: { _, _ in })
+    let model = IntakeModel(
+      fetchInfo: { _ in throw CancellationError() }, enqueue: { _, _ in },
+      preferences: Self.store())
     model.linkText = Self.videoLink
     #expect(model.trimSummary == nil)
 
@@ -1210,7 +1377,9 @@ struct IntakeModelTests {
 
   /// A clip has no trim at all, so it has nothing to say about one either.
   @Test func aClipNeverSummarisesATrim() {
-    let model = IntakeModel(fetchInfo: { _ in throw CancellationError() }, enqueue: { _, _ in })
+    let model = IntakeModel(
+      fetchInfo: { _ in throw CancellationError() }, enqueue: { _, _ in },
+      preferences: Self.store())
     model.linkText = Self.clipLink
     model.trimStartText = "00:10:00"
     #expect(model.trimSummary == nil)
@@ -1220,7 +1389,9 @@ struct IntakeModelTests {
   /// folding the section back up — a reopened window should look like a new
   /// one, not like the last job half-configured.
   @Test func resettingTheWindowFoldsTheTrimSectionAway() {
-    let model = IntakeModel(fetchInfo: { _ in throw CancellationError() }, enqueue: { _, _ in })
+    let model = IntakeModel(
+      fetchInfo: { _ in throw CancellationError() }, enqueue: { _, _ in },
+      preferences: Self.store())
     model.linkText = Self.videoLink
     model.isTrimExpanded = true
     model.trimStartText = "00:10:00"
@@ -1243,7 +1414,8 @@ struct IntakeModelTests {
     let model = IntakeModel(
       fetchInfo: { id in id == "1111" ? long : short },
       enqueue: { _, _ in },
-      calendar: Self.pacific)
+      calendar: Self.pacific,
+      preferences: Self.store())
 
     model.linkText = "https://www.twitch.tv/videos/1111"
     await model.load()
@@ -1366,7 +1538,8 @@ struct IntakeModelTests {
         return fresh
       },
       enqueue: { _, _ in },
-      calendar: Self.pacific)
+      calendar: Self.pacific,
+      preferences: Self.store())
 
     model.linkText = "https://www.twitch.tv/videos/1111"
     let first = Task { await model.load() }

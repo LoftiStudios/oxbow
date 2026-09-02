@@ -572,7 +572,11 @@ private func previewModel(
     },
     enqueue: { _, _ in },
     fileExists: fileExists,
-    volumeSpace: volumeSpace)
+    volumeSpace: volumeSpace,
+    // Previews render off-screen and are never exercised by `xcodebuild
+    // test`, so reaching `.standard` here costs nothing the way it would in
+    // a test run — and `folder` is overwritten just below regardless.
+    preferences: Preferences())
   model.linkText = link
   model.folder = folder
   return model

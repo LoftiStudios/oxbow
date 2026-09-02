@@ -58,6 +58,28 @@ final class IntakeModel {
 
   var folder: URL?
 
+  /// The preference-shaped quality value, as distinct from `quality`, which
+  /// names a rendition of *this* video.
+  ///
+  /// Both exist because `QualityLadder.resolve` and `.bucket` are not
+  /// inverses (docs/design/settings.md §3.3): a cap of `.p720` against a
+  /// video offering only 1080p resolves to `1080p60`, and re-deriving the cap
+  /// from that would quietly raise the user's standing preference because of
+  /// one unusual video. Keeping the cap means an untouched picker saves back
+  /// exactly what was seeded.
+  var qualityCap: QualityCap
+
+  /// The checkbox. **Always false at seed, on every run including the first**
+  /// — see §2.2. A box that stays ticked is last-used-wins with extra steps.
+  var wantsToSaveDefaults = false
+
+  /// The stored destination was gone and `~/Downloads` was used instead. Shown
+  /// inline, because the disk preflight measures the destination's volume and
+  /// a silent fallback would change what its estimate means.
+  private(set) var destinationFellBack = false
+
+  private var preferences: Preferences
+
   /// Trim times as typed, parsed by `Timecode`. Kept as text rather than
   /// `Duration?` so a half-typed value is a visible error rather than
   /// silently reading as no trim at all.
@@ -116,7 +138,8 @@ final class IntakeModel {
       FileManager.default.fileExists(atPath: $0.path)
     },
     volumeSpace: VolumeSpace = .live,
-    workspaceVolumePath: URL = URL.applicationSupportDirectory)
+    workspaceVolumePath: URL = URL.applicationSupportDirectory,
+    preferences: Preferences)
   {
     self.fetchInfo = fetchInfo
     self.enqueue = enqueue
@@ -124,35 +147,33 @@ final class IntakeModel {
     self.fileExists = fileExists
     self.volumeSpace = volumeSpace
     self.workspaceVolumePath = workspaceVolumePath
+    self.preferences = preferences
+    self.qualityCap = preferences.qualityCap
+    self.output = preferences.output
+    self.chatSize = preferences.chatSize
+    self.folder = preferences.destination
+    self.destinationFellBack = preferences.storedDestinationIsMissing
   }
 
-  convenience init(controller: QueueController, calendar: Calendar = .current) {
+  /// Wires the real collaborators. Everything about where a freshly opened
+  /// window starts — the folder, the quality cap, the output and the chat
+  /// size — is seeded by the designated init from `preferences`, which
+  /// defaults to the live `UserDefaults.standard`-backed store here.
+  ///
+  /// This used to seed only the folder, from a `defaultDestination` that
+  /// computed `~/Downloads` and said in its own doc comment that "last
+  /// used" was deliberately not persisted. That question now has a real
+  /// answer — see `docs/design/settings.md` §2.2.
+  convenience init(
+    controller: QueueController,
+    calendar: Calendar = .current,
+    preferences: Preferences = Preferences())
+  {
     self.init(
       fetchInfo: { try await controller.fetchInfo(for: $0) },
       enqueue: { await controller.enqueue($0, title: $1) },
-      calendar: calendar)
-    // Seeded here rather than in the designated init on purpose: the rule that
-    // `composedTemplate()` refuses without a destination is a real one worth
-    // testing, and a default baked into every model would make it unreachable.
-    // This is the app's starting value, not the model's invariant.
-    folder = Self.defaultDestination
-  }
-
-  /// `~/Downloads`, or nil if the system has no such folder.
-  ///
-  /// The point is that a freshly opened window is already addable: paste a
-  /// link, press Add, and the file lands somewhere sensible. Before this,
-  /// Add stayed disabled until you clicked Choose… — on every download,
-  /// every time — which made the common case pay for the rare one.
-  ///
-  /// Not persisted as "last used" yet. That is the better long-run behaviour
-  /// and a small addition, but it is a different decision: a folder you
-  /// picked once for one video silently becoming the default for everything
-  /// afterwards is a choice to make deliberately, not a side effect of this
-  /// one.
-  static var defaultDestination: URL? {
-    try? FileManager.default.url(
-      for: .downloadsDirectory, in: .userDomainMask, appropriateFor: nil, create: false)
+      calendar: calendar,
+      preferences: preferences)
   }
 
   // MARK: - Starting over
@@ -170,15 +191,22 @@ final class IntakeModel {
   /// from reading the clipboard *at all*. The staleness and the dead prefill
   /// are the same bug, and this is the one place that fixes both.
   ///
-  /// `folder`, `output` and `chatSize` deliberately survive. They answer how
-  /// the user works rather than anything about this video, and re-picking a
-  /// destination on every download is the annoyance `defaultDestination`
-  /// exists to remove. Everything cleared below describes one specific video
-  /// and is wrong for the next one.
+  /// `folder`, `output`, `chatSize` and `qualityCap` come back from the
+  /// preference store rather than surviving in place. They used to be
+  /// preserved here with a paragraph explaining that they answer how the user
+  /// works rather than anything about this video — which was right, and which
+  /// this is the conclusion of: that was a within-one-run approximation of a
+  /// preference store, and there is a real one now.
   func reset() {
     linkText = ""
     name = ""
     quality = ""
+    qualityCap = preferences.qualityCap
+    output = preferences.output
+    chatSize = preferences.chatSize
+    folder = preferences.destination
+    destinationFellBack = preferences.storedDestinationIsMissing
+    wantsToSaveDefaults = false
     isTrimExpanded = false
     trimStartText = ""
     trimEndText = ""
@@ -242,9 +270,11 @@ final class IntakeModel {
       guard issued == generation else { return }
       metadata = .loaded(info)
       metadataIdentifier = target.identifier
-      // A different video: whatever quality was picked for the last one is
-      // not necessarily on offer for this one.
-      quality = ""
+      // Resolve the standing cap against what this video actually offers.
+      // Replaces the blanket clear: whatever was picked for the last video is
+      // still not necessarily on offer here, and the cap is what survives.
+      quality = QualityLadder.resolve(
+        qualityCap, in: info.qualities, forComposite: output == .videoWithChat)
       // And the trim with it, for the same reason but more so: a quality that
       // does not exist is merely ignored, while a trim from a longer video
       // fails its bounds check and leaves the window refusing to add a job it
@@ -281,6 +311,34 @@ final class IntakeModel {
   /// picker renders as nothing but "Best available", the same thing an empty
   /// `quality` means to the CLI.
   var qualities: [StreamQuality] { info?.qualities ?? [] }
+
+  /// The quality picker's setter. Sets the rendition **and** re-derives the
+  /// cap, which is what keeps an explicit pick from being lost on the next
+  /// video and what makes an untouched picker a no-op for the store.
+  func selectQuality(_ name: String) {
+    quality = name
+    guard !name.isEmpty else {
+      qualityCap = .best
+      return
+    }
+    guard let picked = qualities.first(where: { $0.name == name }),
+          let bucketed = QualityLadder.bucket(picked)
+    else { return }
+    qualityCap = bucketed
+  }
+
+  /// The rung a save would write, when it differs from what is on screen.
+  /// Nil when the pick is already a rung, which is the common case — so the
+  /// footnote only appears when it has something to say (§3.8).
+  var savedQualityNote: QualityCap? {
+    guard !quality.isEmpty,
+          let picked = qualities.first(where: { $0.name == quality }),
+          let bucketed = QualityLadder.bucket(picked),
+          let ceiling = bucketed.ceiling,
+          picked.shortSide != ceiling
+    else { return nil }
+    return bucketed
+  }
 
   /// `bitsPerSecond x duration`, matching what the WPF app offers (§6). Nil
   /// without metadata, because there is no duration to multiply by — a
@@ -509,6 +567,15 @@ final class IntakeModel {
       This clip's original broadcast is no longer on Twitch, so its chat \
       cannot be downloaded. Choose "Video" to download the clip itself.
       """
+  }
+
+  /// Spec §2.7. While chat is unavailable, the output on screen is a
+  /// workaround for this video's defect rather than a statement of
+  /// preference — and saving it would turn chat off for every future
+  /// download from one tick of an opt-in box.
+  var withholdsOutputFromSave: Bool {
+    guard let info else { return false }
+    return !info.hasDownloadableChat
   }
 
   /// True once *this link's* fetch has settled either way. `.failed` counts:
@@ -784,6 +851,25 @@ final class IntakeModel {
     addFailure = nil
     await enqueue(template, outputBaseName)
     return true
+  }
+
+  /// Called by the window after a successful enqueue and never before it.
+  /// Cancel discards, and `addFailure` is a job that was never composed —
+  /// persisting the settings of either would be persisting a decision the
+  /// user did not complete.
+  func saveDefaultsIfRequested() {
+    guard wantsToSaveDefaults else { return }
+    if let folder { preferences.destination = folder }
+    preferences.chatSize = chatSize
+    if !withholdsOutputFromSave { preferences.output = output }
+    if !quality.isEmpty,
+       let picked = qualities.first(where: { $0.name == quality }),
+       let bucketed = QualityLadder.bucket(picked)
+    {
+      preferences.qualityCap = bucketed
+    } else if quality.isEmpty {
+      preferences.qualityCap = .best
+    }
   }
 
   // MARK: - Failure text
