@@ -1,7 +1,17 @@
 {
   "images" : [
     {
-      "filename" : "testpattern.png",
+      "filename" : "test-pattern-light.png",
+      "idiom" : "universal"
+    },
+    {
+      "appearances" : [
+        {
+          "appearance" : "luminosity",
+          "value" : "dark"
+        }
+      ],
+      "filename" : "test-pattern-dark.png",
       "idiom" : "universal"
     }
   ],

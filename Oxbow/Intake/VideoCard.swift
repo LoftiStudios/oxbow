@@ -205,7 +205,7 @@ struct VideoThumbnail: View {
 /// SF Symbol treatment for every "there is no image here" case, so a missing
 /// thumbnail and a failed frame within the filmstrip read as the same kind
 /// of absence rather than two different ones.
-/// Colour bars, for the slot before there is anything to put in it.
+/// The test card shown in the slot before there is anything to put in it.
 ///
 /// **Why a picture rather than nothing.** The frame's *shape* was always
 /// reserved, so nothing below it ever moved — but the slot went flat grey,
@@ -216,30 +216,35 @@ struct VideoThumbnail: View {
 /// replaced.
 ///
 /// **An asset, not seven rectangles.** The first version drew the bars in
-/// SwiftUI, which scaled to any width with no `@2x` set and needed no
-/// light/dark variants — but it was an approximation of the artwork rather
-/// than the artwork, and the pattern is a design decision rather than a
-/// primitive. As an image, changing it — to a monochrome pattern, say — is
+/// SwiftUI, which scaled to any width with no `@2x` set — but it was an
+/// approximation of the artwork rather than the artwork, and the pattern is
+/// a design decision rather than a primitive. As an image, changing it is
 /// replacing a file in the asset catalog and touching nothing here.
 ///
-/// The asset is single-scale, so it is used at its natural pixel size
-/// whatever the display: at 1146x648 it covers this card's ~490 physical
-/// pixels twice over, with headroom for a much wider window.
+/// **Two files, one for each appearance**, chosen by the asset catalog from
+/// the `luminosity` trait — so this draws no `colorScheme` of its own and
+/// applies no opacity. An earlier drawn version was rendered at 55% to keep
+/// full-strength bars from shouting in a dark window; artwork authored per
+/// appearance has that judgement in it already, and trimming it here would
+/// only undo the tuning.
+///
+/// Both are 1280x720, single-scale, so each is used at its natural pixel
+/// size whatever the display: about 2.6x this card's ~490 physical pixels,
+/// with headroom for a much wider window.
+///
+/// The artwork is the RCA Indian Head test card (1939), confirmed public
+/// domain — recorded here because "is this ours to ship?" is the first
+/// question anyone will have on seeing a recognisable broadcast mark in a
+/// DMG, and the answer should not have to be re-researched.
 private struct TestPattern: View {
-  /// Full-strength bars are very loud against this app's dark window, and
-  /// this is a placeholder rather than the subject. Set to 1 to show the
-  /// asset exactly as authored.
-  private static let strength: Double = 0.55
-
   var body: some View {
     Image("TestPattern")
       .resizable()
-      // `.fill`, not `.fit`: the asset is 1146x648 (1.768:1) against a 16:9
-      // (1.778:1) frame, so fitting would letterbox it by a hair and leave
-      // two slivers of background at the sides. The overflow it crops
-      // instead is well under a pixel at this size.
+      // `.fill`, not `.fit`: both assets are exactly 16:9, so this crops
+      // nothing today — it is here so a replacement that is a pixel or two
+      // off cannot letterbox itself and leave slivers of window showing
+      // down the sides.
       .aspectRatio(contentMode: .fill)
-      .opacity(Self.strength)
       .allowsHitTesting(false)
   }
 }
