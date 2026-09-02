@@ -184,7 +184,7 @@ struct IntakeWindow: View {
   /// transient expansion from ever reaching the stored preference.
   ///
   /// **`spaceWarning` is deliberately NOT inside the `DisclosureGroup`.**
-  /// (Fix round 1.) It started there, reasoning that because it is advisory
+  /// It started there, reasoning that because it is advisory
   /// — it does not gate Add, so it should not join `chatProblem` and
   /// `compositeProblem` in forcing the panel open — it was fine to leave it
   /// wherever else it landed. That reasoning answers the wrong question:
@@ -663,7 +663,7 @@ struct IntakeWindow: View {
 
   // MARK: - Text
 
-  // Delegated rather than duplicated (fix round 1): this view used to carry
+  // Delegated rather than duplicated: this view used to carry
   // its own copy of this exact one-line predicate, and `optionsSummary`
   // grew a second one that disagreed with it — a clip's collapsed header
   // said "Video + chat" while its own expanded picker, reading this
@@ -913,7 +913,7 @@ extension VideoInfo {
 /// Collapsed is the steady state (§2.6), so this is the one most people see
 /// most of the time. Passed as `previewModel`'s own `optionsExpanded:`
 /// parameter rather than set on the model afterward — see that parameter's
-/// doc comment (fix round 1) for why setting it post-construction here would
+/// doc comment for why setting it post-construction here would
 /// have collapsed every *other* preview in this file drawn from the same
 /// `OxbowPreviews` suite, not just this one.
 #Preview("Options panel - collapsed") {
@@ -922,7 +922,7 @@ extension VideoInfo {
 
 /// Expanded, with the checkbox ticked and the quality footnote showing.
 ///
-/// **Fix round 1: this used to call `model.selectQuality("900p30")` before
+/// **This preview used to call `model.selectQuality("900p30")` before
 /// the window's `.task` had loaded metadata, which is a silent no-op —
 /// `selectQuality` guards on `qualities`, which is empty until `load()`
 /// settles it — and `load()` then overwrote `quality` from `qualityCap`

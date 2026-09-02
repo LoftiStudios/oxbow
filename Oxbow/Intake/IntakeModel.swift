@@ -102,7 +102,7 @@ final class IntakeModel {
   /// sticks; a refusal's forced expansion does not.
   ///
   /// **The setter ignores writes while a refusal is forcing the panel
-  /// open** (fix round 1). Without this, tapping the triangle while
+  /// open.** Without this, tapping the triangle while
   /// `chatProblem` or `compositeProblem` is showing calls this setter with
   /// `false`, which writes through to `isOptionsExpanded` and so to the
   /// store — but the getter above still returns `true` regardless, because
@@ -124,12 +124,12 @@ final class IntakeModel {
   /// header that says only "Download Options" hides where the file is going
   /// on most downloads.
   ///
-  /// **Fix round 1: named through `isClip`, which the expanded picker below
-  /// already used ("Clip + chat"/"Clip" rather than "Video + chat"/"Video")
-  /// while this summary did not** — so a clip's collapsed header used to
-  /// read "Video + chat" for the exact same state its own expanded picker
-  /// called "Clip + chat". `isClip` moved onto the model (from
-  /// `IntakeWindow`, which had its own private copy) so both call sites
+  /// **Named through `isClip`, which the expanded picker below already used**
+  /// ("Clip + chat"/"Clip" rather than "Video + chat"/"Video") — this summary
+  /// used to compute the label independently and disagree with it, so a
+  /// clip's collapsed header read "Video + chat" for the exact same state its
+  /// own expanded picker called "Clip + chat". `isClip` moved onto the model
+  /// (from `IntakeWindow`, which had its own private copy) so both call sites
   /// share one answer instead of two copies that can drift.
   var optionsSummary: String {
     let outputLabel: String

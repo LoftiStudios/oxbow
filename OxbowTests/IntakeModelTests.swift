@@ -645,7 +645,7 @@ struct IntakeModelTests {
     #expect(model.isOptionsEffectivelyExpandedBinding, "reads the forced-open value")
   }
 
-  /// Fix round 1. Before this, the binding's setter wrote through to
+  /// Before this guard existed, the binding's setter wrote through to
   /// `isOptionsExpanded` — and so to the store — unconditionally, even while
   /// a refusal was forcing the panel open. That made a triangle tap while
   /// `chatProblem` was showing a dead control with a permanent side effect:
@@ -667,9 +667,9 @@ struct IntakeModelTests {
   }
 
   /// The counterpart to the test above: once nothing is forcing the panel
-  /// open, the same setter writes through exactly as it did before fix round
-  /// 1 — the guard only ever suppresses writes made *while* a refusal is
-  /// showing, never writes in general.
+  /// open, the same setter writes through exactly as it did before that
+  /// guard existed — it only ever suppresses writes made *while* a refusal
+  /// is showing, never writes in general.
   @Test func theEffectiveBindingWritesThroughOnceNothingForcesExpansion() async {
     let model = await loadedModel()
     #expect(model.chatProblem == nil, "precondition")
@@ -701,7 +701,7 @@ struct IntakeModelTests {
     #expect(model.optionsSummary == "Video + chat · Best available · No folder")
   }
 
-  /// Fix round 1. Before this, `optionsSummary` always said "Video + chat" /
+  /// `optionsSummary` used to always say "Video + chat" /
   /// "Video" — a clip's collapsed header disagreed with its own expanded
   /// picker, which already said "Clip + chat" / "Clip" via `isClip`. Both
   /// call sites now read the same `IntakeModel.isClip`.
