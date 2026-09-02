@@ -458,16 +458,45 @@ struct IntakeModelTests {
   }
 
   /// The binding a `DisclosureGroup` actually reads and writes: its getter is
-  /// `isOptionsEffectivelyExpanded`, its setter is `isOptionsExpanded`. A user
-  /// tapping the triangle while a refusal is showing writes through the
-  /// setter exactly like any other collapse — only the forced-open path
-  /// above, which nothing in the view ever assigns *to*, skips the store.
-  @Test func theEffectiveBindingReadsForcedExpansionAndWritesTheRealField() async {
+  /// `isOptionsEffectivelyExpanded`.
+  @Test func theEffectiveBindingReadsTheForcedOpenValue() async {
     let model = await loadedModel(info: Self.info(hasDownloadableChat: false))
     model.output = .videoWithChat
     model.isOptionsExpanded = false
 
     #expect(model.isOptionsEffectivelyExpandedBinding, "reads the forced-open value")
+  }
+
+  /// Fix round 1. Before this, the binding's setter wrote through to
+  /// `isOptionsExpanded` — and so to the store — unconditionally, even while
+  /// a refusal was forcing the panel open. That made a triangle tap while
+  /// `chatProblem` was showing a dead control with a permanent side effect:
+  /// the drawer visibly stays open either way (the getter above still
+  /// returns `true`), but the *stored* preference silently flipped underneath
+  /// it, for every future intake. `isOptionsExpanded` is seeded `true` here
+  /// specifically so an unguarded setter writing `false` would be a change
+  /// this test can catch — starting from `false` could not distinguish
+  /// "ignored" from "already false".
+  @Test func theEffectiveBindingIgnoresWritesWhileForcedOpen() async {
+    let model = await loadedModel(info: Self.info(hasDownloadableChat: false))
+    model.output = .videoWithChat
+    model.isOptionsExpanded = true
+    #expect(model.chatProblem != nil, "precondition: the panel is forced open")
+
+    model.isOptionsEffectivelyExpandedBinding = false
+
+    #expect(model.isOptionsExpanded, "the write was ignored, not merely a no-op value")
+  }
+
+  /// The counterpart to the test above: once nothing is forcing the panel
+  /// open, the same setter writes through exactly as it did before fix round
+  /// 1 — the guard only ever suppresses writes made *while* a refusal is
+  /// showing, never writes in general.
+  @Test func theEffectiveBindingWritesThroughOnceNothingForcesExpansion() async {
+    let model = await loadedModel()
+    #expect(model.chatProblem == nil, "precondition")
+    #expect(model.compositeProblem == nil, "precondition")
+    model.isOptionsExpanded = true
 
     model.isOptionsEffectivelyExpandedBinding = false
 
@@ -492,6 +521,30 @@ struct IntakeModelTests {
     model.folder = nil
 
     #expect(model.optionsSummary == "Video + chat · Best available · No folder")
+  }
+
+  /// Fix round 1. Before this, `optionsSummary` always said "Video + chat" /
+  /// "Video" — a clip's collapsed header disagreed with its own expanded
+  /// picker, which already said "Clip + chat" / "Clip" via `isClip`. Both
+  /// call sites now read the same `IntakeModel.isClip`.
+  @Test func optionsSummaryNamesAClipRatherThanAVideo() async {
+    let model = await loadedModel(link: Self.clipLink)
+    model.output = .videoWithChat
+    model.qualityCap = .best
+    model.folder = URL(filePath: "/Users/t/Movies")
+
+    #expect(model.optionsSummary == "Clip + chat · Best available · Movies")
+
+    model.output = .video
+    #expect(model.optionsSummary == "Clip · Best available · Movies")
+  }
+
+  @Test func isClipReflectsTheParsedTarget() async {
+    let vod = await loadedModel()
+    #expect(vod.isClip == false)
+
+    let clip = await loadedModel(link: Self.clipLink)
+    #expect(clip.isClip)
   }
 
   // MARK: - An occupied destination

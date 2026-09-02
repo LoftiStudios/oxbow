@@ -171,6 +171,25 @@ struct IntakeWindow: View {
   /// this view's: the view only reads and writes through
   /// `isOptionsEffectivelyExpandedBinding`, which is what keeps the forced,
   /// transient expansion from ever reaching the stored preference.
+  ///
+  /// **`spaceWarning` is deliberately NOT inside the `DisclosureGroup`.**
+  /// (Fix round 1.) It started there, reasoning that because it is advisory
+  /// — it does not gate Add, so it should not join `chatProblem` and
+  /// `compositeProblem` in forcing the panel open — it was fine to leave it
+  /// wherever else it landed. That reasoning answers the wrong question:
+  /// §2.7 governs what forces the panel open, not what a collapsed panel is
+  /// allowed to hide. §2.6 makes collapsed the steady state, and §2.5 has
+  /// the app collapse the panel itself the first time someone saves
+  /// defaults — so a warning shown only while expanded is hidden from
+  /// exactly the population most likely to need it: someone whose saved
+  /// destination now sits on a volume that is short of space.
+  /// `docs/design/disk-preflight.md` §2 grounds the whole warn-don't-block
+  /// design on "at intake there is a person" who sees the estimate and
+  /// decides; a warning nobody sees collapses back into that document's own
+  /// §1 failure mode. So it lives in the `Section`'s footer instead, next to
+  /// the collision warning under the name field, which never moved into the
+  /// panel to begin with. `destinationFellBack` stays inside deliberately —
+  /// see its own comment below.
   private var options: some View {
     Section {
       DisclosureGroup(isExpanded: $model.isOptionsEffectivelyExpandedBinding) {
@@ -178,6 +197,14 @@ struct IntakeWindow: View {
         // isolation has little use, and the composite is what makes it worth
         // producing at all (design doc §3). `DownloadOutput` already
         // narrowed to this pair; this is just its rendering.
+        //
+        // Deliberately no `.pickerStyle(.radioGroup)` here any more, unlike
+        // the section this replaced. §2.1's own mockup draws every row in
+        // this panel — including this one — as a single label-and-value
+        // line (`Download    Video + chat  ⌄`), matching the `Picker` below
+        // it rather than the old pair of radio buttons; a mixed drawer with
+        // one row styled differently from its neighbors would read as an
+        // afterthought bolted onto the new layout rather than as part of it.
         Picker("Download", selection: $model.output) {
           Text(isClip ? "Clip + chat" : "Video + chat").tag(DownloadOutput.videoWithChat)
           Text(isClip ? "Clip" : "Video").tag(DownloadOutput.video)
@@ -224,6 +251,15 @@ struct IntakeWindow: View {
 
         destination
 
+        // Stays inside the drawer, unlike `spaceWarning` below — §2.6 names
+        // this exact user (a saved destination that has since vanished) and
+        // makes the collapsed header's summary the mitigation:
+        // `optionsSummary` genuinely reads "Downloads" rather than the
+        // folder that fell back, so the collapsed state is not lying about
+        // where the file is going. There is no equivalent for disk space —
+        // the summary carries output, cap and folder, nothing about what is
+        // free — so that warning cannot rely on the same cover and has to
+        // stay visible outright (see the `Section`'s `footer:` below).
         if model.destinationFellBack {
           Label(
             "The folder you last chose is not available, so Oxbow will use "
@@ -231,27 +267,6 @@ struct IntakeWindow: View {
             systemImage: "exclamationmark.triangle")
             .font(.caption)
             .foregroundStyle(.secondary)
-        }
-
-        if let warning = model.spaceWarning {
-          // Same treatment `saveTo`'s footer used to give this: orange,
-          // matching the overwrite caution under the name field, since
-          // nothing is wrong and nothing is blocked (`spaceWarning` is
-          // advisory — see its doc comment — so it does not join
-          // `chatProblem`/`compositeProblem` in forcing the panel open).
-          VStack(alignment: .leading, spacing: 2) {
-            Label(spaceWarningText(warning), systemImage: "externaldrive.badge.exclamationmark")
-              .font(.caption)
-              .foregroundStyle(.orange)
-            if let remedy = warning.remedy {
-              Text(remedyText(remedy))
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .padding(.leading, 18)
-            }
-          }
-          .fixedSize(horizontal: false, vertical: true)
-          .frame(maxWidth: .infinity, alignment: .leading)
         }
 
         // A clip whose parent broadcast Twitch has expired, or any video
@@ -293,6 +308,31 @@ struct IntakeWindow: View {
               .foregroundStyle(.secondary)
           }
         }
+      }
+    } footer: {
+      // Outside the `DisclosureGroup` on purpose — see the doc comment
+      // above `options`. Visible whether the panel is open or shut, the
+      // same treatment the collision warning under the name field gets.
+      if let warning = model.spaceWarning {
+        VStack(alignment: .leading, spacing: 2) {
+          // Orange, matching the overwrite caution under the name field:
+          // nothing is wrong and nothing is blocked. Red belongs to
+          // `addFailure`, where the sheet is actually refusing.
+          Label(spaceWarningText(warning), systemImage: "externaldrive.badge.exclamationmark")
+            .font(.caption)
+            .foregroundStyle(.orange)
+          if let remedy = warning.remedy {
+            // The actionable half, and the reason this is a warning worth
+            // showing at all. Indented under the label's text rather than its
+            // icon so the two read as one block.
+            Text(remedyText(remedy))
+              .font(.caption)
+              .foregroundStyle(.secondary)
+              .padding(.leading, 18)
+          }
+        }
+        .fixedSize(horizontal: false, vertical: true)
+        .frame(maxWidth: .infinity, alignment: .leading)
       }
     }
   }
@@ -593,10 +633,12 @@ struct IntakeWindow: View {
 
   // MARK: - Text
 
-  private var isClip: Bool {
-    if case .clip = model.target { return true }
-    return false
-  }
+  // Delegated rather than duplicated (fix round 1): this view used to carry
+  // its own copy of this exact one-line predicate, and `optionsSummary`
+  // grew a second one that disagreed with it — a clip's collapsed header
+  // said "Video + chat" while its own expanded picker, reading this
+  // property, said "Clip + chat". One answer now, on the model.
+  private var isClip: Bool { model.isClip }
 
   /// What this job will actually write, so the name field is not a guess.
   ///
@@ -645,9 +687,41 @@ private func previewModel(
   info: VideoInfo? = .previewVOD,
   folder: URL? = URL(filePath: "/Users/you/Downloads"),
   fileExists: @escaping (URL) -> Bool = { _ in false },
-  volumeSpace: VolumeSpace = .previewFull(free: 10_000_000_000_000))
+  volumeSpace: VolumeSpace = .previewFull(free: 10_000_000_000_000),
+  // Defaulted rather than left to whatever `OxbowPreviews` last held. (Fix
+  // round 1.) `isOptionsExpanded`'s `didSet` writes straight through to the
+  // store (§2.5), and this function backs every preview in the file with the
+  // same on-disk suite — so a preview that set `model.isOptionsExpanded`
+  // after construction was not just choosing its own state, it was leaving
+  // that state for the *next* preview drawn from this same function to
+  // inherit. `#Preview("Options panel - collapsed")` rendering once was
+  // enough to collapse the drawer in `#Preview("Not enough room - with a
+  // remedy")`, hiding the one thing that preview exists to show. Setting it
+  // here, before the model exists, makes every preview's expansion its own
+  // explicit choice again — nothing to inherit, nothing to leak.
+  optionsExpanded: Bool = true)
   -> IntakeModel
 {
+  // A fixed store, not `.standard`: `output`, `chatSize` and `qualityCap`
+  // are seeded from it too, not just `folder` (which this function does
+  // overwrite below) — so `.standard` would make every preview canvas in
+  // this file render differently depending on whichever developer's real
+  // saved defaults happen to be, the same thing `VolumeSpace.previewFull`'s
+  // own comment below rules out for disk space ("a canvas that changes
+  // with the developer's disk is a canvas nobody can review"). Worse,
+  // previews are interactive — once Add's save is wired up, ticking the
+  // box and pressing Add in a live preview would write to the real
+  // `studio.lofti.Oxbow` domain.
+  var preferences = Preferences(
+    defaults: UserDefaults(suiteName: "OxbowPreviews")!,
+    homeDirectory: URL(filePath: "/Users/preview"),
+    directoryExists: { _ in true })
+  // Written before `IntakeModel.init` runs, which is what seeds
+  // `isOptionsExpanded` from it — setting `model.isOptionsExpanded`
+  // afterwards instead would work for *this* model but would also perform
+  // the exact store write this parameter exists to make unnecessary.
+  preferences.optionsPanelIsExpanded = optionsExpanded
+
   let model = IntakeModel(
     fetchInfo: { _ in
       guard let info else { throw VideoInfoFetchError.unparseableOutput(snippet: "") }
@@ -656,20 +730,7 @@ private func previewModel(
     enqueue: { _, _ in },
     fileExists: fileExists,
     volumeSpace: volumeSpace,
-    // A fixed store, not `.standard`: `output`, `chatSize` and `qualityCap`
-    // are seeded from it too, not just `folder` (which this function does
-    // overwrite below) — so `.standard` would make every preview canvas in
-    // this file render differently depending on whichever developer's real
-    // saved defaults happen to be, the same thing `VolumeSpace.previewFull`'s
-    // own comment below rules out for disk space ("a canvas that changes
-    // with the developer's disk is a canvas nobody can review"). Worse,
-    // previews are interactive — once Add's save is wired up, ticking the
-    // box and pressing Add in a live preview would write to the real
-    // `studio.lofti.Oxbow` domain.
-    preferences: Preferences(
-      defaults: UserDefaults(suiteName: "OxbowPreviews")!,
-      homeDirectory: URL(filePath: "/Users/preview"),
-      directoryExists: { _ in true }))
+    preferences: preferences)
   model.linkText = link
   model.folder = folder
   return model
@@ -814,25 +875,37 @@ extension VideoInfo {
 // MARK: - The options panel (§2.1, §2.5-§2.7)
 
 /// Collapsed is the steady state (§2.6), so this is the one most people see
-/// most of the time. `isOptionsExpanded` is set explicitly rather than left
-/// to whatever `OxbowPreviews` happens to hold — that suite is a real
-/// `UserDefaults` domain on disk and other previews in this file write
-/// through it too, so a canvas that only trusted the ambient value could
-/// render differently between runs.
+/// most of the time. Passed as `previewModel`'s own `optionsExpanded:`
+/// parameter rather than set on the model afterward — see that parameter's
+/// doc comment (fix round 1) for why setting it post-construction here would
+/// have collapsed every *other* preview in this file drawn from the same
+/// `OxbowPreviews` suite, not just this one.
 #Preview("Options panel - collapsed") {
-  let model = previewModel()
-  model.isOptionsExpanded = false
-  return IntakeWindow(model: model)
+  IntakeWindow(model: previewModel(optionsExpanded: false))
 }
 
 /// Expanded, with the checkbox ticked and the quality footnote showing.
 ///
-/// `900p30` is not a rung `QualityLadder` ever produces — it is an inexact
-/// rendition of `.p720` (`shortSide` 900, that rung's own ceiling 720) — so
-/// `selectQuality` buckets it to `.p720` and `savedQualityNote` disagrees
-/// with what is on screen. The footnote is what keeps that gap from being
-/// silent: "Saved as Up to 720p" next to a visibly different selection
-/// (§3.8).
+/// **Fix round 1: this used to call `model.selectQuality("900p30")` before
+/// the window's `.task` had loaded metadata, which is a silent no-op —
+/// `selectQuality` guards on `qualities`, which is empty until `load()`
+/// settles it — and `load()` then overwrote `quality` from `qualityCap`
+/// anyway, via `QualityLadder.resolve`. The picker never actually showed
+/// `900p30`, and the footnote this preview is named for never actually
+/// rendered.**
+///
+/// Fixed by seeding `qualityCap` directly and letting the real `load()` path
+/// every other preview goes through do the resolving, the same way `folder`
+/// and `output` are seeded elsewhere in this file. This is spec §3.3's own
+/// worked example: a cap of `.p720` against a video offering only
+/// `1080p60` (nothing at or under the ceiling) resolves `quality` to
+/// `"1080p60"` — the only rendition on offer — while the seeded cap itself
+/// stays `.p720`. `savedQualityNote` is exactly this disagreement:
+/// `bucketed` (`.p1080`, from `1080p60`'s own dimensions) differs from
+/// `qualityCap` (`.p720`), so it reads `qualityCap` back out and the
+/// footnote says "Saved as Up to 720p" beside a visibly different
+/// `1080p60` selection (§3.8). Also exercised directly, without a view, by
+/// `IntakeModelTests.anUntouchedPickerSavesTheSeededCapNotWhatItResolvedTo`.
 #Preview("Options panel - expanded, ticked, bucket footnote") {
   let info = VideoInfo(
     streamer: "LeighXP",
@@ -841,20 +914,17 @@ extension VideoInfo {
     duration: .seconds(991),
     qualities: [
       StreamQuality(name: "1080p60", resolution: "1920x1080", bitsPerSecond: 6_184_466),
-      StreamQuality(name: "900p30", resolution: "1600x900", bitsPerSecond: 4_000_000),
-      StreamQuality(name: "480p30", resolution: "852x480", bitsPerSecond: 1_427_697),
     ],
     thumbnailURL: nil)
-  let model = previewModel(info: info)
-  model.selectQuality("900p30")
+  let model = previewModel(info: info, optionsExpanded: true)
+  model.qualityCap = .p720
   model.wantsToSaveDefaults = true
-  model.isOptionsExpanded = true
   return IntakeWindow(model: model)
 }
 
-/// The forced-open case (§2.7). `isOptionsExpanded` is set to `false` here —
-/// the same collapsed state as the first preview above — so what actually
-/// props the panel open is `chatProblem` alone, exactly the mechanism
+/// The forced-open case (§2.7). `optionsExpanded: false` — the same
+/// collapsed state as the first preview above — so what actually props the
+/// panel open is `chatProblem` alone, exactly the mechanism
 /// `isOptionsEffectivelyExpandedBinding` exists for. A regression that made
 /// the panel respect only the stored flag again would show this preview
 /// collapsed, with Add greyed out and no explanation on screen — the failure
@@ -872,8 +942,7 @@ extension VideoInfo {
     hasDownloadableChat: false)
   let model = previewModel(
     link: "https://clips.twitch.tv/AdorableStylishPotatoPlanking-5UAS4GFYHTkDW4xX",
-    info: clipInfo)
+    info: clipInfo, optionsExpanded: false)
   model.output = .videoWithChat
-  model.isOptionsExpanded = false
   return IntakeWindow(model: model)
 }

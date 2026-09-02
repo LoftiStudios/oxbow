@@ -100,18 +100,57 @@ final class IntakeModel {
 
   /// Reads the effective value, writes the stored one. A user's collapse
   /// sticks; a refusal's forced expansion does not.
+  ///
+  /// **The setter ignores writes while a refusal is forcing the panel
+  /// open** (fix round 1). Without this, tapping the triangle while
+  /// `chatProblem` or `compositeProblem` is showing calls this setter with
+  /// `false`, which writes through to `isOptionsExpanded` and so to the
+  /// store — but the getter above still returns `true` regardless, because
+  /// the refusal is still there. The drawer visibly does not move, so the
+  /// tap reads as a dead control either way; the difference is whether it
+  /// is *also* silently rewriting a stored preference for every future
+  /// intake behind that dead control. An inert triangle is honest about
+  /// what just happened; one that quietly changes state nothing on screen
+  /// reflects is not.
   var isOptionsEffectivelyExpandedBinding: Bool {
     get { isOptionsEffectivelyExpanded }
-    set { isOptionsExpanded = newValue }
+    set {
+      guard chatProblem == nil, compositeProblem == nil else { return }
+      isOptionsExpanded = newValue
+    }
   }
 
   /// The collapsed header's summary. Collapsed is the steady state, so a
   /// header that says only "Download Options" hides where the file is going
   /// on most downloads.
+  ///
+  /// **Fix round 1: named through `isClip`, which the expanded picker below
+  /// already used ("Clip + chat"/"Clip" rather than "Video + chat"/"Video")
+  /// while this summary did not** — so a clip's collapsed header used to
+  /// read "Video + chat" for the exact same state its own expanded picker
+  /// called "Clip + chat". `isClip` moved onto the model (from
+  /// `IntakeWindow`, which had its own private copy) so both call sites
+  /// share one answer instead of two copies that can drift.
   var optionsSummary: String {
-    let chat = output == .videoWithChat ? "Video + chat" : "Video"
+    let outputLabel: String
+    switch (output, isClip) {
+    case (.videoWithChat, true): outputLabel = "Clip + chat"
+    case (.videoWithChat, false): outputLabel = "Video + chat"
+    case (.video, true): outputLabel = "Clip"
+    case (.video, false): outputLabel = "Video"
+    }
     let folderName = folder?.lastPathComponent ?? "No folder"
-    return "\(chat) · \(qualityCap.label) · \(folderName)"
+    return "\(outputLabel) · \(qualityCap.label) · \(folderName)"
+  }
+
+  /// Whether `target` is a clip rather than a VOD. Lives here rather than
+  /// only in `IntakeWindow` (where a private copy used to compute the same
+  /// thing for the output picker's labels) because `optionsSummary` above
+  /// needs the same answer, and two independent copies of a one-line
+  /// predicate are two copies that can silently disagree.
+  var isClip: Bool {
+    if case .clip = target { return true }
+    return false
   }
 
   private var preferences: Preferences

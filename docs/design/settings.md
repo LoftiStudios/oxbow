@@ -121,6 +121,20 @@ The first person burned without this is someone whose saved destination is an
 external drive they have since unmounted (§4.2). A summary is what makes the
 collapsed state safe to leave collapsed.
 
+**Not every warning gets that cover, so not every warning lives inside the
+panel.** `IntakeModel.destinationFellBack` (§4.2's own warning) stays inside
+the `DisclosureGroup`: the summary above is a real mitigation for it, because
+it names the folder Oxbow actually used, not the one that vanished. The disk
+space warning (`IntakeModel.spaceWarning`, `docs/design/disk-preflight.md`
+§2-3) has no such cover — the summary carries output, quality cap and folder,
+nothing about what is free — so it renders in the panel `Section`'s own
+footer, outside the `DisclosureGroup`, visible whether the panel is open or
+collapsed. It does not join `chatProblem`/`compositeProblem` in forcing the
+panel open either (§2.7): it is advisory and does not gate Add, so nothing
+about it demands the drawer itself, only that it stay visible. Moving it back
+inside the panel silently reintroduces the exact failure `disk-preflight.md`
+§1 opens with, aimed at precisely the person §2.5 collapses the panel for.
+
 ### 2.7 A collapsed panel must not hide a refusal
 
 Some videos cannot deliver what the default asks for. A clip carries no chat of
