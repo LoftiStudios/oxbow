@@ -51,8 +51,14 @@ metadata, over a range trimmed on a timeline in the intake.
   disk-space estimate.
 - **The app: built, shipped, and used.** Single window, queue list with
   expandable multi-step jobs, an intake that takes a VOD or clip link, fetches
-  the video's metadata and offers a trim range, an About box, and an
-  update banner. Designs live in `docs/design/`.
+  the video's metadata and offers a trim range, a Settings window, an About
+  box, and an update banner. Designs live in `docs/design/`.
+- **The intake's own layout is a design in its own right.** A large preview
+  that plays the VOD's four sampled frames, a test card in the slot until they
+  arrive, no Name field — naming happens in the Save panel — and two
+  collapsible sections whose headers are rows rather than `DisclosureGroup`s.
+  `docs/design/settings.md` §2.1 and §2.9 carry the reasoning, including two
+  control choices that look right and are not.
 - **Release infrastructure: complete but for the Homebrew tap.**
   `scripts/package-dmg.sh` builds the disk image and can sign, notarize and
   staple it; the release workflow does the whole chain from a tag.
