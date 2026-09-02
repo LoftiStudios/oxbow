@@ -1,15 +1,18 @@
 import SwiftUI
 import OxbowKit
 
-/// The pasted link, made recognisable: the video's own preview image beside
+/// The pasted link, made recognisable: the video's own preview image above
 /// its title, who streamed it, and when.
 ///
 /// **The card occupies its space before it has anything to put in it.** The
 /// metadata fetch is a network round trip, so a card that only appeared once
 /// it returned made the window jump by its own height at an unpredictable
 /// moment. `.loading` draws the same layout at the same size with placeholder
-/// text, and the real values replace it in place. The thumbnail well inside it
-/// is fixed for the same reason.
+/// text, and the real values replace it in place. This matters more now than
+/// it did for the old horizontal card — the thumbnail is the tallest thing in
+/// the card, not a fixed 90pt strip beside the text — so `VideoThumbnail`
+/// reserves its height the same way in every state: as a 16:9 aspect ratio
+/// against whatever width the card is given, never against its content.
 struct VideoCard: View {
   enum Content {
     /// Metadata is on its way. Same layout, redacted.
@@ -64,12 +67,20 @@ struct VideoCard: View {
     thumbnail: VideoThumbnail.Source)
     -> some View
   {
-    HStack(alignment: .top, spacing: 12) {
+    // Vertical, thumbnail on top: the mockup's answer to the old horizontal
+    // card, where a fixed 160x90 well left most of a real thumbnail's detail
+    // too small to read. Spanning the full content width costs the "never an
+    // upscale" guarantee the old fixed frame made — a VOD's 320x180 source is
+    // now frequently smaller than the frame it fills — but that trade is the
+    // point of the redesign, not an oversight: a large, legible thumbnail
+    // beats a small, crisp one here.
+    VStack(alignment: .leading, spacing: 8) {
       VideoThumbnail(source: thumbnail)
 
       VStack(alignment: .leading, spacing: 3) {
         Text(title)
-          .font(.headline)
+          .font(.title3)
+          .fontWeight(.bold)
           .lineLimit(2)
           // Titles are user-written and often long; two lines that wrap beat
           // one line that truncates the part that identifies the stream.
@@ -87,13 +98,8 @@ struct VideoCard: View {
             .foregroundStyle(.secondary)
         }
       }
-
-      Spacer(minLength: 0)
     }
-    // A floor, not a fixed height: a two-line title is taller, but the card
-    // must never be shorter than the thumbnail it contains, or the loading
-    // and loaded states would still differ in height.
-    .frame(minHeight: VideoThumbnail.height, alignment: .top)
+    .frame(maxWidth: .infinity, alignment: .leading)
     .accessibilityElement(children: .combine)
   }
 
@@ -112,17 +118,20 @@ struct VideoCard: View {
   }
 }
 
-/// The preview image at a fixed 16:9 frame, in every state it can be in.
+/// The preview image at a 16:9 frame spanning the card's full width, in every
+/// state it can be in.
 ///
-/// **160x90 is a ceiling, not a preference.** A VOD's thumbnail is 320x180 and
-/// there is no larger one to ask for — the CLI hardcodes those dimensions in
-/// its GraphQL query — so anything wider is an upscale that reads as blurry on
-/// a Retina display. A clip's is full-size and would happily go bigger, but
-/// two sizes for the same slot would be worse than one that is always crisp.
-///
-/// The frame is fixed and the image is fitted inside it, rather than the frame
-/// following the image: a vertical clip is 9:16, and a card that changes shape
-/// with the link would move every control below it.
+/// **The frame's shape is fixed; its size is not.** It used to be the other
+/// way around — a hard 160x90, sized so a VOD's real 320x180 thumbnail (the
+/// CLI hardcodes that size in its GraphQL query; there is no larger one to
+/// ask for) was never upscaled. The redesign asks for a thumbnail that spans
+/// the intake's own width instead, which means giving up that guarantee: on
+/// a window wider than 320pt this frame now upscales a VOD thumbnail, same as
+/// it always has for a clip's full-size one. What the fixed *shape* still
+/// buys is the reason the frame existed at all — a vertical clip is 9:16, and
+/// a card that changed shape with the link would move every control below
+/// it. `aspectRatio` keeps that promise at any width; only the "never an
+/// upscale" half of the old comment stopped being true.
 struct VideoThumbnail: View {
   enum Source {
     /// We do not know the URL yet, because the metadata fetch is still out.
@@ -133,13 +142,13 @@ struct VideoThumbnail: View {
 
   let source: Source
 
-  static let width: CGFloat = 160
-  static let height: CGFloat = 90
-  private static let corner: CGFloat = 6
+  private static let aspectRatio: CGFloat = 16.0 / 9.0
+  private static let corner: CGFloat = 8
 
   var body: some View {
     content
-      .frame(width: Self.width, height: Self.height)
+      .aspectRatio(Self.aspectRatio, contentMode: .fit)
+      .frame(maxWidth: .infinity)
       .background(.quaternary)
       .clipShape(.rect(cornerRadius: Self.corner))
       // Twitch thumbnails are photographic and frequently near-black at the
