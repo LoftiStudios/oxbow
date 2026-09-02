@@ -17,6 +17,32 @@ public struct StreamQuality: Sendable, Equatable {
     Int(Double(bitsPerSecond) * duration.asSeconds / 8)
   }
 
+  /// The rendition's dimensions as Twitch reported them, or nil when it
+  /// reported none — which older clips genuinely do.
+  ///
+  /// The one parser for `resolution`. `CompositeGeometry` reads it rather than
+  /// splitting the string a second time, because two parsers for one field is
+  /// how two answers to one question start disagreeing.
+  public var pixelSize: (width: Int, height: Int)? {
+    let parts = resolution.split(separator: "x")
+    guard parts.count == 2,
+          let width = Int(parts[0]), let height = Int(parts[1]),
+          width > 0, height > 0
+    else { return nil }
+    return (width, height)
+  }
+
+  /// The smaller dimension — the orientation-agnostic reading of the `p`
+  /// number in the name.
+  ///
+  /// `1080p60-Portrait` is 1080x1920: its height is 1920 and its `1080p` is
+  /// the **width**. Anything comparing a rendition against a quality ceiling
+  /// has to read this, or a portrait clip files as the highest tier there is.
+  public var shortSide: Int? {
+    guard let size = pixelSize else { return nil }
+    return min(size.width, size.height)
+  }
+
   /// The value to pass as the CLI's `-q`, as distinct from `name`.
   ///
   /// Upstream's `ClipVideoQualities.GetQuality` resolves `-q` by an **exact

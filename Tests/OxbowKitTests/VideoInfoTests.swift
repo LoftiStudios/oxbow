@@ -132,6 +132,34 @@ struct VideoInfoTests {
     let info = try #require(VideoInfo.parse(output))
     #expect(info.thumbnailURL == nil)
   }
+
+  @Test func pixelSizeParsesLandscape() {
+    let quality = StreamQuality(name: "1080p60", resolution: "1920x1080", bitsPerSecond: 6_000_000)
+    let size = quality.pixelSize
+    #expect(size?.width == 1920)
+    #expect(size?.height == 1080)
+    #expect(quality.shortSide == 1080)
+  }
+
+  /// A portrait clip's `1080p` names its **width**. Reading the short side is
+  /// what makes the name and the dimensions agree.
+  @Test func shortSideReadsPortraitAsItsName() {
+    let quality = StreamQuality(
+      name: "1080p60-Portrait", resolution: "1080x1920", bitsPerSecond: 6_000_000)
+    #expect(quality.shortSide == 1080)
+  }
+
+  @Test func pixelSizeIsNilWithoutAResolution() {
+    let quality = StreamQuality(name: "720p0-1", resolution: "", bitsPerSecond: 0)
+    #expect(quality.pixelSize == nil)
+    #expect(quality.shortSide == nil)
+  }
+
+  @Test func pixelSizeIsNilWhenNotTwoPositiveIntegers() {
+    #expect(StreamQuality(name: "x", resolution: "1920x", bitsPerSecond: 0).pixelSize == nil)
+    #expect(StreamQuality(name: "x", resolution: "0x1080", bitsPerSecond: 0).pixelSize == nil)
+    #expect(StreamQuality(name: "x", resolution: "1920", bitsPerSecond: 0).pixelSize == nil)
+  }
 }
 
 /// `info --format Raw` for a clip is a different document from a VOD's — one

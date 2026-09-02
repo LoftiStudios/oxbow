@@ -42,11 +42,9 @@ public struct CompositeGeometry: Sendable, Equatable {
   /// guessed height produces a silently wrong frame rather than a loud
   /// failure.
   public init?(quality: StreamQuality) {
-    let parts = quality.resolution.split(separator: "x")
-    guard parts.count == 2,
-          let rawWidth = Int(parts[0]), let rawHeight = Int(parts[1]),
-          rawWidth > 0, rawHeight > 0
-    else { return nil }
+    guard let size = quality.pixelSize else { return nil }
+    let rawWidth = size.width
+    let rawHeight = size.height
 
     // Twitch's *metadata* dimensions are not always the decoded stream's:
     // h264 4:2:0 (yuv420p/yuvj420p, what every Twitch rendition uses)
