@@ -619,7 +619,21 @@ struct IntakeWindow: View {
     // title, which is the single biggest addition to what's on screen by
     // default — a floor, like the rest of this function, not a measurement.
     var height: CGFloat = 720
-    guard model.hasSettledMetadata else { return height }
+    // **As soon as the link parses, not once metadata settles.** Everything
+    // below is a floor for content that appears when the fetch answers — but
+    // `grow(toFit:)` animates, so waiting for the answer meant the window
+    // resized twice for one paste: once as the loading card appeared, then
+    // again 120pt taller a second later as the options drawer arrived. Two
+    // animated resizes for one action read as the window rendering twice.
+    //
+    // Everything this needs is already known at parse time: the drawer's
+    // expansion comes from preferences, and `chatProblem` is nil until there
+    // is an `info` or a failure to make it otherwise — so the branch below
+    // evaluates the same before and after. A link that then fails, or whose
+    // chat turns out to be unavailable, leaves the window 120pt taller than
+    // it strictly needs; `grow(toFit:)` never shrinks anyway, so that was
+    // already true the moment any drawer opened once.
+    guard model.target != nil else { return height }
     if model.output == .videoWithChat, model.chatProblem == nil,
        model.isOptionsEffectivelyExpanded
     {
