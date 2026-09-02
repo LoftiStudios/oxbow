@@ -188,6 +188,8 @@ So the store holds a **cap**, and the cap is resolved against each video.
 **Resolve** (store → intake), when metadata settles: pick the highest rendition
 whose `min(width, height)` (§3.6) is at or below the cap. If none qualifies, fall back to the lowest
 available — a video that only offers 1080p should still download, not refuse.
+When two renditions have the same short side, tie-break on bitrate (preferring higher);
+when both are 0 (older clips), the tie degrades to first-listed.
 `Best available` resolves to the empty string, which is today's behaviour and
 already proven against the real CLI.
 

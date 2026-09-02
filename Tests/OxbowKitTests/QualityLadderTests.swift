@@ -4,8 +4,8 @@ import Testing
 @Suite("Quality ladder")
 struct QualityLadderTests {
 
-  private func quality(_ name: String, _ resolution: String) -> StreamQuality {
-    StreamQuality(name: name, resolution: resolution, bitsPerSecond: 1_000_000)
+  private func quality(_ name: String, _ resolution: String, bits: Int = 1_000_000) -> StreamQuality {
+    StreamQuality(name: name, resolution: resolution, bitsPerSecond: bits)
   }
 
   private var vod: [StreamQuality] {
@@ -94,5 +94,105 @@ struct QualityLadderTests {
     let resolved = QualityLadder.resolve(.p720, in: onlyHigh, forComposite: false)
     let rendition = try #require(onlyHigh.first { $0.name == resolved })
     #expect(QualityLadder.bucket(rendition) == .p1080)
+  }
+
+  // MARK: - Composite filter discriminator
+
+  /// The one input where the composite filter actually bites: a rendition
+  /// with a dimension of 1 has a `shortSide` (so `sized` keeps it) but no
+  /// usable `CompositeGeometry` (so a composite must not select it).
+  @Test func compositeResolutionSkipsARenditionGeometryRejects() {
+    let odd = [quality("1x1080", "1x1080"), quality("1080p60", "1920x1080")]
+    #expect(QualityLadder.resolve(.p360, in: odd, forComposite: true) == "1080p60")
+    #expect(QualityLadder.resolve(.p360, in: odd, forComposite: false) == "1x1080")
+  }
+
+  // MARK: - Tie-breaking
+
+  /// When two renditions have the same shortSide, resolve picks the one
+  /// with higher bitrate. A vertical VOD can carry both landscape
+  /// (1920x1080, shortSide=1080) and portrait (1080x1920, shortSide=1080)
+  /// — both have the exact same shortSide. The tie-break is on bitrate, not
+  /// orientation, and it must hold regardless of list order.
+  @Test func tieBreaksOnBitrateWhenShortSidesMatch() {
+    let landscape = quality("1080p60", "1920x1080", bits: 8_000_000)
+    let portrait = quality("1080p60-Portrait-1", "1080x1920", bits: 5_000_000)
+
+    // Landscape first: should pick landscape (higher bitrate)
+    let landscapeFirst = [landscape, portrait]
+    #expect(QualityLadder.resolve(.p1080, in: landscapeFirst, forComposite: false) == "1080p60")
+
+    // Portrait first: should still pick landscape (higher bitrate, not list order)
+    let portraitFirst = [portrait, landscape]
+    #expect(QualityLadder.resolve(.p1080, in: portraitFirst, forComposite: false) == "1080p60")
+  }
+
+  /// When both renditions have 0 bitrate (older clips), the tie-break
+  /// degrades to first-listed, preserving the original list order.
+  @Test func whenBitrateTiesAtZeroKeepsListOrder() {
+    let a = quality("1080p60", "1920x1080", bits: 0)
+    let b = quality("1080p60-Portrait-1", "1080x1920", bits: 0)
+
+    // A first: should pick A
+    #expect(QualityLadder.resolve(.p1080, in: [a, b], forComposite: false) == "1080p60")
+
+    // B first: should pick B
+    #expect(QualityLadder.resolve(.p1080, in: [b, a], forComposite: false) == "1080p60-Portrait-1")
+  }
+
+  /// The fallback path (when ceiling is not met) also ties on bitrate, and
+  /// the comparison must be inverted for `min` to surface the higher bitrate.
+  /// This test reaches the fallback with unequal nonzero bitrates: a cap that
+  /// sits below both renditions' shared short side.
+  @Test func fallbackPathAlsoTieBreaksOnBitrate() {
+    let landscape = quality("1080p60", "1920x1080", bits: 8_000_000)
+    let portrait = quality("1080p60-Portrait-1", "1080x1920", bits: 5_000_000)
+
+    // Both have shortSide 1080, cap is .p720 (720 < 1080), so fallback fires.
+    // Should pick landscape (higher bitrate) in both list orders.
+    #expect(QualityLadder.resolve(.p720, in: [landscape, portrait], forComposite: false) == "1080p60")
+    #expect(QualityLadder.resolve(.p720, in: [portrait, landscape], forComposite: false) == "1080p60")
+  }
+
+  // MARK: - Properties and coverage
+
+  /// Every case of QualityCap has a label and a ceiling (or nil for .best).
+  /// Driven off allCases so a new case forces failure.
+  @Test func everyCapHasLabelAndCeiling() {
+    let expectations: [QualityCap: (label: String, ceiling: Int?)] = [
+      .best: ("Best available", nil),
+      .p1080: ("Up to 1080p", 1080),
+      .p720: ("Up to 720p", 720),
+      .p480: ("Up to 480p", 480),
+      .p360: ("Up to 360p", 360),
+    ]
+
+    #expect(expectations.count == QualityCap.allCases.count)
+    for cap in QualityCap.allCases {
+      if let (expectedLabel, expectedCeiling) = expectations[cap] {
+        #expect(cap.label == expectedLabel)
+        #expect(cap.ceiling == expectedCeiling)
+      } else {
+        #expect(Bool(false), "Missing expectation for \(cap)")
+      }
+    }
+  }
+
+  // MARK: - Unpinned behaviours
+
+  /// An all-unparseable list on the non-composite path.
+  @Test func allUnparseableListOnNonCompositeResolvesToEmpty() {
+    let unparseable = [quality("720p0-1", "")]
+    #expect(QualityLadder.resolve(.p720, in: unparseable, forComposite: false) == "")
+  }
+
+  /// `.best` returns empty string regardless of whether the list is parsed or
+  /// filtered. Worth pinning because `.best` is the one place a reader might
+  /// expect the composite filter to matter, and it does not — the empty string
+  /// is the same whether we filtered or not.
+  @Test func bestReturnsEmptyStringRegardlessOfCompositeFilter() {
+    let list = [quality("1080p60", "1920x1080")]
+    #expect(QualityLadder.resolve(.best, in: list, forComposite: true) == "")
+    #expect(QualityLadder.resolve(.best, in: list, forComposite: false) == "")
   }
 }

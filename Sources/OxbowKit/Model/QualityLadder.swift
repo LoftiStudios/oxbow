@@ -34,8 +34,14 @@ public enum QualityCap: String, Codable, CaseIterable, Sendable {
     }
   }
 
-  /// Every rung with a ceiling, highest first.
-  static var rungs: [QualityCap] { [.p1080, .p720, .p480, .p360] }
+  /// Every rung with its ceiling, highest first. Stored as tuples to prevent
+  /// accidental introduction of `.best` into the rungs — if `.best` were added
+  /// here, bucket would have no ceiling and would match everything, reversing
+  /// §3.5's protection against rounding up.
+  static var rungs: [(cap: QualityCap, ceiling: Int)] {
+    [(cap: .p1080, ceiling: 1080), (cap: .p720, ceiling: 720),
+     (cap: .p480, ceiling: 480), (cap: .p360, ceiling: 360)]
+  }
 }
 
 /// Translates between a stored cap and one video's renditions, in both
@@ -52,6 +58,11 @@ public enum QualityLadder {
   /// `IntakeModel.compositeQuality` cannot tell a resolved name from a typed
   /// one — it honours any explicit pick, deliberately. So without this a cap
   /// could hand the user a dead end for a choice they never made.
+  ///
+  /// The filter overlaps `sized`'s own nil-dimension drop today and bites only
+  /// on a rendition with a dimension of 1 (which has a `shortSide` but no usable
+  /// `CompositeGeometry`). It is kept as defence rather than as currently-load-bearing
+  /// logic.
   public static func resolve(
     _ cap: QualityCap, in qualities: [StreamQuality], forComposite: Bool) -> String
   {
@@ -67,12 +78,28 @@ public enum QualityLadder {
     }
     guard !sized.isEmpty else { return "" }
 
-    if let best = sized.filter({ $0.1 <= ceiling }).max(by: { $0.1 < $1.1 }) {
+    if let best = sized.filter({ $0.1 <= ceiling }).max(by: {
+      if $0.1 == $1.1 {
+        // Tie-break on bitrate when shortSides match: prefer higher bitrate.
+        // When both are 0 (older clips), this preserves list order.
+        return $0.0.bitsPerSecond < $1.0.bitsPerSecond
+      }
+      return $0.1 < $1.1
+    }) {
       return best.0.name
     }
     // Nothing at or below the ceiling. A video that only offers more than the
     // user usually wants should still download.
-    return sized.min(by: { $0.1 < $1.1 })?.0.name ?? ""
+    return sized.min(by: {
+      if $0.1 == $1.1 {
+        // Inverted relative to the `max` above, deliberately: `min` returns
+        // the element that compares smallest, so the higher bitrate has to
+        // compare as *smaller* here to be the one that surfaces. Equal
+        // bitrates return false either way, which keeps first-listed.
+        return $0.0.bitsPerSecond > $1.0.bitsPerSecond
+      }
+      return $0.1 < $1.1
+    })?.0.name ?? ""
   }
 
   /// The cap a chosen rendition expresses, or nil when it has no dimensions to
@@ -84,6 +111,6 @@ public enum QualityLadder {
   /// the user ever asked for, on every video after it.
   public static func bucket(_ quality: StreamQuality) -> QualityCap? {
     guard let side = quality.shortSide else { return nil }
-    return QualityCap.rungs.first { side >= ($0.ceiling ?? 0) } ?? .p360
+    return QualityCap.rungs.first { side >= $0.ceiling }?.cap ?? .p360
   }
 }
