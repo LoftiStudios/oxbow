@@ -7,6 +7,49 @@ import OxbowKit
 @Suite("Intake model")
 struct IntakeModelTests {
 
+  // MARK: - Scratch `UserDefaults` suites
+
+  /// Removes every scratch suite this test created, once the test itself is
+  /// torn down.
+  ///
+  /// Every test in this file that needs a `Preferences` store creates its
+  /// own `UserDefaults(suiteName:)` over a fresh UUID — correct, so no test
+  /// can see another test's values — but nothing was ever removing them, and
+  /// `UserDefaults` persists a suite to `~/Library/Preferences` the moment
+  /// anything is written to it. That is real disk litter, not a test-only
+  /// abstraction: hundreds of orphaned `.plist` files accumulate per full
+  /// run, on every developer machine and every CI runner.
+  ///
+  /// Swift Testing has no `tearDown`. This is the idiomatic replacement: a
+  /// plain class's `deinit` runs deterministically once nothing retains the
+  /// instance, and a fresh `IntakeModelTests` (with a fresh `janitor`) is
+  /// constructed for every `@Test`, so a `janitor` releasing at the end of
+  /// one test cannot affect another. It is a separate, non-actor-isolated
+  /// class rather than tracking names on `IntakeModelTests` itself, because
+  /// the struct's own `store()` is called from *default parameter*
+  /// expressions in `makeModel`/`loadedModel` — Swift evaluates those before
+  /// `self` exists, so they cannot append to an instance property, only to
+  /// something reachable without one. `store()` still needs `self.janitor`
+  /// to register what it creates, which is why it is an instance method
+  /// rather than the `static` one it used to be.
+  private final class SuiteJanitor {
+    var names: [String] = []
+    deinit {
+      for name in names { UserDefaults.standard.removePersistentDomain(forName: name) }
+    }
+  }
+
+  private let janitor = SuiteJanitor()
+
+  /// Creates a scratch `UserDefaults` suite over a fresh UUID and registers
+  /// it with `janitor` for cleanup. The one place every suite in this file
+  /// should be created through, so no call site can forget the registration.
+  private func freshSuite(named prefix: String) -> UserDefaults {
+    let name = "\(prefix)-\(UUID().uuidString)"
+    janitor.names.append(name)
+    return UserDefaults(suiteName: name)!
+  }
+
   // MARK: - Seeding
 
   /// The rule survives the arrival of a preference store: a model whose
@@ -19,7 +62,7 @@ struct IntakeModelTests {
   }
 
   @Test func seedsEveryFieldFromTheStore() {
-    let model = makeModel(preferences: Self.store {
+    let model = makeModel(preferences: store {
       $0.destination = URL(filePath: "/Volumes/Archive")
       $0.qualityCap = .p720
       $0.output = .video
@@ -37,8 +80,8 @@ struct IntakeModelTests {
   /// Spec §2.2. Including the first run — an unticked box makes the same
   /// promise every time, so nobody has to remember what state it was left in.
   @Test func theCheckboxIsUntickedOnAFreshStoreAndOnAConfiguredOne() {
-    #expect(makeModel(preferences: Self.store()).wantsToSaveDefaults == false)
-    #expect(makeModel(preferences: Self.store { $0.qualityCap = .p480 })
+    #expect(makeModel(preferences: store()).wantsToSaveDefaults == false)
+    #expect(makeModel(preferences: store { $0.qualityCap = .p480 })
       .wantsToSaveDefaults == false)
   }
 
@@ -59,7 +102,7 @@ struct IntakeModelTests {
   /// — a destination that is present throughout, as this one is, cannot
   /// distinguish "recomputed on reset" from "never touched since init".
   @Test func resetReseedsFromTheStoreAndUnticksTheBox() {
-    let suite = UserDefaults(suiteName: "ResetReseed-\(UUID().uuidString)")!
+    let suite = freshSuite(named: "ResetReseed")
     var store = Preferences(
       defaults: suite, homeDirectory: URL(filePath: "/Users/t"),
       directoryExists: { _ in true })
@@ -112,7 +155,7 @@ struct IntakeModelTests {
   /// stale, uncomputed `destinationFellBack` and a freshly recomputed one
   /// give different answers here; only the real line makes this pass.
   @Test func resetRereadsDestinationFellBackFromTheStoreRatherThanKeepingInitsAnswer() {
-    let suite = UserDefaults(suiteName: "ResetFellBack-\(UUID().uuidString)")!
+    let suite = freshSuite(named: "ResetFellBack")
     var store = Preferences(
       defaults: suite, homeDirectory: URL(filePath: "/Users/t"),
       directoryExists: { $0.path != "/Volumes/NowGone" })
@@ -130,7 +173,7 @@ struct IntakeModelTests {
   }
 
   @Test func aMissingStoredDestinationSeedsTheFallbackAndFlagsIt() {
-    let suite = UserDefaults(suiteName: "Gone-\(UUID().uuidString)")!
+    let suite = freshSuite(named: "Gone")
     var store = Preferences(
       defaults: suite, homeDirectory: URL(filePath: "/Users/t"),
       directoryExists: { $0.path != "/Volumes/Unplugged" })
@@ -150,7 +193,7 @@ struct IntakeModelTests {
   /// the ordinary sequence, not an edge case — never reaches the model until
   /// `reseedFromPreferences()` reads the store again on open.
   @Test func reseedFromPreferencesPicksUpAStoreChangedSinceConstruction() {
-    let suite = UserDefaults(suiteName: "Reseed-\(UUID().uuidString)")!
+    let suite = freshSuite(named: "Reseed")
     var store = Preferences(
       defaults: suite, homeDirectory: URL(filePath: "/Users/t"),
       directoryExists: { _ in true })
@@ -212,7 +255,7 @@ struct IntakeModelTests {
   // MARK: - Quality, both directions
 
   @Test func metadataResolvesTheCapIntoARendition() async {
-    let model = makeModel(preferences: Self.store { $0.qualityCap = .p720 })
+    let model = makeModel(preferences: store { $0.qualityCap = .p720 })
     model.linkText = Self.videoLink
     await model.load()
 
@@ -223,7 +266,7 @@ struct IntakeModelTests {
   /// more than the cap cannot quietly raise the user's standing preference.
   @Test func anUntouchedPickerLeavesTheCapExactlyAsSeeded() async {
     let model = makeModel(
-      preferences: Self.store { $0.qualityCap = .p720 },
+      preferences: store { $0.qualityCap = .p720 },
       info: Self.info(qualities: [
         StreamQuality(name: "1080p60", resolution: "1920x1080", bitsPerSecond: 8_000_000),
       ]))
@@ -265,7 +308,7 @@ struct IntakeModelTests {
   /// (`.p1080`), or it would describe a save that never happens.
   @Test func theFootnoteNamesTheCapAnUntouchedPickerWouldActuallySave() async {
     let model = makeModel(
-      preferences: Self.store { $0.qualityCap = .p720 },
+      preferences: store { $0.qualityCap = .p720 },
       info: Self.info(qualities: [
         StreamQuality(name: "1080p60", resolution: "1920x1080", bitsPerSecond: 8_000_000),
       ]))
@@ -279,7 +322,7 @@ struct IntakeModelTests {
   // MARK: - Saving
 
   @Test func aTickedBoxWritesEveryFieldOnSave() async {
-    let store = Self.store()
+    let store = store()
     let model = await loadedModel(preferences: store)
     // `.videoWithChat`, not `loadedModel`'s own `.video` — the chat text
     // size picker this test wants to save from only exists on screen while
@@ -299,7 +342,7 @@ struct IntakeModelTests {
   }
 
   @Test func anUntickedBoxWritesNothing() async {
-    let store = Self.store()
+    let store = store()
     let model = await loadedModel(preferences: store)
     model.chatSize = .large
 
@@ -315,7 +358,7 @@ struct IntakeModelTests {
   /// proves this of the model field; this proves it of what actually reaches
   /// the store, which is the thing the checkbox promises.
   @Test func anUntouchedPickerSavesTheSeededCapNotWhatItResolvedTo() async {
-    let store = Self.store { $0.qualityCap = .p720 }
+    let store = store { $0.qualityCap = .p720 }
     let model = await loadedModel(
       preferences: store,
       info: Self.info(qualities: [
@@ -334,7 +377,7 @@ struct IntakeModelTests {
   /// available). Saving that must not stomp a real seeded cap with `.best`
   /// — there was never a pick to derive `.best` from, only an absent one.
   @Test func anUntouchedPickerWithNoDimensionsLeavesTheSeededCapAlone() async {
-    let store = Self.store { $0.qualityCap = .p720 }
+    let store = store { $0.qualityCap = .p720 }
     let model = await loadedModel(
       preferences: store,
       info: Self.info(qualities: [
@@ -360,7 +403,7 @@ struct IntakeModelTests {
   /// that actually isolates "does withholding `output` touch anything else",
   /// since nothing hides its control.
   @Test func outputIsWithheldWhileMetadataFailed() async {
-    let store = Self.store { $0.output = .videoWithChat }
+    let store = store { $0.output = .videoWithChat }
     let model = makeModel(
       preferences: store,
       failure: VideoInfoFetchError.helperFailed(status: .exited(1), standardError: "nope"))
@@ -383,7 +426,7 @@ struct IntakeModelTests {
 
   /// Spec §3.7. Nothing to bucket, so the other three still save.
   @Test func aRenditionWithNoDimensionsWithholdsOnlyQuality() async {
-    let store = Self.store { $0.qualityCap = .p1080 }
+    let store = store { $0.qualityCap = .p1080 }
     let model = await loadedModel(
       preferences: store,
       info: Self.info(qualities: [
@@ -411,7 +454,7 @@ struct IntakeModelTests {
   /// is withheld here too, but for §3.7's unrelated reason (its own picker
   /// disappears once `output == .video`), not because of this rule.
   @Test func outputIsWithheldWhileChatIsUnavailable() async {
-    let store = Self.store { $0.output = .videoWithChat }
+    let store = store { $0.output = .videoWithChat }
     let model = await loadedModel(
       preferences: store, info: Self.info(hasDownloadableChat: false))
     model.output = .videoWithChat
@@ -435,7 +478,7 @@ struct IntakeModelTests {
   /// `output == .videoWithChat`, so once `.video` is selected the value on
   /// screen is stale by construction and must not be written.
   @Test func chatSizeIsWithheldWhileVideoOnlyIsSelected() async {
-    let store = Self.store { $0.chatSize = .small }
+    let store = store { $0.chatSize = .small }
     let model = await loadedModel(preferences: store)
     model.output = .video
     #expect(model.withholdsChatSizeFromSave)
@@ -450,7 +493,7 @@ struct IntakeModelTests {
   /// The positive control: with `.videoWithChat` selected, the picker is on
   /// screen and a save must write what it shows.
   @Test func chatSizeSavesNormallyWithVideoAndChatSelected() async {
-    let store = Self.store()
+    let store = store()
     let model = await loadedModel(preferences: store)
     model.output = .videoWithChat
     #expect(!model.withholdsChatSizeFromSave)
@@ -465,7 +508,7 @@ struct IntakeModelTests {
   // MARK: - Options panel
 
   @Test func isOptionsExpandedWritesThroughToTheStore() async {
-    let store = Self.store { $0.optionsPanelIsExpanded = true }
+    let store = store { $0.optionsPanelIsExpanded = true }
     let model = await loadedModel(preferences: store)
 
     model.isOptionsExpanded = false
@@ -483,7 +526,7 @@ struct IntakeModelTests {
   /// `Preferences` value over the same suite, the way the destination does in
   /// the test above.
   @Test func resetRereadsIsOptionsExpandedFromTheStore() async {
-    let store = Self.store { $0.optionsPanelIsExpanded = true }
+    let store = store { $0.optionsPanelIsExpanded = true }
     let model = await loadedModel(preferences: store)
     #expect(model.isOptionsExpanded, "precondition: seeded expanded")
 
@@ -500,7 +543,7 @@ struct IntakeModelTests {
   /// window would start claiming defaults nobody chose from one triangle
   /// click.
   @Test func collapsingThePanelDoesNotSetHasSavedDefaults() async {
-    let store = Self.store()
+    let store = store()
     let model = await loadedModel(preferences: store)
 
     model.isOptionsExpanded = false
@@ -535,7 +578,7 @@ struct IntakeModelTests {
   /// defaults, then adds another job with the box still ticked, must not
   /// find it collapsed again out from under them.
   @Test func aLaterSaveLeavesThePanelAlone() async {
-    let store = Self.store()
+    let store = store()
     let model = await loadedModel(preferences: store)
     model.wantsToSaveDefaults = true
     model.saveDefaultsIfRequested()
@@ -582,7 +625,7 @@ struct IntakeModelTests {
   /// does: `model.isOptionsExpanded` alone cannot prove the store was never
   /// written to, only that the model's own copy of it looks right.
   @Test func theForcedExpansionNeverReachesTheStore() async {
-    let store = Self.store { $0.optionsPanelIsExpanded = false }
+    let store = store { $0.optionsPanelIsExpanded = false }
     let model = await loadedModel(
       preferences: store, info: Self.info(hasDownloadableChat: false))
     model.output = .videoWithChat
@@ -783,7 +826,7 @@ struct IntakeModelTests {
       },
       enqueue: { _, _ in },
       calendar: Self.pacific,
-      preferences: Self.store())
+      preferences: store())
     model.linkText = Self.videoLink
 
     async let loading: Void = model.load()
@@ -995,25 +1038,34 @@ struct IntakeModelTests {
 
   /// A store over a suite nobody else uses, so a test never sees another
   /// test's values and never touches the real preferences domain.
-  private static func store(
+  ///
+  /// **An instance method, not `static` any more.** It has to be, to
+  /// register what it creates with `self.janitor` for cleanup — see
+  /// `SuiteJanitor`'s own doc comment for why that in turn means it cannot
+  /// stay a default-parameter expression on `makeModel`/`loadedModel` below.
+  private func store(
     _ configure: (inout Preferences) -> Void = { _ in }) -> Preferences
   {
-    let suite = UserDefaults(suiteName: "IntakeModelTests-\(UUID().uuidString)")!
     // `directoryExists` is stubbed true because these destinations are
     // fictional. With the real FileManager predicate, `Preferences.destination`
     // correctly decides /Volumes/Archive is missing and hands back
     // ~/Downloads — and every seeding assertion below fails for a reason that
     // has nothing to do with what it is testing.
     var store = Preferences(
-      defaults: suite,
+      defaults: freshSuite(named: "IntakeModelTests"),
       homeDirectory: URL(filePath: "/Users/t"),
       directoryExists: { _ in true })
     configure(&store)
     return store
   }
 
+  /// `preferences` defaults to `nil` rather than to a call to `store()`
+  /// directly — Swift evaluates a default *parameter* expression before
+  /// `self` exists, so it cannot reach `self.janitor`, and `store()` needs
+  /// to (see `SuiteJanitor`). Falling back inside the body instead is the
+  /// smallest change that keeps every existing call site working unchanged.
   private func makeModel(
-    preferences: Preferences = IntakeModelTests.store(),
+    preferences: Preferences? = nil,
     info: VideoInfo? = IntakeModelTests.info(),
     failure: Error? = nil,
     recorder: Recorder = Recorder(),
@@ -1031,7 +1083,7 @@ struct IntakeModelTests {
       calendar: Self.pacific,
       fileExists: fileExists,
       volumeSpace: volumeSpace,
-      preferences: preferences)
+      preferences: preferences ?? store())
   }
 
   /// One volume with a fixed amount of room. Defaulted to a terabyte
@@ -1051,7 +1103,7 @@ struct IntakeModelTests {
   /// every test below into a composite test.
   private func loadedModel(
     link: String = IntakeModelTests.videoLink,
-    preferences: Preferences = IntakeModelTests.store(),
+    preferences: Preferences? = nil,
     info: VideoInfo = IntakeModelTests.info(),
     recorder: Recorder = Recorder(),
     fileExists: @escaping (URL) -> Bool = { _ in false },
@@ -1059,7 +1111,7 @@ struct IntakeModelTests {
     async -> IntakeModel
   {
     let model = makeModel(
-      preferences: preferences, info: info, recorder: recorder, fileExists: fileExists,
+      preferences: preferences ?? store(), info: info, recorder: recorder, fileExists: fileExists,
       volumeSpace: volumeSpace)
     model.linkText = link
     await model.load()
@@ -1831,7 +1883,7 @@ struct IntakeModelTests {
   @Test func collapsingTheTrimSectionKeepsTheTimes() {
     let model = IntakeModel(
       fetchInfo: { _ in throw CancellationError() }, enqueue: { _, _ in },
-      preferences: Self.store())
+      preferences: store())
     model.linkText = Self.videoLink
     model.isTrimExpanded = true
     model.trimStartText = "00:10:00"
@@ -1849,7 +1901,7 @@ struct IntakeModelTests {
   @Test func aCollapsedTrimSectionStillTrims() {
     let model = IntakeModel(
       fetchInfo: { _ in throw CancellationError() }, enqueue: { _, _ in },
-      preferences: Self.store())
+      preferences: store())
     model.linkText = Self.videoLink
     model.trimStartText = "00:10:00"
     model.isTrimExpanded = false
@@ -1861,7 +1913,7 @@ struct IntakeModelTests {
   @Test func summarisesWhicheverEndsAreSet() {
     let model = IntakeModel(
       fetchInfo: { _ in throw CancellationError() }, enqueue: { _, _ in },
-      preferences: Self.store())
+      preferences: store())
     model.linkText = Self.videoLink
     #expect(model.trimSummary == nil)
 
@@ -1881,7 +1933,7 @@ struct IntakeModelTests {
   @Test func aClipNeverSummarisesATrim() {
     let model = IntakeModel(
       fetchInfo: { _ in throw CancellationError() }, enqueue: { _, _ in },
-      preferences: Self.store())
+      preferences: store())
     model.linkText = Self.clipLink
     model.trimStartText = "00:10:00"
     #expect(model.trimSummary == nil)
@@ -1893,7 +1945,7 @@ struct IntakeModelTests {
   @Test func resettingTheWindowFoldsTheTrimSectionAway() {
     let model = IntakeModel(
       fetchInfo: { _ in throw CancellationError() }, enqueue: { _, _ in },
-      preferences: Self.store())
+      preferences: store())
     model.linkText = Self.videoLink
     model.isTrimExpanded = true
     model.trimStartText = "00:10:00"
@@ -1917,7 +1969,7 @@ struct IntakeModelTests {
       fetchInfo: { id in id == "1111" ? long : short },
       enqueue: { _, _ in },
       calendar: Self.pacific,
-      preferences: Self.store())
+      preferences: store())
 
     model.linkText = "https://www.twitch.tv/videos/1111"
     await model.load()
@@ -2041,7 +2093,7 @@ struct IntakeModelTests {
       },
       enqueue: { _, _ in },
       calendar: Self.pacific,
-      preferences: Self.store())
+      preferences: store())
 
     model.linkText = "https://www.twitch.tv/videos/1111"
     let first = Task { await model.load() }

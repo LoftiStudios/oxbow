@@ -5,8 +5,26 @@ import Testing
 @Suite("Preferences")
 struct PreferencesTests {
 
+  /// Removes every scratch suite this test created, once the test itself is
+  /// torn down. Swift Testing has no `tearDown`; a plain class's `deinit`
+  /// is the idiomatic replacement, and a fresh `PreferencesTests` (with a
+  /// fresh `janitor`) is constructed for every `@Test`, so one test's
+  /// cleanup cannot affect another's. Without this, every call to
+  /// `defaults()` below leaves a `.plist` behind in
+  /// `~/Library/Preferences` — real disk litter, not a test-only cost.
+  private final class SuiteJanitor {
+    var names: [String] = []
+    deinit {
+      for name in names { UserDefaults.standard.removePersistentDomain(forName: name) }
+    }
+  }
+
+  private let janitor = SuiteJanitor()
+
   private func defaults() throws -> UserDefaults {
-    try #require(UserDefaults(suiteName: "PreferencesTests-\(UUID().uuidString)"))
+    let name = "PreferencesTests-\(UUID().uuidString)"
+    janitor.names.append(name)
+    return try #require(UserDefaults(suiteName: name))
   }
 
   private let home = URL(filePath: "/Users/tester")
