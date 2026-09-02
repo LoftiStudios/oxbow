@@ -106,7 +106,7 @@ struct IntakeModelTests {
   /// other test in this file sets `output` explicitly, so nothing else here
   /// would notice the default flipping back.
   @Test func chatIsIncludedByDefault() {
-    #expect(IntakeModel.Output.allCases.first == .videoWithChat, "and listed first")
+    #expect(DownloadOutput.allCases.first == .videoWithChat, "and listed first")
     #expect(makeModel().output == .videoWithChat)
   }
 

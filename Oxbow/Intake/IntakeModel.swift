@@ -37,19 +37,10 @@ final class IntakeModel {
   /// own metadata and then the user's to edit.
   var name = ""
 
-  /// What the user gets. Deliberately two choices rather than three
-  /// independent toggles: a chat render in isolation has little use, and the
-  /// composite is what makes it worth producing at all. See
-  /// docs/design/compositing.md §3.
-  enum Output: CaseIterable, Hashable {
-    case videoWithChat
-    case video
-  }
-
   /// Chat included by default, and listed first: it is the reason to reach
   /// for Oxbow rather than any of the video-only downloaders, and a user who
   /// wanted only the video loses nothing but one click.
-  var output: Output = .videoWithChat
+  var output: DownloadOutput = .default
 
   /// How large the composited chat text is. Only meaningful for
   /// `.videoWithChat` — a plain video has no render to size — and only shown
@@ -823,7 +814,7 @@ final class IntakeModel {
 /// The per-output suffix from the design doc, §4.
 ///
 /// One case now, not five: intake no longer offers a bare chat download or a
-/// bare chat render (see `IntakeModel.Output`), so the video suffix — shared
+/// bare chat render (see `DownloadOutput`), so the video suffix — shared
 /// by a plain video and a composite alike, since a composite replaces the
 /// video it stacks rather than accompanying it — is the only one left.
 nonisolated enum OutputSuffix {

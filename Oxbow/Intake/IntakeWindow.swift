@@ -159,13 +159,13 @@ struct IntakeWindow: View {
 
   /// Two choices, not three independent toggles: a chat render in isolation
   /// has little use, and the composite is what makes it worth producing at
-  /// all (design doc §3). `IntakeModel.Output` already narrowed to this pair;
+  /// all (design doc §3). `DownloadOutput` already narrowed to this pair;
   /// this is just its rendering.
   private var outputs: some View {
     Section("Download") {
       Picker("Output", selection: $model.output) {
-        Text(isClip ? "Clip + chat" : "Video + chat").tag(IntakeModel.Output.videoWithChat)
-        Text(isClip ? "Clip" : "Video").tag(IntakeModel.Output.video)
+        Text(isClip ? "Clip + chat" : "Video + chat").tag(DownloadOutput.videoWithChat)
+        Text(isClip ? "Clip" : "Video").tag(DownloadOutput.video)
       }
       .pickerStyle(.radioGroup)
       .labelsHidden()
