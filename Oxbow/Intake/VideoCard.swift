@@ -381,8 +381,17 @@ struct FilmstripThumbnail: View {
   private static let maxScale: CGFloat = 1.025
 
   var body: some View {
-    Group {
-      if let loadedFrames {
+    // A `ZStack` with the bars first, **not** `.background(TestPattern())`.
+    // `background` takes its size from the primary view, and the primary
+    // view here is empty until the frames finish loading — which collapsed
+    // the whole slot to nothing for exactly as long as the bars were meant
+    // to be filling it. In a `ZStack` the bars are a sibling that carries
+    // the size themselves, so the frame is 16:9 from the first instant.
+    ZStack {
+      TestPattern()
+
+      Group {
+        if let loadedFrames {
         if loadedFrames.count >= 2, !reduceMotion {
           ZStack {
             ForEach(loadedFrames.indices, id: \.self) { index in
@@ -404,14 +413,13 @@ struct FilmstripThumbnail: View {
           // empty here — `VideoThumbnail` only builds this view for a
           // non-empty `originalURLs`, and `loadAllFrames` preserves count.
           frameContent(loadedFrames[0])
+          }
         }
       }
+      // The frames fade up *over* the bars rather than replacing them: there
+      // is no instant where the slot is empty, and no swap to catch the eye.
+      .opacity(framesVisible ? 1 : 0)
     }
-    // The frames fade up *over* the bars rather than replacing them, which
-    // is why the pattern is a background rather than an `else` branch: there
-    // is no instant where the slot is empty, and no swap to catch the eye.
-    .opacity(framesVisible ? 1 : 0)
-    .background(TestPattern())
     // Belt and suspenders with the rounded-rect `clipShape` already on
     // `VideoThumbnail.body`: that clip already contains anything drawn
     // inside this view's own bounds, but this makes the "must not bleed past
