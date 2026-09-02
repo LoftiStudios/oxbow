@@ -573,10 +573,20 @@ private func previewModel(
     enqueue: { _, _ in },
     fileExists: fileExists,
     volumeSpace: volumeSpace,
-    // Previews render off-screen and are never exercised by `xcodebuild
-    // test`, so reaching `.standard` here costs nothing the way it would in
-    // a test run — and `folder` is overwritten just below regardless.
-    preferences: Preferences())
+    // A fixed store, not `.standard`: `output`, `chatSize` and `qualityCap`
+    // are seeded from it too, not just `folder` (which this function does
+    // overwrite below) — so `.standard` would make every preview canvas in
+    // this file render differently depending on whichever developer's real
+    // saved defaults happen to be, the same thing `VolumeSpace.previewFull`'s
+    // own comment below rules out for disk space ("a canvas that changes
+    // with the developer's disk is a canvas nobody can review"). Worse,
+    // previews are interactive — once Add's save is wired up, ticking the
+    // box and pressing Add in a live preview would write to the real
+    // `studio.lofti.Oxbow` domain.
+    preferences: Preferences(
+      defaults: UserDefaults(suiteName: "OxbowPreviews")!,
+      homeDirectory: URL(filePath: "/Users/preview"),
+      directoryExists: { _ in true }))
   model.linkText = link
   model.folder = folder
   return model

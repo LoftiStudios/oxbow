@@ -328,16 +328,33 @@ final class IntakeModel {
   }
 
   /// The rung a save would write, when it differs from what is on screen.
-  /// Nil when the pick is already a rung, which is the common case — so the
-  /// footnote only appears when it has something to say (§3.8).
+  /// Nil when the two agree, which is the common case — so the footnote only
+  /// appears when it has something to say (§3.8).
+  ///
+  /// **Always `qualityCap` itself, never a recomputation from `quality`** —
+  /// that is the value `saveDefaultsIfRequested()` actually writes, and a
+  /// note that re-bucketed the on-screen rendition instead could name a rung
+  /// other than the one that gets saved.
+  ///
+  /// Two distinct ways the two can disagree, both checked: the pick can be an
+  /// inexact rendition of a rung it does resolve to (`picked.shortSide !=
+  /// ceiling` — `900p30` picked under a `.p720` cap, still bucketing to
+  /// `.p720`, but not itself the canonical 720-line rendition), or the seeded
+  /// cap can simply differ from what this pick would bucket to (`bucketed !=
+  /// qualityCap` — an *untouched* picker whose cap resolved upward because
+  /// the video offers nothing at or under the ceiling: §3.3's own example,
+  /// cap `.p720` against a video offering only `1080p60`). Accept the second
+  /// case deliberately: the note reads "Saved as Up to 720p" next to a
+  /// visible `1080p60` selection, which is exactly true, and surfacing that
+  /// gap is the entire purpose of this footnote.
   var savedQualityNote: QualityCap? {
     guard !quality.isEmpty,
           let picked = qualities.first(where: { $0.name == quality }),
           let bucketed = QualityLadder.bucket(picked),
           let ceiling = bucketed.ceiling,
-          picked.shortSide != ceiling
+          picked.shortSide != ceiling || bucketed != qualityCap
     else { return nil }
-    return bucketed
+    return qualityCap
   }
 
   /// `bitsPerSecond x duration`, matching what the WPF app offers (§6). Nil
@@ -573,7 +590,20 @@ final class IntakeModel {
   /// workaround for this video's defect rather than a statement of
   /// preference — and saving it would turn chat off for every future
   /// download from one tick of an opt-in box.
+  ///
+  /// **Mirrors `chatProblem`'s own two conditions, not just one of them** —
+  /// this has to hold whenever `chatProblem` would be showing, which is
+  /// deliberately checked without `chatProblem`'s `output == .videoWithChat`
+  /// guard: the whole point is to catch the moment *after* the user has
+  /// already switched away to `.video` because of the problem, which is
+  /// exactly when `chatProblem` itself goes back to nil. A version that
+  /// only checked `info.hasDownloadableChat` missed the metadata-failure
+  /// case entirely: a failed fetch leaves `info` nil, so a stored
+  /// `.videoWithChat` default, switched to `.video` only because this
+  /// video's details never arrived, would otherwise be saved as `.video`
+  /// permanently the moment the checkbox was ticked.
   var withholdsOutputFromSave: Bool {
+    if metadataFailure != nil { return true }
     guard let info else { return false }
     return !info.hasDownloadableChat
   }
@@ -862,14 +892,16 @@ final class IntakeModel {
     if let folder { preferences.destination = folder }
     preferences.chatSize = chatSize
     if !withholdsOutputFromSave { preferences.output = output }
-    if !quality.isEmpty,
-       let picked = qualities.first(where: { $0.name == quality }),
-       let bucketed = QualityLadder.bucket(picked)
-    {
-      preferences.qualityCap = bucketed
-    } else if quality.isEmpty {
-      preferences.qualityCap = .best
-    }
+    // Writes `qualityCap` itself, never a recomputation from `quality`.
+    // `selectQuality` is the only thing that ever changes `qualityCap`, and
+    // it already handles every case correctly (§3.3, §3.7): a bucketable
+    // pick sets a bucketed cap, an unbucketable one leaves the cap alone, and
+    // clearing the pick sets `.best`. Re-deriving here from whatever
+    // `quality` happens to be on screen reintroduces exactly the bug
+    // `qualityCap` exists to prevent — an untouched picker whose resolved
+    // rendition sits above or below the seeded cap would silently overwrite
+    // it with that rendition's own bucket.
+    preferences.qualityCap = qualityCap
   }
 
   // MARK: - Failure text

@@ -40,16 +40,36 @@ struct IntakeModelTests {
       .wantsToSaveDefaults == false)
   }
 
+  /// Every stored value here differs from both its factory default and the
+  /// value the model is mutated to below, so a `reset()` that hardcoded
+  /// factory constants — or one that simply left the mutations in place and
+  /// touched nothing — could not pass this by accident. The destination is
+  /// deliberately the one the store no longer has, so `destinationFellBack`
+  /// has a real, store-derived answer to reseed to as well.
   @Test func resetReseedsFromTheStoreAndUnticksTheBox() {
-    let model = makeModel(preferences: Self.store { $0.output = .videoWithChat })
+    let suite = UserDefaults(suiteName: "ResetReseed-\(UUID().uuidString)")!
+    var store = Preferences(
+      defaults: suite, homeDirectory: URL(filePath: "/Users/t"),
+      directoryExists: { $0.path != "/Volumes/Gone" })
+    store.destination = URL(filePath: "/Volumes/Gone")
+    store.qualityCap = .p480
+    store.output = .video
+    store.chatSize = .large
 
-    model.output = .video
+    let model = makeModel(preferences: store)
+    model.output = .videoWithChat
     model.chatSize = .small
+    model.qualityCap = .p1080
+    model.folder = URL(filePath: "/Users/someone/Movies")
     model.wantsToSaveDefaults = true
+
     model.reset()
 
-    #expect(model.output == .videoWithChat)
-    #expect(model.chatSize == .medium)
+    #expect(model.output == .video)
+    #expect(model.chatSize == .large)
+    #expect(model.qualityCap == .p480)
+    #expect(model.folder == URL(filePath: "/Users/t/Downloads"), "the stored destination is gone")
+    #expect(model.destinationFellBack)
     #expect(model.wantsToSaveDefaults == false)
   }
 
@@ -142,6 +162,73 @@ struct IntakeModelTests {
     #expect(store.hasSavedDefaults == false)
   }
 
+  /// Spec §3.3's own worked example: cap `.p720` against a video offering
+  /// only `1080p60` resolves `quality` to `"1080p60"` (nothing at or under
+  /// the ceiling). Untouched, that must save the seeded `.p720`, not
+  /// `1080p60`'s own bucket — `anUntouchedPickerLeavesTheCapExactlyAsSeeded`
+  /// proves this of the model field; this proves it of what actually reaches
+  /// the store, which is the thing the checkbox promises.
+  @Test func anUntouchedPickerSavesTheSeededCapNotWhatItResolvedTo() async {
+    let store = Self.store { $0.qualityCap = .p720 }
+    let model = await loadedModel(
+      preferences: store,
+      info: Self.info(qualities: [
+        StreamQuality(name: "1080p60", resolution: "1920x1080", bitsPerSecond: 8_000_000),
+      ]))
+    #expect(model.quality == "1080p60", "precondition: nothing here sits at or under 720p")
+    model.wantsToSaveDefaults = true
+
+    model.saveDefaultsIfRequested()
+
+    #expect(store.qualityCap == .p720)
+  }
+
+  /// §3.7's counterpart for an untouched picker: a video whose only
+  /// rendition carries no dimensions resolves `quality` to `""` (best
+  /// available). Saving that must not stomp a real seeded cap with `.best`
+  /// — there was never a pick to derive `.best` from, only an absent one.
+  @Test func anUntouchedPickerWithNoDimensionsLeavesTheSeededCapAlone() async {
+    let store = Self.store { $0.qualityCap = .p720 }
+    let model = await loadedModel(
+      preferences: store,
+      info: Self.info(qualities: [
+        StreamQuality(name: "720p0-1", resolution: "", bitsPerSecond: 0),
+      ]))
+    #expect(model.quality == "", "precondition: nothing here has dimensions to resolve against")
+    model.wantsToSaveDefaults = true
+
+    model.saveDefaultsIfRequested()
+
+    #expect(store.qualityCap == .p720)
+  }
+
+  /// Spec §2.7's other branch: a metadata fetch that failed outright, not
+  /// just a clip whose broadcast expired. `.video` with a failed fetch is
+  /// legal (the id-derived fallback name), so switching to it is a
+  /// workaround for this video's missing details, not a preference — saving
+  /// it must not overwrite a stored `.videoWithChat` default.
+  @Test func outputIsWithheldWhileMetadataFailed() async {
+    let store = Self.store { $0.output = .videoWithChat }
+    let model = makeModel(
+      preferences: store,
+      failure: VideoInfoFetchError.helperFailed(status: .exited(1), standardError: "nope"))
+    model.linkText = Self.videoLink
+    await model.load()
+    model.folder = URL(filePath: "/Volumes/Archive")
+
+    #expect(model.chatProblem != nil, "precondition: the fetch failed")
+    model.output = .video
+    #expect(model.withholdsOutputFromSave)
+
+    model.chatSize = .large
+    model.wantsToSaveDefaults = true
+    model.saveDefaultsIfRequested()
+
+    #expect(store.output == .videoWithChat, "not overwritten by the workaround")
+    #expect(store.chatSize == .large, "the other fields still save")
+    #expect(store.destination == URL(filePath: "/Volumes/Archive"))
+  }
+
   /// Spec §3.7. Nothing to bucket, so the other three still save.
   @Test func aRenditionWithNoDimensionsWithholdsOnlyQuality() async {
     let store = Self.store { $0.qualityCap = .p1080 }
@@ -162,6 +249,8 @@ struct IntakeModelTests {
 
   /// Spec §2.7. The trap this rule exists to disarm: one expired clip would
   /// otherwise turn chat off for every future download, from a single tick.
+  /// Asserts all three of the other fields, not just `chatSize` — the claim
+  /// is that withholding `output` does not touch anything else.
   @Test func outputIsWithheldWhileChatIsUnavailable() async {
     let store = Self.store { $0.output = .videoWithChat }
     let model = await loadedModel(
@@ -172,12 +261,15 @@ struct IntakeModelTests {
     model.output = .video
     #expect(model.withholdsOutputFromSave)
 
+    model.selectQuality("720p60")
     model.chatSize = .large
     model.wantsToSaveDefaults = true
     model.saveDefaultsIfRequested()
 
-    #expect(store.output == .videoWithChat)
+    #expect(store.output == .videoWithChat, "withheld: not overwritten by the workaround")
     #expect(store.chatSize == .large)
+    #expect(store.destination == Self.folder)
+    #expect(store.qualityCap == .p720)
   }
 
   // MARK: - An occupied destination
