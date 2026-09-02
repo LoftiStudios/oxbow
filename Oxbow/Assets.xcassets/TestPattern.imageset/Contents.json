@@ -1,7 +1,7 @@
 {
   "images" : [
     {
-      "filename" : "test-pattern-light.png",
+      "filename" : "testpattern-light.png",
       "idiom" : "universal"
     },
     {
@@ -11,7 +11,7 @@
           "value" : "dark"
         }
       ],
-      "filename" : "test-pattern-dark.png",
+      "filename" : "testpattern-dark.png",
       "idiom" : "universal"
     }
   ],
