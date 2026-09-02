@@ -134,6 +134,25 @@ struct IntakeModelTests {
     #expect(model.savedQualityNote == nil)
   }
 
+  /// The footnote's other source of disagreement: an *untouched* picker
+  /// whose seeded cap resolved upward because nothing on this video sits at
+  /// or under its ceiling. `qualityCap` stays `.p720` — `load()` never
+  /// touches it — while `quality` reads `"1080p60"`. The note has to say
+  /// what a save would actually write (`.p720`), not `1080p60`'s own bucket
+  /// (`.p1080`), or it would describe a save that never happens.
+  @Test func theFootnoteNamesTheCapAnUntouchedPickerWouldActuallySave() async {
+    let model = makeModel(
+      preferences: Self.store { $0.qualityCap = .p720 },
+      info: Self.info(qualities: [
+        StreamQuality(name: "1080p60", resolution: "1920x1080", bitsPerSecond: 8_000_000),
+      ]))
+    model.linkText = Self.videoLink
+    await model.load()
+
+    #expect(model.quality == "1080p60", "precondition: nothing here sits at or under 720p")
+    #expect(model.savedQualityNote == .p720, "what a save would write, not 1080p60's own bucket")
+  }
+
   // MARK: - Saving
 
   @Test func aTickedBoxWritesEveryFieldOnSave() async {
