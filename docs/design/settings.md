@@ -44,11 +44,26 @@ existing Trim disclosure, with a checkbox at the bottom:
 ```
 ⌄ Download Options
     Download        Video + chat  ⌄
+    ────────────────────────────────
     Quality         Best available  ⌄
+    ────────────────────────────────
     Chat text size  Medium  ⌄
+
     Save to         Downloads      Choose…
+
     ☐ Make these settings my defaults
+    Chat is rendered in a column beside the video and encoded into
+    one file. This takes roughly as long as the stream itself.
 ```
+
+Thin rules separate `Download`, `Quality` and `Chat text size` — three rows of
+the same shape, a label and a pulldown, matching the mockup. `Chat text size`
+is a pulldown now too; it used to be a segmented control (§2.1's own earlier
+mockup), until the redesign asked for `Medium ⌄` alongside its neighbors. The
+checkbox sits flush left, aligned with the row labels above it, rather than
+centred the way a bare `Toggle` row renders by default.
+
+There is no `Name` field any more — see §2.8.
 
 The panel is where the user is already deciding these things for a real video.
 A Settings window alone would put the deliberate act somewhere most people
@@ -129,19 +144,28 @@ space warning (`IntakeModel.spaceWarning`, `docs/design/disk-preflight.md`
 §2-3) has no such cover — the summary carries output, quality cap and folder,
 nothing about what is free — so it renders in the panel `Section`'s own
 footer, outside the `DisclosureGroup`, visible whether the panel is open or
-collapsed. It does not join `chatProblem`/`compositeProblem` in forcing the
-panel open either (§2.7): it is advisory and does not gate Add, so nothing
-about it demands the drawer itself, only that it stay visible. Moving it back
-inside the panel silently reintroduces the exact failure `disk-preflight.md`
-§1 opens with, aimed at precisely the person §2.5 collapses the panel for.
+collapsed. So do the delivered filename and the collision warning, which used
+to sit under the deleted `Name` section (§2.8) and now share this footer with
+`spaceWarning` for the identical reason: none of the three is something a
+collapsed panel should be allowed to hide. Neither joins
+`chatProblem`/`compositeProblem` in forcing the panel open (§2.7): they are
+advisory and do not gate Add, so nothing about them demands the drawer
+itself, only that they stay visible. Moving `spaceWarning` back inside the
+panel silently reintroduces the exact failure `disk-preflight.md` §1 opens
+with, aimed at precisely the person §2.5 collapses the panel for.
 
-The encode-duration note ("Chat is rendered in a column beside the video and
-encoded into one file. This takes roughly as long as the stream itself.")
-lives in the same footer, for the same reason. `.videoWithChat` is the
-factory default, so the note explaining that a composite takes as long as
-the stream itself has to survive the one place most downloads actually take
-— collapsed, chat included — or nobody sees it until the queue has already
-sat "in progress" long enough to look stuck.
+**The encode-duration note is the one exception, and it lives inside the
+drawer, below the checkbox — not in this footer.** ("Chat is rendered in a
+column beside the video and encoded into one file. This takes roughly as
+long as the stream itself.") It briefly lived in the footer for the same
+reason `spaceWarning` still does — `.videoWithChat` is the factory default,
+so a note that only rendered inside the drawer was hidden on the one path
+most downloads actually take. That reasoning was sound, and it was
+overridden anyway on the app author's own explicit instruction: unlike
+`spaceWarning`, the note is not a standing fact about the destination, it
+reads as an in-the-moment explanation of what the checkbox above it is about
+to commit to, and the cost of moving it back — it is invisible while the
+panel is collapsed — is accepted rather than solved.
 
 ### 2.7 A collapsed panel must not hide a refusal
 
@@ -181,6 +205,40 @@ footnote says which one did not.
 Someone who genuinely wants a video-only default is not blocked; they set it in
 Settings, or on the next video that has chat. That is a small price for
 removing a trap that would otherwise be sprung by accident.
+
+### 2.8 Naming happens in the Save panel
+
+There is no `Name` field in the intake any more. `Choose…` used to open an
+`NSOpenPanel` — pick a folder, nothing else — and the delivered filename was
+whatever `TextField("Name", text: $model.name)` held, edited separately. It
+became an `NSSavePanel`, which is where a Mac user already expects to name a
+file, so the two decisions — where, and what to call it — collapse into the
+one dialog that already asks both.
+
+`model.name` did not go anywhere; it stopped being editable through a text
+field. It is still derived from the video's own metadata in `load()`, still
+flows through `outputBaseName` into every output's destination path, and
+`outputBaseName` still sanitises it and reserves room for the longest suffix
+any output can take (§1's own naming rules, unchanged). Opening the panel
+seeds `nameFieldStringValue` from that same `outputBaseName`, plus the `.mp4`
+suffix — `allowedContentTypes` restricts it to that one type, so the panel
+cannot offer a name Oxbow would never produce — and `directoryURL` from the
+folder already chosen, not a hard-coded `~/Downloads`. On `.OK`, the returned
+URL is split back into the two fields it replaced: `model.folder` from the
+directory, `model.name` from the filename with its extension removed. A name
+typed in the panel goes through `outputBaseName`'s sanitising and
+byte-reservation exactly like one `load()` derived from metadata — the panel
+is a new way to set `model.name`, not a bypass of what reads it.
+
+The window still shows one row for the destination, `Save to`, with the same
+folder icon, truncated path and `Choose…` button as before (§2.1) — only what
+the button opens changed. The delivered filename itself moved out of a field
+and into a caption: the options panel's footer now shows what this job will
+actually write, so a name picked in the Save panel is confirmed on screen
+without reopening it. The collision warning that used to sit under the `Name`
+field moved down into that same footer, unchanged in every other respect —
+still orange, still worded by `collisionWarning(for:)`, still visible whether
+the options panel is open or collapsed.
 
 ---
 
