@@ -169,10 +169,21 @@ capture() {
   # any approximation of one: the capture grows by 224px on each axis and
   # carries the real falloff. It also means the front window's shadow lands on
   # the one behind it for free, because it is part of that window's own PNG.
+  # `screencapture` exits non-zero with "could not create image from window"
+  # when it is not allowed to record the screen. Caught here rather than left
+  # to `set -e`, which would abort the run with only that line -- and the
+  # blank-file check further down, which is the other half of this, never gets
+  # reached because no file is written at all.
+  # Branch rather than build an argv array: macOS ships bash 3.2, where
+  # "${array[@]}" on an empty array trips `set -u`.
+  local rc=0
   if [[ $SHADOW -eq 1 ]]; then
-    screencapture -x -l"$id" "$out"
+    screencapture -x -l"$id" "$out" || rc=$?
   else
-    screencapture -x -o -l"$id" "$out"
+    screencapture -x -o -l"$id" "$out" || rc=$?
+  fi
+  if [[ $rc -ne 0 ]]; then
+    permission_help "screencapture could not capture window $id (exit $rc)."
   fi
   echo "  $out  (window $id)"
 }
@@ -181,6 +192,23 @@ capture() {
 # hand and is not written here. A run that overwrote the hero image would undo
 # that composite every time somebody regenerated a part of it.
 OUT="$ROOT/docs/screenshots"
+permission_help() {
+  echo >&2
+  echo "$1" >&2
+  echo >&2
+  echo "This is almost always Screen Recording permission. macOS grants it to" >&2
+  echo "the application running this script, not to the script, so a terminal" >&2
+  echo "that has never been granted it will fail here even though another one" >&2
+  echo "on the same Mac succeeds." >&2
+  echo >&2
+  echo "  System Settings > Privacy & Security > Screen & System Audio Recording" >&2
+  echo >&2
+  echo "Add (or tick) the app you ran this from -- Terminal, iTerm, your editor," >&2
+  echo "whatever hosts the shell -- then QUIT AND REOPEN it. The permission is" >&2
+  echo "read at launch, so a running app keeps being refused until it restarts." >&2
+  exit 1
+}
+
 mkdir -p "$OUT"
 # Let the titles settle before matching any of them. A WindowGroup(for:) window
 # carries the application name until its content sets a title, so capturing too
@@ -198,11 +226,7 @@ capture "${EXPAND:0:24}" "$OUT/info.png"
 for f in "$OUT/queue.png" "$OUT/intake.png" "$OUT/info.png"; do
   bytes=$(stat -f%z "$f" 2>/dev/null || echo 0)
   if [[ "$bytes" -lt 20000 ]]; then
-    echo >&2
-    echo "$(basename "$f") is only ${bytes} bytes — almost certainly blank." >&2
-    echo "Grant Screen Recording to this terminal in System Settings >" >&2
-    echo "Privacy & Security > Screen Recording, then run this again." >&2
-    exit 1
+    permission_help "$(basename "$f") is only ${bytes} bytes — almost certainly blank."
   fi
 done
 
