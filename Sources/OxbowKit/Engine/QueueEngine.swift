@@ -65,6 +65,9 @@ public actor QueueEngine {
   }
 
   private let configuration: Configuration
+
+  /// The only route to `Workspace`'s removal methods — see `TeardownJournal`.
+  private let journal: TeardownJournal
   private var jobs: [Job] = []
   /// The live helper for each in-flight step, keyed by step. Only the helper
   /// is kept: the unstructured `Task` that drives it is deliberately not
@@ -94,6 +97,7 @@ public actor QueueEngine {
 
   public init(configuration: Configuration) {
     self.configuration = configuration
+    self.journal = TeardownJournal(workspace: configuration.workspace)
   }
 
   // MARK: - Public surface
@@ -298,7 +302,7 @@ public actor QueueEngine {
     // user-cleared for now, docs/design/resume.md §8 — so this runs
     // unconditionally, ahead of the `doomed` lookup below, rather than only
     // for a job still tracked here.
-    for id in ids { removeResumableFiles(id) }
+    for id in ids { journal.removeResumable(id) }
 
     let doomed = jobs.filter { ids.contains($0.id) }
     guard !doomed.isEmpty else { return }
@@ -329,7 +333,7 @@ public actor QueueEngine {
     }
 
     self.jobs.removeAll { ids.contains($0.id) }
-    for id in ids { removeJobWorkspaceFiles(id) }
+    for id in ids { journal.removeJob(id) }
 
     // Publish and save, in that order, so observers and the queue file agree —
     // and so a removal survives a quit that happens before the debounce fires.
@@ -708,7 +712,7 @@ public actor QueueEngine {
     lastHeartbeatAt[id] = nil
     if let location = locate(id) {
       let job = jobs[location.job]
-      removeStepWorkspaceFiles(job: job.id, step: id)
+      journal.removeStep(job: job.id, step: id)
       if jobsAwaitingWorkspaceRemoval.contains(job.id) {
         removeJobWorkspaceIfSettled(job.id)
       }
@@ -731,7 +735,7 @@ public actor QueueEngine {
 
     Scheduler.complete(id, with: outcome, in: &jobs)
 
-    removeStepWorkspaceFiles(job: jobID, step: id)
+    journal.removeStep(job: jobID, step: id)
 
     if jobs[location.job].status == .done {
       removeJobWorkspace(jobID)
@@ -772,163 +776,6 @@ public actor QueueEngine {
     return nil
   }
 
-  // MARK: - Teardown reporting
-  //
-  // `Workspace`'s removal methods no longer discard what they fail to
-  // remove — see their doc comments. These three wrappers are the only
-  // callers of those methods anywhere in this file, so every workspace
-  // teardown is guaranteed to have somewhere to report a failure, rather
-  // than that being a discipline each call site has to remember on its own.
-  // That is the fix for the actual incident this exists to prevent: an
-  // 8.66 GB video that outlived its job's teardown with nothing anywhere
-  // recording that the removal had failed.
-
-  /// Tears down a step's own working directory and reports anything left
-  /// behind in that step's transcript — see `recordStepTeardownFailure`.
-  private nonisolated func removeStepWorkspaceFiles(job: JobID, step: StepID) {
-    recordStepTeardownFailure(
-      configuration.workspace.removeStep(job: job, step: step), job: job, step: step)
-  }
-
-  /// Tears down a job's whole workspace and reports anything left behind —
-  /// see `recordTeardownFailure`.
-  private nonisolated func removeJobWorkspaceFiles(_ id: JobID) {
-    recordTeardownFailure(
-      configuration.workspace.removeJob(id), context: "job \(id.rawValue.uuidString): workspace")
-  }
-
-  /// Tears down a job's retained-pieces area and reports anything left
-  /// behind — see `recordTeardownFailure`.
-  private nonisolated func removeResumableFiles(_ id: JobID) {
-    recordTeardownFailure(
-      configuration.workspace.removeResumable(id),
-      context: "job \(id.rawValue.uuidString): resumable area")
-  }
-
-  /// Writes a step-level teardown failure into that step's own `StepLog` —
-  /// the file already meant to hold "why did this go wrong" for exactly
-  /// this step, and, unlike a job-level failure, one that is still standing
-  /// when this runs: `removeStep` only ever touches the step's own working
-  /// directory (`stepDirectory`), never `logs/`. That directory — and this
-  /// step's slice of it — survives until the whole job's workspace goes
-  /// with `removeJob`, so the row someone would already open to ask what
-  /// went wrong is where this shows up.
-  ///
-  /// Fire-and-forget: `StepLog.append` is `async`, actor-isolated to
-  /// `StepLog` itself rather than to `QueueEngine`, and every call site here
-  /// (`completeStep`, `abandonAlreadyFinalizedStep`) is a synchronous
-  /// teardown path that must not become `async` just to report a failure
-  /// that changes no queue state. Nothing here races anything that matters:
-  /// `removeStep` never touches this file, and the one interleaving that
-  /// could happen — a job-level teardown deleting `logs/` before this write
-  /// lands — just recreates a single-entry `logs/` for a job that is
-  /// already gone, which is itself more evidence, not corruption.
-  private nonisolated func recordStepTeardownFailure(_ failed: [URL], job: JobID, step: StepID) {
-    guard !failed.isEmpty else { return }
-    let workspace = configuration.workspace
-    Task {
-      let log = StepLog(fileURL: workspace.logFile(job: job, step: step))
-      await log.append("[teardown] could not remove: " + failed.map(\.path).joined(separator: ", "))
-      await log.close()
-    }
-  }
-
-  /// Records a job- or resumable-area teardown failure, or a failure
-  /// dropping assemble's spent inputs, somewhere it survives being
-  /// reported. Those three have no per-step home the way a step-level
-  /// failure does: `removeJob` takes the job's own `logs/` directory down
-  /// with it as part of what it tears down, and the assemble-time cleanup
-  /// runs once per job rather than once per step. This writes instead to
-  /// `Workspace.teardownFailureLog`, a small file that sits beside `jobs/`
-  /// and `resume/` — neither `removeJob` nor the launch sweep
-  /// (`removeAll()`, scoped to `jobsRoot`) can ever reach it, so it
-  /// outlives every failure it records and accumulates across launches.
-  ///
-  /// `nonisolated`: reached from `resumePoint` and `makeContext`, both
-  /// nonisolated because they touch nothing but `configuration`. This does
-  /// the same — plain synchronous file I/O against an immutable path — so
-  /// it can be too, and actor-isolated callers reach it exactly like any
-  /// other nonisolated method, no `await` required.
-  private nonisolated func recordTeardownFailure(_ failed: [URL], context: String) {
-    guard !failed.isEmpty else { return }
-
-    let timestamp = ISO8601DateFormatter().string(from: Date())
-    let line = "\(timestamp) \(context) — could not remove: "
-      + failed.map(\.path).joined(separator: ", ") + "\n"
-    guard let data = line.data(using: .utf8) else { return }
-
-    // `FileHandle.write(_:)` (no `contentsOf:`) can raise an uncaught
-    // Objective-C exception on a genuine write failure rather than
-    // returning a Swift error — exactly the kind of failure a full disk
-    // would produce, which is also a plausible companion to a teardown
-    // failure. `write(contentsOf:)` is the throwing form, so a failure here
-    // is just another swallowed `try?` rather than a crash compounding the
-    // problem this method exists to report.
-    let log = configuration.workspace.teardownFailureLog
-    if let handle = try? FileHandle(forWritingTo: log) {
-      defer { try? handle.close() }
-      // A failed seek must not fall through to the write below: opening for
-      // writing does not itself seek, so that write would land at offset 0
-      // and overwrite every entry already accumulated here — destroying the
-      // history this file exists to keep, in exchange for recording the one
-      // failure that triggered it.
-      guard (try? handle.seekToEnd()) != nil else { return }
-      try? handle.write(contentsOf: data)
-    } else if !FileManager.default.fileExists(atPath: log.path) {
-      // Reached only when the file genuinely does not exist yet.
-      // `FileHandle(forWritingTo:)` can also fail to open a file that *does*
-      // exist — a permissions problem, say — and `createFile(atPath:contents:)`
-      // truncates, so falling through to it unconditionally would silently
-      // wipe an existing log the moment opening it started failing for any
-      // reason, not only the reason this branch is for.
-      try? FileManager.default.createDirectory(
-        at: log.deletingLastPathComponent(), withIntermediateDirectories: true)
-      FileManager.default.createFile(atPath: log.path, contents: data)
-      return
-    } else {
-      return
-    }
-
-    compactTeardownFailureLogIfNeeded()
-  }
-
-  /// Bounds `teardownFailureLog` the way `StepLog` bounds its own file — see
-  /// its doc comment — because this file has the same problem and no
-  /// dedicated owner to solve it a different way: it sits outside the launch
-  /// sweep (`Workspace.removeAll()` is scoped to `jobsRoot`) and nothing else
-  /// reads or rotates it, so an unbounded accumulation across launches is not
-  /// a policy, just an oversight.
-  ///
-  /// Unlike `StepLog`, there is no persistent actor here to track a running
-  /// byte count between writes — this is a plain nonisolated function called
-  /// once per failure — so this checks the file's actual size instead. A
-  /// failed teardown is rare enough that re-reading a capped-size file on
-  /// each one costs nothing that matters.
-  private nonisolated func compactTeardownFailureLogIfNeeded() {
-    let log = configuration.workspace.teardownFailureLog
-    let cap = StepLog.defaultMaxBytes
-
-    // Compact only when meaningfully over, not the instant the cap is
-    // crossed — same reasoning as `StepLog.append`: rewriting the file on
-    // every single write would be needless O(n^2) I/O for what is meant to
-    // be an occasional, low-volume file.
-    guard
-      let data = try? Data(contentsOf: log),
-      data.count > cap + cap / 2
-    else { return }
-
-    // Drops whole lines, never a byte offset, for the same reason
-    // `StepLog.compact()` does: a byte cut could leave a mangled first entry
-    // that reads as corruption rather than as "the older history was
-    // trimmed".
-    let text = String(decoding: data, as: UTF8.self)
-    var kept = Substring(text)
-    while kept.utf8.count > cap, let newline = kept.firstIndex(of: "\n") {
-      kept = kept[kept.index(after: newline)...]
-    }
-    try? Data(kept.utf8).write(to: log, options: .atomic)
-  }
-
   /// Removes a job's workspace once nothing belonging to it is still
   /// `running`. A helper can outlive its kill signal by up to ~2s, so at the
   /// moment `cancel(job:)`'s kills return there may still be a process
@@ -941,7 +788,7 @@ public actor QueueEngine {
   private func removeJobWorkspaceIfSettled(_ id: JobID) {
     guard let job = jobs.first(where: { $0.id == id }) else {
       jobsAwaitingWorkspaceRemoval.remove(id)
-      removeJobWorkspaceFiles(id)
+      journal.removeJob(id)
       return
     }
     guard !job.steps.contains(where: { running[$0.id] != nil }) else {
@@ -973,7 +820,7 @@ public actor QueueEngine {
   ///    next launch anyway.
   private func removeJobWorkspace(_ id: JobID) {
     guard let index = jobs.firstIndex(where: { $0.id == id }) else {
-      removeJobWorkspaceFiles(id)
+      journal.removeJob(id)
       return
     }
 
@@ -983,7 +830,7 @@ public actor QueueEngine {
         return configuration.workspace.contains(artifact, ofJob: id)
       }
       guard !isClaimed else { return }
-      removeJobWorkspaceFiles(id)
+      journal.removeJob(id)
       return
     }
 
@@ -1004,7 +851,7 @@ public actor QueueEngine {
       else { continue }
       jobs[index].steps[stepIndex].artifact = nil
     }
-    removeJobWorkspaceFiles(id)
+    journal.removeJob(id)
 
     // Reached only on the genuinely-`.done` path above, never from the
     // not-done branch that can return early to preserve a cancelled job's
@@ -1019,7 +866,7 @@ public actor QueueEngine {
     // Reconciler will not get a second chance to notice — it short-circuits
     // for a `.done` job — so nothing here may leave a step pointing at a
     // piece this call is about to delete.
-    removeResumableFiles(id)
+    journal.removeResumable(id)
   }
 
   /// Spec §1.5: a step succeeded iff its artifact exists **and is non-empty**.
@@ -1146,7 +993,7 @@ public actor QueueEngine {
     let existing = pieces(of: job)
     guard !existing.isEmpty else { return (0, nil) }
     guard existing.count < Self.maximumPieces else {
-      removeResumableFiles(job)
+      journal.removeResumable(job)
       return (0, nil)
     }
 
@@ -1173,7 +1020,7 @@ public actor QueueEngine {
       }
     }
     guard frames > 0 else {
-      removeResumableFiles(job)
+      journal.removeResumable(job)
       return (0, nil)
     }
     return (survivors.count, .seconds(Double(frames) / Double(framerate)))
@@ -1361,7 +1208,7 @@ public actor QueueEngine {
             return file
           }
         }
-      recordTeardownFailure(
+      journal.record(
         unremoved, context: "job \(job.id.rawValue.uuidString): re-fetched inputs spent by assemble")
 
       // Assemble's single input artifact is the sidecar audio, not a parent's
