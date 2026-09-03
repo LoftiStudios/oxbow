@@ -68,6 +68,10 @@ public actor QueueEngine {
 
   /// The only route to `Workspace`'s removal methods — see `TeardownJournal`.
   private let journal: TeardownJournal
+
+  /// What is retained on disk for an interrupted composite, and where a
+  /// resumed one picks up — see `ResumeLedger`.
+  private let ledger: ResumeLedger
   private var jobs: [Job] = []
   /// The live helper for each in-flight step, keyed by step. Only the helper
   /// is kept: the unstructured `Task` that drives it is deliberately not
@@ -97,7 +101,9 @@ public actor QueueEngine {
 
   public init(configuration: Configuration) {
     self.configuration = configuration
-    self.journal = TeardownJournal(workspace: configuration.workspace)
+    let journal = TeardownJournal(workspace: configuration.workspace)
+    self.journal = journal
+    self.ledger = ResumeLedger(workspace: configuration.workspace, journal: journal)
   }
 
   // MARK: - Public surface
@@ -888,35 +894,13 @@ public actor QueueEngine {
     return size > 0
   }
 
-  /// How many times a composite may be continued before a retry starts over.
-  ///
-  /// Each resume adds an encode boundary, and a job that has failed this many
-  /// times is reporting something that continuing will not fix. Accumulating
-  /// pieces turns a persistent fault into a slowly degrading file instead of
-  /// a clear failure. docs/design/resume.md §7.
-  private static let maximumPieces = 4
-
-  /// The pieces already on disk for a job, in order.
-  private nonisolated func pieces(of job: JobID) -> [URL] {
-    let directory = configuration.workspace.resumeDirectory(job)
-    let contents = (try? FileManager.default.contentsOfDirectory(
-      at: directory, includingPropertiesForKeys: nil)) ?? []
-    return contents
-      .filter { $0.lastPathComponent.hasPrefix("piece-") }
-      .sorted { $0.lastPathComponent.compare(
-        $1.lastPathComponent, options: .numeric) == .orderedAscending }
-  }
-
   /// Bytes held in the retention area for a job.
   ///
   /// Surfaced on the row because retention is user-cleared: the space is
   /// reclaimed by dismissing the job, and a user who cannot see the cost will
   /// never connect the two. docs/design/resume.md §8.
   public func retainedBytes(forJob id: JobID) -> Int {
-    pieces(of: id).reduce(0) { total, piece in
-      total + (((try? FileManager.default
-        .attributesOfItem(atPath: piece.path))?[.size] as? NSNumber)?.intValue ?? 0)
-    }
+    ledger.retainedBytes(forJob: id)
   }
 
   /// Where the composite step's own Finder-reveal item points, and what to
@@ -932,7 +916,7 @@ public actor QueueEngine {
   /// when `pieces` is empty, e.g. the gap between the step starting and its
   /// first fragment landing on disk.
   public func retainedFileURLs(forJob id: JobID) -> (directory: URL, pieces: [URL]) {
-    (configuration.workspace.resumeDirectory(id), pieces(of: id))
+    ledger.retainedFileURLs(forJob: id)
   }
 
   /// What the composite step's Finder-reveal item should show right now, in
@@ -979,51 +963,6 @@ public actor QueueEngine {
       FileManager.default.fileExists(atPath: delivered.path)
     else { return nil }
     return .delivered(delivered)
-  }
-
-  /// Repairs the last piece, counts what survived, and says where to resume.
-  ///
-  /// Returns `nil` for a first attempt and when the piece cap is hit — in the
-  /// latter case the retained pieces are dropped first, so the caller starts
-  /// from `piece-0` with a clean directory.
-  private nonisolated func resumePoint(
-    job: JobID, framerate: Int)
-    -> (index: Int, from: Duration?)
-  {
-    let existing = pieces(of: job)
-    guard !existing.isEmpty else { return (0, nil) }
-    guard existing.count < Self.maximumPieces else {
-      journal.removeResumable(job)
-      return (0, nil)
-    }
-
-    // Only the last piece can be torn — earlier ones were completed before
-    // the next began. Repair is a no-op on an untorn file.
-    if let last = existing.last { _ = try? FragmentedMP4.repair(last) }
-
-    // A piece that contributed zero frames is one FFmpeg opened (`ftyp` +
-    // `moov`) but was killed before finishing a single fragment for — there
-    // is nothing in it to resume from. Left on disk it would still count as
-    // a real attempt: it burns a slot against `maximumPieces`, and
-    // `.assemble`'s `pieces.txt` would list it as an empty segment in the
-    // concat. Discarded outright rather than repaired — repair only fixes a
-    // torn trailing fragment, and an absent one is not that.
-    var survivors: [URL] = []
-    var frames = 0
-    for piece in existing {
-      let count = (try? FragmentedMP4.index(of: piece))?.frameCount ?? 0
-      if count > 0 {
-        survivors.append(piece)
-        frames += count
-      } else {
-        try? FileManager.default.removeItem(at: piece)
-      }
-    }
-    guard frames > 0 else {
-      journal.removeResumable(job)
-      return (0, nil)
-    }
-    return (survivors.count, .seconds(Double(frames) / Double(framerate)))
   }
 
   /// Builds a step's `StepContext`: where it works, where it writes, and
@@ -1073,7 +1012,7 @@ public actor QueueEngine {
       // `directory` names a real, empty directory either way. Calling these
       // in the other order would hand back a piece path inside a directory
       // that no longer exists once the cap resets it.
-      let resume = resumePoint(job: job.id, framerate: request.framerate)
+      let resume = ledger.resumePoint(job: job.id, framerate: request.framerate)
       let directory = try configuration.workspace.prepareResume(job: job.id)
 
       // A resumed job re-downloads its source, and Twitch does not guarantee
@@ -1182,7 +1121,7 @@ public actor QueueEngine {
     if case .assemble = step.kind {
       // The concat demuxer reads a list file. Written here rather than in
       // ArgumentBuilder because that type is pure and does no I/O.
-      let list = pieces(of: job.id)
+      let list = ledger.pieces(of: job.id)
         .map { "file '\($0.path)'" }
         .joined(separator: "\n") + "\n"
       try list.write(
