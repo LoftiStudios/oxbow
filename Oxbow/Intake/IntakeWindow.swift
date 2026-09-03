@@ -940,8 +940,16 @@ private func previewModel(
   // previews are interactive — once Add's save is wired up, ticking the
   // box and pressing Add in a live preview would write to the real
   // `studio.lofti.Oxbow` domain.
+  //
+  // A fresh `InMemoryPreferenceStore` per call, not the named
+  // `UserDefaults(suiteName: "OxbowPreviews")` this used to be: that suite
+  // name was fixed rather than per-call, so every preview in this file
+  // shared one on-disk domain across the whole run — which is what made the
+  // `optionsExpanded` parameter above necessary in the first place (see its
+  // comment). A fresh in-memory store removes the sharing entirely, along
+  // with the `.plist` the named suite left in `~/Library/Preferences`.
   var preferences = Preferences(
-    defaults: UserDefaults(suiteName: "OxbowPreviews")!,
+    store: InMemoryPreferenceStore(),
     homeDirectory: URL(filePath: "/Users/preview"),
     directoryExists: { _ in true })
   // Written before `IntakeModel.init` runs, which is what seeds
@@ -1106,9 +1114,12 @@ extension VideoInfo {
 /// Collapsed is the steady state (§2.6), so this is the one most people see
 /// most of the time. Passed as `previewModel`'s own `optionsExpanded:`
 /// parameter rather than set on the model afterward — see that parameter's
-/// doc comment for why setting it post-construction here would
-/// have collapsed every *other* preview in this file drawn from the same
-/// `OxbowPreviews` suite, not just this one.
+/// doc comment: that used to matter because every preview in this file
+/// shared one on-disk `UserDefaults` suite, so setting it post-construction
+/// here would have collapsed every *other* preview too, not just this one.
+/// `previewModel` now hands each call its own `InMemoryPreferenceStore`, so
+/// that sharing is gone — the parameter stays because it is still the
+/// correct way for a preview to choose its own expansion explicitly.
 #Preview("Options panel - collapsed") {
   IntakeWindow(model: previewModel(optionsExpanded: false))
 }

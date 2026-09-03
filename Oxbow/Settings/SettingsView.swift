@@ -38,9 +38,9 @@ struct SettingsView: View {
   @State private var output: DownloadOutput
   @State private var chatSize: ChatSize
 
-  /// `Preferences()` defaults to `.standard` — correct here, unlike the
-  /// preview below: this is the real Settings window, reading and writing the
-  /// user's actual saved defaults.
+  /// `Preferences()` defaults to `UserDefaults.standard` — correct here,
+  /// unlike the preview below: this is the real Settings window, reading and
+  /// writing the user's actual saved defaults.
   init(preferences: Preferences = Preferences()) {
     _preferences = State(initialValue: preferences)
     _destination = State(initialValue: preferences.destination)
@@ -194,15 +194,19 @@ struct SettingsView: View {
 // MARK: - Previews
 
 #Preview("Settings") {
-  // A fixed suite, never `.standard` — the same reasoning `IntakeWindow`'s
-  // own `previewModel()` spells out at length: a canvas that reads the
-  // developer's real saved defaults renders differently per developer, and
-  // once this preview is interactive, clicking a picker in it would write to
-  // the real `studio.lofti.Oxbow` domain. `UserDefaults(suiteName:)` gives a
-  // scratch domain nothing else touches.
+  // An in-memory store, never `.standard` — the same reasoning
+  // `IntakeWindow`'s own `previewModel()` spells out at length: a canvas that
+  // reads the developer's real saved defaults renders differently per
+  // developer, and once this preview is interactive, clicking a picker in it
+  // would write to the real `studio.lofti.Oxbow` domain. `UserDefaults(
+  // suiteName:)` used to stand in for a scratch domain here, but a named
+  // suite is still real `UserDefaults` — it persists a `.plist` to
+  // `~/Library/Preferences` on first write, and that file outlives the
+  // preview. `InMemoryPreferenceStore` gives the same isolation with nothing
+  // to clean up afterward.
   SettingsView(
     preferences: Preferences(
-      defaults: UserDefaults(suiteName: "SettingsPreview")!,
+      store: InMemoryPreferenceStore(),
       homeDirectory: URL(filePath: "/Users/preview"),
       directoryExists: { _ in true }))
 }
