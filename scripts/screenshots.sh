@@ -29,6 +29,8 @@
 #   ./scripts/screenshots.sh             build if needed, capture, write to docs/
 #   ./scripts/screenshots.sh --no-build  reuse the existing Debug build
 #   ./scripts/screenshots.sh --keep      leave the app running to poke at
+#   ./scripts/screenshots.sh --size 900x560   window content size, in points
+#                                        (default 900x492 — what docs/ holds)
 #
 set -euo pipefail
 
@@ -37,10 +39,16 @@ ROOT="$(pwd)"
 
 BUILD=1
 KEEP=0
+# Window content size in points. Frame restoration would otherwise hand the
+# run whatever size the developer last left their real Oxbow window at, so the
+# screenshot would be a different shape on every machine. How much room sits
+# under the last row is a design call, so it is an input.
+SIZE="900x492"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --no-build) BUILD=0; shift ;;
     --keep)     KEEP=1; shift ;;
+    --size)     SIZE="${2:?--size needs WIDTHxHEIGHT, e.g. 900x520}"; shift 2 ;;
     -h|--help)  sed -n '2,32p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *)          echo "unknown option: $1" >&2; exit 2 ;;
   esac
@@ -80,8 +88,15 @@ cleanup() {
 }
 trap cleanup EXIT
 
-echo "launching with OXBOW_FIXTURE_DIR=$STATE"
-OXBOW_FIXTURE_DIR="$STATE" "$APP/Contents/MacOS/Oxbow" >/dev/null 2>&1 &
+# Which row opens its step list. Expansion is view state, not queue state, so
+# it cannot live in queue.json; make-fixture.py writes this beside it so the
+# two cannot drift.
+EXPAND=""
+[[ -f "$FIXTURE/expand.txt" ]] && EXPAND="$(cat "$FIXTURE/expand.txt")"
+
+echo "launching with OXBOW_FIXTURE_DIR=$STATE  size=$SIZE"
+OXBOW_FIXTURE_DIR="$STATE" OXBOW_FIXTURE_EXPAND="$EXPAND" OXBOW_FIXTURE_SIZE="$SIZE" \
+  "$APP/Contents/MacOS/Oxbow" >/dev/null 2>&1 &
 APP_PID=$!
 
 # Capture one window by title. Retries because the window arrives a moment

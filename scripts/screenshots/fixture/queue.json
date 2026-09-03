@@ -17,6 +17,10 @@
               "_0": {
                 "format": "json",
                 "isEmbeddingImages": false,
+                "trimEnd": [
+                  17,
+                  6405350746937622528
+                ],
                 "videoID": "2000000000"
               }
             }
@@ -36,316 +40,6 @@
           ],
           "id": {
             "rawValue": "D2B5D850-C590-50EA-84BB-DDB24FDCF529"
-          },
-          "kind": {
-            "renderChat": {
-              "_0": {
-                "alternateBackgroundColor": "#191919",
-                "backgroundColor": "#111111",
-                "bitrateMbps": 12,
-                "font": "Inter Embedded",
-                "fontSize": 16,
-                "framerate": 30,
-                "hasAlternateBackgrounds": false,
-                "hasOutline": false,
-                "hasTimestamps": false,
-                "height": 1080,
-                "isSharpened": false,
-                "messageColor": "#ffffff",
-                "outlineSize": 4,
-                "width": 360
-              }
-            }
-          },
-          "progress": {
-            "elapsed": [
-              0,
-              0
-            ],
-            "fraction": 1,
-            "phase": "Rendering Video",
-            "remaining": [
-              0,
-              0
-            ]
-          },
-          "status": {
-            "done": {}
-          }
-        },
-        {
-          "dependsOn": [],
-          "id": {
-            "rawValue": "A5BC3FFF-5782-5794-9C48-DD508F15E317"
-          },
-          "kind": {
-            "downloadClip": {
-              "_0": {
-                "clipSlug": "FictionalClipSlug00",
-                "quality": "1080p60"
-              }
-            }
-          },
-          "progress": {
-            "fraction": 1,
-            "phase": "Encoding Clip Metadata"
-          },
-          "status": {
-            "done": {}
-          }
-        },
-        {
-          "dependsOn": [
-            {
-              "rawValue": "A5BC3FFF-5782-5794-9C48-DD508F15E317"
-            },
-            {
-              "rawValue": "D2B5D850-C590-50EA-84BB-DDB24FDCF529"
-            }
-          ],
-          "id": {
-            "rawValue": "76E34B7C-C9F1-5C69-B9C2-3D44DAC4B3E9"
-          },
-          "kind": {
-            "composite": {
-              "_0": {
-                "destination": "file:///Users/oxbow/Downloads/RaphDee%20-%202026-08-28%20-%20A%20taste%20of%20your%20own%20medicine.mp4",
-                "duration": [
-                  1,
-                  11553255926290448384
-                ],
-                "framerate": 60
-              }
-            }
-          },
-          "progress": {
-            "bytesWritten": 616226,
-            "fraction": 1,
-            "phase": "Compositing",
-            "speed": 5.29
-          },
-          "status": {
-            "done": {}
-          }
-        },
-        {
-          "artifact": "file:///Users/oxbow/Downloads/RaphDee%20-%202026-08-28%20-%20A%20taste%20of%20your%20own%20medicine.mp4",
-          "dependsOn": [
-            {
-              "rawValue": "76E34B7C-C9F1-5C69-B9C2-3D44DAC4B3E9"
-            }
-          ],
-          "id": {
-            "rawValue": "D2FDA6A3-9C8C-5D13-9886-EDAAA8BF25B2"
-          },
-          "kind": {
-            "assemble": {
-              "_0": {
-                "destination": "file:///Users/oxbow/Downloads/RaphDee%20-%202026-08-28%20-%20A%20taste%20of%20your%20own%20medicine.mp4"
-              }
-            }
-          },
-          "progress": {},
-          "status": {
-            "done": {}
-          }
-        }
-      ],
-      "title": "CrashOverride - 2026-08-12 - a few side quests, then ending the base game (maybe) [day 46]"
-    },
-    {
-      "created": 809913600.0,
-      "id": {
-        "rawValue": "EF2EF34A-CE59-5564-B9A5-A63F87592EB9"
-      },
-      "replacesExistingFile": false,
-      "steps": [
-        {
-          "dependsOn": [],
-          "id": {
-            "rawValue": "F3DF2F15-4BC5-56A6-A689-56E18E4A41F2"
-          },
-          "kind": {
-            "downloadChat": {
-              "_0": {
-                "format": "json",
-                "isEmbeddingImages": false,
-                "videoID": "2000000001"
-              }
-            }
-          },
-          "progress": {
-            "phase": "Writing Output File"
-          },
-          "status": {
-            "done": {}
-          }
-        },
-        {
-          "dependsOn": [
-            {
-              "rawValue": "F3DF2F15-4BC5-56A6-A689-56E18E4A41F2"
-            }
-          ],
-          "id": {
-            "rawValue": "C7F7196E-47AA-5425-8C8A-F1E6767CE4E2"
-          },
-          "kind": {
-            "renderChat": {
-              "_0": {
-                "alternateBackgroundColor": "#191919",
-                "backgroundColor": "#111111",
-                "bitrateMbps": 12,
-                "font": "Inter Embedded",
-                "fontSize": 16,
-                "framerate": 30,
-                "hasAlternateBackgrounds": false,
-                "hasOutline": false,
-                "hasTimestamps": false,
-                "height": 1080,
-                "isSharpened": false,
-                "messageColor": "#ffffff",
-                "outlineSize": 4,
-                "width": 360
-              }
-            }
-          },
-          "progress": {
-            "elapsed": [
-              0,
-              0
-            ],
-            "fraction": 1,
-            "phase": "Rendering Video",
-            "remaining": [
-              0,
-              0
-            ]
-          },
-          "status": {
-            "done": {}
-          }
-        },
-        {
-          "dependsOn": [],
-          "id": {
-            "rawValue": "9EA68142-5CEA-55DF-9CED-863B4B2FAF5E"
-          },
-          "kind": {
-            "downloadClip": {
-              "_0": {
-                "clipSlug": "FictionalClipSlug01",
-                "quality": "1080p60"
-              }
-            }
-          },
-          "progress": {
-            "fraction": 1,
-            "phase": "Encoding Clip Metadata"
-          },
-          "status": {
-            "done": {}
-          }
-        },
-        {
-          "dependsOn": [
-            {
-              "rawValue": "9EA68142-5CEA-55DF-9CED-863B4B2FAF5E"
-            },
-            {
-              "rawValue": "C7F7196E-47AA-5425-8C8A-F1E6767CE4E2"
-            }
-          ],
-          "id": {
-            "rawValue": "D83111ED-BE9E-5D22-9D90-FE8C2EDC6E4D"
-          },
-          "kind": {
-            "composite": {
-              "_0": {
-                "destination": "file:///Users/oxbow/Downloads/RaphDee%20-%202026-08-28%20-%20A%20taste%20of%20your%20own%20medicine.mp4",
-                "duration": [
-                  1,
-                  11553255926290448384
-                ],
-                "framerate": 60
-              }
-            }
-          },
-          "progress": {
-            "bytesWritten": 616226,
-            "fraction": 1,
-            "phase": "Compositing",
-            "speed": 5.29
-          },
-          "status": {
-            "done": {}
-          }
-        },
-        {
-          "artifact": "file:///Users/oxbow/Downloads/RaphDee%20-%202026-08-28%20-%20A%20taste%20of%20your%20own%20medicine.mp4",
-          "dependsOn": [
-            {
-              "rawValue": "D83111ED-BE9E-5D22-9D90-FE8C2EDC6E4D"
-            }
-          ],
-          "id": {
-            "rawValue": "3620F081-964B-5FFB-94A4-40A520DF075A"
-          },
-          "kind": {
-            "assemble": {
-              "_0": {
-                "destination": "file:///Users/oxbow/Downloads/RaphDee%20-%202026-08-28%20-%20A%20taste%20of%20your%20own%20medicine.mp4"
-              }
-            }
-          },
-          "progress": {},
-          "status": {
-            "done": {}
-          }
-        }
-      ],
-      "title": "AcidBurn - 2026-07-12 - gold saucer pt. 2??? for real [first playthrough]"
-    },
-    {
-      "created": 809827200.0,
-      "id": {
-        "rawValue": "EFE28B31-C82A-50C5-955A-E08E259C2D26"
-      },
-      "replacesExistingFile": false,
-      "steps": [
-        {
-          "dependsOn": [],
-          "id": {
-            "rawValue": "6D7E390F-8439-5064-844E-ADD09F95D2FE"
-          },
-          "kind": {
-            "downloadChat": {
-              "_0": {
-                "format": "json",
-                "isEmbeddingImages": false,
-                "trimEnd": [
-                  17,
-                  6405350746937622528
-                ],
-                "videoID": "2000000002"
-              }
-            }
-          },
-          "progress": {
-            "phase": "Writing Output File"
-          },
-          "status": {
-            "done": {}
-          }
-        },
-        {
-          "dependsOn": [
-            {
-              "rawValue": "6D7E390F-8439-5064-844E-ADD09F95D2FE"
-            }
-          ],
-          "id": {
-            "rawValue": "A3273D16-7D62-5774-A322-01036FEA3F50"
           },
           "kind": {
             "renderChat": {
@@ -386,7 +80,7 @@
         {
           "dependsOn": [],
           "id": {
-            "rawValue": "3B953691-804D-5CB5-9D21-E368647820FB"
+            "rawValue": "A5BC3FFF-5782-5794-9C48-DD508F15E317"
           },
           "kind": {
             "downloadVideo": {
@@ -395,6 +89,356 @@
                 "trimEnd": [
                   17,
                   6405350746937622528
+                ],
+                "videoID": "2000000000"
+              }
+            }
+          },
+          "progress": {
+            "fraction": 1,
+            "index": 4,
+            "phase": "Finalizing Video",
+            "total": 4
+          },
+          "status": {
+            "done": {}
+          }
+        },
+        {
+          "dependsOn": [
+            {
+              "rawValue": "A5BC3FFF-5782-5794-9C48-DD508F15E317"
+            },
+            {
+              "rawValue": "D2B5D850-C590-50EA-84BB-DDB24FDCF529"
+            }
+          ],
+          "id": {
+            "rawValue": "76E34B7C-C9F1-5C69-B9C2-3D44DAC4B3E9"
+          },
+          "kind": {
+            "composite": {
+              "_0": {
+                "destination": "file:///Users/oxbow/Downloads/nataliecuomo%20-%202026-08-11%20-%20hi%20friends!.mp4",
+                "duration": [
+                  17,
+                  6405350746937622528
+                ],
+                "framerate": 30
+              }
+            }
+          },
+          "progress": {
+            "bytesWritten": 4781483,
+            "fraction": 1,
+            "phase": "Compositing",
+            "remaining": [
+              0,
+              1594880382776429
+            ],
+            "speed": 20.9
+          },
+          "status": {
+            "done": {}
+          }
+        },
+        {
+          "artifact": "file:///Users/oxbow/Downloads/nataliecuomo%20-%202026-08-11%20-%20hi%20friends!.mp4",
+          "dependsOn": [
+            {
+              "rawValue": "76E34B7C-C9F1-5C69-B9C2-3D44DAC4B3E9"
+            }
+          ],
+          "id": {
+            "rawValue": "D2FDA6A3-9C8C-5D13-9886-EDAAA8BF25B2"
+          },
+          "kind": {
+            "assemble": {
+              "_0": {
+                "destination": "file:///Users/oxbow/Downloads/nataliecuomo%20-%202026-08-11%20-%20hi%20friends!.mp4"
+              }
+            }
+          },
+          "progress": {},
+          "status": {
+            "done": {}
+          }
+        }
+      ],
+      "title": "CrashOverride - 2026-08-11 - death stranding ep. 3 - BT country, send help"
+    },
+    {
+      "created": 810086400.0,
+      "id": {
+        "rawValue": "EF2EF34A-CE59-5564-B9A5-A63F87592EB9"
+      },
+      "replacesExistingFile": false,
+      "steps": [
+        {
+          "dependsOn": [],
+          "id": {
+            "rawValue": "F3DF2F15-4BC5-56A6-A689-56E18E4A41F2"
+          },
+          "kind": {
+            "downloadChat": {
+              "_0": {
+                "format": "json",
+                "isEmbeddingImages": false,
+                "trimEnd": [
+                  74,
+                  14940938545493180416
+                ],
+                "trimStart": [
+                  32,
+                  9704189641294348288
+                ],
+                "videoID": "2000000001"
+              }
+            }
+          },
+          "progress": {
+            "phase": "Writing Output File"
+          },
+          "status": {
+            "done": {}
+          }
+        },
+        {
+          "dependsOn": [
+            {
+              "rawValue": "F3DF2F15-4BC5-56A6-A689-56E18E4A41F2"
+            }
+          ],
+          "id": {
+            "rawValue": "C7F7196E-47AA-5425-8C8A-F1E6767CE4E2"
+          },
+          "kind": {
+            "renderChat": {
+              "_0": {
+                "alternateBackgroundColor": "#191919",
+                "backgroundColor": "#111111",
+                "bitrateMbps": 12,
+                "font": "Inter Embedded",
+                "fontSize": 20,
+                "framerate": 30,
+                "hasAlternateBackgrounds": false,
+                "hasOutline": false,
+                "hasTimestamps": false,
+                "height": 1080,
+                "isSharpened": false,
+                "messageColor": "#ffffff",
+                "outlineSize": 4,
+                "width": 360
+              }
+            }
+          },
+          "progress": {
+            "elapsed": [
+              1,
+              3553255926290448384
+            ],
+            "fraction": 1,
+            "phase": "Rendering Video",
+            "remaining": [
+              0,
+              0
+            ]
+          },
+          "status": {
+            "done": {}
+          }
+        },
+        {
+          "dependsOn": [],
+          "id": {
+            "rawValue": "9EA68142-5CEA-55DF-9CED-863B4B2FAF5E"
+          },
+          "kind": {
+            "downloadVideo": {
+              "_0": {
+                "quality": "1080p60",
+                "trimEnd": [
+                  74,
+                  14940938545493180416
+                ],
+                "trimStart": [
+                  32,
+                  9704189641294348288
+                ],
+                "videoID": "2000000001"
+              }
+            }
+          },
+          "progress": {
+            "fraction": 1,
+            "index": 4,
+            "phase": "Finalizing Video",
+            "total": 4
+          },
+          "status": {
+            "done": {}
+          }
+        },
+        {
+          "dependsOn": [
+            {
+              "rawValue": "9EA68142-5CEA-55DF-9CED-863B4B2FAF5E"
+            },
+            {
+              "rawValue": "C7F7196E-47AA-5425-8C8A-F1E6767CE4E2"
+            }
+          ],
+          "id": {
+            "rawValue": "D83111ED-BE9E-5D22-9D90-FE8C2EDC6E4D"
+          },
+          "kind": {
+            "composite": {
+              "_0": {
+                "destination": "file:///Users/oxbow/Downloads/SeeCatPlay%20-%202026-08-29%20-%20Back%20to%20South%20of%20Midnight%20%F0%9F%92%9A%20!nohelp.mp4",
+                "duration": [
+                  42,
+                  5236748904198832128
+                ],
+                "framerate": 60
+              }
+            }
+          },
+          "progress": {
+            "bytesWritten": 15758377,
+            "fraction": 1,
+            "phase": "Compositing",
+            "remaining": [
+              0,
+              2997661870500720
+            ],
+            "speed": 5.56
+          },
+          "status": {
+            "done": {}
+          }
+        },
+        {
+          "artifact": "file:///Users/oxbow/Downloads/SeeCatPlay%20-%202026-08-29%20-%20Back%20to%20South%20of%20Midnight%20%F0%9F%92%9A%20!nohelp.mp4",
+          "dependsOn": [
+            {
+              "rawValue": "D83111ED-BE9E-5D22-9D90-FE8C2EDC6E4D"
+            }
+          ],
+          "id": {
+            "rawValue": "3620F081-964B-5FFB-94A4-40A520DF075A"
+          },
+          "kind": {
+            "assemble": {
+              "_0": {
+                "destination": "file:///Users/oxbow/Downloads/SeeCatPlay%20-%202026-08-29%20-%20Back%20to%20South%20of%20Midnight%20%F0%9F%92%9A%20!nohelp.mp4"
+              }
+            }
+          },
+          "progress": {},
+          "status": {
+            "done": {}
+          }
+        }
+      ],
+      "title": "CrashOverride - 2026-08-12 - death stranding ep. 4 - crossing the tar belt"
+    },
+    {
+      "created": 810172800.0,
+      "id": {
+        "rawValue": "EFE28B31-C82A-50C5-955A-E08E259C2D26"
+      },
+      "replacesExistingFile": false,
+      "steps": [
+        {
+          "dependsOn": [],
+          "id": {
+            "rawValue": "6D7E390F-8439-5064-844E-ADD09F95D2FE"
+          },
+          "kind": {
+            "downloadChat": {
+              "_0": {
+                "format": "json",
+                "isEmbeddingImages": false,
+                "trimEnd": [
+                  87,
+                  15133265587269009408
+                ],
+                "trimStart": [
+                  55,
+                  5429075945974661120
+                ],
+                "videoID": "2000000002"
+              }
+            }
+          },
+          "progress": {
+            "phase": "Writing Output File"
+          },
+          "status": {
+            "done": {}
+          }
+        },
+        {
+          "dependsOn": [
+            {
+              "rawValue": "6D7E390F-8439-5064-844E-ADD09F95D2FE"
+            }
+          ],
+          "id": {
+            "rawValue": "A3273D16-7D62-5774-A322-01036FEA3F50"
+          },
+          "kind": {
+            "renderChat": {
+              "_0": {
+                "alternateBackgroundColor": "#191919",
+                "backgroundColor": "#111111",
+                "bitrateMbps": 12,
+                "font": "Inter Embedded",
+                "fontSize": 20,
+                "framerate": 30,
+                "hasAlternateBackgrounds": false,
+                "hasOutline": false,
+                "hasTimestamps": false,
+                "height": 1080,
+                "isSharpened": false,
+                "messageColor": "#ffffff",
+                "outlineSize": 4,
+                "width": 360
+              }
+            }
+          },
+          "progress": {
+            "elapsed": [
+              0,
+              17000000000000000000
+            ],
+            "fraction": 1,
+            "phase": "Rendering Video",
+            "remaining": [
+              0,
+              0
+            ]
+          },
+          "status": {
+            "done": {}
+          }
+        },
+        {
+          "dependsOn": [],
+          "id": {
+            "rawValue": "3B953691-804D-5CB5-9D21-E368647820FB"
+          },
+          "kind": {
+            "downloadVideo": {
+              "_0": {
+                "quality": "1080p60",
+                "trimEnd": [
+                  87,
+                  15133265587269009408
+                ],
+                "trimStart": [
+                  55,
+                  5429075945974661120
                 ],
                 "videoID": "2000000002"
               }
@@ -425,31 +469,27 @@
           "kind": {
             "composite": {
               "_0": {
-                "destination": "file:///Users/oxbow/Downloads/nataliecuomo%20-%202026-08-11%20-%20hi%20friends!.mp4",
+                "destination": "file:///Users/oxbow/Downloads/Bubbell%20-%202026-07-16%20-%20%5BNEW%20DROPS%5D%20Shantiemaxxing,%20More%20Main%20Quest%20Today%20-%20DAY%206%20-%20!yt%20!ig%20-%20Giving%20Away%20a%20PS5%20Deluxe%20Copy%20+%20Steel%20Book%20!giveaway%20%F0%9F%A7%9A%E2%80%8D%E2%99%80%EF%B8%8F.mp4",
                 "duration": [
-                  17,
-                  6405350746937622528
+                  32,
+                  9704189641294348288
                 ],
-                "framerate": 30
+                "framerate": 60
               }
             }
           },
           "progress": {
-            "bytesWritten": 4781483,
+            "bytesWritten": 12049512,
             "fraction": 1,
             "phase": "Compositing",
-            "remaining": [
-              0,
-              1594880382776429
-            ],
-            "speed": 20.9
+            "speed": 5.56
           },
           "status": {
             "done": {}
           }
         },
         {
-          "artifact": "file:///Users/oxbow/Downloads/nataliecuomo%20-%202026-08-11%20-%20hi%20friends!.mp4",
+          "artifact": "file:///Users/oxbow/Downloads/Bubbell%20-%202026-07-16%20-%20%5BNEW%20DROPS%5D%20Shantiemaxxing,%20More%20Main%20Quest%20Today%20-%20DAY%206%20-%20!yt%20!ig%20-%20Giving%20Away%20a%20PS5%20Deluxe%20Copy%20+%20Steel%20Book%20!giveaway%20%F0%9F%A7%9A%E2%80%8D%E2%99%80%EF%B8%8F.mp4",
           "dependsOn": [
             {
               "rawValue": "6561F136-4939-5336-B5A3-133936DDF048"
@@ -461,7 +501,7 @@
           "kind": {
             "assemble": {
               "_0": {
-                "destination": "file:///Users/oxbow/Downloads/nataliecuomo%20-%202026-08-11%20-%20hi%20friends!.mp4"
+                "destination": "file:///Users/oxbow/Downloads/Bubbell%20-%202026-07-16%20-%20%5BNEW%20DROPS%5D%20Shantiemaxxing,%20More%20Main%20Quest%20Today%20-%20DAY%206%20-%20!yt%20!ig%20-%20Giving%20Away%20a%20PS5%20Deluxe%20Copy%20+%20Steel%20Book%20!giveaway%20%F0%9F%A7%9A%E2%80%8D%E2%99%80%EF%B8%8F.mp4"
               }
             }
           },
@@ -471,10 +511,10 @@
           }
         }
       ],
-      "title": "LordNikon - 2026-07-05 - yeah we're gaming"
+      "title": "AcidBurn - 2026-08-01 - persona 3 - first playthrough, blind, no spoilers"
     },
     {
-      "created": 809740800.0,
+      "created": 810259200.0,
       "id": {
         "rawValue": "96EBC822-2B65-5AB9-B253-E9183596E986"
       },
@@ -491,12 +531,8 @@
                 "format": "json",
                 "isEmbeddingImages": false,
                 "trimEnd": [
-                  74,
-                  14940938545493180416
-                ],
-                "trimStart": [
-                  32,
-                  9704189641294348288
+                  19,
+                  9511862599518519296
                 ],
                 "videoID": "2000000003"
               }
@@ -517,1669 +553,6 @@
           ],
           "id": {
             "rawValue": "84460199-C605-55D4-A344-447F82BD5434"
-          },
-          "kind": {
-            "renderChat": {
-              "_0": {
-                "alternateBackgroundColor": "#191919",
-                "backgroundColor": "#111111",
-                "bitrateMbps": 12,
-                "font": "Inter Embedded",
-                "fontSize": 20,
-                "framerate": 30,
-                "hasAlternateBackgrounds": false,
-                "hasOutline": false,
-                "hasTimestamps": false,
-                "height": 1080,
-                "isSharpened": false,
-                "messageColor": "#ffffff",
-                "outlineSize": 4,
-                "width": 360
-              }
-            }
-          },
-          "progress": {
-            "elapsed": [
-              1,
-              3553255926290448384
-            ],
-            "fraction": 1,
-            "phase": "Rendering Video",
-            "remaining": [
-              0,
-              0
-            ]
-          },
-          "status": {
-            "done": {}
-          }
-        },
-        {
-          "dependsOn": [],
-          "id": {
-            "rawValue": "284783D1-0270-5D40-82E5-AD6E2E36DCC0"
-          },
-          "kind": {
-            "downloadVideo": {
-              "_0": {
-                "quality": "1080p60",
-                "trimEnd": [
-                  74,
-                  14940938545493180416
-                ],
-                "trimStart": [
-                  32,
-                  9704189641294348288
-                ],
-                "videoID": "2000000003"
-              }
-            }
-          },
-          "progress": {
-            "fraction": 1,
-            "index": 4,
-            "phase": "Finalizing Video",
-            "total": 4
-          },
-          "status": {
-            "done": {}
-          }
-        },
-        {
-          "dependsOn": [
-            {
-              "rawValue": "284783D1-0270-5D40-82E5-AD6E2E36DCC0"
-            },
-            {
-              "rawValue": "84460199-C605-55D4-A344-447F82BD5434"
-            }
-          ],
-          "id": {
-            "rawValue": "8289AC75-7ED3-5B64-B790-676E00102CB0"
-          },
-          "kind": {
-            "composite": {
-              "_0": {
-                "destination": "file:///Users/oxbow/Downloads/SeeCatPlay%20-%202026-08-29%20-%20Back%20to%20South%20of%20Midnight%20%F0%9F%92%9A%20!nohelp.mp4",
-                "duration": [
-                  42,
-                  5236748904198832128
-                ],
-                "framerate": 60
-              }
-            }
-          },
-          "progress": {
-            "bytesWritten": 15758377,
-            "fraction": 1,
-            "phase": "Compositing",
-            "remaining": [
-              0,
-              2997661870500720
-            ],
-            "speed": 5.56
-          },
-          "status": {
-            "done": {}
-          }
-        },
-        {
-          "artifact": "file:///Users/oxbow/Downloads/SeeCatPlay%20-%202026-08-29%20-%20Back%20to%20South%20of%20Midnight%20%F0%9F%92%9A%20!nohelp.mp4",
-          "dependsOn": [
-            {
-              "rawValue": "8289AC75-7ED3-5B64-B790-676E00102CB0"
-            }
-          ],
-          "id": {
-            "rawValue": "64B00543-7E2C-5121-AF93-11E49BE1ED07"
-          },
-          "kind": {
-            "assemble": {
-              "_0": {
-                "destination": "file:///Users/oxbow/Downloads/SeeCatPlay%20-%202026-08-29%20-%20Back%20to%20South%20of%20Midnight%20%F0%9F%92%9A%20!nohelp.mp4"
-              }
-            }
-          },
-          "progress": {},
-          "status": {
-            "done": {}
-          }
-        }
-      ],
-      "title": "PhantomPhreak - 2026-07-13 - end game pt 1 (bc I know there's several parts) [first playthrough]"
-    },
-    {
-      "created": 809654400.0,
-      "id": {
-        "rawValue": "EFB980AB-209E-59CC-8A6A-90DD3449996B"
-      },
-      "replacesExistingFile": false,
-      "steps": [
-        {
-          "dependsOn": [],
-          "id": {
-            "rawValue": "2CEB6F1F-ABFB-5596-B3ED-2E05FD022444"
-          },
-          "kind": {
-            "downloadChat": {
-              "_0": {
-                "format": "json",
-                "isEmbeddingImages": false,
-                "trimEnd": [
-                  87,
-                  15133265587269009408
-                ],
-                "trimStart": [
-                  55,
-                  5429075945974661120
-                ],
-                "videoID": "2000000004"
-              }
-            }
-          },
-          "progress": {
-            "phase": "Writing Output File"
-          },
-          "status": {
-            "done": {}
-          }
-        },
-        {
-          "dependsOn": [
-            {
-              "rawValue": "2CEB6F1F-ABFB-5596-B3ED-2E05FD022444"
-            }
-          ],
-          "id": {
-            "rawValue": "23AEBEEC-8FFE-5CA0-BDD8-DBB06501C94C"
-          },
-          "kind": {
-            "renderChat": {
-              "_0": {
-                "alternateBackgroundColor": "#191919",
-                "backgroundColor": "#111111",
-                "bitrateMbps": 12,
-                "font": "Inter Embedded",
-                "fontSize": 20,
-                "framerate": 30,
-                "hasAlternateBackgrounds": false,
-                "hasOutline": false,
-                "hasTimestamps": false,
-                "height": 1080,
-                "isSharpened": false,
-                "messageColor": "#ffffff",
-                "outlineSize": 4,
-                "width": 360
-              }
-            }
-          },
-          "progress": {
-            "elapsed": [
-              0,
-              17000000000000000000
-            ],
-            "fraction": 1,
-            "phase": "Rendering Video",
-            "remaining": [
-              0,
-              0
-            ]
-          },
-          "status": {
-            "done": {}
-          }
-        },
-        {
-          "dependsOn": [],
-          "id": {
-            "rawValue": "2213F0F2-8052-5251-8DA3-7F4BD5B955BE"
-          },
-          "kind": {
-            "downloadVideo": {
-              "_0": {
-                "quality": "1080p60",
-                "trimEnd": [
-                  87,
-                  15133265587269009408
-                ],
-                "trimStart": [
-                  55,
-                  5429075945974661120
-                ],
-                "videoID": "2000000004"
-              }
-            }
-          },
-          "progress": {
-            "fraction": 1,
-            "index": 4,
-            "phase": "Finalizing Video",
-            "total": 4
-          },
-          "status": {
-            "done": {}
-          }
-        },
-        {
-          "dependsOn": [
-            {
-              "rawValue": "2213F0F2-8052-5251-8DA3-7F4BD5B955BE"
-            },
-            {
-              "rawValue": "23AEBEEC-8FFE-5CA0-BDD8-DBB06501C94C"
-            }
-          ],
-          "id": {
-            "rawValue": "207EDFA1-9A78-57F3-B35E-BB2CD5FEDF42"
-          },
-          "kind": {
-            "composite": {
-              "_0": {
-                "destination": "file:///Users/oxbow/Downloads/Bubbell%20-%202026-07-16%20-%20%5BNEW%20DROPS%5D%20Shantiemaxxing,%20More%20Main%20Quest%20Today%20-%20DAY%206%20-%20!yt%20!ig%20-%20Giving%20Away%20a%20PS5%20Deluxe%20Copy%20+%20Steel%20Book%20!giveaway%20%F0%9F%A7%9A%E2%80%8D%E2%99%80%EF%B8%8F.mp4",
-                "duration": [
-                  32,
-                  9704189641294348288
-                ],
-                "framerate": 60
-              }
-            }
-          },
-          "progress": {
-            "bytesWritten": 12049512,
-            "fraction": 1,
-            "phase": "Compositing",
-            "speed": 5.56
-          },
-          "status": {
-            "done": {}
-          }
-        },
-        {
-          "artifact": "file:///Users/oxbow/Downloads/Bubbell%20-%202026-07-16%20-%20%5BNEW%20DROPS%5D%20Shantiemaxxing,%20More%20Main%20Quest%20Today%20-%20DAY%206%20-%20!yt%20!ig%20-%20Giving%20Away%20a%20PS5%20Deluxe%20Copy%20+%20Steel%20Book%20!giveaway%20%F0%9F%A7%9A%E2%80%8D%E2%99%80%EF%B8%8F.mp4",
-          "dependsOn": [
-            {
-              "rawValue": "207EDFA1-9A78-57F3-B35E-BB2CD5FEDF42"
-            }
-          ],
-          "id": {
-            "rawValue": "E0597F6C-544F-59E3-A7DE-BA2873AA42FC"
-          },
-          "kind": {
-            "assemble": {
-              "_0": {
-                "destination": "file:///Users/oxbow/Downloads/Bubbell%20-%202026-07-16%20-%20%5BNEW%20DROPS%5D%20Shantiemaxxing,%20More%20Main%20Quest%20Today%20-%20DAY%206%20-%20!yt%20!ig%20-%20Giving%20Away%20a%20PS5%20Deluxe%20Copy%20+%20Steel%20Book%20!giveaway%20%F0%9F%A7%9A%E2%80%8D%E2%99%80%EF%B8%8F.mp4"
-              }
-            }
-          },
-          "progress": {},
-          "status": {
-            "done": {}
-          }
-        }
-      ],
-      "title": "CerealKiller - 2026-08-23 - back and ready to get absolutely demolished + Heaps of Content"
-    },
-    {
-      "created": 809568000.0,
-      "id": {
-        "rawValue": "8C5C43B5-28FA-5F39-AD34-B1FD4641A3C1"
-      },
-      "replacesExistingFile": false,
-      "steps": [
-        {
-          "dependsOn": [],
-          "id": {
-            "rawValue": "54282A3A-AB4A-51E3-81E9-1DE4CC33BB56"
-          },
-          "kind": {
-            "downloadChat": {
-              "_0": {
-                "format": "json",
-                "isEmbeddingImages": false,
-                "trimEnd": [
-                  19,
-                  9511862599518519296
-                ],
-                "videoID": "2000000005"
-              }
-            }
-          },
-          "progress": {
-            "fraction": 1,
-            "phase": "Writing Output File"
-          },
-          "status": {
-            "done": {}
-          }
-        },
-        {
-          "dependsOn": [
-            {
-              "rawValue": "54282A3A-AB4A-51E3-81E9-1DE4CC33BB56"
-            }
-          ],
-          "id": {
-            "rawValue": "E5CDC3A6-1CC2-5B86-9927-BA95DE993C00"
-          },
-          "kind": {
-            "renderChat": {
-              "_0": {
-                "alternateBackgroundColor": "#191919",
-                "backgroundColor": "#111111",
-                "bitrateMbps": 12,
-                "font": "Inter Embedded",
-                "fontSize": 16,
-                "framerate": 30,
-                "hasAlternateBackgrounds": false,
-                "hasOutline": false,
-                "hasTimestamps": false,
-                "height": 1080,
-                "isSharpened": false,
-                "messageColor": "#ffffff",
-                "outlineSize": 4,
-                "width": 360
-              }
-            }
-          },
-          "progress": {
-            "fraction": 0.62,
-            "index": 2,
-            "phase": "Rendering Video",
-            "remaining": [
-              2,
-              1106511852580896768
-            ],
-            "total": 2
-          },
-          "status": {
-            "running": {}
-          }
-        },
-        {
-          "dependsOn": [],
-          "id": {
-            "rawValue": "42C3A5BA-BAD0-55E6-9FE4-9DA77C8009D0"
-          },
-          "kind": {
-            "downloadVideo": {
-              "_0": {
-                "quality": "1080p",
-                "trimEnd": [
-                  19,
-                  9511862599518519296
-                ],
-                "videoID": "2000000005"
-              }
-            }
-          },
-          "progress": {
-            "fraction": 0.35,
-            "index": 2,
-            "phase": "Downloading",
-            "total": 4
-          },
-          "status": {
-            "running": {}
-          }
-        },
-        {
-          "dependsOn": [
-            {
-              "rawValue": "42C3A5BA-BAD0-55E6-9FE4-9DA77C8009D0"
-            },
-            {
-              "rawValue": "E5CDC3A6-1CC2-5B86-9927-BA95DE993C00"
-            }
-          ],
-          "id": {
-            "rawValue": "1569BE29-A631-541E-9981-D1456CDDE084"
-          },
-          "kind": {
-            "composite": {
-              "_0": {
-                "destination": "file:///Users/oxbow/Downloads/lucyjamesgames%20-%202022-01-20%20-%20Highlight-%20Metal%20Gear%20Solid%202.mp4",
-                "duration": [
-                  19,
-                  9511862599518519296
-                ],
-                "framerate": 30
-              }
-            }
-          },
-          "progress": {},
-          "status": {
-            "queued": {}
-          }
-        },
-        {
-          "dependsOn": [
-            {
-              "rawValue": "1569BE29-A631-541E-9981-D1456CDDE084"
-            }
-          ],
-          "id": {
-            "rawValue": "4C617D37-EA78-5169-AB2A-71A63E57681D"
-          },
-          "kind": {
-            "assemble": {
-              "_0": {
-                "destination": "file:///Users/oxbow/Downloads/lucyjamesgames%20-%202022-01-20%20-%20Highlight-%20Metal%20Gear%20Solid%202.mp4"
-              }
-            }
-          },
-          "progress": {},
-          "status": {
-            "queued": {}
-          }
-        }
-      ],
-      "title": "ZeroCool - 2026-08-06 - ok for real finale pt. 1 omg [first playthrough]"
-    },
-    {
-      "created": 809481600.0,
-      "id": {
-        "rawValue": "6DE06FAA-0717-5382-B337-7753C819DE11"
-      },
-      "replacesExistingFile": true,
-      "steps": [
-        {
-          "dependsOn": [],
-          "id": {
-            "rawValue": "45EEEAF9-8987-52B0-B4A8-E344E1E99F9E"
-          },
-          "kind": {
-            "downloadChat": {
-              "_0": {
-                "format": "json",
-                "isEmbeddingImages": false,
-                "trimEnd": [
-                  120,
-                  6390711154853806080
-                ],
-                "trimStart": [
-                  87,
-                  15133265587269009408
-                ],
-                "videoID": "2000000006"
-              }
-            }
-          },
-          "progress": {
-            "phase": "Writing Output File"
-          },
-          "status": {
-            "done": {}
-          }
-        },
-        {
-          "dependsOn": [
-            {
-              "rawValue": "45EEEAF9-8987-52B0-B4A8-E344E1E99F9E"
-            }
-          ],
-          "id": {
-            "rawValue": "8DC905EA-3E00-5455-A310-0D02930FA41E"
-          },
-          "kind": {
-            "renderChat": {
-              "_0": {
-                "alternateBackgroundColor": "#191919",
-                "backgroundColor": "#111111",
-                "bitrateMbps": 12,
-                "font": "Inter Embedded",
-                "fontSize": 16,
-                "framerate": 30,
-                "hasAlternateBackgrounds": false,
-                "hasOutline": false,
-                "hasTimestamps": false,
-                "height": 1080,
-                "isSharpened": false,
-                "messageColor": "#ffffff",
-                "outlineSize": 4,
-                "width": 360
-              }
-            }
-          },
-          "progress": {
-            "elapsed": [
-              0,
-              17000000000000000000
-            ],
-            "fraction": 1,
-            "phase": "Rendering Video",
-            "remaining": [
-              0,
-              0
-            ]
-          },
-          "status": {
-            "done": {}
-          }
-        },
-        {
-          "dependsOn": [],
-          "id": {
-            "rawValue": "4FF0A670-04DF-5C1A-94FF-19B983B2842F"
-          },
-          "kind": {
-            "downloadVideo": {
-              "_0": {
-                "quality": "1080p60",
-                "trimEnd": [
-                  120,
-                  6390711154853806080
-                ],
-                "trimStart": [
-                  87,
-                  15133265587269009408
-                ],
-                "videoID": "2000000006"
-              }
-            }
-          },
-          "progress": {
-            "fraction": 1,
-            "index": 4,
-            "phase": "Finalizing Video",
-            "total": 4
-          },
-          "status": {
-            "done": {}
-          }
-        },
-        {
-          "dependsOn": [
-            {
-              "rawValue": "4FF0A670-04DF-5C1A-94FF-19B983B2842F"
-            },
-            {
-              "rawValue": "8DC905EA-3E00-5455-A310-0D02930FA41E"
-            }
-          ],
-          "id": {
-            "rawValue": "6E834D81-45A2-518E-A3C4-23FFB5B81E90"
-          },
-          "kind": {
-            "composite": {
-              "_0": {
-                "destination": "file:///Users/oxbow/Downloads/Bubbell%20-%202026-07-16%20-%20%5BNEW%20DROPS%5D%20Shantiemaxxing,%20More%20Main%20Quest%20Today%20-%20DAY%206%20-%20!yt%20!ig%20-%20Giving%20Away%20a%20PS5%20Deluxe%20Copy%20+%20Steel%20Book%20!giveaway%20%F0%9F%A7%9A%E2%80%8D%E2%99%80%EF%B8%8F.mp4",
-                "duration": [
-                  32,
-                  9704189641294348288
-                ],
-                "framerate": 60
-              }
-            }
-          },
-          "progress": {
-            "bytesWritten": 12054623,
-            "fraction": 1,
-            "phase": "Compositing",
-            "speed": 5.56
-          },
-          "status": {
-            "done": {}
-          }
-        },
-        {
-          "artifact": "file:///Users/oxbow/Downloads/Bubbell%20-%202026-07-16%20-%20%5BNEW%20DROPS%5D%20Shantiemaxxing,%20More%20Main%20Quest%20Today%20-%20DAY%206%20-%20!yt%20!ig%20-%20Giving%20Away%20a%20PS5%20Deluxe%20Copy%20+%20Steel%20Book%20!giveaway%20%F0%9F%A7%9A%E2%80%8D%E2%99%80%EF%B8%8F.mp4",
-          "dependsOn": [
-            {
-              "rawValue": "6E834D81-45A2-518E-A3C4-23FFB5B81E90"
-            }
-          ],
-          "id": {
-            "rawValue": "7531B979-EF18-583B-833E-38C694627FAB"
-          },
-          "kind": {
-            "assemble": {
-              "_0": {
-                "destination": "file:///Users/oxbow/Downloads/Bubbell%20-%202026-07-16%20-%20%5BNEW%20DROPS%5D%20Shantiemaxxing,%20More%20Main%20Quest%20Today%20-%20DAY%206%20-%20!yt%20!ig%20-%20Giving%20Away%20a%20PS5%20Deluxe%20Copy%20+%20Steel%20Book%20!giveaway%20%F0%9F%A7%9A%E2%80%8D%E2%99%80%EF%B8%8F.mp4"
-              }
-            }
-          },
-          "progress": {},
-          "status": {
-            "done": {}
-          }
-        }
-      ],
-      "title": "TheGibson - 2026-08-19 - hack the planet (again)"
-    },
-    {
-      "created": 809395200.0,
-      "id": {
-        "rawValue": "2A3517AF-F31F-5A50-A2DE-00B5B44BACD5"
-      },
-      "replacesExistingFile": false,
-      "steps": [
-        {
-          "dependsOn": [],
-          "id": {
-            "rawValue": "D5168544-2608-5C9E-8AC0-501E669DFF4D"
-          },
-          "kind": {
-            "downloadChat": {
-              "_0": {
-                "format": "json",
-                "isEmbeddingImages": false,
-                "trimEnd": [
-                  47,
-                  3003028535651074048
-                ],
-                "trimStart": [
-                  34,
-                  2810701493875245056
-                ],
-                "videoID": "2000000007"
-              }
-            }
-          },
-          "progress": {
-            "phase": "Writing Output File"
-          },
-          "status": {
-            "done": {}
-          }
-        },
-        {
-          "dependsOn": [
-            {
-              "rawValue": "D5168544-2608-5C9E-8AC0-501E669DFF4D"
-            }
-          ],
-          "id": {
-            "rawValue": "4DA0BD72-7BB7-5127-AC24-8E20DCA6CF20"
-          },
-          "kind": {
-            "renderChat": {
-              "_0": {
-                "alternateBackgroundColor": "#191919",
-                "backgroundColor": "#111111",
-                "bitrateMbps": 12,
-                "font": "Inter Embedded",
-                "fontSize": 11,
-                "framerate": 30,
-                "hasAlternateBackgrounds": false,
-                "hasOutline": false,
-                "hasTimestamps": false,
-                "height": 720,
-                "isSharpened": false,
-                "messageColor": "#ffffff",
-                "outlineSize": 4,
-                "width": 240
-              }
-            }
-          },
-          "progress": {
-            "elapsed": [
-              0,
-              4000000000000000000
-            ],
-            "fraction": 1,
-            "phase": "Rendering Video",
-            "remaining": [
-              0,
-              0
-            ]
-          },
-          "status": {
-            "done": {}
-          }
-        },
-        {
-          "dependsOn": [],
-          "id": {
-            "rawValue": "71246449-15D9-503A-A512-E10455F28676"
-          },
-          "kind": {
-            "downloadVideo": {
-              "_0": {
-                "quality": "720p60",
-                "trimEnd": [
-                  47,
-                  3003028535651074048
-                ],
-                "trimStart": [
-                  34,
-                  2810701493875245056
-                ],
-                "videoID": "2000000007"
-              }
-            }
-          },
-          "progress": {
-            "fraction": 1,
-            "index": 4,
-            "phase": "Finalizing Video",
-            "total": 4
-          },
-          "status": {
-            "done": {}
-          }
-        },
-        {
-          "dependsOn": [
-            {
-              "rawValue": "71246449-15D9-503A-A512-E10455F28676"
-            },
-            {
-              "rawValue": "4DA0BD72-7BB7-5127-AC24-8E20DCA6CF20"
-            }
-          ],
-          "id": {
-            "rawValue": "0B830123-84A1-5E08-955D-D5D47D39526C"
-          },
-          "kind": {
-            "composite": {
-              "_0": {
-                "destination": "file:///Users/oxbow/Downloads/KatAbughazaleh%20-%202026-08-19%20-%20STREAM%20%2369-%20Nice.mp4",
-                "duration": [
-                  13,
-                  192327041775828992
-                ],
-                "framerate": 60
-              }
-            }
-          },
-          "progress": {
-            "bytesWritten": 7345582,
-            "fraction": 1,
-            "phase": "Compositing",
-            "remaining": [
-              0,
-              1618155339807031
-            ],
-            "speed": 10.3
-          },
-          "status": {
-            "done": {}
-          }
-        },
-        {
-          "artifact": "file:///Users/oxbow/Downloads/KatAbughazaleh%20-%202026-08-19%20-%20STREAM%20%2369-%20Nice.mp4",
-          "dependsOn": [
-            {
-              "rawValue": "0B830123-84A1-5E08-955D-D5D47D39526C"
-            }
-          ],
-          "id": {
-            "rawValue": "A2FED75A-AF7D-5B47-9C06-3FF472E3912A"
-          },
-          "kind": {
-            "assemble": {
-              "_0": {
-                "destination": "file:///Users/oxbow/Downloads/KatAbughazaleh%20-%202026-08-19%20-%20STREAM%20%2369-%20Nice.mp4"
-              }
-            }
-          },
-          "progress": {},
-          "status": {
-            "done": {}
-          }
-        }
-      ],
-      "title": "Razor - 2026-08-02 - tartarus climb, no commentary"
-    },
-    {
-      "created": 809308800.0,
-      "id": {
-        "rawValue": "695ADAA7-43FB-58C0-963F-6269EEF2207C"
-      },
-      "replacesExistingFile": false,
-      "steps": [
-        {
-          "dependsOn": [],
-          "id": {
-            "rawValue": "9F78E9E9-0377-52B1-809F-44A2C979F478"
-          },
-          "kind": {
-            "downloadChat": {
-              "_0": {
-                "format": "json",
-                "isEmbeddingImages": false,
-                "videoID": "2000000008"
-              }
-            }
-          },
-          "progress": {
-            "phase": "Writing Output File"
-          },
-          "status": {
-            "done": {}
-          }
-        },
-        {
-          "dependsOn": [
-            {
-              "rawValue": "9F78E9E9-0377-52B1-809F-44A2C979F478"
-            }
-          ],
-          "id": {
-            "rawValue": "81A64DF7-2DB1-5EC5-8580-3FFCF847F437"
-          },
-          "kind": {
-            "renderChat": {
-              "_0": {
-                "alternateBackgroundColor": "#191919",
-                "backgroundColor": "#111111",
-                "bitrateMbps": 12,
-                "font": "Inter Embedded",
-                "fontSize": 16,
-                "framerate": 30,
-                "hasAlternateBackgrounds": false,
-                "hasOutline": false,
-                "hasTimestamps": false,
-                "height": 1080,
-                "isSharpened": false,
-                "messageColor": "#ffffff",
-                "outlineSize": 4,
-                "width": 360
-              }
-            }
-          },
-          "progress": {
-            "elapsed": [
-              0,
-              0
-            ],
-            "fraction": 1,
-            "phase": "Rendering Video",
-            "remaining": [
-              0,
-              0
-            ]
-          },
-          "status": {
-            "done": {}
-          }
-        },
-        {
-          "dependsOn": [],
-          "id": {
-            "rawValue": "DFADEEFB-D949-5529-B175-BF8ED548F094"
-          },
-          "kind": {
-            "downloadClip": {
-              "_0": {
-                "clipSlug": "FictionalClipSlug08",
-                "quality": "1080p60"
-              }
-            }
-          },
-          "progress": {
-            "fraction": 1,
-            "phase": "Encoding Clip Metadata"
-          },
-          "status": {
-            "done": {}
-          }
-        },
-        {
-          "dependsOn": [
-            {
-              "rawValue": "DFADEEFB-D949-5529-B175-BF8ED548F094"
-            },
-            {
-              "rawValue": "81A64DF7-2DB1-5EC5-8580-3FFCF847F437"
-            }
-          ],
-          "id": {
-            "rawValue": "EA295ECB-1F32-5F02-8FD4-E281858F0390"
-          },
-          "kind": {
-            "composite": {
-              "_0": {
-                "destination": "file:///Users/oxbow/Downloads/RaphDee%20-%202026-08-28%20-%20A%20taste%20of%20your%20own%20medicine.mp4",
-                "duration": [
-                  1,
-                  11553255926290448384
-                ],
-                "framerate": 60
-              }
-            }
-          },
-          "progress": {
-            "bytesWritten": 616226,
-            "fraction": 1,
-            "phase": "Compositing",
-            "speed": 5.29
-          },
-          "status": {
-            "done": {}
-          }
-        },
-        {
-          "artifact": "file:///Users/oxbow/Downloads/RaphDee%20-%202026-08-28%20-%20A%20taste%20of%20your%20own%20medicine.mp4",
-          "dependsOn": [
-            {
-              "rawValue": "EA295ECB-1F32-5F02-8FD4-E281858F0390"
-            }
-          ],
-          "id": {
-            "rawValue": "D1C80713-01F0-57D6-8DD8-AE90368F32E8"
-          },
-          "kind": {
-            "assemble": {
-              "_0": {
-                "destination": "file:///Users/oxbow/Downloads/RaphDee%20-%202026-08-28%20-%20A%20taste%20of%20your%20own%20medicine.mp4"
-              }
-            }
-          },
-          "progress": {},
-          "status": {
-            "done": {}
-          }
-        }
-      ],
-      "title": "Blade - 2026-07-28 - one more floor. one. more."
-    },
-    {
-      "created": 809222400.0,
-      "id": {
-        "rawValue": "8F0E6D0F-7BCC-5957-8C01-3CA2C6C0911C"
-      },
-      "replacesExistingFile": false,
-      "steps": [
-        {
-          "dependsOn": [],
-          "id": {
-            "rawValue": "23F9990D-9028-5A52-8638-4776182F9C61"
-          },
-          "kind": {
-            "downloadChat": {
-              "_0": {
-                "format": "json",
-                "isEmbeddingImages": false,
-                "videoID": "2000000009"
-              }
-            }
-          },
-          "progress": {
-            "phase": "Writing Output File"
-          },
-          "status": {
-            "done": {}
-          }
-        },
-        {
-          "dependsOn": [
-            {
-              "rawValue": "23F9990D-9028-5A52-8638-4776182F9C61"
-            }
-          ],
-          "id": {
-            "rawValue": "AA993AA0-2952-5CC0-ADAB-1DD7A2791A19"
-          },
-          "kind": {
-            "renderChat": {
-              "_0": {
-                "alternateBackgroundColor": "#191919",
-                "backgroundColor": "#111111",
-                "bitrateMbps": 12,
-                "font": "Inter Embedded",
-                "fontSize": 16,
-                "framerate": 30,
-                "hasAlternateBackgrounds": false,
-                "hasOutline": false,
-                "hasTimestamps": false,
-                "height": 1080,
-                "isSharpened": false,
-                "messageColor": "#ffffff",
-                "outlineSize": 4,
-                "width": 360
-              }
-            }
-          },
-          "progress": {
-            "elapsed": [
-              0,
-              0
-            ],
-            "fraction": 1,
-            "phase": "Rendering Video",
-            "remaining": [
-              0,
-              0
-            ]
-          },
-          "status": {
-            "done": {}
-          }
-        },
-        {
-          "dependsOn": [],
-          "id": {
-            "rawValue": "8BB37F60-AA9E-5F5D-9900-A28A043ECDB5"
-          },
-          "kind": {
-            "downloadClip": {
-              "_0": {
-                "clipSlug": "FictionalClipSlug09",
-                "quality": "1080p60"
-              }
-            }
-          },
-          "progress": {
-            "fraction": 1,
-            "phase": "Encoding Clip Metadata"
-          },
-          "status": {
-            "done": {}
-          }
-        },
-        {
-          "dependsOn": [
-            {
-              "rawValue": "8BB37F60-AA9E-5F5D-9900-A28A043ECDB5"
-            },
-            {
-              "rawValue": "AA993AA0-2952-5CC0-ADAB-1DD7A2791A19"
-            }
-          ],
-          "id": {
-            "rawValue": "BFF1EAB1-79EC-5D84-BFAD-483A16660211"
-          },
-          "kind": {
-            "composite": {
-              "_0": {
-                "destination": "file:///Users/oxbow/Downloads/RaphDee%20-%202026-08-28%20-%20A%20taste%20of%20your%20own%20medicine.mp4",
-                "duration": [
-                  1,
-                  11553255926290448384
-                ],
-                "framerate": 60
-              }
-            }
-          },
-          "progress": {
-            "bytesWritten": 616226,
-            "fraction": 1,
-            "phase": "Compositing",
-            "speed": 5.29
-          },
-          "status": {
-            "done": {}
-          }
-        },
-        {
-          "artifact": "file:///Users/oxbow/Downloads/RaphDee%20-%202026-08-28%20-%20A%20taste%20of%20your%20own%20medicine.mp4",
-          "dependsOn": [
-            {
-              "rawValue": "BFF1EAB1-79EC-5D84-BFAD-483A16660211"
-            }
-          ],
-          "id": {
-            "rawValue": "3A530057-2A0E-5F67-B21C-872A359550AE"
-          },
-          "kind": {
-            "assemble": {
-              "_0": {
-                "destination": "file:///Users/oxbow/Downloads/RaphDee%20-%202026-08-28%20-%20A%20taste%20of%20your%20own%20medicine.mp4"
-              }
-            }
-          },
-          "progress": {},
-          "status": {
-            "done": {}
-          }
-        }
-      ],
-      "title": "JoeyP - 2026-07-24 - i finally beat it (clip compilation)"
-    },
-    {
-      "created": 809136000.0,
-      "id": {
-        "rawValue": "B3BDB2B8-69B9-52A7-82A3-AB25618A0F50"
-      },
-      "replacesExistingFile": false,
-      "steps": [
-        {
-          "dependsOn": [],
-          "id": {
-            "rawValue": "686E3840-EF02-5163-B16D-AE589A2301EB"
-          },
-          "kind": {
-            "downloadChat": {
-              "_0": {
-                "format": "json",
-                "isEmbeddingImages": false,
-                "trimEnd": [
-                  17,
-                  6405350746937622528
-                ],
-                "videoID": "2000000010"
-              }
-            }
-          },
-          "progress": {
-            "phase": "Writing Output File"
-          },
-          "status": {
-            "done": {}
-          }
-        },
-        {
-          "dependsOn": [
-            {
-              "rawValue": "686E3840-EF02-5163-B16D-AE589A2301EB"
-            }
-          ],
-          "id": {
-            "rawValue": "F60BB463-7917-5BF7-B98F-85393721B4F0"
-          },
-          "kind": {
-            "renderChat": {
-              "_0": {
-                "alternateBackgroundColor": "#191919",
-                "backgroundColor": "#111111",
-                "bitrateMbps": 12,
-                "font": "Inter Embedded",
-                "fontSize": 11,
-                "framerate": 30,
-                "hasAlternateBackgrounds": false,
-                "hasOutline": false,
-                "hasTimestamps": false,
-                "height": 720,
-                "isSharpened": false,
-                "messageColor": "#ffffff",
-                "outlineSize": 4,
-                "width": 240
-              }
-            }
-          },
-          "progress": {
-            "elapsed": [
-              0,
-              6000000000000000000
-            ],
-            "fraction": 1,
-            "phase": "Rendering Video",
-            "remaining": [
-              0,
-              0
-            ]
-          },
-          "status": {
-            "done": {}
-          }
-        },
-        {
-          "dependsOn": [],
-          "id": {
-            "rawValue": "7A9B3700-F3EF-5238-BCED-0B11823A037E"
-          },
-          "kind": {
-            "downloadVideo": {
-              "_0": {
-                "quality": "720p",
-                "trimEnd": [
-                  17,
-                  6405350746937622528
-                ],
-                "videoID": "2000000010"
-              }
-            }
-          },
-          "progress": {
-            "fraction": 1,
-            "index": 4,
-            "phase": "Finalizing Video",
-            "total": 4
-          },
-          "status": {
-            "done": {}
-          }
-        },
-        {
-          "dependsOn": [
-            {
-              "rawValue": "7A9B3700-F3EF-5238-BCED-0B11823A037E"
-            },
-            {
-              "rawValue": "F60BB463-7917-5BF7-B98F-85393721B4F0"
-            }
-          ],
-          "id": {
-            "rawValue": "491E04C3-E06F-53F1-8401-B330695D3C5B"
-          },
-          "kind": {
-            "composite": {
-              "_0": {
-                "destination": "file:///Users/oxbow/Downloads/nataliecuomo%20-%202026-08-11%20-%20hi%20friends!.mp4",
-                "duration": [
-                  17,
-                  6405350746937622528
-                ],
-                "framerate": 30
-              }
-            }
-          },
-          "progress": {
-            "bytesWritten": 4781483,
-            "fraction": 1,
-            "phase": "Compositing",
-            "remaining": [
-              0,
-              1594880382776429
-            ],
-            "speed": 20.9
-          },
-          "status": {
-            "done": {}
-          }
-        },
-        {
-          "artifact": "file:///Users/oxbow/Downloads/nataliecuomo%20-%202026-08-11%20-%20hi%20friends!.mp4",
-          "dependsOn": [
-            {
-              "rawValue": "491E04C3-E06F-53F1-8401-B330695D3C5B"
-            }
-          ],
-          "id": {
-            "rawValue": "EEDEC8DF-DAC1-589E-9734-9479ABB1D72F"
-          },
-          "kind": {
-            "assemble": {
-              "_0": {
-                "destination": "file:///Users/oxbow/Downloads/nataliecuomo%20-%202026-08-11%20-%20hi%20friends!.mp4"
-              }
-            }
-          },
-          "progress": {},
-          "status": {
-            "done": {}
-          }
-        }
-      ],
-      "title": "AcidBurn - 2026-07-19 - velvet room lore deep dive"
-    },
-    {
-      "created": 809049600.0,
-      "id": {
-        "rawValue": "3401D506-8DD1-53C0-B89E-887D47F534F4"
-      },
-      "replacesExistingFile": false,
-      "steps": [
-        {
-          "dependsOn": [],
-          "id": {
-            "rawValue": "142C0281-E96A-57EC-8180-9D0C758CE587"
-          },
-          "kind": {
-            "downloadChat": {
-              "_0": {
-                "format": "json",
-                "isEmbeddingImages": false,
-                "trimEnd": [
-                  74,
-                  14940938545493180416
-                ],
-                "trimStart": [
-                  32,
-                  9704189641294348288
-                ],
-                "videoID": "2000000011"
-              }
-            }
-          },
-          "progress": {
-            "phase": "Writing Output File"
-          },
-          "status": {
-            "done": {}
-          }
-        },
-        {
-          "dependsOn": [
-            {
-              "rawValue": "142C0281-E96A-57EC-8180-9D0C758CE587"
-            }
-          ],
-          "id": {
-            "rawValue": "BABA6E21-BE03-561A-AEC6-D9D7266B019A"
-          },
-          "kind": {
-            "renderChat": {
-              "_0": {
-                "alternateBackgroundColor": "#191919",
-                "backgroundColor": "#111111",
-                "bitrateMbps": 12,
-                "font": "Inter Embedded",
-                "fontSize": 20,
-                "framerate": 30,
-                "hasAlternateBackgrounds": false,
-                "hasOutline": false,
-                "hasTimestamps": false,
-                "height": 1080,
-                "isSharpened": false,
-                "messageColor": "#ffffff",
-                "outlineSize": 4,
-                "width": 360
-              }
-            }
-          },
-          "progress": {
-            "elapsed": [
-              1,
-              3553255926290448384
-            ],
-            "fraction": 1,
-            "phase": "Rendering Video",
-            "remaining": [
-              0,
-              0
-            ]
-          },
-          "status": {
-            "done": {}
-          }
-        },
-        {
-          "dependsOn": [],
-          "id": {
-            "rawValue": "A22A7703-A017-50CF-BA51-D877528BFB63"
-          },
-          "kind": {
-            "downloadVideo": {
-              "_0": {
-                "quality": "1080p60",
-                "trimEnd": [
-                  74,
-                  14940938545493180416
-                ],
-                "trimStart": [
-                  32,
-                  9704189641294348288
-                ],
-                "videoID": "2000000011"
-              }
-            }
-          },
-          "progress": {
-            "fraction": 1,
-            "index": 4,
-            "phase": "Finalizing Video",
-            "total": 4
-          },
-          "status": {
-            "done": {}
-          }
-        },
-        {
-          "dependsOn": [
-            {
-              "rawValue": "A22A7703-A017-50CF-BA51-D877528BFB63"
-            },
-            {
-              "rawValue": "BABA6E21-BE03-561A-AEC6-D9D7266B019A"
-            }
-          ],
-          "id": {
-            "rawValue": "8D777E63-6510-5642-9938-958E1D6742E7"
-          },
-          "kind": {
-            "composite": {
-              "_0": {
-                "destination": "file:///Users/oxbow/Downloads/SeeCatPlay%20-%202026-08-29%20-%20Back%20to%20South%20of%20Midnight%20%F0%9F%92%9A%20!nohelp.mp4",
-                "duration": [
-                  42,
-                  5236748904198832128
-                ],
-                "framerate": 60
-              }
-            }
-          },
-          "progress": {
-            "bytesWritten": 15758377,
-            "fraction": 1,
-            "phase": "Compositing",
-            "remaining": [
-              0,
-              2997661870500720
-            ],
-            "speed": 5.56
-          },
-          "status": {
-            "done": {}
-          }
-        },
-        {
-          "artifact": "file:///Users/oxbow/Downloads/SeeCatPlay%20-%202026-08-29%20-%20Back%20to%20South%20of%20Midnight%20%F0%9F%92%9A%20!nohelp.mp4",
-          "dependsOn": [
-            {
-              "rawValue": "8D777E63-6510-5642-9938-958E1D6742E7"
-            }
-          ],
-          "id": {
-            "rawValue": "83491E19-5394-5562-9605-EEB61823CFA9"
-          },
-          "kind": {
-            "assemble": {
-              "_0": {
-                "destination": "file:///Users/oxbow/Downloads/SeeCatPlay%20-%202026-08-29%20-%20Back%20to%20South%20of%20Midnight%20%F0%9F%92%9A%20!nohelp.mp4"
-              }
-            }
-          },
-          "progress": {},
-          "status": {
-            "done": {}
-          }
-        }
-      ],
-      "title": "CrashOverride - 2026-07-02 - blind run, no guides, bad decisions"
-    },
-    {
-      "created": 808963200.0,
-      "id": {
-        "rawValue": "935778DB-F8E1-56A9-BD2B-2B86094AC756"
-      },
-      "replacesExistingFile": false,
-      "steps": [
-        {
-          "dependsOn": [],
-          "id": {
-            "rawValue": "A555FE2F-C89A-5BF0-AF3C-37E9FE17A3D5"
-          },
-          "kind": {
-            "downloadChat": {
-              "_0": {
-                "format": "json",
-                "isEmbeddingImages": false,
-                "trimEnd": [
-                  87,
-                  15133265587269009408
-                ],
-                "trimStart": [
-                  55,
-                  5429075945974661120
-                ],
-                "videoID": "2000000012"
-              }
-            }
-          },
-          "progress": {
-            "phase": "Writing Output File"
-          },
-          "status": {
-            "done": {}
-          }
-        },
-        {
-          "dependsOn": [
-            {
-              "rawValue": "A555FE2F-C89A-5BF0-AF3C-37E9FE17A3D5"
-            }
-          ],
-          "id": {
-            "rawValue": "4D9442FC-513C-52AC-88E0-23C82DAA4558"
-          },
-          "kind": {
-            "renderChat": {
-              "_0": {
-                "alternateBackgroundColor": "#191919",
-                "backgroundColor": "#111111",
-                "bitrateMbps": 12,
-                "font": "Inter Embedded",
-                "fontSize": 20,
-                "framerate": 30,
-                "hasAlternateBackgrounds": false,
-                "hasOutline": false,
-                "hasTimestamps": false,
-                "height": 1080,
-                "isSharpened": false,
-                "messageColor": "#ffffff",
-                "outlineSize": 4,
-                "width": 360
-              }
-            }
-          },
-          "progress": {
-            "elapsed": [
-              0,
-              17000000000000000000
-            ],
-            "fraction": 1,
-            "phase": "Rendering Video",
-            "remaining": [
-              0,
-              0
-            ]
-          },
-          "status": {
-            "done": {}
-          }
-        },
-        {
-          "dependsOn": [],
-          "id": {
-            "rawValue": "BE7F68A5-1AD0-5246-8A55-41D7E0FEA736"
-          },
-          "kind": {
-            "downloadVideo": {
-              "_0": {
-                "quality": "1080p60",
-                "trimEnd": [
-                  87,
-                  15133265587269009408
-                ],
-                "trimStart": [
-                  55,
-                  5429075945974661120
-                ],
-                "videoID": "2000000012"
-              }
-            }
-          },
-          "progress": {
-            "fraction": 1,
-            "index": 4,
-            "phase": "Finalizing Video",
-            "total": 4
-          },
-          "status": {
-            "done": {}
-          }
-        },
-        {
-          "dependsOn": [
-            {
-              "rawValue": "BE7F68A5-1AD0-5246-8A55-41D7E0FEA736"
-            },
-            {
-              "rawValue": "4D9442FC-513C-52AC-88E0-23C82DAA4558"
-            }
-          ],
-          "id": {
-            "rawValue": "AB94C939-D4D9-5E01-B1E1-B2952537F92F"
-          },
-          "kind": {
-            "composite": {
-              "_0": {
-                "destination": "file:///Users/oxbow/Downloads/Bubbell%20-%202026-07-16%20-%20%5BNEW%20DROPS%5D%20Shantiemaxxing,%20More%20Main%20Quest%20Today%20-%20DAY%206%20-%20!yt%20!ig%20-%20Giving%20Away%20a%20PS5%20Deluxe%20Copy%20+%20Steel%20Book%20!giveaway%20%F0%9F%A7%9A%E2%80%8D%E2%99%80%EF%B8%8F.mp4",
-                "duration": [
-                  32,
-                  9704189641294348288
-                ],
-                "framerate": 60
-              }
-            }
-          },
-          "progress": {
-            "bytesWritten": 12049512,
-            "fraction": 1,
-            "phase": "Compositing",
-            "speed": 5.56
-          },
-          "status": {
-            "done": {}
-          }
-        },
-        {
-          "artifact": "file:///Users/oxbow/Downloads/Bubbell%20-%202026-07-16%20-%20%5BNEW%20DROPS%5D%20Shantiemaxxing,%20More%20Main%20Quest%20Today%20-%20DAY%206%20-%20!yt%20!ig%20-%20Giving%20Away%20a%20PS5%20Deluxe%20Copy%20+%20Steel%20Book%20!giveaway%20%F0%9F%A7%9A%E2%80%8D%E2%99%80%EF%B8%8F.mp4",
-          "dependsOn": [
-            {
-              "rawValue": "AB94C939-D4D9-5E01-B1E1-B2952537F92F"
-            }
-          ],
-          "id": {
-            "rawValue": "8C417A63-974F-5C55-BA6C-AFCD6874B527"
-          },
-          "kind": {
-            "assemble": {
-              "_0": {
-                "destination": "file:///Users/oxbow/Downloads/Bubbell%20-%202026-07-16%20-%20%5BNEW%20DROPS%5D%20Shantiemaxxing,%20More%20Main%20Quest%20Today%20-%20DAY%206%20-%20!yt%20!ig%20-%20Giving%20Away%20a%20PS5%20Deluxe%20Copy%20+%20Steel%20Book%20!giveaway%20%F0%9F%A7%9A%E2%80%8D%E2%99%80%EF%B8%8F.mp4"
-              }
-            }
-          },
-          "progress": {},
-          "status": {
-            "done": {}
-          }
-        }
-      ],
-      "title": "LordNikon - 2026-06-27 - fusion calculator? never heard of her"
-    },
-    {
-      "created": 808876800.0,
-      "id": {
-        "rawValue": "C4D87988-29F7-51EE-9B5A-9A892FB1D2BE"
-      },
-      "replacesExistingFile": false,
-      "steps": [
-        {
-          "dependsOn": [],
-          "id": {
-            "rawValue": "2E954C42-308F-512E-87A7-F5BAD2E06BDA"
-          },
-          "kind": {
-            "downloadChat": {
-              "_0": {
-                "format": "json",
-                "isEmbeddingImages": false,
-                "trimEnd": [
-                  19,
-                  9511862599518519296
-                ],
-                "videoID": "2000000013"
-              }
-            }
-          },
-          "progress": {
-            "phase": "Writing Output File"
-          },
-          "status": {
-            "done": {}
-          }
-        },
-        {
-          "dependsOn": [
-            {
-              "rawValue": "2E954C42-308F-512E-87A7-F5BAD2E06BDA"
-            }
-          ],
-          "id": {
-            "rawValue": "B3B95897-05EE-5EEA-AB21-878D514CD175"
           },
           "kind": {
             "renderChat": {
@@ -2220,7 +593,7 @@
         {
           "dependsOn": [],
           "id": {
-            "rawValue": "BB1E3CC8-19A5-502B-8290-70CA9795EFE3"
+            "rawValue": "284783D1-0270-5D40-82E5-AD6E2E36DCC0"
           },
           "kind": {
             "downloadVideo": {
@@ -2230,7 +603,7 @@
                   19,
                   9511862599518519296
                 ],
-                "videoID": "2000000013"
+                "videoID": "2000000003"
               }
             }
           },
@@ -2247,14 +620,14 @@
         {
           "dependsOn": [
             {
-              "rawValue": "BB1E3CC8-19A5-502B-8290-70CA9795EFE3"
+              "rawValue": "284783D1-0270-5D40-82E5-AD6E2E36DCC0"
             },
             {
-              "rawValue": "B3B95897-05EE-5EEA-AB21-878D514CD175"
+              "rawValue": "84460199-C605-55D4-A344-447F82BD5434"
             }
           ],
           "id": {
-            "rawValue": "5F7BF845-B5B5-5DF0-9B28-251F01C69DD7"
+            "rawValue": "8289AC75-7ED3-5B64-B790-676E00102CB0"
           },
           "kind": {
             "composite": {
@@ -2286,11 +659,11 @@
           "artifact": "file:///Users/oxbow/Downloads/lucyjamesgames%20-%202022-01-20%20-%20Highlight-%20Metal%20Gear%20Solid%202.mp4",
           "dependsOn": [
             {
-              "rawValue": "5F7BF845-B5B5-5DF0-9B28-251F01C69DD7"
+              "rawValue": "8289AC75-7ED3-5B64-B790-676E00102CB0"
             }
           ],
           "id": {
-            "rawValue": "4AC1A926-C8BC-56A3-9B42-23A5587F11E5"
+            "rawValue": "64B00543-7E2C-5121-AF93-11E49BE1ED07"
           },
           "kind": {
             "assemble": {
@@ -2305,7 +678,342 @@
           }
         }
       ],
-      "title": "CerealKiller - 2026-06-21 - full moon boss attempt #7"
+      "title": "AcidBurn - 2026-08-02 - persona 3 - exam week and i am not prepared"
+    },
+    {
+      "created": 810345600.0,
+      "id": {
+        "rawValue": "EFB980AB-209E-59CC-8A6A-90DD3449996B"
+      },
+      "replacesExistingFile": true,
+      "steps": [
+        {
+          "dependsOn": [],
+          "id": {
+            "rawValue": "2CEB6F1F-ABFB-5596-B3ED-2E05FD022444"
+          },
+          "kind": {
+            "downloadChat": {
+              "_0": {
+                "format": "json",
+                "isEmbeddingImages": false,
+                "trimEnd": [
+                  120,
+                  6390711154853806080
+                ],
+                "trimStart": [
+                  87,
+                  15133265587269009408
+                ],
+                "videoID": "2000000004"
+              }
+            }
+          },
+          "progress": {
+            "phase": "Writing Output File"
+          },
+          "status": {
+            "done": {}
+          }
+        },
+        {
+          "dependsOn": [
+            {
+              "rawValue": "2CEB6F1F-ABFB-5596-B3ED-2E05FD022444"
+            }
+          ],
+          "id": {
+            "rawValue": "23AEBEEC-8FFE-5CA0-BDD8-DBB06501C94C"
+          },
+          "kind": {
+            "renderChat": {
+              "_0": {
+                "alternateBackgroundColor": "#191919",
+                "backgroundColor": "#111111",
+                "bitrateMbps": 12,
+                "font": "Inter Embedded",
+                "fontSize": 16,
+                "framerate": 30,
+                "hasAlternateBackgrounds": false,
+                "hasOutline": false,
+                "hasTimestamps": false,
+                "height": 1080,
+                "isSharpened": false,
+                "messageColor": "#ffffff",
+                "outlineSize": 4,
+                "width": 360
+              }
+            }
+          },
+          "progress": {
+            "elapsed": [
+              0,
+              17000000000000000000
+            ],
+            "fraction": 1,
+            "phase": "Rendering Video",
+            "remaining": [
+              0,
+              0
+            ]
+          },
+          "status": {
+            "done": {}
+          }
+        },
+        {
+          "dependsOn": [],
+          "id": {
+            "rawValue": "2213F0F2-8052-5251-8DA3-7F4BD5B955BE"
+          },
+          "kind": {
+            "downloadVideo": {
+              "_0": {
+                "quality": "1080p60",
+                "trimEnd": [
+                  120,
+                  6390711154853806080
+                ],
+                "trimStart": [
+                  87,
+                  15133265587269009408
+                ],
+                "videoID": "2000000004"
+              }
+            }
+          },
+          "progress": {
+            "fraction": 1,
+            "index": 4,
+            "phase": "Finalizing Video",
+            "total": 4
+          },
+          "status": {
+            "done": {}
+          }
+        },
+        {
+          "dependsOn": [
+            {
+              "rawValue": "2213F0F2-8052-5251-8DA3-7F4BD5B955BE"
+            },
+            {
+              "rawValue": "23AEBEEC-8FFE-5CA0-BDD8-DBB06501C94C"
+            }
+          ],
+          "id": {
+            "rawValue": "207EDFA1-9A78-57F3-B35E-BB2CD5FEDF42"
+          },
+          "kind": {
+            "composite": {
+              "_0": {
+                "destination": "file:///Users/oxbow/Downloads/Bubbell%20-%202026-07-16%20-%20%5BNEW%20DROPS%5D%20Shantiemaxxing,%20More%20Main%20Quest%20Today%20-%20DAY%206%20-%20!yt%20!ig%20-%20Giving%20Away%20a%20PS5%20Deluxe%20Copy%20+%20Steel%20Book%20!giveaway%20%F0%9F%A7%9A%E2%80%8D%E2%99%80%EF%B8%8F.mp4",
+                "duration": [
+                  32,
+                  9704189641294348288
+                ],
+                "framerate": 60
+              }
+            }
+          },
+          "progress": {
+            "bytesWritten": 12054623,
+            "fraction": 1,
+            "phase": "Compositing",
+            "speed": 5.56
+          },
+          "status": {
+            "done": {}
+          }
+        },
+        {
+          "artifact": "file:///Users/oxbow/Downloads/Bubbell%20-%202026-07-16%20-%20%5BNEW%20DROPS%5D%20Shantiemaxxing,%20More%20Main%20Quest%20Today%20-%20DAY%206%20-%20!yt%20!ig%20-%20Giving%20Away%20a%20PS5%20Deluxe%20Copy%20+%20Steel%20Book%20!giveaway%20%F0%9F%A7%9A%E2%80%8D%E2%99%80%EF%B8%8F.mp4",
+          "dependsOn": [
+            {
+              "rawValue": "207EDFA1-9A78-57F3-B35E-BB2CD5FEDF42"
+            }
+          ],
+          "id": {
+            "rawValue": "E0597F6C-544F-59E3-A7DE-BA2873AA42FC"
+          },
+          "kind": {
+            "assemble": {
+              "_0": {
+                "destination": "file:///Users/oxbow/Downloads/Bubbell%20-%202026-07-16%20-%20%5BNEW%20DROPS%5D%20Shantiemaxxing,%20More%20Main%20Quest%20Today%20-%20DAY%206%20-%20!yt%20!ig%20-%20Giving%20Away%20a%20PS5%20Deluxe%20Copy%20+%20Steel%20Book%20!giveaway%20%F0%9F%A7%9A%E2%80%8D%E2%99%80%EF%B8%8F.mp4"
+              }
+            }
+          },
+          "progress": {},
+          "status": {
+            "done": {}
+          }
+        }
+      ],
+      "title": "AcidBurn - 2026-08-03 - persona 3 - tartarus grind + social links"
+    },
+    {
+      "created": 810432000.0,
+      "id": {
+        "rawValue": "8C5C43B5-28FA-5F39-AD34-B1FD4641A3C1"
+      },
+      "replacesExistingFile": false,
+      "steps": [
+        {
+          "dependsOn": [],
+          "id": {
+            "rawValue": "54282A3A-AB4A-51E3-81E9-1DE4CC33BB56"
+          },
+          "kind": {
+            "downloadChat": {
+              "_0": {
+                "format": "json",
+                "isEmbeddingImages": false,
+                "trimEnd": [
+                  47,
+                  3003028535651074048
+                ],
+                "trimStart": [
+                  34,
+                  2810701493875245056
+                ],
+                "videoID": "2000000005"
+              }
+            }
+          },
+          "progress": {
+            "fraction": 1,
+            "phase": "Writing Output File"
+          },
+          "status": {
+            "done": {}
+          }
+        },
+        {
+          "dependsOn": [
+            {
+              "rawValue": "54282A3A-AB4A-51E3-81E9-1DE4CC33BB56"
+            }
+          ],
+          "id": {
+            "rawValue": "E5CDC3A6-1CC2-5B86-9927-BA95DE993C00"
+          },
+          "kind": {
+            "renderChat": {
+              "_0": {
+                "alternateBackgroundColor": "#191919",
+                "backgroundColor": "#111111",
+                "bitrateMbps": 12,
+                "font": "Inter Embedded",
+                "fontSize": 11,
+                "framerate": 30,
+                "hasAlternateBackgrounds": false,
+                "hasOutline": false,
+                "hasTimestamps": false,
+                "height": 720,
+                "isSharpened": false,
+                "messageColor": "#ffffff",
+                "outlineSize": 4,
+                "width": 240
+              }
+            }
+          },
+          "progress": {
+            "fraction": 0.62,
+            "index": 2,
+            "phase": "Rendering Video",
+            "remaining": [
+              2,
+              1106511852580896768
+            ],
+            "total": 2
+          },
+          "status": {
+            "running": {}
+          }
+        },
+        {
+          "dependsOn": [],
+          "id": {
+            "rawValue": "42C3A5BA-BAD0-55E6-9FE4-9DA77C8009D0"
+          },
+          "kind": {
+            "downloadVideo": {
+              "_0": {
+                "quality": "720p60",
+                "trimEnd": [
+                  47,
+                  3003028535651074048
+                ],
+                "trimStart": [
+                  34,
+                  2810701493875245056
+                ],
+                "videoID": "2000000005"
+              }
+            }
+          },
+          "progress": {
+            "fraction": 0.35,
+            "index": 2,
+            "phase": "Downloading",
+            "total": 4
+          },
+          "status": {
+            "running": {}
+          }
+        },
+        {
+          "dependsOn": [
+            {
+              "rawValue": "42C3A5BA-BAD0-55E6-9FE4-9DA77C8009D0"
+            },
+            {
+              "rawValue": "E5CDC3A6-1CC2-5B86-9927-BA95DE993C00"
+            }
+          ],
+          "id": {
+            "rawValue": "1569BE29-A631-541E-9981-D1456CDDE084"
+          },
+          "kind": {
+            "composite": {
+              "_0": {
+                "destination": "file:///Users/oxbow/Downloads/KatAbughazaleh%20-%202026-08-19%20-%20STREAM%20%2369-%20Nice.mp4",
+                "duration": [
+                  13,
+                  192327041775828992
+                ],
+                "framerate": 60
+              }
+            }
+          },
+          "progress": {},
+          "status": {
+            "queued": {}
+          }
+        },
+        {
+          "dependsOn": [
+            {
+              "rawValue": "1569BE29-A631-541E-9981-D1456CDDE084"
+            }
+          ],
+          "id": {
+            "rawValue": "4C617D37-EA78-5169-AB2A-71A63E57681D"
+          },
+          "kind": {
+            "assemble": {
+              "_0": {
+                "destination": "file:///Users/oxbow/Downloads/KatAbughazaleh%20-%202026-08-19%20-%20STREAM%20%2369-%20Nice.mp4"
+              }
+            }
+          },
+          "progress": {},
+          "status": {
+            "queued": {}
+          }
+        }
+      ],
+      "title": "AcidBurn - 2026-08-04 - persona 3 - full moon op, wish us luck"
     }
   ],
   "version": 1

@@ -1,5 +1,7 @@
 #if DEBUG
+import AppKit
 import Foundation
+import SwiftUI
 
 /// Redirects the app's on-disk state so a screenshot run reads a checked-in
 /// fixture instead of whatever is in the developer's real queue.
@@ -47,5 +49,74 @@ nonisolated enum ScreenshotFixture {
     else { return nil }
     return URL(filePath: path, directoryHint: .isDirectory)
   }
+
+  /// A substring of the job title whose row should open its step list.
+  ///
+  /// Expansion is `@State` inside `JobRow` and deliberately not persisted —
+  /// which row a person left open is not queue state. That makes it the one
+  /// thing about the screenshot the fixture file cannot express, so it comes
+  /// in beside it rather than being faked by clicking at a coordinate, which
+  /// is exactly the layout knowledge this harness avoids having.
+  static let expandKey = "OXBOW_FIXTURE_EXPAND"
+
+  /// Whether `title` names the row to open. Always false outside a fixture
+  /// run, so the variable cannot affect anyone's real queue even in a DEBUG
+  /// build.
+  static func expandsJob(titled title: String) -> Bool {
+    guard directory != nil else { return false }
+    guard
+      let wanted = ProcessInfo.processInfo.environment[expandKey],
+      !wanted.isEmpty
+    else { return false }
+    return title.contains(wanted)
+  }
+
+  /// The content size the queue window should take, as `WIDTHxHEIGHT` in
+  /// points.
+  ///
+  /// Needed because `.defaultSize(width: 720, height: 480)` on that scene does
+  /// not get the last word. The queue window has no
+  /// `.restorationBehavior(.disabled)`, so AppKit restores its saved frame —
+  /// and that frame lives in `UserDefaults`, which `OXBOW_FIXTURE_DIR` does
+  /// not redirect. A fixture run therefore inherits whatever size the
+  /// developer last left their real window at, and the screenshot is a
+  /// different shape on every machine.
+  ///
+  /// Framing is the one thing a person genuinely should control here — how
+  /// much empty room sits under the last row is a design judgement, not a
+  /// fact about the data — so it is an input rather than something computed.
+  static var windowSize: CGSize? {
+    guard directory != nil else { return nil }
+    guard let raw = ProcessInfo.processInfo.environment["OXBOW_FIXTURE_SIZE"] else { return nil }
+    let parts = raw.lowercased().split(separator: "x")
+    guard
+      parts.count == 2,
+      let width = Double(parts[0]), let height = Double(parts[1]),
+      width > 0, height > 0
+    else { return nil }
+    return CGSize(width: width, height: height)
+  }
+}
+
+/// Resizes the window hosting it to `ScreenshotFixture.windowSize`.
+///
+/// AppKit rather than `.defaultSize`, because it has to beat frame
+/// restoration, which runs after the scene is built. Applied on the next
+/// runloop turn for the same reason `view.window` is nil during `makeNSView`:
+/// the view is not in a window yet.
+struct ScreenshotWindowSizer: NSViewRepresentable {
+  func makeNSView(context: Context) -> NSView {
+    let view = NSView(frame: .zero)
+    DispatchQueue.main.async {
+      guard let window = view.window, let size = ScreenshotFixture.windowSize else { return }
+      window.setContentSize(size)
+      // Centred so a capture never runs off a screen edge, and so the shot is
+      // reproducible on a different display.
+      window.center()
+    }
+    return view
+  }
+
+  func updateNSView(_ nsView: NSView, context: Context) {}
 }
 #endif

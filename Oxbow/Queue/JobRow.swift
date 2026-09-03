@@ -121,6 +121,17 @@ struct JobRow: View {
       }
       bytesRetained = await retainedBytes(job.id)
     }
+    // Which row a screenshot shows opened. `isExpanded` is view state and
+    // stays that way — which row a person left open is not queue state, so it
+    // is not in the store and the fixture file cannot express it. This is the
+    // alternative to clicking at a coordinate, which would put layout
+    // knowledge into `scripts/screenshots.sh` and break on the next restyle.
+    // Inert outside a fixture run; see `ScreenshotFixture.expandsJob`.
+    #if DEBUG
+    .onAppear {
+      if ScreenshotFixture.expandsJob(titled: job.title) { isExpanded = true }
+    }
+    #endif
   }
 
   /// A disclosure control only where there is something to disclose — but the

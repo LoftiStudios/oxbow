@@ -23,7 +23,8 @@ What gets replaced, and why each one:
   artifact        same.
   id.rawValue     random UUIDs, so a regenerated fixture would show a spurious
                   diff on every run. Made deterministic instead.
-  created         real timestamps, and the queue sorts on them.
+  created         real timestamps. Not what orders the list — QueueView
+                  draws controller.jobs in array order — but still real.
 
 Usage:
     ./make-fixture.py                       # from the live app's queue.json
@@ -45,20 +46,12 @@ DEFAULT_SOURCE = Path.home() / "Library/Application Support/studio.lofti.Oxbow/q
 # identity across every artifact the project publishes. Format matches
 # OutputNaming: "{streamer} - {date} - {title}".
 TITLES = [
-    "CrashOverride - 2026-08-12 - a few side quests, then ending the base game (maybe) [day 46]",
-    "AcidBurn - 2026-07-12 - gold saucer pt. 2??? for real [first playthrough]",
-    "LordNikon - 2026-07-05 - yeah we're gaming",
-    "PhantomPhreak - 2026-07-13 - end game pt 1 (bc I know there's several parts) [first playthrough]",
-    "CerealKiller - 2026-08-23 - back and ready to get absolutely demolished + Heaps of Content",
-    "ZeroCool - 2026-08-06 - ok for real finale pt. 1 omg [first playthrough]",
-    "TheGibson - 2026-08-19 - hack the planet (again)",
-    "Razor - 2026-08-02 - tartarus climb, no commentary",
-    "Blade - 2026-07-28 - one more floor. one. more.",
-    "JoeyP - 2026-07-24 - i finally beat it (clip compilation)",
-    "AcidBurn - 2026-07-19 - velvet room lore deep dive",
-    "CrashOverride - 2026-07-02 - blind run, no guides, bad decisions",
-    "LordNikon - 2026-06-27 - fusion calculator? never heard of her",
-    "CerealKiller - 2026-06-21 - full moon boss attempt #7",
+    "CrashOverride - 2026-08-11 - death stranding ep. 3 - BT country, send help",
+    "CrashOverride - 2026-08-12 - death stranding ep. 4 - crossing the tar belt",
+    "AcidBurn - 2026-08-01 - persona 3 - first playthrough, blind, no spoilers",
+    "AcidBurn - 2026-08-02 - persona 3 - exam week and i am not prepared",
+    "AcidBurn - 2026-08-03 - persona 3 - tartarus grind + social links",
+    "AcidBurn - 2026-08-04 - persona 3 - full moon op, wish us luck",
 ]
 
 # Which job is caught mid-flight, and what its steps are doing. An all-done
@@ -128,12 +121,17 @@ def main():
     if not available:
         sys.exit(f"{source} has no jobs to build a fixture from")
 
-    # Cycled rather than truncated: TITLES sets how many rows the screenshot
-    # shows, and the queue window is taller than one real queue happened to
-    # be. Reusing a source job only reuses its *shape* — every identifying
-    # field is replaced below, and the ids are derived from the row index, so
-    # duplicates get distinct ones.
-    jobs = [available[i % len(available)] for i in range(len(TITLES))]
+    # Cycled rather than truncated: TITLES decides how many rows the
+    # screenshot shows. Reusing a source job reuses only its *shape* — every
+    # identifying field is replaced below, and ids derive from the row index,
+    # so duplicated shapes still get distinct ones.
+    #
+    # VOD-shaped sources only: a clip job carries `downloadClip`, which
+    # RUNNING_PLAN has no entry for, so the mid-flight row would silently keep
+    # whatever status the source happened to have.
+    shaped = [j for j in available
+              if any("downloadVideo" in s["kind"] for s in j["steps"])] or available
+    jobs = [shaped[i % len(shaped)] for i in range(len(TITLES))]
 
     # Deterministic ids have to be assigned before dependsOn is rewritten, or
     # the two sides of an edge get different values and every step looks
@@ -179,9 +177,12 @@ def main():
 
         job = remap(job)
         job["title"] = TITLES[index]
-        # Descending, so the list order is stable and independent of whatever
-        # the source queue happened to contain.
-        job["created"] = 810_000_000.0 - index * 86_400.0
+        # The window draws `controller.jobs` in array order with no sort, so
+        # `created` does not decide position — TITLES does. It is set
+        # ascending anyway so the running row at the bottom is also the most
+        # recently added, which is the only reading under which the rows above
+        # it are already finished.
+        job["created"] = 810_000_000.0 + index * 86_400.0
 
         if index == RUNNING_JOB:
             for step in job["steps"]:
@@ -217,6 +218,11 @@ def main():
     leaked = [line for line in OUT.read_text().splitlines() if os.path.expanduser("~") in line]
     if leaked:
         sys.exit(f"refusing to write: {len(leaked)} line(s) still contain your home path")
+
+    # Which row scripts/screenshots.sh should open. Written here rather than
+    # hardcoded there because it has to name the mid-flight job exactly, and
+    # two places holding that independently is two places to forget.
+    (OUT.parent / "expand.txt").write_text(TITLES[RUNNING_JOB] + "\n")
 
     print(f"wrote {OUT.relative_to(Path.cwd()) if OUT.is_relative_to(Path.cwd()) else OUT}")
     print(f"  {len(rebuilt)} jobs, job {RUNNING_JOB} caught mid-flight")

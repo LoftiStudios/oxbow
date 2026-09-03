@@ -43,6 +43,11 @@ struct OxbowApp: App {
         }
       }
       .task { await setUp() }
+      // Screenshot framing only. Has to be AppKit rather than `.defaultSize`
+      // below, which frame restoration overrides — see `ScreenshotFixture`.
+      #if DEBUG
+      .background { ScreenshotWindowSizer() }
+      #endif
       // Its own task, not a step inside `setUp()`: the two are unrelated,
       // and a check that waits for the helper to be found would be a check
       // that never runs on the builds most in need of an update.
