@@ -116,11 +116,13 @@ what changed upstream and why we want it.
 
 ## Pull requests
 
-- **Conventional commits**, matching existing history:
-  `feat(engine):`, `fix(persistence):`, `test(parsing):`. Scopes track the
-  `Sources/OxbowKit` subdirectories — `model`, `parsing`, `scheduling`,
-  `persistence`, `process`, `arguments`, `engine` — plus `build` for the
-  scripts.
+- **Conventional commits** for new work: `feat(engine):`, `fix(persistence):`,
+  `test(parsing):`. Scopes track the `Sources/OxbowKit` subdirectories —
+  `model`, `parsing`, `scheduling`, `persistence`, `process`, `arguments`,
+  `engine`, `logging`, `power`, `update` — plus `build` for the scripts. Most
+  of the existing history predates this and reads as plain sentences; it is
+  not the model to copy. PRs are squash merged, so the PR title is what lands
+  on `main` — put the prefix there.
 - **Tests come with the change.** `OxbowKit` is tested to a standard; new
   behaviour in it should arrive tested.
 - **Keep PRs focused.** One concern per PR. A drive-by refactor in the same diff
