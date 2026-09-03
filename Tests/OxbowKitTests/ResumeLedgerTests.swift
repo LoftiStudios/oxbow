@@ -143,30 +143,36 @@ struct ResumeLedgerTests {
 
   /// **This is the test that pins `maximumPieces`.**
   ///
-  /// Three pieces resume; four start over. Asserting both sides is what makes
-  /// the constant load-bearing — a test that only checked the four-piece case
-  /// would still pass if the cap moved to 5, because four pieces would then
-  /// simply resume and the assertion would never notice which branch ran.
-  /// Spec §10: mutate the constants, not only the call sites.
+  /// The arrangements below use literal counts (3, then 4), not
+  /// `ResumeLedger.maximumPieces`, so the behaviour itself discriminates on
+  /// the cap's value: three pieces must resume and four must start over,
+  /// regardless of what the constant currently says. Writing the counts
+  /// relative to the constant instead would make every assertion restate the
+  /// implementation back to itself — under a cap of 5, "one under the cap
+  /// resumes" and "at the cap it starts over" would both still hold, just
+  /// one piece later, and the test would never notice the cap had moved.
+  /// The trailing `#expect(ResumeLedger.maximumPieces == 4, ...)` is not
+  /// what catches a moved cap; it is a documentation anchor tying these
+  /// literals to the constant, so a deliberate change to the cap has a clear
+  /// pointer to which test to update. Spec §10: mutate the constants, not
+  /// only the call sites.
   @Test func thePieceCapIsFourAndStartingOverClearsTheArea() throws {
     let (belowLedger, belowWorkspace, belowJob) = makeLedger()
     defer { cleanUp(belowWorkspace) }
-    for index in 0..<(ResumeLedger.maximumPieces - 1) {
+    for index in 0..<3 {
       try writePiece(index, frames: 30, job: belowJob, workspace: belowWorkspace)
     }
     let below = belowLedger.resumePoint(job: belowJob, framerate: 30)
-    #expect(
-      below.index == ResumeLedger.maximumPieces - 1,
-      "one under the cap must resume, not start over")
+    #expect(below.index == 3, "three pieces, one under the cap, must resume, not start over")
     #expect(below.from != nil, "one under the cap must have a resume point")
 
     let (atLedger, atWorkspace, atJob) = makeLedger()
     defer { cleanUp(atWorkspace) }
-    for index in 0..<ResumeLedger.maximumPieces {
+    for index in 0..<4 {
       try writePiece(index, frames: 30, job: atJob, workspace: atWorkspace)
     }
     let at = atLedger.resumePoint(job: atJob, framerate: 30)
-    #expect(at.index == 0, "at the cap the next attempt starts from piece-0")
+    #expect(at.index == 0, "four pieces, at the cap, must start over from piece-0")
     #expect(at.from == nil, "at the cap there is no resume point")
     #expect(
       atLedger.pieces(of: atJob).isEmpty,
