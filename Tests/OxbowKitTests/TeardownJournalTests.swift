@@ -6,10 +6,9 @@ import Testing
 
 /// Direct tests for the branches `QueueEngineTests` cannot reach.
 ///
-/// Compaction needs a 256 KB failure log; the create-versus-append split needs
-/// the log to be absent and then present; the seek guard needs a write to be
-/// attempted against a handle whose seek failed. None of those are reachable
-/// by driving an engine, which is why this logic went untested until it had a
+/// Compaction needs a 256 KB failure log, and the create-versus-append split
+/// needs the log to be absent and then present. Neither is reachable by
+/// driving an engine, which is why this logic went untested until it had a
 /// type of its own.
 @Suite("TeardownJournal")
 struct TeardownJournalTests {
@@ -136,22 +135,39 @@ struct TeardownJournalTests {
       "the first surviving line must be whole, not a partial cut; was: \(first)")
   }
 
-  /// A log comfortably under the cap is left exactly as it was — compaction
-  /// fires past `cap + cap/2`, not the instant the cap is crossed, so that a
-  /// low-volume file is not rewritten on every single append.
+  /// Past `cap` but short of the `cap + cap/2` hysteresis threshold,
+  /// compaction must not fire — it only fires once the log is meaningfully
+  /// over, not the instant the cap is crossed, so that a low-volume file is
+  /// not rewritten on every single append. Seeded at `cap + cap/4`, the
+  /// reviewer's suggested midpoint: comfortably past `cap` (so a fixture
+  /// that never approaches the cap couldn't accidentally pass this test
+  /// either way) and comfortably short of `cap + cap/2`, so the assertion
+  /// that the file is still larger than `cap` after `record` actually pins
+  /// the threshold rather than being true regardless of where it sits.
   @Test func aLogUnderTheThresholdIsLeftAlone() throws {
     let workspace = makeWorkspace()
     defer { cleanUp(workspace) }
     let journal = TeardownJournal(workspace: workspace)
 
-    let seeded = String(repeating: "z", count: 1024) + "\n"
+    let cap = StepLog.defaultMaxBytes
+    let line = String(repeating: "z", count: 63) + "\n"
+    let seeded = String(repeating: line, count: (cap + cap / 4) / 64)
     try Data(seeded.utf8).write(to: workspace.teardownFailureLog)
+    let before = try Data(contentsOf: workspace.teardownFailureLog).count
+    #expect(before > cap, "precondition: the seeded log must already exceed cap")
+    #expect(
+      before <= cap + cap / 2,
+      "precondition: the seeded log must stay under the compaction threshold")
 
-    journal.record([URL(filePath: "/tmp/small.mp4")], context: "well under the cap")
+    journal.record([URL(filePath: "/tmp/small.mp4")], context: "well under the threshold")
 
     let text = contents(of: workspace)
     #expect(text.hasPrefix(seeded), "the existing content must be untouched")
     #expect(text.contains("small.mp4"), "the new entry must be appended")
+    let after = try Data(contentsOf: workspace.teardownFailureLog).count
+    #expect(
+      after > cap,
+      "compaction must not have fired: the file should still be larger than cap; was \(after)")
   }
 
   /// `removeStep` names what it could not remove. `UF_IMMUTABLE` is what

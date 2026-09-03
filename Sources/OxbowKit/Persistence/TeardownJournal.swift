@@ -17,7 +17,7 @@ import Foundation
 /// them `async` would introduce suspension points that reorder work inside
 /// those paths.
 struct TeardownJournal: Sendable {
-  let workspace: Workspace
+  private let workspace: Workspace
 
   init(workspace: Workspace) {
     self.workspace = workspace
@@ -27,7 +27,7 @@ struct TeardownJournal: Sendable {
   //
   // `Workspace`'s removal methods no longer discard what they fail to
   // remove — see their doc comments. These three wrappers are the only
-  // callers of those methods anywhere in this file, so every workspace
+  // callers of those methods anywhere in OxbowKit, so every workspace
   // teardown is guaranteed to have somewhere to report a failure, rather
   // than that being a discipline each call site has to remember on its own.
   // That is the fix for the actual incident this exists to prevent: an
@@ -66,10 +66,11 @@ struct TeardownJournal: Sendable {
   /// went wrong is where this shows up.
   ///
   /// Fire-and-forget: `StepLog.append` is `async`, actor-isolated to
-  /// `StepLog` itself rather than to `QueueEngine`, and every call site here
-  /// (`completeStep`, `abandonAlreadyFinalizedStep`) is a synchronous
-  /// teardown path that must not become `async` just to report a failure
-  /// that changes no queue state. Nothing here races anything that matters:
+  /// `StepLog` itself rather than to `QueueEngine`, and the engine's
+  /// teardown paths that reach this (`completeStep`,
+  /// `abandonAlreadyFinalizedStep`) are synchronous and must not become
+  /// `async` just to report a failure that changes no queue state. Nothing
+  /// here races anything that matters:
   /// `removeStep` never touches this file, and the one interleaving that
   /// could happen — a job-level teardown deleting `logs/` before this write
   /// lands — just recreates a single-entry `logs/` for a job that is
@@ -95,11 +96,12 @@ struct TeardownJournal: Sendable {
   /// (`removeAll()`, scoped to `jobsRoot`) can ever reach it, so it
   /// outlives every failure it records and accumulates across launches.
   ///
-  /// `nonisolated`: reached from `resumePoint` and `makeContext`, both
-  /// nonisolated because they touch nothing but `configuration`. This does
-  /// the same — plain synchronous file I/O against an immutable path — so
-  /// it can be too, and actor-isolated callers reach it exactly like any
-  /// other nonisolated method, no `await` required.
+  /// Plain synchronous method, deliberately: `TeardownJournal` is a
+  /// `Sendable` struct over an immutable `Workspace`, with no isolation
+  /// domain of its own, and this does nothing but synchronous file I/O
+  /// against an immutable path. That is what lets actor-isolated callers —
+  /// the engine's teardown paths among them — call it directly, no `await`
+  /// required.
   func record(_ failed: [URL], context: String) {
     guard !failed.isEmpty else { return }
 
@@ -151,10 +153,10 @@ struct TeardownJournal: Sendable {
   /// a policy, just an oversight.
   ///
   /// Unlike `StepLog`, there is no persistent actor here to track a running
-  /// byte count between writes — this is a plain nonisolated function called
-  /// once per failure — so this checks the file's actual size instead. A
-  /// failed teardown is rare enough that re-reading a capped-size file on
-  /// each one costs nothing that matters.
+  /// byte count between writes — this is a plain method on a stateless
+  /// struct, called once per failure — so this checks the file's actual
+  /// size instead. A failed teardown is rare enough that re-reading a
+  /// capped-size file on each one costs nothing that matters.
   private func compactTeardownFailureLogIfNeeded() {
     let log = workspace.teardownFailureLog
     let cap = StepLog.defaultMaxBytes

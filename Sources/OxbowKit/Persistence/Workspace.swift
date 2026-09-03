@@ -125,7 +125,7 @@ public struct Workspace: Sendable {
   }
 
   /// Where a job- or resumable-level teardown failure gets recorded once
-  /// `QueueEngine` sees one — see its use of this.
+  /// `TeardownJournal` sees one — see its use of this.
   ///
   /// A sibling of `jobsRoot` and `resumeRoot`, deliberately never inside
   /// either. `removeJob` deletes a job's own `logs/` directory as part of
