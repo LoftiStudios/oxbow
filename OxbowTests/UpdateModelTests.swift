@@ -25,9 +25,11 @@ struct UpdateModelTests {
 
   private struct Offline: Error {}
 
-  private func defaults() throws -> UserDefaults {
-    let suite = try #require(UserDefaults(suiteName: "UpdateModelTests-\(UUID().uuidString)"))
-    return suite
+  /// In memory, never `UserDefaults(suiteName:)`. A named suite makes
+  /// cfprefsd write a real file into `~/Library/Preferences` that nothing
+  /// removes — this suite alone had left over 1,700 of them behind.
+  private func defaults() -> InMemoryPreferenceStore {
+    InMemoryPreferenceStore()
   }
 
   private func available(_ version: String) throws -> UpdateCheck.Outcome {
@@ -37,20 +39,20 @@ struct UpdateModelTests {
   }
 
   private func model(
-    defaults: UserDefaults,
+    defaults: InMemoryPreferenceStore,
     stub: Stub,
     now: Date? = nil)
     -> UpdateModel
   {
     let clock = now ?? self.now
-    return UpdateModel(defaults: defaults, now: { clock }, performCheck: { try await stub.run() })
+    return UpdateModel(store: defaults, now: { clock }, performCheck: { try await stub.run() })
   }
 
   // MARK: - The automatic check
 
   @Test func automaticCheckSurfacesANewerRelease() async throws {
     let stub = Stub(.success(try available("0.3.0")))
-    let model = model(defaults: try defaults(), stub: stub)
+    let model = model(defaults: defaults(), stub: stub)
 
     await model.checkAutomatically()
 
@@ -60,7 +62,7 @@ struct UpdateModelTests {
   }
 
   @Test func automaticCheckDoesNotRunAgainWithinTheInterval() async throws {
-    let defaults = try defaults()
+    let defaults = defaults()
     let stub = Stub(.success(.upToDate))
 
     await model(defaults: defaults, stub: stub).checkAutomatically()
@@ -74,7 +76,7 @@ struct UpdateModelTests {
   /// wi-fi off must not paint anything.
   @Test func automaticCheckStaysSilentWhenItFails() async throws {
     let stub = Stub(.failure(Offline()))
-    let model = model(defaults: try defaults(), stub: stub)
+    let model = model(defaults: defaults(), stub: stub)
 
     await model.checkAutomatically()
 
@@ -85,7 +87,7 @@ struct UpdateModelTests {
   /// A failed check must not consume the day's slot, or one launch in a cafe
   /// with a captive portal costs the user 24 hours of not being told.
   @Test func aFailedCheckDoesNotStartTheInterval() async throws {
-    let defaults = try defaults()
+    let defaults = defaults()
 
     await model(defaults: defaults, stub: Stub(.failure(Offline()))).checkAutomatically()
 
@@ -100,7 +102,7 @@ struct UpdateModelTests {
 
   /// Pressing it is an explicit request, so the throttle does not apply.
   @Test func manualCheckRunsEvenInsideTheInterval() async throws {
-    let defaults = try defaults()
+    let defaults = defaults()
     let stub = Stub(.success(.upToDate))
 
     await model(defaults: defaults, stub: stub).checkAutomatically()
@@ -111,13 +113,13 @@ struct UpdateModelTests {
 
   /// The only proof a user has that the feature works at all.
   @Test func manualCheckSaysSoWhenAlreadyCurrent() async throws {
-    let model = model(defaults: try defaults(), stub: Stub(.success(.upToDate)))
+    let model = model(defaults: defaults(), stub: Stub(.success(.upToDate)))
     await model.checkManually()
     #expect(model.state == .upToDate)
   }
 
   @Test func manualCheckReportsItsFailure() async throws {
-    let model = model(defaults: try defaults(), stub: Stub(.failure(Offline())))
+    let model = model(defaults: defaults(), stub: Stub(.failure(Offline())))
     await model.checkManually()
 
     guard case .failed = model.state else {
@@ -129,7 +131,7 @@ struct UpdateModelTests {
   // MARK: - Dismissal
 
   @Test func dismissingHidesTheBannerImmediately() async throws {
-    let model = model(defaults: try defaults(), stub: Stub(.success(try available("0.3.0"))))
+    let model = model(defaults: defaults(), stub: Stub(.success(try available("0.3.0"))))
     await model.checkAutomatically()
 
     model.dismiss()
@@ -138,7 +140,7 @@ struct UpdateModelTests {
   }
 
   @Test func aDismissedVersionStaysHiddenOnTheNextLaunch() async throws {
-    let defaults = try defaults()
+    let defaults = defaults()
     let first = model(defaults: defaults, stub: Stub(.success(try available("0.3.0"))))
     await first.checkAutomatically()
     first.dismiss()
@@ -156,7 +158,7 @@ struct UpdateModelTests {
   /// explicit question, and answering "up to date" while a newer release sits
   /// on the releases page would be a lie the user has no way to see through.
   @Test func manualCheckIgnoresAPreviousDismissal() async throws {
-    let defaults = try defaults()
+    let defaults = defaults()
     let first = model(defaults: defaults, stub: Stub(.success(try available("0.3.0"))))
     await first.checkAutomatically()
     first.dismiss()
@@ -170,7 +172,7 @@ struct UpdateModelTests {
   }
 
   @Test func aDismissalDoesNotSuppressALaterVersion() async throws {
-    let defaults = try defaults()
+    let defaults = defaults()
     let first = model(defaults: defaults, stub: Stub(.success(try available("0.3.0"))))
     await first.checkAutomatically()
     first.dismiss()
