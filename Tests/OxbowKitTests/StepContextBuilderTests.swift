@@ -172,6 +172,12 @@ struct StepContextBuilderTests {
 
   /// A resume point comfortably inside the render needs no clamp — the chat
   /// seeks with the video, which is what `nil` means to `ArgumentBuilder`.
+  ///
+  /// The leading `resumeFrom != nil` assertion is a positive control: `make`'s
+  /// guard chain short-circuits on `resume.from == nil` before it ever reaches
+  /// the `from > landing` comparison this test is meant to exercise, so
+  /// without that control a broken harness producing no resume point at all
+  /// would pass this test vacuously, for the wrong reason.
   @Test func aResumePointInsideTheRenderNeedsNoChatSeek() throws {
     let h = makeHarness()
     defer { cleanUp(h.workspace) }
@@ -181,6 +187,9 @@ struct StepContextBuilderTests {
       pieceFrames: 150, compositeFramerate: 30)
 
     let context = try h.builder.make(job: job, step: step)
+    #expect(
+      context.resumeFrom != nil,
+      "precondition: the harness must produce a resume point, or the nil below proves nothing")
     #expect(context.chatResumeFrom == nil, "no clamp is needed, so the chat seeks with the video")
   }
 
