@@ -33,7 +33,7 @@ public struct StepContext: Sendable {
   /// So this is `resumeFrom` clamped to one frame inside the render's own
   /// end, which lands the seek on its last frame and lets `hstack` repeat it
   /// exactly as a first attempt does. Deciding that needs the render's
-  /// duration, which is I/O, so `QueueEngine.makeContext` computes it and
+  /// duration, which is I/O, so `StepContextBuilder.make` computes it and
   /// hands it in — the same division of labour as `hasUsableSidecar`. See
   /// docs/design/resume.md §12.
   public var chatResumeFrom: Duration?
@@ -45,7 +45,7 @@ public struct StepContext: Sendable {
   /// case, because both need the same fix: `ArgumentBuilder` rewrites the
   /// sidecar whenever this is `false`, not only on `resumeFrom == nil`. The
   /// decision of which one applies is I/O (`FragmentedMP4.hasCompleteMoov`),
-  /// so it is made by `QueueEngine` and handed in here — this type, and the
+  /// so it is made by `StepContextBuilder` and handed in here — this type, and the
   /// pure `ArgumentBuilder` that reads it, do none. See
   /// docs/design/resume.md §4.
   public var hasUsableSidecar: Bool

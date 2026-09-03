@@ -173,6 +173,12 @@ struct StepContextBuilderTests {
   /// A resume point comfortably inside the render needs no clamp — the chat
   /// seeks with the video, which is what `nil` means to `ArgumentBuilder`.
   ///
+  /// This is a differential test: the second half reuses every fixture
+  /// parameter except `pieceFrames`, moving only the resume point out past
+  /// the landing. That is what makes the first `nil` attributable to
+  /// `from > landing` specifically — an unreadable render header or a missing
+  /// resume point would take both cases to `nil` together, not just this one.
+  ///
   /// The leading `resumeFrom != nil` assertion is a positive control: `make`'s
   /// guard chain short-circuits on `resume.from == nil` before it ever reaches
   /// the `from > landing` comparison this test is meant to exercise, so
@@ -191,6 +197,21 @@ struct StepContextBuilderTests {
       context.resumeFrom != nil,
       "precondition: the harness must produce a resume point, or the nil below proves nothing")
     #expect(context.chatResumeFrom == nil, "no clamp is needed, so the chat seeks with the video")
+
+    // The same arrangement with a resume point past the landing must produce a
+    // seek. Sharing every parameter but `pieceFrames` is what makes the nil
+    // above attributable to `from > landing` rather than to any earlier leg of
+    // the guard — an unreadable render header or a missing resume point would
+    // take both cases to nil together.
+    let past = makeHarness()
+    defer { cleanUp(past.workspace) }
+    let (pastJob, pastStep) = try makeComposite(
+      past, renderSeconds: 10, renderFramerate: 16,
+      pieceFrames: 600, compositeFramerate: 30)
+    let pastContext = try past.builder.make(job: pastJob, step: pastStep)
+    #expect(
+      pastContext.chatResumeFrom == .seconds(9.875),
+      "the identical fixture with a later resume point does clamp, so the nil above is the guard")
   }
 
   /// A render shorter than the margin would clamp to a negative timestamp.
@@ -204,7 +225,7 @@ struct StepContextBuilderTests {
       pieceFrames: 600, compositeFramerate: 30)
 
     let context = try h.builder.make(job: job, step: step)
-    #expect(context.chatResumeFrom != nil, "a 1s render still clamps to 0.5s")
+    #expect(context.chatResumeFrom == .seconds(0.5), "a 1s render still clamps to 0.5s")
 
     // And with a margin larger than the render itself, there is nowhere to land.
     let tiny = makeHarness()

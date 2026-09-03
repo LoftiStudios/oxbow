@@ -977,10 +977,10 @@ public actor QueueEngine {
 
   /// Builds a step's `StepContext` — see `StepContextBuilder.make(job:step:)`.
   ///
-  /// Kept on the engine, and `nonisolated`, because `launch` needs it without
-  /// an `await` and twelve tests across `QueueEngineTests` and
-  /// `ResumeEndToEndTests` already treat it as the seam for building a
-  /// context without running a job.
+  /// `nonisolated` so the twelve test call sites in `QueueEngineTests` and
+  /// `ResumeEndToEndTests` can build a context without hopping onto the
+  /// actor. `launch` needs it *synchronous*, which is `make`'s own property,
+  /// not a consequence of this.
   nonisolated func makeContext(job: Job, step: Step) throws -> StepContext {
     try contexts.make(job: job, step: step)
   }

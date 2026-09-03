@@ -149,7 +149,7 @@ grids to match — nothing depends on them matching.
 
 ### Verified end to end
 
-Task 11, 2026-08-27. Headless — `QueueEngine.makeContext` and `ArgumentBuilder`
+Task 11, 2026-08-27. Headless — `StepContextBuilder.make` and `ArgumentBuilder`
 driven directly against `build/helper/TwitchDownloaderCLI` and
 `build/ffmpeg/ffmpeg`, against a real 120s slice of the same VOD, with a
 genuine `SIGKILL` (not `HelperProcess.cancel()`'s `SIGTERM`) fired at 60% of
@@ -253,7 +253,7 @@ is deliberately outside the job workspace and why.
 
 ## 4. The composite writes pieces
 
-`QueueEngine.makeContext` points the composite's output at
+`StepContextBuilder.make` points the composite's output at
 `resume/<jobid>/piece-N.mp4` rather than `artifacts/`.
 
 **`audio.m4a` is written whenever no usable one exists yet — not only on a
@@ -550,7 +550,7 @@ this did that, and the end-to-end test failed identically before and after it,
 which is what makes it worth writing down: a clamp that looks applied, prints
 a plausible number in the argv, and does nothing.
 
-`QueueEngine.makeContext` therefore reads the framerate from the *render step's
+`StepContextBuilder.make` therefore reads the framerate from the *render step's
 own request* and uses two of its frames — one frame of tolerance either way.
 The cost is that the seam replays two chat frames (67ms at 30fps) rather than
 freezing on the last one. The cost of being one frame too late is the whole

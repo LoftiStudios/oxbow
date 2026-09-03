@@ -39,7 +39,7 @@ public actor StepLog {
     // exception on a genuine write failure rather than returning a Swift
     // error — the job-level teardown-failure log had the same hazard and was
     // switched to the throwing `write(contentsOf:)` for it. It matters more
-    // here: `QueueEngine.recordStepTeardownFailure` calls into this from an
+    // here: `TeardownJournal.recordStepTeardownFailure` calls into this from an
     // unstructured `Task`, on a path whose likeliest cause is a full disk, so
     // an uncatchable exception there would crash the app while it was trying
     // to report a cleanup failure. `try?` swallows it the same way the

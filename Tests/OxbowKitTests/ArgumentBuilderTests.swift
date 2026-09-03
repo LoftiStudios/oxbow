@@ -626,7 +626,7 @@ struct ArgumentBuilderTests {
   /// frames, exit 0. The same run with the chat's seek clamped to one frame
   /// inside its end → 903 frames, a full piece.
   ///
-  /// So the two seeks are separate values. `QueueEngine.makeContext` does the
+  /// So the two seeks are separate values. `StepContextBuilder.make` does the
   /// clamping, because knowing the render's duration is I/O and this type is
   /// pure.
   @Test func aResumeBeyondTheChatRenderClampsOnlyTheChatSeek() {
