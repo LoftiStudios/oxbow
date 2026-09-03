@@ -48,7 +48,9 @@ struct OxbowApp: App {
       #if DEBUG
       .background {
         ScreenshotWindowSizer()
-        ScreenshotIntakeOpener(windowID: Self.intakeWindowID)
+        ScreenshotIntakeOpener(
+          windowID: Self.intakeWindowID,
+          infoWindowID: Self.infoWindowID)
       }
       #endif
       // Its own task, not a step inside `setUp()`: the two are unrelated,

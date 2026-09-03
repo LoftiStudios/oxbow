@@ -161,6 +161,14 @@ extension ScreenshotFixture {
     directory != nil && ProcessInfo.processInfo.environment["OXBOW_FIXTURE_TRIM"] == "1"
   }
 
+  /// The job whose Job Info window should also be opened, if any.
+  static var infoJobID: UUID? {
+    guard directory != nil else { return nil }
+    guard let raw = ProcessInfo.processInfo.environment["OXBOW_FIXTURE_INFO_JOB"], !raw.isEmpty
+    else { return nil }
+    return UUID(uuidString: raw)
+  }
+
   /// Where the script is serving `fixture/thumbnail.jpg`, e.g.
   /// `http://127.0.0.1:8731`.
   static var thumbnailBase: URL? {
@@ -193,11 +201,17 @@ extension ScreenshotFixture {
 struct ScreenshotIntakeOpener: View {
   @Environment(\.openWindow) private var openWindow
   let windowID: String
+  /// Job Info is a `WindowGroup(for: JobID.self)`, so it needs a value rather
+  /// than only a scene id — and one naming a job the fixture actually holds.
+  let infoWindowID: String
 
   var body: some View {
     Color.clear
       .frame(width: 0, height: 0)
       .onAppear {
+        if let job = ScreenshotFixture.infoJobID {
+          openWindow(id: infoWindowID, value: JobID(rawValue: job))
+        }
         guard ScreenshotFixture.link != nil else { return }
         openWindow(id: windowID)
         // Launched from a shell, the app never becomes frontmost, so every

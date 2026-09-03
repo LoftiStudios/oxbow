@@ -245,6 +245,11 @@ def main():
     # two places holding that independently is two places to forget.
     (OUT.parent / "expand.txt").write_text(TITLES[RUNNING_JOB] + "\n")
     (OUT.parent / "videoinfo.json").write_text(json.dumps(INTAKE, indent=2) + "\n")
+    # The mid-flight job's own id. Job Info is a `WindowGroup(for: JobID.self)`,
+    # so opening it needs an id rather than just a window name -- and it has to
+    # be one the fixture contains. The job's id is the first `rawValue` the
+    # walk above assigns, hence ordinal 0.
+    (OUT.parent / "infojob.txt").write_text(stable_uuid(RUNNING_JOB, 0) + "\n")
     (OUT.parent / "link.txt").write_text(INTAKE_LINK + "\n")
 
     print(f"wrote {OUT.relative_to(Path.cwd()) if OUT.is_relative_to(Path.cwd()) else OUT}")

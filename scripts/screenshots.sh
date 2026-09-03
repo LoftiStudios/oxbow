@@ -30,6 +30,8 @@
 #   ./scripts/screenshots.sh --no-build  reuse the existing Debug build
 #   ./scripts/screenshots.sh --keep      leave the app running to poke at
 #   ./scripts/screenshots.sh --size 900x560   window content size, in points
+#   ./scripts/screenshots.sh --no-shadow      transparent window edges, for a
+#                                        design tool that adds its own shadow
 #                                        (default 900x492 — what docs/ holds)
 #
 set -euo pipefail
@@ -44,11 +46,19 @@ KEEP=0
 # screenshot would be a different shape on every machine. How much room sits
 # under the last row is a design call, so it is an input.
 SIZE="900x492"
+# Whether macOS draws its own window shadow into the capture's alpha.
+#
+# Keep it for compositing here: it is the real shadow, and the front window's
+# falls on the one behind it for free. Drop it when the captures are going into
+# a design tool, which wants clean transparent window edges and its own shadow
+# layer -- a baked-in shadow cannot be moved, recoloured, or removed there.
+SHADOW=1
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --no-build) BUILD=0; shift ;;
     --keep)     KEEP=1; shift ;;
     --size)     SIZE="${2:?--size needs WIDTHxHEIGHT, e.g. 900x520}"; shift 2 ;;
+    --no-shadow) SHADOW=0; shift ;;
     -h|--help)  sed -n '2,32p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *)          echo "unknown option: $1" >&2; exit 2 ;;
   esac
@@ -96,6 +106,8 @@ EXPAND=""
 [[ -f "$FIXTURE/expand.txt" ]] && EXPAND="$(cat "$FIXTURE/expand.txt")"
 LINK=""
 [[ -f "$FIXTURE/link.txt" ]] && LINK="$(cat "$FIXTURE/link.txt")"
+INFO_JOB=""
+[[ -f "$FIXTURE/infojob.txt" ]] && INFO_JOB="$(cat "$FIXTURE/infojob.txt")"
 
 cp -f "$FIXTURE/videoinfo.json" "$STATE/" 2>/dev/null || true
 
@@ -121,6 +133,7 @@ OXBOW_FIXTURE_SIZE="$SIZE" \
 OXBOW_FIXTURE_LINK="$LINK" \
 OXBOW_FIXTURE_TRIM=1 \
 OXBOW_FIXTURE_THUMBS="http://127.0.0.1:$PORT" \
+OXBOW_FIXTURE_INFO_JOB="$INFO_JOB" \
   "$APP/Contents/MacOS/Oxbow" \
   -hasSavedDefaults NO \
   -intakeOptionsExpanded YES \
@@ -151,9 +164,16 @@ capture() {
   }
   # One more beat: the window exists but its content may still be arriving.
   sleep 1.5
-  # -o drops the drop-shadow, leaving transparent rounded corners that read
-  # correctly on both a light and a dark README background.
-  screencapture -x -o -l"$id" "$out"
+  # The shadow is kept -- no `-o`. These are composited onto a desktop
+  # background, and macOS drawing its own window shadow into the alpha beats
+  # any approximation of one: the capture grows by 224px on each axis and
+  # carries the real falloff. It also means the front window's shadow lands on
+  # the one behind it for free, because it is part of that window's own PNG.
+  if [[ $SHADOW -eq 1 ]]; then
+    screencapture -x -l"$id" "$out"
+  else
+    screencapture -x -o -l"$id" "$out"
+  fi
   echo "  $out  (window $id)"
 }
 
@@ -162,13 +182,20 @@ capture() {
 # that composite every time somebody regenerated a part of it.
 OUT="$ROOT/docs/screenshots"
 mkdir -p "$OUT"
+# Let the titles settle before matching any of them. A WindowGroup(for:) window
+# carries the application name until its content sets a title, so capturing too
+# early can match Job Info as "Oxbow".
+sleep 2
 echo "capturing…"
 capture "Oxbow" "$OUT/queue.png"
 capture "Add Download" "$OUT/intake.png"
+# Job Info's window title is the job's own title, so match the fixture's
+# mid-flight row rather than a fixed string.
+capture "${EXPAND:0:24}" "$OUT/info.png"
 
 # Guard against the silent failure mode: without Screen Recording permission
 # screencapture writes a file, it is just empty or black.
-for f in "$OUT/queue.png" "$OUT/intake.png"; do
+for f in "$OUT/queue.png" "$OUT/intake.png" "$OUT/info.png"; do
   bytes=$(stat -f%z "$f" 2>/dev/null || echo 0)
   if [[ "$bytes" -lt 20000 ]]; then
     echo >&2

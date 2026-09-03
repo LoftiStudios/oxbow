@@ -83,6 +83,16 @@ guard !candidates.isEmpty else {
 }
 
 if let wantedTitle, !wantedTitle.isEmpty {
+  // Exact before substring, and it is load-bearing. A `WindowGroup(for:)`
+  // window is briefly titled with the application name before its content
+  // applies its own title, so while Job Info is settling there are two windows
+  // whose title contains "Oxbow" -- and a substring match would happily return
+  // the wrong one. Which it did: the queue capture came back 460x620, Job
+  // Info's default size, looking like a perfectly ordinary screenshot.
+  if let exact = candidates.first(where: { $0.title == wantedTitle }) {
+    print(exact.id)
+    exit(0)
+  }
   if let match = candidates.first(where: { $0.title.contains(wantedTitle) }) {
     print(match.id)
     exit(0)
