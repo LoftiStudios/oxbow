@@ -30,9 +30,10 @@
 #   ./scripts/screenshots.sh --no-build  reuse the existing Debug build
 #   ./scripts/screenshots.sh --keep      leave the app running to poke at
 #   ./scripts/screenshots.sh --size 900x560   window content size, in points
+#                                        (default 900x492 — what docs/ holds)
 #   ./scripts/screenshots.sh --no-shadow      transparent window edges, for a
 #                                        design tool that adds its own shadow
-#                                        (default 900x492 — what docs/ holds)
+#   ./scripts/screenshots.sh --no-trim        intake with Trim collapsed
 #
 set -euo pipefail
 
@@ -53,12 +54,17 @@ SIZE="900x492"
 # a design tool, which wants clean transparent window edges and its own shadow
 # layer -- a baked-in shadow cannot be moved, recoloured, or removed there.
 SHADOW=1
+# Whether the intake opens with its Trim section down. Both sections open is a
+# 1002pt-tall sheet; closing Trim takes 100pt off it, which matters a lot when
+# the composite is a wide frame.
+TRIM=1
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --no-build) BUILD=0; shift ;;
     --keep)     KEEP=1; shift ;;
     --size)     SIZE="${2:?--size needs WIDTHxHEIGHT, e.g. 900x520}"; shift 2 ;;
     --no-shadow) SHADOW=0; shift ;;
+    --no-trim)   TRIM=0; shift ;;
     -h|--help)  sed -n '2,32p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *)          echo "unknown option: $1" >&2; exit 2 ;;
   esac
@@ -131,7 +137,7 @@ OXBOW_FIXTURE_DIR="$STATE" \
 OXBOW_FIXTURE_EXPAND="$EXPAND" \
 OXBOW_FIXTURE_SIZE="$SIZE" \
 OXBOW_FIXTURE_LINK="$LINK" \
-OXBOW_FIXTURE_TRIM=1 \
+OXBOW_FIXTURE_TRIM="$TRIM" \
 OXBOW_FIXTURE_THUMBS="http://127.0.0.1:$PORT" \
 OXBOW_FIXTURE_INFO_JOB="$INFO_JOB" \
   "$APP/Contents/MacOS/Oxbow" \
