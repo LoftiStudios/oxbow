@@ -22,7 +22,7 @@
 favorite streams end up on your Mac, ready for the flight, the commute, or
 anywhere the wifi gives up.*
 
-<img src="docs/screenshot.jpg" alt="Oxbow downloading a VOD with its chat, showing the queue and a job's detail window" width="100%">
+<img src="docs/screenshot.png" alt="Oxbow's queue, with a multi-step job mid-flight showing per-step progress" width="100%">
 
 ## What it does
 

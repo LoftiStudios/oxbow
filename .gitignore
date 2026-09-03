@@ -97,3 +97,9 @@ scripts/dmg/VolumeIcon.icns
 # publishes a signature image. Only the .md template is tracked under docs/legal.
 docs/legal/*.pdf
 docs/legal/*.docx
+
+# Coverage instrumentation drops these next to the working directory whenever
+# an instrumented binary runs — including the Debug app that
+# scripts/screenshots.sh launches, so they now appear routinely.
+*.profraw
+*.profdata

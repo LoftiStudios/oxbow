@@ -55,8 +55,16 @@ final class QueueController {
       }
     }
 
+    // A screenshot run loads the fixture and looks at it; it must not try to
+    // download the invented video ids in it. See `ScreenshotFixture`.
+    #if DEBUG
+    let runsWork = ScreenshotFixture.directory == nil
+    #else
+    let runsWork = true
+    #endif
+
     do {
-      try await engine.start()
+      try await engine.start(runsWork: runsWork)
     } catch {
       startFailure = "The saved queue could not be loaded: \(error.localizedDescription)"
     }

@@ -52,6 +52,52 @@ struct QueueEngineTests {
     try? FileManager.default.removeItem(at: storeURL(for: root))
   }
 
+
+  /// `start(runsWork: false)` publishes the store exactly as written.
+  ///
+  /// This is what `scripts/screenshots.sh` relies on: it launches the real app
+  /// against a fabricated queue so a published screenshot need not contain a
+  /// real streamer's name, and both halves of a normal start would ruin that.
+  /// `tick()` would try to download the invented video ids and settle every
+  /// step as failed, and `Reconciler` would first demote the `running` step —
+  /// correctly, since a running step on disk means the app died mid-step.
+  /// Between them a fixture could only ever depict a finished queue, which
+  /// shows none of the per-step progress the interface exists to present.
+  ///
+  /// So the property under test is that a `running` step survives the load,
+  /// which is precisely what a normal start is supposed to prevent.
+  @Test func loadingWithoutRunningWorkPublishesTheStoreVerbatim() async throws {
+    let root = makeRoot()
+    defer { cleanUp(root) }
+
+    let step = Step(
+      id: StepID(rawValue: UUID()),
+      kind: .downloadVideo(VideoRequest(
+        videoID: "invented", quality: "",
+        destination: root.appending(path: "out.mp4"))),
+      status: .running,
+      progress: StepProgress(phase: "Downloading", fraction: 0.35),
+      dependsOn: [])
+    let job = Job(
+      id: JobID(rawValue: UUID()),
+      created: Date(timeIntervalSinceReferenceDate: 810_000_000),
+      title: "CrashOverride - a fabricated row",
+      steps: [step])
+    try QueueStore(fileURL: storeURL(for: root)).save([job])
+
+    let engine = QueueEngine(configuration: makeConfiguration(
+      root: root,
+      makeProcess: { FakeHelper(.failsWithoutArtifact(stderr: "must never run")) }))
+
+    try await engine.start(runsWork: false)
+
+    let loaded = try #require(await engine.currentJobs.first)
+    #expect(loaded.title == "CrashOverride - a fabricated row")
+    let only = try #require(loaded.steps.first)
+    #expect(only.status == .running, "a normal start would have demoted this")
+    #expect(only.progress.fraction == 0.35)
+  }
+
   /// The render step's destination is deliberately outside `root`, mirroring
   /// real usage — the user's chosen destination is never inside the app's own
   /// workspace, and must survive `Workspace.removeAll()`'s sweep. Because it

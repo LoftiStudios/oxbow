@@ -75,7 +75,20 @@ nonisolated enum AppComposition {
   }
 
   /// `~/Library/Application Support/studio.lofti.Oxbow`, created if absent.
+  ///
+  /// In a DEBUG build `OXBOW_FIXTURE_DIR` overrides it, which is what lets
+  /// `scripts/screenshots.sh` launch the real app against a checked-in queue
+  /// instead of the developer's own. See `ScreenshotFixture`. This is the one
+  /// place the app decides where its state lives, so the redirect needs no
+  /// cooperation from any view.
   static func defaultSupportDirectory() throws -> URL {
+    #if DEBUG
+    if let fixture = ScreenshotFixture.directory {
+      try FileManager.default.createDirectory(at: fixture, withIntermediateDirectories: true)
+      return fixture
+    }
+    #endif
+
     let base = try FileManager.default.url(
       for: .applicationSupportDirectory,
       in: .userDomainMask,
