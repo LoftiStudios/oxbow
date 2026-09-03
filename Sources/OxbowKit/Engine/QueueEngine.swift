@@ -131,10 +131,36 @@ public actor QueueEngine {
   ///
   /// The sweep is unconditional: nothing on disk can ever be resumed, so there
   /// is no case to reason about and no way for a power loss to leak disk.
-  public func start() async throws {
+  ///
+  /// - Parameter runsWork: when `false`, the store is loaded and published
+  ///   exactly as written and nothing else happens — no reconciliation, no
+  ///   orphan sweep, no `tick()`. The queue becomes something to look at
+  ///   rather than something being worked.
+  ///
+  ///   This exists for `scripts/screenshots.sh`, which launches the real app
+  ///   against a fabricated queue so the published screenshot need not contain
+  ///   a real streamer's name. Both of the things `start` normally does are
+  ///   wrong for that: `tick()` would genuinely try to download the invented
+  ///   video ids and settle every step as failed, and `Reconciler` would first
+  ///   demote any `running` step on the correct assumption that the app died
+  ///   mid-step. Between them a fixture could only ever depict a finished
+  ///   queue, which is the one state that shows none of the per-step progress
+  ///   the interface exists to present.
+  ///
+  ///   Defaulted, so the only caller that passes it is the one that means it.
+  public func start(runsWork: Bool = true) async throws {
     configuration.workspace.removeAll()
 
     let loaded = try configuration.store.load()
+
+    guard runsWork else {
+      jobs = loaded
+      // Explicitly, because nothing else will: `jobs` has no `didSet`, and
+      // every other path reaches observers by way of `tick()`.
+      publish()
+      return
+    }
+
     jobs = Reconciler.reconcile(loaded) { Self.isUsableArtifact($0) }
 
     removeOrphanedResumeDirectories()

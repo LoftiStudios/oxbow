@@ -55,8 +55,16 @@ final class QueueController {
       }
     }
 
+    // A screenshot run loads the fixture and looks at it; it must not try to
+    // download the invented video ids in it. See `ScreenshotFixture`.
+    #if DEBUG
+    let runsWork = ScreenshotFixture.directory == nil
+    #else
+    let runsWork = true
+    #endif
+
     do {
-      try await engine.start()
+      try await engine.start(runsWork: runsWork)
     } catch {
       startFailure = "The saved queue could not be loaded: \(error.localizedDescription)"
     }
@@ -72,7 +80,13 @@ final class QueueController {
   /// (design doc §3). Intake calls it once per pasted link, before any job
   /// exists, to derive a filename and offer a quality picker.
   func fetchInfo(for id: String) async throws -> VideoInfo {
-    try await VideoInfoFetcher.fetch(id: id, helper: helperExecutable, process: makeProcess())
+    // A screenshot run has no real video behind its link, and the helper is
+    // not necessarily even embedded in the Debug build the harness uses.
+    #if DEBUG
+    if let canned = ScreenshotFixture.videoInfo { return canned }
+    #endif
+    return try await VideoInfoFetcher.fetch(
+      id: id, helper: helperExecutable, process: makeProcess())
   }
 
   /// Enqueues an already-composed template. Intake now builds the whole

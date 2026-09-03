@@ -35,6 +35,10 @@ run = "swift test"
 description = "Regenerate the DMG background artwork and its multi-resolution TIFF"
 run = "swift scripts/dmg/make-background.swift"
 
+[tasks.screenshots]
+description = "Regenerate docs/screenshot.png from the checked-in queue fixture"
+run = "./scripts/screenshots.sh"
+
 [tasks.dmg]
 description = "Package build/Oxbow.app into a release DMG (app must be signed and stapled)"
 depends = ["setup"]

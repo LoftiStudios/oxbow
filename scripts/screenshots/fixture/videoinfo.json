@@ -1,0 +1,26 @@
+{
+  "streamer": "AcidBurn",
+  "title": "persona 3 - ep. 5 - october, dark hour, deep breaths \ud83c\udf12",
+  "createdAt": "2026-08-05T20:14:00Z",
+  "durationSeconds": 8142,
+  "qualities": [
+    {
+      "name": "1080p60",
+      "resolution": "1920x1080",
+      "bitsPerSecond": 6184466
+    },
+    {
+      "name": "720p60",
+      "resolution": "1280x720",
+      "bitsPerSecond": 3411940
+    },
+    {
+      "name": "480p30",
+      "resolution": "852x480",
+      "bitsPerSecond": 1427697
+    }
+  ],
+  "thumbnailPaths": [
+    "thumbnail.jpg"
+  ]
+}

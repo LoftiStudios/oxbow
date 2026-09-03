@@ -371,6 +371,49 @@ Locally that reads notary credentials from the keychain profile `oxbow-notary`.
 CI has no keychain profile, so setting `NOTARY_KEY`, `NOTARY_KEY_ID` and
 `NOTARY_ISSUER` switches it to an App Store Connect API key.
 
+Regenerate the README screenshot. Launches the real app against a checked-in
+queue fixture and captures its window:
+
+```bash
+mise run screenshots
+```
+
+**The fixture exists so the published screenshot contains no real person.**
+`docs/screenshot.png` goes stale every time the interface moves, and producing
+it used to mean pointing Oxbow at real VODs and photographing the result — which
+put real streamers' names, titles and thumbnails into an image on a public
+README. That is a permission question, and it should not have to be answered
+again at every release.
+
+Nothing in the harness knows about layout: it knows a window title and a JSON
+file, which is what lets it survive the interface changes it exists to keep up
+with. The pieces:
+
+- `Oxbow/ScreenshotFixture.swift` reads `OXBOW_FIXTURE_DIR`, and
+  `AppComposition.defaultSupportDirectory()` returns it when set — the one place
+  the app decides where its state lives, so no view is involved. **`#if DEBUG`**,
+  so the hook is not compiled into a release build at all.
+- `QueueController` passes `runsWork: false` to `QueueEngine.start` for a
+  fixture run. Without it the queue is live: `tick()` would try to download the
+  invented video ids and settle every step as failed, and `Reconciler` would
+  demote the `running` step first, so a fixture could only ever show a finished
+  queue — the one state that displays none of the per-step progress.
+- `scripts/screenshots/fixture/queue.json` is the app's own persisted format,
+  not a bespoke one. Regenerate it from a real queue with
+  `scripts/screenshots/make-fixture.py`, which replaces every identifying field
+  and marks one job mid-flight. Starting from a file the app wrote is what keeps
+  it decodable: `Step.progress` is non-optional, and a queue.json the store
+  cannot decode is silently moved to `queue.json.bak`, leaving a blank window
+  rather than an error.
+- Windows are matched **by PID**, never by application name. The run launches a
+  second Oxbow beside whatever you already have open, and matching on the name
+  captured the developer's real queue — silently, since the image looked
+  perfectly correct.
+
+It needs Screen Recording permission for your terminal; without it
+`screencapture` writes a blank file rather than failing, so the script checks
+the output size and says so.
+
 The window layout is a background image plus a `.DS_Store`, and the two must
 agree: the artwork paints an arrow between two points and Finder draws the real
 icons on top of it. The coordinates live in `scripts/dmg/settings.py` and in
