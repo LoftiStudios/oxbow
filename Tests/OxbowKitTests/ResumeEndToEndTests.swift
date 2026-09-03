@@ -602,7 +602,7 @@ struct ResumeEndToEndTests {
     // `resumeFrom` is non-nil here (this is a resume), so the old gate
     // (`resumeFrom == nil`) would have skipped the sidecar entirely — the
     // exact defect this branch fixes. The new gate is usability, computed by
-    // `QueueEngine.makeContext` from the real file on disk above.
+    // `StepContextBuilder.make` from the real file on disk above.
     #expect(
       !composite2Context.hasUsableSidecar,
       "the corrupt sidecar left by attempt 1 must not be reported usable to a resumed attempt")
