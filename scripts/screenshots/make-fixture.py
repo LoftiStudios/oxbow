@@ -48,10 +48,10 @@ DEFAULT_SOURCE = Path.home() / "Library/Application Support/studio.lofti.Oxbow/q
 TITLES = [
     "CrashOverride - 2026-08-11 - death stranding ep. 3 - BT country, send help",
     "CrashOverride - 2026-08-12 - death stranding ep. 4 - crossing the tar belt",
-    "AcidBurn - 2026-08-01 - persona 3 - first playthrough, blind, no spoilers",
-    "AcidBurn - 2026-08-02 - persona 3 - exam week and i am not prepared",
+    "AcidBurn - 2026-08-01 - persona 3 - first playthrough, blind, no spoilers 🌙",
+    "AcidBurn - 2026-08-02 - persona 3 - exam week and i am not prepared 😭📚",
     "AcidBurn - 2026-08-03 - persona 3 - tartarus grind + social links",
-    "AcidBurn - 2026-08-04 - persona 3 - full moon op, wish us luck",
+    "AcidBurn - 2026-08-04 - persona 3 - full moon op, wish us luck 🌕",
 ]
 
 # Which job is caught mid-flight, and what its steps are doing. An all-done
