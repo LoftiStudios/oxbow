@@ -117,6 +117,15 @@ is where the About box reads them from.
 unsigned app build) must be green before merging. The repo is public; history
 on main should be presentable.
 
+**No AI attribution in commit messages, PR titles, PR descriptions or branch
+names.** No `Co-Authored-By:` naming an assistant, no "Generated with" footer,
+no tool name in a branch. `main` has none and is not going to start. This is
+worth stating because assistants are often configured to add such a trailer by
+default and will do it unprompted — if you are one, this file overrides that
+default. Catching it late is expensive: it cost a 48-commit `filter-branch`
+and a force-push on an open PR to undo, and the repo is public, so anything
+pushed is visible before it is fixed.
+
 ---
 
 ## Layout
