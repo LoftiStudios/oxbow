@@ -112,8 +112,7 @@ public actor QueueEngine {
     self.contexts = StepContextBuilder(
       workspace: configuration.workspace,
       ffmpegPath: configuration.ffmpegPath,
-      ledger: ledger,
-      journal: journal)
+      ledger: ledger)
   }
 
   // MARK: - Public surface
@@ -475,6 +474,20 @@ public actor QueueEngine {
         kind: .launchFailed("\(error)"),
         summary: "Could not create a working directory.")))
       return
+    }
+
+    // Immediately after the context is built, and so still before the child
+    // process exists: the re-fetched video and chat render are dead the
+    // moment assemble has its pieces and sidecar, and dropping them here
+    // rather than at job end is what holds the recovery peak at ~58 GB
+    // instead of ~84 on a six-hour job — resume.md §5.
+    //
+    // `launch` runs to its end without a suspension point, so every position
+    // in it is the same instant as far as the child is concerned; this one
+    // is chosen because it is where `StepContextBuilder.make` used to do it,
+    // which makes the move a move rather than a retiming.
+    if case .assemble = step.kind {
+      journal.removeSpentInputs(of: job)
     }
 
     jobs[location.job].steps[location.step].status = .running

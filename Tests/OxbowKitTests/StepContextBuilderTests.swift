@@ -32,8 +32,7 @@ struct StepContextBuilderTests {
       builder: StepContextBuilder(
         workspace: workspace,
         ffmpegPath: URL(filePath: "/usr/bin/false"),
-        ledger: ledger,
-        journal: journal),
+        ledger: ledger),
       workspace: workspace,
       job: JobID(rawValue: UUID()))
   }

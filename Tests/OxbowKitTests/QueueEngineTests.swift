@@ -1660,11 +1660,13 @@ struct QueueEngineTests {
       }
     }
 
-    /// Exercises the assemble branch of `makeContext` directly, wired to a
-    /// video and a render dependency so there is something for it to drop.
-    /// The deletion is a plain filesystem side effect of building the
-    /// context, so there is nothing further to run.
-    func runAssemble() async {
+    /// A job as an `.assemble` step finds one: its video, chat render and
+    /// composite all `.done` with artifacts, and assemble itself the only
+    /// step left.
+    ///
+    /// The steps are ordered video, render, composite, assemble, so a test
+    /// can name one by index.
+    func assembleReadyJob() -> Job {
       let videoStep = Step(
         id: StepID(rawValue: UUID()),
         kind: .downloadVideo(VideoRequest(videoID: "v", quality: "best")),
@@ -1685,16 +1687,63 @@ struct QueueEngineTests {
         // Never read by the assemble branch — it hardcodes the sidecar path
         // instead — but `makeContext`'s wiring guard still counts it, so a
         // nil here would misreport this as a wiring bug rather than
-        // exercising the deletion this test is actually after.
+        // exercising the launch this test is actually after.
         artifact: workspace.resumeDirectory(job.id).appending(path: "piece-0.mp4"))
       let assembleStep = Step(
         id: StepID(rawValue: UUID()),
         kind: .assemble(AssembleRequest(destination: workspace.root.appending(path: "out.mp4"))),
         dependsOn: [compositeStep.id])
-      let wired = Job(id: job.id, created: job.created, title: job.title,
-                       steps: [videoStep, renderStep, compositeStep, assembleStep])
+      return Job(id: job.id, created: job.created, title: job.title,
+                 steps: [videoStep, renderStep, compositeStep, assembleStep])
+    }
 
-      _ = try? engine.makeContext(job: wired, step: assembleStep)
+    /// Builds the assemble step's context the way `launch` does, and nothing
+    /// else — no engine tick, no process.
+    @discardableResult
+    func buildAssembleContext() -> StepContext? {
+      let wired = assembleReadyJob()
+      return try? engine.makeContext(job: wired, step: wired.steps[3])
+    }
+
+    /// Drives the engine's real `launch` path for one of the job's steps and
+    /// returns once that step is `.running`.
+    ///
+    /// The step at `stepIndex` is seeded `.failed` because `retry(job:)` is
+    /// the one public call that requeues a step and ticks without also
+    /// sweeping the workspace the way `start()` does. Loaded with
+    /// `runsWork: false` for the same reason: the artifacts written below
+    /// have to survive `start`'s unconditional `removeAll()`.
+    ///
+    /// `launch` runs `makeContext` and everything after it synchronously on
+    /// the actor, so by the time this returns the launch-time work has
+    /// already happened — there is nothing to poll for.
+    func launchThroughTheEngine(
+      stepIndex: Int = 3)
+      async throws -> (video: URL, render: URL, launched: StepID)
+    {
+      var wired = assembleReadyJob()
+      wired.steps[stepIndex].status = .failed(
+        StepFailure(kind: .noArtifact, summary: "seeded so retry can requeue it"))
+      try store.save([wired])
+      try await engine.start(runsWork: false)
+
+      let artifacts = try workspace.prepareArtifacts(job: job.id)
+      let video = artifacts.appending(path: "video.mp4")
+      let render = artifacts.appending(path: "render.mp4")
+      try Data("x".utf8).write(to: video)
+      try Data("x".utf8).write(to: render)
+
+      await engine.retry(job: job.id)
+      return (video, render, wired.steps[stepIndex].id)
+    }
+
+    /// Whether the engine actually took the step — the control every one of
+    /// these tests needs, since a harness that quietly launched nothing
+    /// would satisfy any "this file still exists" claim for free.
+    func isRunning(_ step: StepID) async -> Bool {
+      await engine.currentJobs
+        .flatMap(\.steps)
+        .first { $0.id == step }?.status == .running
     }
 
     /// Runs `job` to real completion through the engine's own pipeline,
@@ -1716,10 +1765,13 @@ struct QueueEngineTests {
     }
   }
 
-  private func makeHarness() throws -> ResumeHarness {
+  private func makeHarness(
+    _ makeProcess: @escaping @Sendable () -> HelperProcessing = { FakeHelper(.succeeds) })
+    throws -> ResumeHarness
+  {
     let root = makeRoot()
     let workspace = Workspace(root: root)
-    let engine = QueueEngine(configuration: makeConfiguration(root: root) { FakeHelper(.succeeds) })
+    let engine = QueueEngine(configuration: makeConfiguration(root: root, makeProcess: makeProcess))
 
     // 30fps so a piece's frame count converts to seconds by simple division —
     // see aSecondAttemptResumesAfterTheSurvivingFrames.
@@ -1903,16 +1955,75 @@ struct QueueEngineTests {
 
   /// Deleting the re-fetched inputs before assembling is what keeps the disk
   /// peak at ~58 GB rather than ~84 on a six-hour job. resume.md §5.
-  @Test func assembleDropsTheRefetchedInputsFirst() async throws {
+  ///
+  /// Driven through the engine's own `launch`, not through `makeContext`,
+  /// because that is where the call now lives — remove
+  /// `journal.removeSpentInputs(of:)` from `launch` and this goes red.
+  ///
+  /// The helper hangs rather than succeeding so the step is still `.running`
+  /// when the assertions run. That rules out the other way these files could
+  /// have vanished: a job that reached a terminal status takes its whole
+  /// workspace, artifacts included, with it.
+  @Test func launchingAssembleDropsTheRefetchedInputsFirst() async throws {
+    let harness = try makeHarness { FakeHelper(.hangsUntilCancelled) }
+    defer { harness.tearDown() }
+
+    let (video, render, assemble) = try await harness.launchThroughTheEngine()
+
+    #expect(await harness.isRunning(assemble), "control: assemble must really have launched")
+    #expect(!FileManager.default.fileExists(atPath: video.path),
+            "the re-fetched video must be gone before assemble writes — resume.md §5")
+    #expect(!FileManager.default.fileExists(atPath: render.path),
+            "the re-fetched chat render must be gone before assemble writes — resume.md §5")
+    await harness.engine.cancel(job: harness.job.id)
+  }
+
+  /// Building a context is a query, and a query must not destroy files.
+  ///
+  /// This is the half of the behaviour that changed when the cleanup moved
+  /// out of `StepContextBuilder`: put it back and this goes red, while
+  /// `launchingAssembleDropsTheRefetchedInputsFirst` stays green — which is
+  /// exactly why both are here rather than either alone.
+  @Test func buildingAnAssembleContextDestroysNothing() async throws {
     let harness = try makeHarness()
     defer { harness.tearDown() }
     let video = try harness.writeVideoArtifact(byteCount: 10)
     let render = try harness.writeRenderArtifact(byteCount: 10)
 
-    await harness.runAssemble()
+    let context = try #require(harness.buildAssembleContext())
 
-    #expect(!FileManager.default.fileExists(atPath: video.path))
-    #expect(!FileManager.default.fileExists(atPath: render.path))
+    #expect(FileManager.default.fileExists(atPath: video.path),
+            "makeContext must not delete the video")
+    #expect(FileManager.default.fileExists(atPath: render.path),
+            "makeContext must not delete the chat render")
+    // The control: the call really did build an assemble context, so the two
+    // survivals above cannot be explained by an early throw.
+    #expect(context.outputFile.lastPathComponent == "assemble.mp4")
+  }
+
+  /// Only `.assemble` spends them. A composite is *about to read* the video
+  /// and the render it would otherwise be dropping, so a cleanup that fires
+  /// on every launch destroys the inputs of the step doing the launching —
+  /// and does it with the engine reporting nothing wrong until FFmpeg fails
+  /// on a missing file.
+  ///
+  /// Drop the `if case .assemble` guard in `launch` and this goes red while
+  /// `launchingAssembleDropsTheRefetchedInputsFirst` stays green.
+  @Test func launchingACompositeSpendsNothing() async throws {
+    let harness = try makeHarness { FakeHelper(.hangsUntilCancelled) }
+    defer { harness.tearDown() }
+
+    let (video, render, composite) = try await harness.launchThroughTheEngine(stepIndex: 2)
+
+    // The control. Without it a harness that launched nothing at all would
+    // satisfy both survival claims below and this test would catch nothing —
+    // which is exactly what a dead-harness probe showed.
+    #expect(await harness.isRunning(composite), "control: the composite must really have launched")
+    #expect(FileManager.default.fileExists(atPath: video.path),
+            "a composite must still have the video it is about to read")
+    #expect(FileManager.default.fileExists(atPath: render.path),
+            "a composite must still have the chat render it is about to read")
+    await harness.engine.cancel(job: harness.job.id)
   }
 
   /// Delivered means done: the retained bytes have no further use.

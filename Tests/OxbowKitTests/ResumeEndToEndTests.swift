@@ -823,10 +823,14 @@ struct ResumeEndToEndTests {
       videoArtifact: video2, chatArtifact: chat2, renderArtifact: render2, compositeArtifact: piece1)
     let assembleContext = try engine.makeContext(job: snapshot, step: snapshot.steps[4])
 
-    // `makeContext`'s own side effect: the re-fetched video and render are
-    // deleted the moment the assemble context is built, regardless of
-    // whether the ffmpeg invocation that follows can actually succeed —
-    // resume.md §5 step 5.
+    // Building the context destroys nothing; `QueueEngine.launch` drops the
+    // spent inputs separately, and this suite drives steps by hand rather
+    // than through `launch`, so it makes that call itself — resume.md §5
+    // step 5. The point of the ordering is that both happen before the
+    // ffmpeg invocation below, whether or not that invocation can succeed.
+    #expect(FileManager.default.fileExists(atPath: video2.path),
+            "building the context must not delete anything")
+    TeardownJournal(workspace: workspace).removeSpentInputs(of: snapshot)
     #expect(!FileManager.default.fileExists(atPath: video2.path),
             "assemble must delete the re-fetched video — resume.md §5")
     #expect(!FileManager.default.fileExists(atPath: render2.path),

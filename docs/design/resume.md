@@ -342,6 +342,9 @@ When a composite step launches and its resume directory holds pieces:
 5. **Delete the re-fetched video and chat render.** Load-bearing for disk, see
    below. Both can go because the audio was copied out on the first attempt
    (§4); without that the video would have to survive to delivery.
+   `TeardownJournal.removeSpentInputs(of:)`, called by `QueueEngine.launch`
+   the moment it has the assemble step's context and before the FFmpeg
+   process exists — which is the ordering the table below depends on.
 6. **Assemble** (§6), deliver, and clear the resume directory.
 
 Step 5 is what keeps the peak reasonable. Six-hour numbers, from

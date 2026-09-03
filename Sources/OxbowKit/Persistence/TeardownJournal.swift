@@ -56,6 +56,46 @@ struct TeardownJournal: Sendable {
       context: "job \(id.rawValue.uuidString): resumable area")
   }
 
+  /// Drops the inputs an `.assemble` step has just made dead: the re-fetched
+  /// video (or clip) and the chat render.
+  ///
+  /// Both can go once the pieces and the sidecar audio exist, because the
+  /// audio was copied out on the first attempt — resume.md §4. Dropping them
+  /// at this moment rather than at job end is what keeps the recovery peak
+  /// near a normal run's: §5's table has the delivered file growing against
+  /// 29.4 GB rather than 55.9. So the call belongs *before* assemble's FFmpeg
+  /// starts writing, which is why `QueueEngine.launch` makes it there.
+  ///
+  /// The chat transcript and the composite's own pieces are deliberately not
+  /// spent — the pieces are half the delivery, and the transcript is small
+  /// enough that dropping it buys nothing.
+  ///
+  /// The one removal here that does not go through `Workspace`, because it
+  /// takes individual files rather than a tree. `contains(_:ofJob:)` is what
+  /// keeps that safe: a step's `artifact` can point outside the workspace
+  /// once `move` has delivered it, and a delivered file is the one thing
+  /// this must never touch.
+  func removeSpentInputs(of job: Job) {
+    let spent = job.steps.compactMap { step -> URL? in
+      switch step.kind {
+      case .downloadVideo, .downloadClip, .renderChat: step.artifact
+      case .downloadChat, .composite, .assemble: nil
+      }
+    }
+    let unremoved = spent
+      .filter { workspace.contains($0, ofJob: job.id) }
+      .compactMap { file -> URL? in
+        do {
+          try FileManager.default.removeItem(at: file)
+          return nil
+        } catch {
+          return file
+        }
+      }
+    record(
+      unremoved, context: "job \(job.id.rawValue.uuidString): re-fetched inputs spent by assemble")
+  }
+
   /// Writes a step-level teardown failure into that step's own `StepLog` —
   /// the file already meant to hold "why did this go wrong" for exactly
   /// this step, and, unlike a job-level failure, one that is still standing
