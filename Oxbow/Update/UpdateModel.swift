@@ -26,16 +26,22 @@ final class UpdateModel {
 
   private(set) var state: State = .idle
 
-  private let defaults: UserDefaults
+  /// `PreferenceStore`, not `UserDefaults`. The two small values this keeps
+  /// between launches are the only reason it touches persistence at all, and
+  /// a suite-per-test `UserDefaults` leaves a real file in
+  /// `~/Library/Preferences` for every test that builds one — thousands of
+  /// them had accumulated before `Preferences` moved to this protocol. Same
+  /// injection, same production default, no disk in a test run.
+  private let store: PreferenceStore
   private let now: () -> Date
   private let performCheck: @Sendable () async throws -> UpdateCheck.Outcome
 
   init(
-    defaults: UserDefaults = .standard,
+    store: PreferenceStore = UserDefaults.standard,
     now: @escaping () -> Date = Date.init,
     performCheck: @escaping @Sendable () async throws -> UpdateCheck.Outcome)
   {
-    self.defaults = defaults
+    self.store = store
     self.now = now
     self.performCheck = performCheck
   }
@@ -58,7 +64,7 @@ final class UpdateModel {
   /// launch stays quiet, and any version above it still gets through.
   func dismiss() {
     if case .available(let version, _) = state {
-      defaults.set(version.description, forKey: Key.skippedVersion)
+      store.set(version.description, forKey: Key.skippedVersion)
     }
     state = .idle
   }
@@ -94,12 +100,12 @@ final class UpdateModel {
   }
 
   private var lastChecked: Date? {
-    get { defaults.object(forKey: Key.lastChecked) as? Date }
-    set { defaults.set(newValue, forKey: Key.lastChecked) }
+    get { store.object(forKey: Key.lastChecked) as? Date }
+    set { store.set(newValue, forKey: Key.lastChecked) }
   }
 
   private var skippedVersion: ReleaseVersion? {
-    defaults.string(forKey: Key.skippedVersion).flatMap(ReleaseVersion.init)
+    store.string(forKey: Key.skippedVersion).flatMap(ReleaseVersion.init)
   }
 }
 

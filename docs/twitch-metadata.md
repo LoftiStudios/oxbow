@@ -34,6 +34,7 @@ defensively or verified after decode.
 | quality *name* | CLI, derived | High for framerate | `1080p60` -> 60. The only reliable framerate source. |
 | quality *name* | CLI, derived | **Valid only against the response it came from** | Renditions change between calls; a `-<digits>` suffix resolves fine while it exists. |
 | `lengthSeconds` | Twitch | High | Matches the decoded duration. |
+| `thumbnailURLs` (VOD) size token | Twitch CDN, undocumented | Medium | Rewritable to a larger size; not a documented contract. See §8. |
 
 ## 3. Pixel dimensions can be odd, and the stream cannot
 
@@ -163,3 +164,52 @@ artifacts were only ever visible in decoded pixels.
 Anything at the boundary — argv, geometry, encoder behaviour — needs at least
 one check against the real binary and the real decoded output, once, recorded
 here with its evidence.
+
+## 8. A VOD's preview is four frames, and its size is rewritable
+
+**Measured against the live CDN on VOD 2859050150, 2026-09-01.** This is the
+same category as §3-5: something Twitch's own payload shape makes true, that
+nothing in the documentation says, and that a filmstrip preview (`VideoCard`'s
+`FilmstripThumbnail`, `StreamThumbnail`) now depends on.
+
+**A VOD's `thumbnailURLs` is four elements, not one.** The CLI's GraphQL query
+hardcodes `thumbnailURLs(height:180,width:320)`, and Twitch returns four URLs
+of the shape `…/thumb/thumbN-320x180.jpg` for `N` in `0...3`. Fetched and
+compared by hash: the four are genuinely different JPEGs (distinct SHAs,
+12-14 KB each), sampled at different points across the VOD — not one frame
+served four times under different names. `VideoInfo.thumbnailURLs` carries
+all four, in order; `VideoInfo.parse` used to take only `.first`.
+
+**The `320x180` in the path is a size token, not a fixed asset.** The same
+frame, requested with that segment rewritten, returned HTTP 200 at every size
+tried:
+
+| Requested size | Response size |
+|---|---|
+| 320x180 (Twitch's own) | 12-14 KB |
+| 640x360 | 38 KB |
+| 1280x720 | 108 KB |
+| 1920x1080 | 176 KB |
+
+`StreamThumbnail.rewritten(_:)` asks for 1280x720 — enough to cover the
+card's current ~490 physical pixels on a 2x display with headroom for a wider
+window, without paying for the 1920 variant. Four frames at 1280x720 is
+roughly 430 KB per VOD, fetched once and CDN-cached.
+
+**A clip's preview is one element, already full size, and must not be
+rewritten.** A clip's `thumbnailURL` looks like
+`…/landscape/thumb/thumb-0000000000-1920x1080.jpg` — a different filename
+shape (a dash, not a digit, right after `thumb`) from a VOD frame's
+`thumbN-WxH.jpg`. `StreamThumbnail` keys its match on that difference
+specifically, so a clip's URL passes through untouched: rewriting it would be
+pointless (it is already the size the rewrite would ask for) and could ask
+the CDN for a variant that does not exist.
+
+**This is undocumented CDN behaviour, exactly like the rest of this
+document's §2-5 findings — not a Twitch contract.** The Twitch web client
+depends on the same path shape to render its own hover previews, so it is
+unlikely to disappear outright, but nothing here guarantees the rewrite keeps
+working. Every caller of a rewritten URL falls back to the original URL
+Twitch actually gave us if the rewritten one fails to load — the same
+defend-rather-than-trust posture §6 draws as the lesson from every other
+field in this document.

@@ -37,19 +37,10 @@ final class IntakeModel {
   /// own metadata and then the user's to edit.
   var name = ""
 
-  /// What the user gets. Deliberately two choices rather than three
-  /// independent toggles: a chat render in isolation has little use, and the
-  /// composite is what makes it worth producing at all. See
-  /// docs/design/compositing.md §3.
-  enum Output: CaseIterable, Hashable {
-    case videoWithChat
-    case video
-  }
-
   /// Chat included by default, and listed first: it is the reason to reach
   /// for Oxbow rather than any of the video-only downloaders, and a user who
   /// wanted only the video loses nothing but one click.
-  var output: Output = .videoWithChat
+  var output: DownloadOutput = .default
 
   /// How large the composited chat text is. Only meaningful for
   /// `.videoWithChat` — a plain video has no render to size — and only shown
@@ -66,6 +57,103 @@ final class IntakeModel {
   var quality = ""
 
   var folder: URL?
+
+  /// The preference-shaped quality value, as distinct from `quality`, which
+  /// names a rendition of *this* video.
+  ///
+  /// Both exist because `QualityLadder.resolve` and `.bucket` are not
+  /// inverses (docs/design/settings.md §3.3): a cap of `.p720` against a
+  /// video offering only 1080p resolves to `1080p60`, and re-deriving the cap
+  /// from that would quietly raise the user's standing preference because of
+  /// one unusual video. Keeping the cap means an untouched picker saves back
+  /// exactly what was seeded.
+  var qualityCap: QualityCap
+
+  /// The checkbox. **Always false at seed, on every run including the first**
+  /// — see §2.2. A box that stays ticked is last-used-wins with extra steps.
+  var wantsToSaveDefaults = false
+
+  /// The stored destination was gone and `~/Downloads` was used instead. Shown
+  /// inline, because the disk preflight measures the destination's volume and
+  /// a silent fallback would change what its estimate means.
+  private(set) var destinationFellBack = false
+
+  /// Whether the options panel is open.
+  ///
+  /// Writes through to the store, so a collapse sticks — except the
+  /// transient expansion in `isOptionsEffectivelyExpanded`, which must not.
+  var isOptionsExpanded: Bool {
+    didSet { preferences.optionsPanelIsExpanded = isOptionsExpanded }
+  }
+
+  /// What the panel actually shows.
+  ///
+  /// Forced open whenever a refusal is on screen. Both `chatProblem` and
+  /// `compositeProblem` render inside this panel and both disable Add, so a
+  /// closed panel would grey Add out with the explanation sealed inside it —
+  /// the exact failure those messages exist to prevent. Transient by
+  /// construction: it never reaches `isOptionsExpanded`, so a clip with an
+  /// expired broadcast cannot permanently reopen the drawer.
+  var isOptionsEffectivelyExpanded: Bool {
+    isOptionsExpanded || chatProblem != nil || compositeProblem != nil
+  }
+
+  /// Reads the effective value, writes the stored one. A user's collapse
+  /// sticks; a refusal's forced expansion does not.
+  ///
+  /// **The setter ignores writes while a refusal is forcing the panel
+  /// open.** Without this, tapping the triangle while
+  /// `chatProblem` or `compositeProblem` is showing calls this setter with
+  /// `false`, which writes through to `isOptionsExpanded` and so to the
+  /// store — but the getter above still returns `true` regardless, because
+  /// the refusal is still there. The drawer visibly does not move, so the
+  /// tap reads as a dead control either way; the difference is whether it
+  /// is *also* silently rewriting a stored preference for every future
+  /// intake behind that dead control. An inert triangle is honest about
+  /// what just happened; one that quietly changes state nothing on screen
+  /// reflects is not.
+  var isOptionsEffectivelyExpandedBinding: Bool {
+    get { isOptionsEffectivelyExpanded }
+    set {
+      guard chatProblem == nil, compositeProblem == nil else { return }
+      isOptionsExpanded = newValue
+    }
+  }
+
+  /// The collapsed header's summary. Collapsed is the steady state, so a
+  /// header that says only "Download Options" hides where the file is going
+  /// on most downloads.
+  ///
+  /// **Named through `isClip`, which the expanded picker below already used**
+  /// ("Clip + chat"/"Clip" rather than "Video + chat"/"Video") — this summary
+  /// used to compute the label independently and disagree with it, so a
+  /// clip's collapsed header read "Video + chat" for the exact same state its
+  /// own expanded picker called "Clip + chat". `isClip` moved onto the model
+  /// (from `IntakeWindow`, which had its own private copy) so both call sites
+  /// share one answer instead of two copies that can drift.
+  var optionsSummary: String {
+    let outputLabel: String
+    switch (output, isClip) {
+    case (.videoWithChat, true): outputLabel = "Clip + chat"
+    case (.videoWithChat, false): outputLabel = "Video + chat"
+    case (.video, true): outputLabel = "Clip"
+    case (.video, false): outputLabel = "Video"
+    }
+    let folderName = folder?.lastPathComponent ?? "No folder"
+    return "\(outputLabel) · \(qualityCap.label) · \(folderName)"
+  }
+
+  /// Whether `target` is a clip rather than a VOD. Lives here rather than
+  /// only in `IntakeWindow` (where a private copy used to compute the same
+  /// thing for the output picker's labels) because `optionsSummary` above
+  /// needs the same answer, and two independent copies of a one-line
+  /// predicate are two copies that can silently disagree.
+  var isClip: Bool {
+    if case .clip = target { return true }
+    return false
+  }
+
+  private var preferences: Preferences
 
   /// Trim times as typed, parsed by `Timecode`. Kept as text rather than
   /// `Duration?` so a half-typed value is a visible error rather than
@@ -125,7 +213,8 @@ final class IntakeModel {
       FileManager.default.fileExists(atPath: $0.path)
     },
     volumeSpace: VolumeSpace = .live,
-    workspaceVolumePath: URL = URL.applicationSupportDirectory)
+    workspaceVolumePath: URL = URL.applicationSupportDirectory,
+    preferences: Preferences)
   {
     self.fetchInfo = fetchInfo
     self.enqueue = enqueue
@@ -133,35 +222,34 @@ final class IntakeModel {
     self.fileExists = fileExists
     self.volumeSpace = volumeSpace
     self.workspaceVolumePath = workspaceVolumePath
+    self.preferences = preferences
+    self.qualityCap = preferences.qualityCap
+    self.output = preferences.output
+    self.chatSize = preferences.chatSize
+    self.folder = preferences.destination
+    self.destinationFellBack = preferences.storedDestinationIsMissing
+    self.isOptionsExpanded = preferences.optionsPanelIsExpanded
   }
 
-  convenience init(controller: QueueController, calendar: Calendar = .current) {
+  /// Wires the real collaborators. Everything about where a freshly opened
+  /// window starts — the folder, the quality cap, the output and the chat
+  /// size — is seeded by the designated init from `preferences`, which
+  /// defaults to the live `UserDefaults.standard`-backed store here.
+  ///
+  /// This used to seed only the folder, from a `defaultDestination` that
+  /// computed `~/Downloads` and said in its own doc comment that "last
+  /// used" was deliberately not persisted. That question now has a real
+  /// answer — see `docs/design/settings.md` §2.2.
+  convenience init(
+    controller: QueueController,
+    calendar: Calendar = .current,
+    preferences: Preferences = Preferences())
+  {
     self.init(
       fetchInfo: { try await controller.fetchInfo(for: $0) },
       enqueue: { await controller.enqueue($0, title: $1) },
-      calendar: calendar)
-    // Seeded here rather than in the designated init on purpose: the rule that
-    // `composedTemplate()` refuses without a destination is a real one worth
-    // testing, and a default baked into every model would make it unreachable.
-    // This is the app's starting value, not the model's invariant.
-    folder = Self.defaultDestination
-  }
-
-  /// `~/Downloads`, or nil if the system has no such folder.
-  ///
-  /// The point is that a freshly opened window is already addable: paste a
-  /// link, press Add, and the file lands somewhere sensible. Before this,
-  /// Add stayed disabled until you clicked Choose… — on every download,
-  /// every time — which made the common case pay for the rare one.
-  ///
-  /// Not persisted as "last used" yet. That is the better long-run behaviour
-  /// and a small addition, but it is a different decision: a folder you
-  /// picked once for one video silently becoming the default for everything
-  /// afterwards is a choice to make deliberately, not a side effect of this
-  /// one.
-  static var defaultDestination: URL? {
-    try? FileManager.default.url(
-      for: .downloadsDirectory, in: .userDomainMask, appropriateFor: nil, create: false)
+      calendar: calendar,
+      preferences: preferences)
   }
 
   // MARK: - Starting over
@@ -179,15 +267,20 @@ final class IntakeModel {
   /// from reading the clipboard *at all*. The staleness and the dead prefill
   /// are the same bug, and this is the one place that fixes both.
   ///
-  /// `folder`, `output` and `chatSize` deliberately survive. They answer how
-  /// the user works rather than anything about this video, and re-picking a
-  /// destination on every download is the annoyance `defaultDestination`
-  /// exists to remove. Everything cleared below describes one specific video
-  /// and is wrong for the next one.
+  /// `folder`, `output`, `chatSize`, `qualityCap` and `isOptionsExpanded`
+  /// come back from the preference store rather than surviving in place —
+  /// see `reseedFromPreferences()`, which is what actually does that read.
+  /// They used to be preserved here with a paragraph explaining that they
+  /// answer how the user works rather than anything about this video — which
+  /// was right, and which this is the conclusion of: that was a
+  /// within-one-run approximation of a preference store, and there is a real
+  /// one now.
   func reset() {
     linkText = ""
     name = ""
     quality = ""
+    reseedFromPreferences()
+    wantsToSaveDefaults = false
     isTrimExpanded = false
     trimStartText = ""
     trimEndText = ""
@@ -197,6 +290,43 @@ final class IntakeModel {
     // Invalidates a fetch still in flight the same way a new link does, so a
     // late arrival cannot settle metadata into the form it just emptied.
     generation += 1
+  }
+
+  /// Re-reads the four standing preferences — plus the panel's own persisted
+  /// expansion and the stale-destination flag derived from it — from the
+  /// store, touching nothing about whatever video is currently on screen.
+  ///
+  /// **Why `reset()` on close is not enough by itself.** Add Download is a
+  /// `Window`, not a `WindowGroup` (see `reset()`'s own comment), so it is
+  /// only ever seeded once, at construction, and re-seeded whenever `reset()`
+  /// fires — which is `.onDisappear`, i.e. once per *close*. That reseeds a
+  /// window that is about to show a blank form for its next video, which is
+  /// exactly right when the next thing to happen is a fresh Add. But it does
+  /// nothing for the ordinary sequence of close the intake, open Settings,
+  /// change something, close Settings, reopen the intake: the reseed already
+  /// happened at the first close, nothing re-runs it before the second open,
+  /// and the model sits on the Settings change every field it seeded from
+  /// still describes the value *before* that edit. `IntakeWindow` calls this
+  /// from `.onAppear`, before the clipboard prefill, so every open re-reads
+  /// the store regardless of whether anything changed.
+  ///
+  /// **Deliberately narrower than `reset()`.** `reset()` also clears
+  /// `linkText`, `name`, `quality`, the trim fields and
+  /// `wantsToSaveDefaults` — all correct there, because `reset()` only ever
+  /// runs between one video and the next. An open, by contrast, can land on
+  /// a window that already has a link typed or a fetch in flight (the
+  /// window does not always start from a close), and clobbering that would
+  /// be a second bug in the same neighbourhood as the one this fixes. So this
+  /// touches only the fields a fresh video does not own: the four
+  /// preferences, the panel's persisted expansion, and the fallback flag
+  /// that is a pure function of the destination the store just handed back.
+  func reseedFromPreferences() {
+    qualityCap = preferences.qualityCap
+    output = preferences.output
+    chatSize = preferences.chatSize
+    folder = preferences.destination
+    destinationFellBack = preferences.storedDestinationIsMissing
+    isOptionsExpanded = preferences.optionsPanelIsExpanded
   }
 
   // MARK: - The link
@@ -251,9 +381,11 @@ final class IntakeModel {
       guard issued == generation else { return }
       metadata = .loaded(info)
       metadataIdentifier = target.identifier
-      // A different video: whatever quality was picked for the last one is
-      // not necessarily on offer for this one.
-      quality = ""
+      // Resolve the standing cap against what this video actually offers.
+      // Replaces the blanket clear: whatever was picked for the last video is
+      // still not necessarily on offer here, and the cap is what survives.
+      quality = QualityLadder.resolve(
+        qualityCap, in: info.qualities, forComposite: output == .videoWithChat)
       // And the trim with it, for the same reason but more so: a quality that
       // does not exist is merely ignored, while a trim from a longer video
       // fails its bounds check and leaves the window refusing to add a job it
@@ -290,6 +422,51 @@ final class IntakeModel {
   /// picker renders as nothing but "Best available", the same thing an empty
   /// `quality` means to the CLI.
   var qualities: [StreamQuality] { info?.qualities ?? [] }
+
+  /// The quality picker's setter. Sets the rendition **and** re-derives the
+  /// cap, which is what keeps an explicit pick from being lost on the next
+  /// video and what makes an untouched picker a no-op for the store.
+  func selectQuality(_ name: String) {
+    quality = name
+    guard !name.isEmpty else {
+      qualityCap = .best
+      return
+    }
+    guard let picked = qualities.first(where: { $0.name == name }),
+          let bucketed = QualityLadder.bucket(picked)
+    else { return }
+    qualityCap = bucketed
+  }
+
+  /// The rung a save would write, when it differs from what is on screen.
+  /// Nil when the two agree, which is the common case — so the footnote only
+  /// appears when it has something to say (§3.8).
+  ///
+  /// **Always `qualityCap` itself, never a recomputation from `quality`** —
+  /// that is the value `saveDefaultsIfRequested()` actually writes, and a
+  /// note that re-bucketed the on-screen rendition instead could name a rung
+  /// other than the one that gets saved.
+  ///
+  /// Two distinct ways the two can disagree, both checked: the pick can be an
+  /// inexact rendition of a rung it does resolve to (`picked.shortSide !=
+  /// ceiling` — `900p30` picked under a `.p720` cap, still bucketing to
+  /// `.p720`, but not itself the canonical 720-line rendition), or the seeded
+  /// cap can simply differ from what this pick would bucket to (`bucketed !=
+  /// qualityCap` — an *untouched* picker whose cap resolved upward because
+  /// the video offers nothing at or under the ceiling: §3.3's own example,
+  /// cap `.p720` against a video offering only `1080p60`). Accept the second
+  /// case deliberately: the note reads "Saved as Up to 720p" next to a
+  /// visible `1080p60` selection, which is exactly true, and surfacing that
+  /// gap is the entire purpose of this footnote.
+  var savedQualityNote: QualityCap? {
+    guard !quality.isEmpty,
+          let picked = qualities.first(where: { $0.name == quality }),
+          let bucketed = QualityLadder.bucket(picked),
+          let ceiling = bucketed.ceiling,
+          picked.shortSide != ceiling || bucketed != qualityCap
+    else { return nil }
+    return qualityCap
+  }
 
   /// `bitsPerSecond x duration`, matching what the WPF app offers (§6). Nil
   /// without metadata, because there is no duration to multiply by — a
@@ -520,6 +697,38 @@ final class IntakeModel {
       """
   }
 
+  /// Spec §2.7. While chat is unavailable, the output on screen is a
+  /// workaround for this video's defect rather than a statement of
+  /// preference — and saving it would turn chat off for every future
+  /// download from one tick of an opt-in box.
+  ///
+  /// **Mirrors `chatProblem`'s own two conditions, not just one of them** —
+  /// this has to hold whenever `chatProblem` would be showing, which is
+  /// deliberately checked without `chatProblem`'s `output == .videoWithChat`
+  /// guard: the whole point is to catch the moment *after* the user has
+  /// already switched away to `.video` because of the problem, which is
+  /// exactly when `chatProblem` itself goes back to nil. A version that
+  /// only checked `info.hasDownloadableChat` missed the metadata-failure
+  /// case entirely: a failed fetch leaves `info` nil, so a stored
+  /// `.videoWithChat` default, switched to `.video` only because this
+  /// video's details never arrived, would otherwise be saved as `.video`
+  /// permanently the moment the checkbox was ticked.
+  var withholdsOutputFromSave: Bool {
+    if metadataFailure != nil { return true }
+    guard let info else { return false }
+    return !info.hasDownloadableChat
+  }
+
+  /// Spec §3.7's shape, for a different field: the chat text size picker only
+  /// renders while `output == .videoWithChat` (see `IntakeWindow`), so
+  /// saving it while `.video` is selected would write a value from a control
+  /// nobody on screen can currently see. Unlike `withholdsOutputFromSave`,
+  /// this reads the plain `output` on screen rather than accounting for
+  /// `chatProblem` — there is no equivalent workaround case here: switching
+  /// to `.video` because of a refusal hides the same picker for the same
+  /// reason a deliberate switch does, so one condition covers both.
+  var withholdsChatSizeFromSave: Bool { output != .videoWithChat }
+
   /// True once *this link's* fetch has settled either way. `.failed` counts:
   /// the sheet stays usable, with a name derived from the id or slug.
   var hasSettledMetadata: Bool {
@@ -546,7 +755,8 @@ final class IntakeModel {
   ///
   /// One `stat` per evaluation, on a path the user chose. Cheap enough to
   /// stay derived rather than cached, and derived is what keeps it honest
-  /// when the name field changes under it.
+  /// when `name` changes under it — from a fresh `load()`, or from a name
+  /// picked in the Save panel (`IntakeWindow.chooseFolder()`).
   var destinationCollision: URL? {
     guard hasSettledMetadata, let folder else { return nil }
     let destination = folder.appending(path: outputBaseName + OutputSuffix.video)
@@ -795,6 +1005,39 @@ final class IntakeModel {
     return true
   }
 
+  /// Called by the window after a successful enqueue and never before it.
+  /// Cancel discards, and `addFailure` is a job that was never composed —
+  /// persisting the settings of either would be persisting a decision the
+  /// user did not complete.
+  func saveDefaultsIfRequested() {
+    guard wantsToSaveDefaults else { return }
+    // Read before any of the writes below — they all call
+    // `Preferences.recordSave()`, which flips `hasSavedDefaults` to true, so
+    // reading it after even one of them would make every save look like the
+    // first.
+    let isFirstSave = !preferences.hasSavedDefaults
+    if let folder { preferences.destination = folder }
+    if !withholdsChatSizeFromSave { preferences.chatSize = chatSize }
+    if !withholdsOutputFromSave { preferences.output = output }
+    // Writes `qualityCap` itself, never a recomputation from `quality`.
+    // `selectQuality` is the only thing that ever changes `qualityCap`, and
+    // it already handles every case correctly (§3.3, §3.7): a bucketable
+    // pick sets a bucketed cap, an unbucketable one leaves the cap alone, and
+    // clearing the pick sets `.best`. Re-deriving here from whatever
+    // `quality` happens to be on screen reintroduces exactly the bug
+    // `qualityCap` exists to prevent — an untouched picker whose resolved
+    // rendition sits above or below the seeded cap would silently overwrite
+    // it with that rendition's own bucket.
+    preferences.qualityCap = qualityCap
+    // The visible payoff for opting in, tied to an explicit act so it reads
+    // as cause and effect rather than as the app moving furniture. Once
+    // only, on the save that first sets `hasSavedDefaults` — a later save
+    // must leave the panel exactly where the user put it, or every
+    // subsequent Add would quietly re-collapse a panel someone had
+    // deliberately reopened.
+    if isFirstSave { isOptionsExpanded = false }
+  }
+
   // MARK: - Failure text
 
   private static func message(for error: Error) -> String {
@@ -823,7 +1066,7 @@ final class IntakeModel {
 /// The per-output suffix from the design doc, §4.
 ///
 /// One case now, not five: intake no longer offers a bare chat download or a
-/// bare chat render (see `IntakeModel.Output`), so the video suffix — shared
+/// bare chat render (see `DownloadOutput`), so the video suffix — shared
 /// by a plain video and a composite alike, since a composite replaces the
 /// video it stacks rather than accompanying it — is the only one left.
 nonisolated enum OutputSuffix {

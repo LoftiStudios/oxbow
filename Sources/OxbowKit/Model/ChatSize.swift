@@ -7,6 +7,13 @@ import Foundation
 /// column's width scales with the chosen quality, so a fixed number would
 /// look right at one resolution and wrong at every other. `CompositeGeometry`
 /// turns this into an actual size in proportion to the column it will sit in.
+///
+/// `Preferences` persists this enum's raw values in `UserDefaults`. Renaming
+/// a case is therefore a storage-format change, not a refactor — it silently
+/// orphans every saved preference, which falls back to the factory value with
+/// no error anywhere. `ChatSizeTests.rawValuesArePersistedAndPinned` pins the
+/// exact strings on purpose; if it fails after a rename, fix the case name,
+/// not the test.
 public enum ChatSize: String, Codable, CaseIterable, Sendable {
   case small
   case medium
