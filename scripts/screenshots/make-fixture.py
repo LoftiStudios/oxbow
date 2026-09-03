@@ -65,7 +65,7 @@ RUNNING_JOB = 5
 # itself next month.
 INTAKE = {
     "streamer": "AcidBurn",
-    "title": "persona 3 - ep. 5 - the answer, and then bed 🌒",
+    "title": "persona 3 - ep. 5 - october, dark hour, deep breaths 🌒",
     "createdAt": "2026-08-05T20:14:00Z",
     "durationSeconds": 8142,
     "qualities": [
