@@ -116,13 +116,17 @@ what changed upstream and why we want it.
 
 ## Pull requests
 
-- **Conventional commits** for new work: `feat(engine):`, `fix(persistence):`,
-  `test(parsing):`. Scopes track the `Sources/OxbowKit` subdirectories —
-  `model`, `parsing`, `scheduling`, `persistence`, `process`, `arguments`,
-  `engine`, `logging`, `power`, `update` — plus `build` for the scripts. Most
-  of the existing history predates this and reads as plain sentences; it is
-  not the model to copy. PRs are squash merged, so the PR title is what lands
-  on `main` — put the prefix there.
+- **Write the PR title as a sentence** — imperative, capitalised, no full
+  stop, saying what changed: "Warn at intake when a job will not fit on disk."
+  PRs are squash merged, so that title becomes the commit on `main`; it is the
+  one that has to read well later. Commit subjects inside the PR follow the
+  same shape.
+
+  Oxbow does not use conventional commits (`feat(engine):`, `fix:`). They exist
+  to drive tooling — semantic-release picking a version bump, a generated
+  changelog — and this project has neither: `MARKETING_VERSION` is bumped by
+  hand in `Config/Shared.xcconfig` as part of the release commit, and
+  `CHANGELOG.md` is written by hand, because a generated one would be worse.
 - **Tests come with the change.** `OxbowKit` is tested to a standard; new
   behaviour in it should arrive tested.
 - **Keep PRs focused.** One concern per PR. A drive-by refactor in the same diff
