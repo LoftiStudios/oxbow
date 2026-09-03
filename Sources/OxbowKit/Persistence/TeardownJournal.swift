@@ -42,14 +42,14 @@ struct TeardownJournal: Sendable {
   }
 
   /// Tears down a job's whole workspace and reports anything left behind —
-  /// see `recordTeardownFailure`.
+  /// see `record`.
   func removeJob(_ id: JobID) {
     record(
       workspace.removeJob(id), context: "job \(id.rawValue.uuidString): workspace")
   }
 
   /// Tears down a job's retained-pieces area and reports anything left
-  /// behind — see `recordTeardownFailure`.
+  /// behind — see `record`.
   func removeResumable(_ id: JobID) {
     record(
       workspace.removeResumable(id),

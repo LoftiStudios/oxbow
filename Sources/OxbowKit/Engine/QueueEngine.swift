@@ -776,7 +776,6 @@ public actor QueueEngine {
     return nil
   }
 
-
   /// Removes a job's workspace once nothing belonging to it is still
   /// `running`. A helper can outlive its kill signal by up to ~2s, so at the
   /// moment `cancel(job:)`'s kills return there may still be a process
