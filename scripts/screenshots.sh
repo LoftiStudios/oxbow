@@ -33,7 +33,8 @@
 #                                        (default 900x492 — what docs/ holds)
 #   ./scripts/screenshots.sh --no-shadow      transparent window edges, for a
 #                                        design tool that adds its own shadow
-#   ./scripts/screenshots.sh --no-trim        intake with Trim collapsed
+#   ./scripts/screenshots.sh --trim           intake with Trim expanded
+#   ./scripts/screenshots.sh --info           also capture the Job Info window
 #
 set -euo pipefail
 
@@ -54,17 +55,24 @@ SIZE="900x492"
 # a design tool, which wants clean transparent window edges and its own shadow
 # layer -- a baked-in shadow cannot be moved, recoloured, or removed there.
 SHADOW=1
-# Whether the intake opens with its Trim section down. Both sections open is a
-# 1002pt-tall sheet; closing Trim takes 100pt off it, which matters a lot when
-# the composite is a wide frame.
-TRIM=1
+# Whether the intake opens with its Trim section down. Closed by default: both
+# sections open is a 1002pt sheet, and in the composite that has to shrink to
+# 0.68 to fit. Closed it fits at 0.76, so every glyph lands ~11% larger in an
+# image that is already downsampled hard wherever it is used.
+TRIM=0
+# Whether to also open and capture Job Info. Off by default: it is not in the
+# composite, and opening it races the intake for key-window status. Losing that
+# race is not subtle -- macOS draws a smaller shadow for a non-key window, and
+# the default button stops being accented -- but it is silent.
+INFO=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --no-build) BUILD=0; shift ;;
     --keep)     KEEP=1; shift ;;
     --size)     SIZE="${2:?--size needs WIDTHxHEIGHT, e.g. 900x520}"; shift 2 ;;
     --no-shadow) SHADOW=0; shift ;;
-    --no-trim)   TRIM=0; shift ;;
+    --trim)      TRIM=1; shift ;;
+    --info)      INFO=1; shift ;;
     -h|--help)  sed -n '2,32p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *)          echo "unknown option: $1" >&2; exit 2 ;;
   esac
@@ -113,7 +121,7 @@ EXPAND=""
 LINK=""
 [[ -f "$FIXTURE/link.txt" ]] && LINK="$(cat "$FIXTURE/link.txt")"
 INFO_JOB=""
-[[ -f "$FIXTURE/infojob.txt" ]] && INFO_JOB="$(cat "$FIXTURE/infojob.txt")"
+[[ $INFO -eq 1 && -f "$FIXTURE/infojob.txt" ]] && INFO_JOB="$(cat "$FIXTURE/infojob.txt")"
 
 cp -f "$FIXTURE/videoinfo.json" "$STATE/" 2>/dev/null || true
 
@@ -225,15 +233,78 @@ capture "Oxbow" "$OUT/queue.png"
 capture "Add Download" "$OUT/intake.png"
 # Job Info's window title is the job's own title, so match the fixture's
 # mid-flight row rather than a fixed string.
-capture "${EXPAND:0:24}" "$OUT/info.png"
+[[ $INFO -eq 1 ]] && capture "${EXPAND:0:24}" "$OUT/info.png"
 
 # Guard against the silent failure mode: without Screen Recording permission
 # screencapture writes a file, it is just empty or black.
-for f in "$OUT/queue.png" "$OUT/intake.png" "$OUT/info.png"; do
+CHECK=("$OUT/queue.png" "$OUT/intake.png")
+[[ $INFO -eq 1 ]] && CHECK+=("$OUT/info.png")
+for f in "${CHECK[@]}"; do
   bytes=$(stat -f%z "$f" 2>/dev/null || echo 0)
   if [[ "$bytes" -lt 20000 ]]; then
     permission_help "$(basename "$f") is only ${bytes} bytes — almost certainly blank."
   fi
 done
 
-echo "done. docs/screenshot.png is the composite and is not written by this."
+# ---------------------------------------------------------------- composite
+#
+# Geometry is derived, not hardcoded, so the layout survives a --size change or
+# a taller/shorter intake: the only fixed inputs are the margin, where the
+# queue's title bar sits, and how tall the intake should end up.
+#
+# The shadow padding baked into each capture is what makes this arithmetic
+# necessary at all -- a placement positions the PNG, but the margin that matters
+# is to the window *body* inside it. The inset is derivable because both widths
+# are known: the queue's is whatever --size asked for, and the intake is a
+# fixed-width sheet whose height alone varies with its sections.
+BACKGROUND="$FIXTURE/desktop.png"
+if [[ -f "$BACKGROUND" ]]; then
+  echo "compositing…"
+  PLACEMENTS=$(python3 - "$BACKGROUND" "$OUT/queue.png" "$OUT/intake.png" "${SIZE%%x*}" <<'PYEOF'
+import subprocess, sys
+
+def size(path):
+    out = subprocess.run(["sips", "-g", "pixelWidth", "-g", "pixelHeight", path],
+                         capture_output=True, text=True).stdout
+    values = {}
+    for line in out.splitlines():
+        if ":" in line:
+            key, _, value = line.strip().partition(":")
+            if key in ("pixelWidth", "pixelHeight"):
+                values[key] = int(value)
+    return values["pixelWidth"], values["pixelHeight"]
+
+background, queue, intake, size_width = sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4])
+
+MARGIN = 74            # canvas px from a canvas edge to a window body
+QUEUE_BODY_TOP = 199   # where the queue's title bar sits
+INTAKE_BODY_TOP = 58
+INTAKE_BODY_HEIGHT = 1366  # what the intake shrinks to
+INTAKE_BODY_WIDTH = 1120   # the sheet is a fixed 560pt; only its height moves
+
+canvas_w, _ = size(background)
+queue_w, _ = size(queue)
+intake_w, intake_h = size(intake)
+
+# Half the difference between the capture and the window inside it.
+queue_inset = (queue_w - size_width * 2) / 2
+intake_inset = (intake_w - INTAKE_BODY_WIDTH) / 2
+intake_scale = INTAKE_BODY_HEIGHT / (intake_h - 2 * intake_inset)
+
+print(f"{queue}:{MARGIN - queue_inset:.0f}:{QUEUE_BODY_TOP - queue_inset:.0f}:1.0")
+# Right-aligned to the same margin the queue keeps on the left.
+right_edge = canvas_w - MARGIN
+intake_x = right_edge - INTAKE_BODY_WIDTH * intake_scale - intake_inset * intake_scale
+print(f"{intake}:{intake_x:.0f}:{INTAKE_BODY_TOP - intake_inset * intake_scale:.0f}:{intake_scale:.4f}")
+PYEOF
+)
+  # shellcheck disable=SC2086
+  swift "$ROOT/scripts/screenshots/composite.swift" \
+    --background "$BACKGROUND" \
+    --out "$ROOT/docs/screenshot.png" \
+    $(echo "$PLACEMENTS" | sed 's/^/--place /' | tr '\n' ' ')
+else
+  echo "no $BACKGROUND — skipping the composite" >&2
+fi
+
+echo "done."

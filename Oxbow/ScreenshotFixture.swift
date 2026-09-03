@@ -214,12 +214,22 @@ struct ScreenshotIntakeOpener: View {
         }
         guard ScreenshotFixture.link != nil else { return }
         openWindow(id: windowID)
-        // Launched from a shell, the app never becomes frontmost, so every
-        // window draws inactive — grey traffic lights on all of them, which
-        // in a composite reads as a screenshot of an app nobody is using.
-        // Activating leaves the intake key and the queue correctly dimmed
-        // behind it, which is what the arrangement actually looks like.
-        NSApp.activate(ignoringOtherApps: true)
+        // Deliberately not activating the app.
+        //
+        // A shell-launched app is not frontmost, so its windows draw inactive:
+        // grey traffic lights, and a default button that is not accented. An
+        // earlier version called NSApp.activate to fix that, and it worked
+        // often enough to look correct -- but macOS does not let an app take
+        // focus from whatever the person is actually using, so whether it
+        // succeeded depended on what else happened to be running. A capture
+        // that is prettier on some machines than others is worse than one that
+        // is plainly consistent, and the difference is not only cosmetic: an
+        // inactive window gets a smaller shadow, so the composite's geometry
+        // moved too.
+        //
+        // Inactive on purpose, therefore. The layout arithmetic in
+        // screenshots.sh derives the shadow inset from the capture, so it
+        // stays correct either way.
       }
   }
 }
