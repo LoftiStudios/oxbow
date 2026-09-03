@@ -1,6 +1,7 @@
 #if DEBUG
 import AppKit
 import Foundation
+import OxbowKit
 import SwiftUI
 
 /// Redirects the app's on-disk state so a screenshot run reads a checked-in
@@ -95,6 +96,117 @@ nonisolated enum ScreenshotFixture {
       width > 0, height > 0
     else { return nil }
     return CGSize(width: width, height: height)
+  }
+}
+
+/// The intake's metadata, decoded from `fixture/videoinfo.json`.
+///
+/// A DTO rather than making `VideoInfo` `Codable`: `VideoInfo` is built by
+/// parsing the helper's output and has no reason to round-trip through JSON,
+/// and adding a conformance to the shipping model so a screenshot can be taken
+/// is the tail wagging the dog. This mirrors only the fields the intake draws.
+struct ScreenshotVideoInfo: Decodable {
+  struct Quality: Decodable {
+    var name: String
+    var resolution: String
+    var bitsPerSecond: Int
+  }
+
+  var streamer: String
+  var title: String
+  /// ISO 8601. Absolute rather than relative-to-now so the captured date
+  /// matches the dates baked into the queue fixture's titles — a composite of
+  /// the two windows would otherwise disagree with itself the day after it
+  /// was made.
+  var createdAt: String
+  var durationSeconds: Double
+  var qualities: [Quality]
+  /// Resolved at run time against the local server the script starts — see
+  /// `thumbnailBase`. Twitch's own URLs are absolute, but a fixture's cannot
+  /// be: `VideoCard.loadImage` requires an `HTTPURLResponse` with status 200,
+  /// so a `file://` URL loads nothing and silently shows the placeholder.
+  var thumbnailPaths: [String]
+
+  func resolved(thumbnailBase: URL?) -> VideoInfo {
+    VideoInfo(
+      streamer: streamer,
+      title: title,
+      createdAt: ISO8601DateFormatter().date(from: createdAt) ?? .now,
+      duration: .seconds(durationSeconds),
+      qualities: qualities.map {
+        StreamQuality(name: $0.name, resolution: $0.resolution, bitsPerSecond: $0.bitsPerSecond)
+      },
+      thumbnailURLs: thumbnailBase.map { base in
+        thumbnailPaths.map { base.appending(path: $0) }
+      } ?? [])
+  }
+}
+
+extension ScreenshotFixture {
+
+  /// The link the intake opens with, seeded as though it had been pasted.
+  static var link: String? {
+    guard directory != nil else { return nil }
+    let value = ProcessInfo.processInfo.environment["OXBOW_FIXTURE_LINK"]
+    return (value?.isEmpty == false) ? value : nil
+  }
+
+  /// Whether the intake should open with its trim section down.
+  ///
+  /// `isTrimExpanded` is model state that `reset()` clears, deliberately —
+  /// it is this video's business, not a standing preference, which is exactly
+  /// why the options panel *is* a preference and this is not. So it cannot be
+  /// set the way the options panel can, through the argument domain.
+  static var opensTrim: Bool {
+    directory != nil && ProcessInfo.processInfo.environment["OXBOW_FIXTURE_TRIM"] == "1"
+  }
+
+  /// Where the script is serving `fixture/thumbnail.jpg`, e.g.
+  /// `http://127.0.0.1:8731`.
+  static var thumbnailBase: URL? {
+    guard directory != nil else { return nil }
+    guard let raw = ProcessInfo.processInfo.environment["OXBOW_FIXTURE_THUMBS"], !raw.isEmpty
+    else { return nil }
+    return URL(string: raw)
+  }
+
+  /// The canned metadata `QueueController.fetchInfo` returns during a fixture
+  /// run, so the intake never reaches Twitch for a video that does not exist.
+  static var videoInfo: VideoInfo? {
+    guard let directory else { return nil }
+    let url = directory.appending(path: "videoinfo.json")
+    guard
+      let data = try? Data(contentsOf: url),
+      let decoded = try? JSONDecoder().decode(ScreenshotVideoInfo.self, from: data)
+    else { return nil }
+    return decoded.resolved(thumbnailBase: thumbnailBase)
+  }
+}
+
+/// Opens the intake window at launch when the fixture supplies a link.
+///
+/// The intake is a `Window` scene reached by a menu item or the toolbar `+`,
+/// and `.restorationBehavior(.disabled)` means it never comes back on its own.
+/// Rather than synthesising a click on the `+` — which would need its
+/// coordinates, and so the layout knowledge this harness exists without — the
+/// run asks for the window the same way the toolbar button does.
+struct ScreenshotIntakeOpener: View {
+  @Environment(\.openWindow) private var openWindow
+  let windowID: String
+
+  var body: some View {
+    Color.clear
+      .frame(width: 0, height: 0)
+      .onAppear {
+        guard ScreenshotFixture.link != nil else { return }
+        openWindow(id: windowID)
+        // Launched from a shell, the app never becomes frontmost, so every
+        // window draws inactive — grey traffic lights on all of them, which
+        // in a composite reads as a screenshot of an app nobody is using.
+        // Activating leaves the intake key and the queue correctly dimmed
+        // behind it, which is what the arrangement actually looks like.
+        NSApp.activate(ignoringOtherApps: true)
+      }
   }
 }
 

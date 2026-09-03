@@ -82,6 +82,7 @@ STATE="$(mktemp -d)"
 cp "$FIXTURE/queue.json" "$STATE/queue.json"
 
 cleanup() {
+  [[ -n "${SERVER_PID:-}" ]] && kill "$SERVER_PID" 2>/dev/null || true
   [[ $KEEP -eq 1 ]] && { echo "app left running; state in $STATE"; return; }
   [[ -n "${APP_PID:-}" ]] && kill "$APP_PID" 2>/dev/null || true
   rm -rf "$STATE"
@@ -93,10 +94,37 @@ trap cleanup EXIT
 # two cannot drift.
 EXPAND=""
 [[ -f "$FIXTURE/expand.txt" ]] && EXPAND="$(cat "$FIXTURE/expand.txt")"
+LINK=""
+[[ -f "$FIXTURE/link.txt" ]] && LINK="$(cat "$FIXTURE/link.txt")"
 
-echo "launching with OXBOW_FIXTURE_DIR=$STATE  size=$SIZE"
-OXBOW_FIXTURE_DIR="$STATE" OXBOW_FIXTURE_EXPAND="$EXPAND" OXBOW_FIXTURE_SIZE="$SIZE" \
-  "$APP/Contents/MacOS/Oxbow" >/dev/null 2>&1 &
+cp -f "$FIXTURE/videoinfo.json" "$STATE/" 2>/dev/null || true
+
+# The intake's thumbnail has to arrive over HTTP. VideoCard.loadImage requires
+# an HTTPURLResponse with status 200, and a file:// URL produces a plain
+# URLResponse — so it would load nothing and quietly draw the placeholder,
+# which looks like a design decision rather than a broken fixture. A loopback
+# server costs one process and keeps the app unchanged.
+PORT=$(( 8730 + RANDOM % 200 ))
+python3 -m http.server "$PORT" --bind 127.0.0.1 --directory "$FIXTURE" >/dev/null 2>&1 &
+SERVER_PID=$!
+
+echo "launching with OXBOW_FIXTURE_DIR=$STATE  size=$SIZE  thumbs=:$PORT"
+# `-key value` pairs land in NSArgumentDomain, which outranks everything in
+# UserDefaults. That is how the intake is kept off the developer's own saved
+# defaults -- destination, quality cap, chat size -- without writing to the
+# real domain the way `defaults write` would. `intakeOptionsExpanded` is a
+# genuine preference, so this is also how the Download Options section is
+# opened; the trim section is not one, and comes in by environment.
+OXBOW_FIXTURE_DIR="$STATE" \
+OXBOW_FIXTURE_EXPAND="$EXPAND" \
+OXBOW_FIXTURE_SIZE="$SIZE" \
+OXBOW_FIXTURE_LINK="$LINK" \
+OXBOW_FIXTURE_TRIM=1 \
+OXBOW_FIXTURE_THUMBS="http://127.0.0.1:$PORT" \
+  "$APP/Contents/MacOS/Oxbow" \
+  -hasSavedDefaults NO \
+  -intakeOptionsExpanded YES \
+  >/dev/null 2>&1 &
 APP_PID=$!
 
 # Capture one window by title. Retries because the window arrives a moment
@@ -129,19 +157,26 @@ capture() {
   echo "  $out  (window $id)"
 }
 
-mkdir -p "$ROOT/docs"
+# Components, deliberately -- docs/screenshot.png is composited from these by
+# hand and is not written here. A run that overwrote the hero image would undo
+# that composite every time somebody regenerated a part of it.
+OUT="$ROOT/docs/screenshots"
+mkdir -p "$OUT"
 echo "capturing…"
-capture "Oxbow" "$ROOT/docs/screenshot.png"
+capture "Oxbow" "$OUT/queue.png"
+capture "Add Download" "$OUT/intake.png"
 
 # Guard against the silent failure mode: without Screen Recording permission
 # screencapture writes a file, it is just empty or black.
-SIZE=$(stat -f%z "$ROOT/docs/screenshot.png" 2>/dev/null || echo 0)
-if [[ "$SIZE" -lt 20000 ]]; then
-  echo >&2
-  echo "capture is only ${SIZE} bytes — almost certainly blank." >&2
-  echo "Grant Screen Recording to this terminal in System Settings >" >&2
-  echo "Privacy & Security > Screen Recording, then run this again." >&2
-  exit 1
-fi
+for f in "$OUT/queue.png" "$OUT/intake.png"; do
+  bytes=$(stat -f%z "$f" 2>/dev/null || echo 0)
+  if [[ "$bytes" -lt 20000 ]]; then
+    echo >&2
+    echo "$(basename "$f") is only ${bytes} bytes — almost certainly blank." >&2
+    echo "Grant Screen Recording to this terminal in System Settings >" >&2
+    echo "Privacy & Security > Screen Recording, then run this again." >&2
+    exit 1
+  fi
+done
 
-echo "done."
+echo "done. docs/screenshot.png is the composite and is not written by this."

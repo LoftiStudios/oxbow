@@ -79,8 +79,26 @@ struct IntakeWindow: View {
     // actually touch overlapping fields today.
     .onAppear {
       model.reseedFromPreferences()
+      // Seeded like a paste, so the fixture run goes down the same path a
+      // person does — the debounced `.task(id:)` below sees the link change
+      // and fetches, and `QueueController.fetchInfo` hands back canned
+      // metadata. Deliberately ahead of the clipboard, which it stands in for.
+      #if DEBUG
+      if let link = ScreenshotFixture.link { model.linkText = link }
+      #endif
       prefillFromClipboard()
     }
+    // Trim has to be opened *after* the metadata lands, not with the link:
+    // `load()` clears `isTrimExpanded` when it arrives, because a trim carried
+    // over from a longer video fails its bounds check. `name` is assigned in
+    // the same breath as that clear, so it is the signal that the clear has
+    // already happened.
+    #if DEBUG
+    .onChange(of: model.name) { _, newName in
+      guard ScreenshotFixture.opensTrim, !newName.isEmpty else { return }
+      model.isTrimExpanded = true
+    }
+    #endif
     // Turning on chat or trim adds a section to a form whose footer is pinned,
     // so the new section arrives below the fold — the one you just asked for is
     // the one you cannot see. Grow the window to meet it.

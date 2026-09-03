@@ -58,6 +58,27 @@ TITLES = [
 # queue is a truthful screenshot of a boring moment; the interesting one shows
 # the multi-step model actually working. Index into the job list.
 RUNNING_JOB = 5
+
+# The intake shows a video being *added*, so deliberately not one of the six
+# already queued: the next episode after the one downloading at the bottom.
+# `createdAt` is absolute so a composite of the two windows still agrees with
+# itself next month.
+INTAKE = {
+    "streamer": "AcidBurn",
+    "title": "persona 3 - ep. 5 - the answer, and then bed 🌒",
+    "createdAt": "2026-08-05T20:14:00Z",
+    "durationSeconds": 8142,
+    "qualities": [
+        {"name": "1080p60", "resolution": "1920x1080", "bitsPerSecond": 6_184_466},
+        {"name": "720p60", "resolution": "1280x720", "bitsPerSecond": 3_411_940},
+        {"name": "480p30", "resolution": "852x480", "bitsPerSecond": 1_427_697},
+    ],
+    # Served over http by scripts/screenshots.sh, never file:// — VideoCard
+    # requires an HTTPURLResponse with status 200, so a file URL silently
+    # renders the placeholder instead.
+    "thumbnailPaths": ["thumbnail.jpg"],
+}
+INTAKE_LINK = "https://www.twitch.tv/videos/2850120005"
 RUNNING_PLAN = {
     "downloadChat": ("done", {"phase": "Writing Output File", "fraction": 1}),
     "renderChat": ("running", {"phase": "Rendering Video", "fraction": 0.62,
@@ -223,9 +244,12 @@ def main():
     # hardcoded there because it has to name the mid-flight job exactly, and
     # two places holding that independently is two places to forget.
     (OUT.parent / "expand.txt").write_text(TITLES[RUNNING_JOB] + "\n")
+    (OUT.parent / "videoinfo.json").write_text(json.dumps(INTAKE, indent=2) + "\n")
+    (OUT.parent / "link.txt").write_text(INTAKE_LINK + "\n")
 
     print(f"wrote {OUT.relative_to(Path.cwd()) if OUT.is_relative_to(Path.cwd()) else OUT}")
     print(f"  {len(rebuilt)} jobs, job {RUNNING_JOB} caught mid-flight")
+    print(f"  intake: {INTAKE['streamer']} - {INTAKE['title']}")
 
 
 if __name__ == "__main__":
