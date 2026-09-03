@@ -200,7 +200,10 @@ struct ResumeLedgerTests {
   }
 
   /// Every piece frameless means there is nothing to continue from, so the
-  /// area is cleared and the next attempt is a first attempt.
+  /// retention *directory itself* is removed, not merely emptied of pieces —
+  /// the two read the same through `pieces(of:)` alone, since the frameless
+  /// loop above already deletes each piece individually regardless of
+  /// whether the journal call runs.
   @Test func anAllFramelessDirectoryStartsOver() throws {
     let (ledger, workspace, job) = makeLedger()
     defer { cleanUp(workspace) }
@@ -212,10 +215,17 @@ struct ResumeLedgerTests {
     #expect(resume.index == 0)
     #expect(resume.from == nil)
     #expect(ledger.pieces(of: job).isEmpty, "the area must be cleared")
+    #expect(
+      !FileManager.default.fileExists(atPath: workspace.resumeDirectory(job).path),
+      "the retention directory itself must be removed, not merely emptied of pieces")
   }
 
-  /// The resume point is frames divided by the *render's* framerate, so the
-  /// same pieces resume at a different timestamp at 60fps than at 30.
+  /// The resume point is frames divided by the *render's* framerate, so one
+  /// arrangement — a single 60-frame piece — must resume at a different
+  /// timestamp at 30fps than at 60. Calling `resumePoint` twice against the
+  /// same on-disk piece is safe here: with one 60-frame piece it never takes
+  /// a side-effecting branch (nothing is removed, the cap is not reached),
+  /// and both quotients are exact in binary floating point.
   @Test func theResumePointScalesWithFramerate() throws {
     let (ledger, workspace, job) = makeLedger()
     defer { cleanUp(workspace) }
@@ -223,5 +233,8 @@ struct ResumeLedgerTests {
     try writePiece(0, frames: 60, job: job, workspace: workspace)
 
     #expect(ledger.resumePoint(job: job, framerate: 30).from == .seconds(2))
+    #expect(
+      ledger.resumePoint(job: job, framerate: 60).from == .seconds(1),
+      "the same pieces must resume earlier at a higher framerate")
   }
 }

@@ -72,6 +72,7 @@ public actor QueueEngine {
   /// What is retained on disk for an interrupted composite, and where a
   /// resumed one picks up — see `ResumeLedger`.
   private let ledger: ResumeLedger
+
   private var jobs: [Job] = []
   /// The live helper for each in-flight step, keyed by step. Only the helper
   /// is kept: the unstructured `Task` that drives it is deliberately not
@@ -969,9 +970,9 @@ public actor QueueEngine {
   /// (for a composite) where it resumes from.
   ///
   /// `nonisolated` — and callable with no `await` — because it touches
-  /// nothing but `configuration`, which is immutable and `Sendable`. That
-  /// also happens to be what lets tests exercise it directly without hopping
-  /// onto the actor.
+  /// nothing but `configuration`, `journal` and `ledger`, all immutable and
+  /// `Sendable`. That also happens to be what lets tests exercise it
+  /// directly without hopping onto the actor.
   nonisolated func makeContext(job: Job, step: Step) throws -> StepContext {
     let stepDirectory = try configuration.workspace.prepareStep(job: job.id, step: step.id)
     let artifacts = try configuration.workspace.prepareArtifacts(job: job.id)
