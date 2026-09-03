@@ -1,17 +1,93 @@
 import Foundation
 
+/// What `Preferences` needs from a key-value store: exactly the five
+/// `UserDefaults` members it calls, and nothing else.
+///
+/// **Constrained to `AnyObject`, deliberately.** `Preferences` is a struct
+/// whose copies are meant to share state — `IntakeModel` holds one,
+/// `SettingsView` holds another, and a write through either must be visible
+/// to the other; `reseedFromPreferences()` and the Settings window only work
+/// together because of that sharing. That falls out for free with a
+/// reference-type store — `UserDefaults` is a class, and so is
+/// `InMemoryPreferenceStore` below — because `Preferences` holds the store by
+/// reference even though `Preferences` itself is copied. A `struct`
+/// conformance (say, a value-type dictionary wrapper) would silently break
+/// this: each copy of `Preferences` would carry its own independent copy of
+/// the store's state, and a write through one copy would vanish from every
+/// other. `AnyObject` makes that mistake fail to compile instead of failing
+/// a handful of tests that read a store written through a different copy of
+/// `Preferences`.
+public protocol PreferenceStore: AnyObject {
+  func string(forKey: String) -> String?
+  func bool(forKey: String) -> Bool
+  func object(forKey: String) -> Any?
+  func set(_ value: Any?, forKey: String)
+  func removeObject(forKey: String)
+}
+
+/// `UserDefaults` already has every one of these five methods with matching
+/// argument labels, so the conformance has nothing to add.
+extension UserDefaults: PreferenceStore {}
+
+/// A `PreferenceStore` that never touches disk — a dictionary behind a lock,
+/// nothing more.
+///
+/// **Why this exists.** Tests and SwiftUI previews used to stand up a scratch
+/// `UserDefaults(suiteName:)` instead, which is a real `UserDefaults` and
+/// therefore writes a real `.plist` to `~/Library/Preferences` the moment
+/// anything is set on it — cfprefsd persists a domain's *file* on first write
+/// and `removePersistentDomain(forName:)` only clears the domain's
+/// *contents*, not the file. That is why the `deinit`-based janitors this
+/// type replaces were only a partial fix: they emptied the plist, they never
+/// deleted it. A store with no disk underneath it has nothing to leak.
+///
+/// **Public, and a `final class` rather than an `actor`.** Public because
+/// three call sites outside this package need it: `Tests/OxbowKitTests`,
+/// `OxbowTests`, and the SwiftUI previews in `Oxbow/`. A plain class rather
+/// than an `actor` because `Preferences`' getters and setters are synchronous
+/// — an `actor` would force every read through `await`, which `UserDefaults`
+/// does not require and callers do not expect. The lock exists only so a
+/// store shared between a preview's model and its host window does not race.
+public final class InMemoryPreferenceStore: PreferenceStore {
+  private var storage: [String: Any] = [:]
+  private let lock = NSLock()
+
+  public init() {}
+
+  public func string(forKey key: String) -> String? {
+    lock.withLock { storage[key] as? String }
+  }
+
+  public func bool(forKey key: String) -> Bool {
+    lock.withLock { storage[key] as? Bool ?? false }
+  }
+
+  public func object(forKey key: String) -> Any? {
+    lock.withLock { storage[key] }
+  }
+
+  public func set(_ value: Any?, forKey key: String) {
+    lock.withLock { storage[key] = value }
+  }
+
+  public func removeObject(forKey key: String) {
+    lock.withLock { storage.removeValue(forKey: key) }
+  }
+}
+
 /// The four standing preferences, and the one flag that says whether the user
 /// has ever expressed one.
 ///
-/// **`UserDefaults` is injected, never `.standard` by default at a call site
-/// that cannot override it, and never `@AppStorage`.** `OxbowTests` is hosted
-/// by the app, so anything reaching for `.standard` during a test run reads
-/// and writes the real `studio.lofti.Oxbow` domain — the trap
+/// **The store is injected, never `.standard` by default at a call site that
+/// cannot override it, and never `@AppStorage`.** `OxbowTests` is hosted by
+/// the app, so anything reaching for `.standard` during a test run reads and
+/// writes the real `studio.lofti.Oxbow` domain — the trap
 /// `docs/design/status.md` §9.2 exists to remember. `UpdateModel` takes the
 /// same parameter for the same reason.
 ///
-/// **Not `Sendable`.** `UserDefaults` is not, and nothing needs to send this
-/// across an isolation domain: both writers are main-actor views.
+/// **Not `Sendable`.** Neither `UserDefaults` nor `PreferenceStore` promise
+/// to be, and nothing needs to send this across an isolation domain: both
+/// writers are main-actor views.
 public struct Preferences {
 
   private enum Key {
@@ -23,12 +99,12 @@ public struct Preferences {
     static let optionsExpanded = "intakeOptionsExpanded"
   }
 
-  private let defaults: UserDefaults
+  private let store: PreferenceStore
   private let homeDirectory: URL
   private let directoryExists: (URL) -> Bool
 
   public init(
-    defaults: UserDefaults = .standard,
+    store: PreferenceStore = UserDefaults.standard,
     homeDirectory: URL = .homeDirectory,
     directoryExists: @escaping (URL) -> Bool = { url in
       var isDirectory: ObjCBool = false
@@ -36,7 +112,7 @@ public struct Preferences {
       return found && isDirectory.boolValue
     })
   {
-    self.defaults = defaults
+    self.store = store
     self.homeDirectory = homeDirectory
     self.directoryExists = directoryExists
   }
@@ -54,7 +130,7 @@ public struct Preferences {
   /// see `storedDestinationIsMissing`, which is what makes that visible.
   public var destination: URL {
     get {
-      guard let path = defaults.string(forKey: Key.destination) else {
+      guard let path = store.string(forKey: Key.destination) else {
         return Self.factoryDestination(homeDirectory: homeDirectory)
       }
       let stored = URL(filePath: path)
@@ -64,37 +140,37 @@ public struct Preferences {
       return stored
     }
     set {
-      defaults.set(newValue.path, forKey: Key.destination)
+      store.set(newValue.path, forKey: Key.destination)
       recordSave()
     }
   }
 
   public var qualityCap: QualityCap {
     get {
-      defaults.string(forKey: Key.qualityCap).flatMap(QualityCap.init(rawValue:)) ?? .best
+      store.string(forKey: Key.qualityCap).flatMap(QualityCap.init(rawValue:)) ?? .best
     }
     set {
-      defaults.set(newValue.rawValue, forKey: Key.qualityCap)
+      store.set(newValue.rawValue, forKey: Key.qualityCap)
       recordSave()
     }
   }
 
   public var output: DownloadOutput {
     get {
-      defaults.string(forKey: Key.output).flatMap(DownloadOutput.init(rawValue:)) ?? .default
+      store.string(forKey: Key.output).flatMap(DownloadOutput.init(rawValue:)) ?? .default
     }
     set {
-      defaults.set(newValue.rawValue, forKey: Key.output)
+      store.set(newValue.rawValue, forKey: Key.output)
       recordSave()
     }
   }
 
   public var chatSize: ChatSize {
     get {
-      defaults.string(forKey: Key.chatSize).flatMap(ChatSize.init(rawValue:)) ?? .default
+      store.string(forKey: Key.chatSize).flatMap(ChatSize.init(rawValue:)) ?? .default
     }
     set {
-      defaults.set(newValue.rawValue, forKey: Key.chatSize)
+      store.set(newValue.rawValue, forKey: Key.chatSize)
       recordSave()
     }
   }
@@ -108,8 +184,8 @@ public struct Preferences {
   /// Deliberately does **not** call `recordSave()`: collapsing a panel is not
   /// expressing a preference about downloads.
   public var optionsPanelIsExpanded: Bool {
-    get { defaults.object(forKey: Key.optionsExpanded) as? Bool ?? true }
-    set { defaults.set(newValue, forKey: Key.optionsExpanded) }
+    get { store.object(forKey: Key.optionsExpanded) as? Bool ?? true }
+    set { store.set(newValue, forKey: Key.optionsExpanded) }
   }
 
   // MARK: - Whether anything has been expressed
@@ -123,24 +199,24 @@ public struct Preferences {
   /// Settings window alike. It means *the user has expressed a preference*,
   /// not *the checkbox was used*.
   public var hasSavedDefaults: Bool {
-    defaults.bool(forKey: Key.hasSavedDefaults)
+    store.bool(forKey: Key.hasSavedDefaults)
   }
 
   /// A destination was stored and is no longer there. False when nothing was
   /// ever stored — that is not the same situation and must not draw a warning.
   public var storedDestinationIsMissing: Bool {
-    guard let path = defaults.string(forKey: Key.destination) else { return false }
+    guard let path = store.string(forKey: Key.destination) else { return false }
     return !directoryExists(URL(filePath: path))
   }
 
   public mutating func restoreDefaults() {
     for key in [Key.destination, Key.qualityCap, Key.output, Key.chatSize,
                 Key.hasSavedDefaults, Key.optionsExpanded] {
-      defaults.removeObject(forKey: key)
+      store.removeObject(forKey: key)
     }
   }
 
   private func recordSave() {
-    defaults.set(true, forKey: Key.hasSavedDefaults)
+    store.set(true, forKey: Key.hasSavedDefaults)
   }
 }
