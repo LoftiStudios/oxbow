@@ -15,7 +15,7 @@ enum IntentSubmission {
   /// and two of them end by naming a control this action does not have —
   /// "Choose \"Video\"" and "Pick another quality". Those become the
   /// parameter names.
-  enum Failure: Error, CustomLocalizedStringResourceConvertible {
+  enum Failure: Error, Equatable, CustomLocalizedStringResourceConvertible {
     case unrecognizedLink
     case unavailable(String)
     case refused(String)

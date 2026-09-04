@@ -79,14 +79,66 @@ struct DownloadTwitchVideoIntentTests {
     #expect(preferences.hasSavedDefaults == false)
   }
 
+  /// Asserts the *specific* case, not merely the type: deleting `submit`'s
+  /// early `guard !model.isLinkUnrecognized, model.target != nil` still
+  /// throws *some* `Failure` (`load()` no-ops on a nil `target`, `add()`
+  /// fails its own `guard let target` inside `composedTemplate()`, and the
+  /// generic `Failure.refused("Oxbow could not build that download…")`
+  /// ships instead) — a test that only checked the error's type would still
+  /// pass with that guard deleted. And the fetch counter is what makes
+  /// "before any fetch" a checked fact rather than a claim in the test's
+  /// name: without the early guard, `load()` never gets far enough to call
+  /// `fetchInfo` either (its own `guard let target` fires first), so the
+  /// counter would still read zero even with the bug above — the count
+  /// alone cannot catch that regression, which is why both assertions are
+  /// here together.
   @Test func anUnrecognizedLinkIsRefusedBeforeAnyFetch() async {
-    let model = makeModel(preferences: store())
+    let fetchCounter = FetchCounter()
+    let model = makeModel(preferences: store(), fetchCounter: fetchCounter)
 
-    await #expect(throws: IntentSubmission.Failure.self) {
+    await #expect(throws: IntentSubmission.Failure.unrecognizedLink) {
       _ = try await IntentSubmission.submit(
         link: "https://example.com/not-twitch",
         quality: nil, output: nil, chatSize: nil, destination: nil,
         into: model)
+    }
+
+    #expect(fetchCounter.count == 0)
+  }
+
+  /// **Pins `rewordForIntent` to the strings it rewrites.** `chatProblem`'s
+  /// two sentences end by naming a control this action does not have —
+  /// "Choose \"Video\"" — and `rewordForIntent` swaps that fragment for
+  /// "Set Output to \"Video only\"" by literal string match against
+  /// `IntakeModel`'s own copy. Nothing else ties the two together: reword
+  /// the tail of `chatProblem` in a future refactor and `rewordForIntent`'s
+  /// `replacingOccurrences` silently stops matching, and this action starts
+  /// shipping "Choose \"Video\"" to a surface with no Video control. This
+  /// test fails the moment that happens, whether the fragment changes or the
+  /// rewording is dropped.
+  ///
+  /// `hasDownloadableChat: false` is what `IntakeModel.chatProblem` checks
+  /// (once `metadataFailure` is nil and `output == .videoWithChat`, which is
+  /// the factory default this test never overrides) — see
+  /// `IntakeModel.swift`'s `chatProblem`.
+  @Test func aChatProblemIsRewordedForTheIntentsSurface() async {
+    let model = makeModel(preferences: store(), hasDownloadableChat: false)
+
+    do {
+      _ = try await IntentSubmission.submit(
+        link: "https://twitch.tv/videos/123",
+        quality: nil, output: nil, chatSize: nil, destination: nil,
+        into: model)
+      Issue.record("expected a chat-problem refusal")
+    } catch let error as IntentSubmission.Failure {
+      guard case .refused(let message) = error else {
+        Issue.record("expected .refused, got \(error)")
+        return
+      }
+      #expect(message.contains("Set Output to \"Video only\""))
+      #expect(!message.contains("Choose \"Video\""))
+    } catch {
+      Issue.record("expected IntentSubmission.Failure, got \(error)")
     }
   }
 
@@ -104,6 +156,13 @@ struct DownloadTwitchVideoIntentTests {
 
   // MARK: - Fixtures
 
+  /// Counts calls to a fixture's `fetchInfo` closure, so a test can assert
+  /// "before any fetch" as a checked fact rather than a claim in its name.
+  private final class FetchCounter {
+    private(set) var count = 0
+    func record() { count += 1 }
+  }
+
   /// A model wired to the stub video every test above resolves against.
   ///
   /// Mirrors `IntakeModelTests.makeModel`/`.info` rather than inventing a
@@ -114,11 +173,17 @@ struct DownloadTwitchVideoIntentTests {
   /// `volumeSpace` is stubbed with a terabyte free for the same reason
   /// `IntakeModelTests` stubs it everywhere: `IntakeModel`'s designated init
   /// defaults it to `.live`, and a unit test has no business reading the
-  /// real disk.
-  private func makeModel(preferences: Preferences) -> IntakeModel {
+  /// real disk. `fetchCounter` and `hasDownloadableChat` default to no-op /
+  /// `true` so every existing call site is unaffected.
+  private func makeModel(
+    preferences: Preferences,
+    fetchCounter: FetchCounter? = nil,
+    hasDownloadableChat: Bool = true
+  ) -> IntakeModel {
     IntakeModel(
       fetchInfo: { _ in
-        VideoInfo(
+        fetchCounter?.record()
+        return VideoInfo(
           streamer: "streamer",
           title: "A Stream",
           createdAt: Date(timeIntervalSince1970: 1_755_000_000),
@@ -128,7 +193,7 @@ struct DownloadTwitchVideoIntentTests {
             StreamQuality(name: "720p60", resolution: "1280x720", bitsPerSecond: 3_000_000),
             StreamQuality(name: "480p30", resolution: "852x480", bitsPerSecond: 1_500_000),
           ],
-          hasDownloadableChat: true)
+          hasDownloadableChat: hasDownloadableChat)
       },
       enqueue: { _, _ in },
       fileExists: { _ in false },
