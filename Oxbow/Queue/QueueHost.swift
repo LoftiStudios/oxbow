@@ -39,6 +39,25 @@ final class QueueHost {
   private var state: State = .idle
   private let resolve: (() async -> QueueContent)?
 
+  /// The engine from the moment it is **constructed**, which is deliberately
+  /// earlier than `ready()` hands it out.
+  ///
+  /// **Two ways to reach one object, and they are not interchangeable.**
+  /// `ready()` answers only once `start()` has loaded the saved queue and
+  /// swept the workspace, because anything that *enqueues* must never see a
+  /// pre-start engine: `start()` does both unconditionally, so a job added
+  /// before it is either overwritten by the load or has its workspace deleted
+  /// by the sweep. Quitting wants the opposite. It needs whatever exists right
+  /// now — and a `nil` here for however long `start()` takes is
+  /// `applicationShouldTerminate` returning `.terminateNow` and skipping
+  /// `shutDown()`, which is precisely the window in which
+  /// `TwitchDownloaderCLI` and its FFmpeg survive the quit as orphans (see
+  /// `AppDelegate`'s comment, hand-verified against a real download).
+  ///
+  /// So: `ready()` for every caller that will *use* the engine, this one for
+  /// the single caller that only wants to stop it.
+  private var liveController: QueueController?
+
   /// **`lazy`, and for the reason `AppDelegate`'s were.** Built on first use
   /// by whichever caller gets there, so neither depends on when it is first
   /// reached. Both stay `nil` under `xcodebuild test`: `OxbowTests` is hosted
@@ -53,11 +72,33 @@ final class QueueHost {
     self.resolve = resolve
   }
 
-  /// The controller if one resolved, for `applicationShouldTerminate`, which
-  /// must not itself start a resolution just to find nothing to shut down.
-  var resolvedController: QueueController? {
-    guard case .resolved(.ready(let controller)) = state else { return nil }
-    return controller
+  /// The controller if one has been built, for `applicationShouldTerminate`,
+  /// which must not itself start a resolution just to find nothing to shut
+  /// down.
+  ///
+  /// Reads `liveController` rather than `state`, so a quit arriving during
+  /// `start()` still finds the engine to shut down. See that property for why
+  /// the two answers deliberately differ in that span.
+  var resolvedController: QueueController? { liveController }
+
+  /// Builds the notifier, and with it registers the notification centre's
+  /// delegate and the `finished` category's "Show in Finder" action.
+  ///
+  /// **Synchronous, and separate from `ready()`, for two reasons.**
+  /// `UNUserNotificationCenter` wants its delegate set before the app finishes
+  /// launching, so that a notification response which *cold-launches* the app
+  /// is delivered rather than dropped — and `applicationDidFinishLaunching`
+  /// cannot await, so the `Task` that nudges `ready()` cannot even begin until
+  /// after it returns. And resolution is not a reliable route to the notifier
+  /// anyway: `attachStatusObservers` is only reached on the `.ready` branch,
+  /// so a `helperMissing` launch would build no notifier at all and leave the
+  /// centre with no delegate for the whole session.
+  ///
+  /// `lazy` is what makes this safe to call alongside `attachStatusObservers`:
+  /// whichever gets there first constructs the one notifier and the other
+  /// finds it. Still `nil` under `xcodebuild test` — see `notifier`.
+  func registerNotificationDelegate() {
+    _ = notifier
   }
 
   /// Resolves the engine, or returns why it could not. Safe to call from
@@ -77,7 +118,19 @@ final class QueueHost {
           // Resolution finished while this caller was suspending. Answer
           // from the settled state rather than joining a queue nobody will
           // ever drain.
-          if case .resolved(let content) = state { continuation.resume(returning: content) }
+          guard case .resolved(let content) = state else {
+            // Unreachable, and crashing is the point. The only states are
+            // `.idle`, `.resolving` and `.resolved`; the `switch` above saw
+            // `.resolving` in this same main-actor turn with no suspension
+            // between there and here; and nothing ever moves the state
+            // backwards. Reaching this line means that graph gained an edge,
+            // and there is no honest answer to resume with — so a debug crash
+            // that names the broken invariant beats returning silently and
+            // hanging this caller forever.
+            preconditionFailure(
+              "QueueHost left .resolving without settling on .resolved; a caller would hang")
+          }
+          continuation.resume(returning: content)
           return
         }
         waiting.append(continuation)
@@ -98,6 +151,10 @@ final class QueueHost {
       let waiting: [CheckedContinuation<QueueContent, Never>]
       if case .resolving(let pending) = state { waiting = pending } else { waiting = [] }
       state = .resolved(content)
+      // Redundant on the real path, where `resolveFromBundleInternal` set it
+      // before `start()`. Here so the injected `resolve` seam cannot make
+      // `resolvedController` disagree with the outcome it just published.
+      if case .ready(let controller) = content { liveController = controller }
       for continuation in waiting { continuation.resume(returning: content) }
       return content
     }
@@ -116,6 +173,11 @@ final class QueueHost {
       switch AppComposition.resolve(bundleExecutable: executable, supportDirectory: support) {
       case .ready(let configuration):
         let controller = QueueController(configuration: configuration)
+        // Reachable through `resolvedController` from here, so a quit during
+        // `start()` still has something to shut down — and *not* through
+        // `ready()`, which waits for `start()` so no enqueuer ever sees a
+        // pre-start engine. See `liveController`.
+        liveController = controller
         attachStatusObservers(to: controller)
         await controller.start()
         return .ready(controller)

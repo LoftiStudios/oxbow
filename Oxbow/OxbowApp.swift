@@ -48,6 +48,12 @@ struct OxbowApp: App {
         if let content {
           QueueView(content: content, updates: updates)
         } else {
+          // This spinner covers `QueueEngine.start()` too, deliberately.
+          // `QueueHost.ready()` answers only after the saved queue is loaded
+          // and the workspace swept, so that nothing can enqueue into an
+          // engine `start()` is about to overwrite — see `liveController`.
+          // Showing rows before that would mean showing a queue that is still
+          // being reconciled underneath them.
           ProgressView().frame(minWidth: 480, minHeight: 320)
         }
       }
@@ -304,14 +310,26 @@ private struct AboutCommand: View {
 /// `.failed(.interrupted)`, as designed.
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
-  /// Touches the notifier's owner so it registers as the notification
-  /// centre's delegate as early as the app can manage — a response arriving
-  /// before the delegate exists is a response that goes nowhere.
+  /// Two things, and the order between them is the point.
   ///
-  /// Fire-and-forget: `applicationDidFinishLaunching` cannot await, and
-  /// nothing here needs the result. `ready()` is idempotent, so the scene's
-  /// own `.task` joins this resolution rather than starting a second one.
+  /// **The delegate registration is synchronous and unconditional**, because
+  /// `UNUserNotificationCenter` requires its delegate before the app finishes
+  /// launching — that is what makes a notification response which *cold-
+  /// launches* Oxbow get delivered instead of dropped. Someone who queued a
+  /// six-hour composite from Spotlight, walked away and quit is exactly the
+  /// person who clicks "Show in Finder" on a launched-from-cold app, and the
+  /// failure is silent. Deferring it into the `Task` below would not do:
+  /// unstructured work cannot begin until this method returns. Routing it
+  /// through resolution would not do either — the notifier is otherwise only
+  /// built on `ready()`'s `.ready` branch, so a `helperMissing` launch would
+  /// register no delegate at all.
+  ///
+  /// **The resolution nudge is fire-and-forget**, because this method cannot
+  /// await and nothing here needs the result. `ready()` is idempotent, so the
+  /// scene's own `.task` joins this resolution rather than starting a second
+  /// one.
   func applicationDidFinishLaunching(_ notification: Notification) {
+    QueueHost.shared.registerNotificationDelegate()
     Task { _ = await QueueHost.shared.ready() }
   }
 

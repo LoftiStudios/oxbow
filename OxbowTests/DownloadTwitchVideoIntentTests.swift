@@ -48,6 +48,45 @@ struct DownloadTwitchVideoIntentTests {
     #expect(model.quality == "480p30")
   }
 
+  /// **The other half of the same constraint, and the half `settings.md` §3.4
+  /// is actually about.** The test above passes `output: nil`, so
+  /// `forComposite` is `.videoWithChat` in either ordering and only
+  /// `qualityCap` is pinned. `load()` also reads `output`, to decide whether
+  /// resolution must skip a rendition `CompositeGeometry` cannot parse — an
+  /// `output` override that arrives after `load()` resolves against the wrong
+  /// filter and names a rendition nobody asked for.
+  ///
+  /// **The fixture is artificial by construction, and has to be.**
+  /// `QualityLadder.resolve`'s composite filter drops exactly those renditions
+  /// `CompositeGeometry` refuses, and everything without pixel dimensions is
+  /// already dropped by `sized` in the same function. The one remaining gap —
+  /// as `QualityLadder.resolve`'s own comment says — is a rendition with a
+  /// dimension of *1*: `shortSide` reads it, while `CompositeGeometry` rounds
+  /// it down to even, gets zero, and returns nil. So `284x1` is the only
+  /// shape in which the two filters genuinely disagree, and a difference in
+  /// the resolved rendition is the whole assertion.
+  ///
+  /// With `.p480` and `output: .video`: nothing is filtered, and `284x1`'s
+  /// short side of 1 is the largest rendition at or below the ceiling. With
+  /// the composite filter still in force it is gone, nothing else is at or
+  /// below 480, and `resolve` falls back to the smallest thing there is —
+  /// `1080p60`.
+  @Test func anOutputOverrideIsAppliedBeforeMetadataResolves() async throws {
+    let model = makeModel(
+      preferences: store { $0.qualityCap = .p480 },
+      qualities: [
+        StreamQuality(name: "1080p60", resolution: "1920x1080", bitsPerSecond: 8_000_000),
+        StreamQuality(name: "160p30", resolution: "284x1", bitsPerSecond: 200_000),
+      ])
+
+    _ = try await IntentSubmission.submit(
+      link: "https://twitch.tv/videos/123",
+      quality: nil, output: .video, chatSize: nil, destination: nil,
+      into: model)
+
+    #expect(model.quality == "160p30")
+  }
+
   /// An override is a decision about this run, not a standing preference.
   /// `settings.md` §2.2 refuses last-used-wins for the window; an automation
   /// silently rewriting the user's defaults is a worse version of it.
@@ -178,7 +217,12 @@ struct DownloadTwitchVideoIntentTests {
   private func makeModel(
     preferences: Preferences,
     fetchCounter: FetchCounter? = nil,
-    hasDownloadableChat: Bool = true
+    hasDownloadableChat: Bool = true,
+    qualities: [StreamQuality] = [
+      StreamQuality(name: "1080p60", resolution: "1920x1080", bitsPerSecond: 8_000_000),
+      StreamQuality(name: "720p60", resolution: "1280x720", bitsPerSecond: 3_000_000),
+      StreamQuality(name: "480p30", resolution: "852x480", bitsPerSecond: 1_500_000),
+    ]
   ) -> IntakeModel {
     IntakeModel(
       fetchInfo: { _ in
@@ -188,20 +232,31 @@ struct DownloadTwitchVideoIntentTests {
           title: "A Stream",
           createdAt: Date(timeIntervalSince1970: 1_755_000_000),
           duration: .seconds(3600),
-          qualities: [
-            StreamQuality(name: "1080p60", resolution: "1920x1080", bitsPerSecond: 8_000_000),
-            StreamQuality(name: "720p60", resolution: "1280x720", bitsPerSecond: 3_000_000),
-            StreamQuality(name: "480p30", resolution: "852x480", bitsPerSecond: 1_500_000),
-          ],
+          qualities: qualities,
           hasDownloadableChat: hasDownloadableChat)
       },
       enqueue: { _, _ in },
+      calendar: Self.pacific,
       fileExists: { _ in false },
       volumeSpace: VolumeSpace(
         availableBytes: { _ in 1_000_000_000_000 },
         volumeRoot: { _ in URL(filePath: "/") },
         volumeName: { _ in "Macintosh HD" }),
       preferences: preferences)
+  }
+
+  /// The same pinned calendar `IntakeModelTests` passes everywhere, and for
+  /// the same reason: `IntakeModel`'s designated init defaults `calendar` to
+  /// `.current`, so `OutputNaming.baseName` would date the job in whatever
+  /// zone the machine running the suite happens to be in. No assertion here
+  /// reads a date component today — `aSuccessfulSubmissionReturnsTheJobName`
+  /// compares the returned name against the model's own — which makes this a
+  /// trap laid for the first test that does, rather than a live failure.
+  /// Pinning it now costs a line.
+  private static var pacific: Calendar {
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = TimeZone(identifier: "America/Los_Angeles")!
+    return calendar
   }
 
   /// A `Preferences` over its own in-memory store, with a fixed fictional
