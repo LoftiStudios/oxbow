@@ -86,19 +86,36 @@ Notification Center shipped in 0.4.0, and defaults now stick: `Preferences`
 in `Sources/OxbowKit` stores destination, a quality cap, chat on/off and chat
 text size over an **injected** `UserDefaults` — deliberately not `@AppStorage`,
 which reaches `.standard` and would have every `xcodebuild test` writing the
-real domain. What it still has no answer for is drag-and-drop and a URL scheme.
+real domain. What it still has no answer for is any way in from outside itself.
 
 Clipboard hand-off already ships: `IntakeWindow` focuses the link field on
 open and, if the clipboard holds a Twitch address, prefills it —
-`TwitchLink` is what decides a string is worth offering.
+`TwitchLink` is what decides a string is worth offering. Between that and the
+defaults, everything *after* switching to the app is nearly free, which leaves
+the switch as the whole remaining cost.
 
 In rough order of delight per hour:
 
 1. **The live disk projection.** `docs/design/composite-rate-control.md` §6.1
    argues for it and `docs/design/disk-preflight.md` §9 records the two gaps it
    closes. The projection is already computed for the progress UI.
-2. **Drag-and-drop and a URL scheme.** Drop a link on the window or the Dock
-   icon; register `oxbow://` so a browser extension or a Shortcut can hand off.
+2. **The App Intent.** `docs/design/automation.md`. One Shortcuts action,
+   which macOS 26 also surfaces in Spotlight for free — ⌘Space, paste, Return,
+   no window. Small, because `IntakeModel` already runs without one; the real
+   work is §5's `QueueHost`, which stops engine construction being a side
+   effect of a window appearing.
+3. **Channel watching.** VODs expire after 14 days, 60 for partners, and a
+   missed one is unrecoverable. It is the only proposal that changes what the
+   app is rather than how fast you reach it, and it needs its own design doc —
+   polling, an app that runs rather than being opened, and a posture question.
+   `automation.md` §10.4 records the framing.
+
+**Drag-and-drop and the `oxbow://` scheme are not being built**, having sat at
+number 2 on this list for two releases. `automation.md` §10.1 and §10.2 carry
+the reasoning: the window already fills itself from the clipboard, so a drop
+replaces a paste that does not happen; and nothing on a Mac emits `oxbow://`
+except a browser extension that does not exist, for which App Intents is a
+better transport anyway.
 
 Then the Homebrew tap, and the native-renderer spike, which wants its own
 design doc before any code.
