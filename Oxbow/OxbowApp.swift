@@ -93,6 +93,7 @@ struct OxbowApp: App {
       // See `AppComposition.isUserSession`.
       .task {
         guard AppComposition.isUserSession else { return }
+        guard poller == nil else { return }
         guard let support = try? AppComposition.defaultSupportDirectory() else { return }
         poller = WatchPoller.live(supportDirectory: support)
         poller?.start()
