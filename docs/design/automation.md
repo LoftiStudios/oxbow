@@ -68,9 +68,9 @@ project and is deliberately not this one.
 |---|---|---|---|
 | Link | `String` | yes | — |
 | Quality | `QualityCap` | no | `Preferences.qualityCap` |
-| Include Chat | `DownloadOutput` | no | `Preferences.output` |
-| Chat Size | `ChatSize` | no | `Preferences.chatSize` |
-| Destination | `URL` (folder) | no | `Preferences.destination` |
+| Output | `DownloadOutput` | no | `Preferences.output` |
+| Chat Text Size | `ChatSize` | no | `Preferences.chatSize` |
+| Destination | `URL` | no | `Preferences.destination` |
 
 **Every override defaults to the stored preference, never to a factory
 value.** An omitted parameter must mean "whatever the Settings window says",
@@ -90,6 +90,17 @@ a preference, you get the best one available.
 The link is a `String`, not a `URL`. `TwitchLink.parse` already accepts a bare
 VOD id, a bare clip slug, and a scheme-less host, and a `URL` parameter would
 reject the first two before Oxbow ever saw them.
+
+**The destination is a plain `URL?`**, not the folder-typed `IntentFile` this
+table first implied. `IntentFile` models file *content* — its `data` is a
+non-optional, eagerly loaded `Data` — which is the wrong shape for a reference
+to a directory, and `supportedContentTypes:` is only exposed on the
+`IntentFile`-typed `@Parameter` overload in the first place. `URL` is a
+first-class intent parameter type with none of that machinery to fight, and
+Oxbow is not sandboxed, so there is no security-scoped bookmark to preserve
+either — which is the one thing that would have justified the heavier type.
+**Unverified**: that Shortcuts renders a folder *picker* for a plain `URL`
+parameter was reasoned from the SDK's interface and never driven live.
 
 ### 3.2 The vocabulary already exists
 
@@ -113,6 +124,45 @@ Shortcuts persists inside a user's saved shortcut, so renaming one silently
 breaks shortcuts that already exist, off in a file this repository cannot see.
 That test's failure message should say so.
 
+**Only `QualityCap` has a `label` to reuse.** `DownloadOutput` and `ChatSize`
+carry their display names in the `AppEnum` conformance and nowhere else,
+because `SettingsView` writes both inline and `IntakeWindow` renders
+`DownloadOutput` differently again for a clip — "Clip + chat" rather than
+"Video + chat". A single `label` could not have served the intake anyway, so
+three duplicated words beat refactoring a picker whose wording is
+context-dependent.
+
+### 3.2.1 The cap's wording is duplicated, and had to be
+
+`QualityCap.caseDisplayRepresentations` was meant to be *built* from `label`,
+so that the Shortcuts wording and the Settings window's wording could not drift
+apart. **That construction does not compile.** `appintentsmetadataprocessor` — the Xcode build tool that
+statically extracts `AppEnum` metadata for Shortcuts and Spotlight — parses
+that property's source *without executing it*, and needs each case's title to
+be a compile-time string literal. Two forms were tried against a real
+`xcodebuild test` and both were rejected: a `Dictionary(uniqueKeysWithValues:)`
+is not bracket syntax at all, so the whole property read as "not a dictionary"
+and every case as missing; spelling the dictionary out in brackets fixed that
+and still failed case by case, because reading the *value* through a
+runtime-computed `label` is precisely what the tool cannot follow.
+`IntentVocabulary.swift` carries both failures verbatim, in the property's own
+comment, so the next person to try it finds out before Xcode tells them.
+
+So the five strings are duplicated: literals in the conformance repeating
+literals on `label`. **The protection moved from construction time to test
+time, and the test is worth more than it was.**
+`IntentVocabularyTests.theQualityCapReusesItsOwnLabel` now compares each
+literal against `label` at runtime and fails the moment the two disagree.
+Written against the label-derived dictionary it compared `label` with itself —
+tautological, and structurally incapable of failing.
+
+**The trap worth recording is that `swift test` cannot see this class of
+error.** The metadata processor runs only under `xcodebuild`, and only once a
+real `AppIntent` exists in the app target to pull the enum into the extraction.
+A library-only test run will green-light an `AppEnum` the app cannot build. An
+`AppEnum` change is not verified until `xcodebuild` has compiled the app
+around it.
+
 ### 3.3 The parameter summary keeps Spotlight to one line
 
 `ParameterSummary` puts `\.$link` in the summary and leaves the four overrides
@@ -122,10 +172,21 @@ them. Optional parameters cost the common case nothing.
 
 ### 3.4 What it returns
 
-`JobID`, as an `IntentResult` with a dialog naming the job — "Queued *Streamer
-— 2026-08-14 — Title*". The id is returned so a later action can refer to the
-job; the dialog is what Spotlight actually shows, and it is the only
-confirmation a user who never opens the app will get.
+The job's base name, as a `String`, in an `IntentResult` with a dialog naming
+it — "Queued *Streamer — 2026-08-14 — Title*". The dialog is what Spotlight
+actually shows, and it is the only confirmation a user who never opens the app
+will get.
+
+**Not a `JobID`, which is what this section first asked for.**
+`QueueEngine.enqueue(_:title:)` returns `Void` and mints the id internally, so
+returning one means changing that signature, `QueueController.enqueue`, and the
+`enqueue` collaborator closure stubbed throughout the 2,142 lines of
+`IntakeModelTests` — all to hand back a value nothing can consume, since §9
+already puts querying the queue from Shortcuts out of scope. The base name
+costs nothing by comparison: `IntakeModel` derives it already, as
+`outputBaseName`, and a following Shortcuts action can build a path or a
+message out of it. If the queue actions §9 defers ever land, the id is worth
+its signature change then, with something on the other end to receive it.
 
 ---
 
@@ -204,11 +265,11 @@ Both the scene's `.task` and the intent call `ready()`. Whichever arrives first
 does the work and the other awaits the same outcome.
 
 **This removes an ordering assumption rather than moving it**, which is the
-same reasoning `AppDelegate`'s `lazy dock` and `lazy notifier` already record:
-those were built in `applicationDidFinishLaunching` on the assumption that it
-precedes the scene's `.task`, it does not, and the fix was to stop depending on
-which came first. This is that fix applied one level up, to the thing those
-two observe.
+same reasoning the `lazy dock` and `lazy notifier` already record: those were
+built in `applicationDidFinishLaunching` on the assumption that it precedes the
+scene's `.task`, it does not, and the fix was to stop depending on which came
+first. This is that fix applied one level up, to the thing those two observe —
+and both have since followed the observers onto the host itself (§8).
 
 **A singleton, deliberately.** The app is single-engine by construction — the
 long comment on the `Window` scene in `OxbowApp` explains what a second
@@ -219,8 +280,16 @@ us, which cannot be done.
 
 **`helperMissing` must fail the intent, not hang it.** `ready()` returns
 `QueueContent`, not `QueueController?`, so the unavailable case carries its
-message and the intent throws it. A bounded wait guards the remaining case
-where resolution neither succeeds nor fails.
+message and the intent throws it.
+
+**The bounded wait this section promised for the remaining case — resolution
+that neither succeeds nor fails — was deliberately not built.** There is no
+such case to guard. `AppComposition.resolve` is synchronous, and
+`controller.start()` catches its own error, so `resolveFromBundleInternal` has
+no path that can hang; a timeout would protect nothing, and could not be tested
+without injecting a hang for it to catch. What would change that is `start()`
+gaining a network call or a helper probe. Add the wait then, with the thing it
+guards already in hand.
 
 **`attachStatusObservers` moves to the host**, since it must happen before
 `start()` regardless of which caller triggered it.
@@ -270,7 +339,14 @@ model's own words where they survive compression and in a shorter form where
 they do not. **Two need rewording**: `chatProblem` and `compositeProblem` both
 end in an instruction to change a control the intent has no equivalent of
 ("Choose \"Video\"", "Pick another quality"). From an intent those become the
-parameter names — `Include Chat` and `Quality`.
+parameter names: `Set Output to "Video only"` and `Set a different Quality`.
+
+There is no `Include Chat` parameter for the first of those to name, whatever
+§3.1 said while this was being planned. The vocabulary settled on a
+`DownloadOutput` enum whose two cases *are* the choice — "Video + chat" or
+"Video only" — so the parameter is called Output, and the reworded refusal
+names the value to set as well as the parameter to set it on. A refusal that
+names a control the user cannot find is worse than one that says nothing.
 
 The disk warning is a special case. In the window it is a warning with a
 remedy, and Add stays enabled. From an intent nobody is reading it, so the
@@ -289,6 +365,19 @@ point, and the host owns a lifecycle the library has no opinion about.
 **The `AppEnum` conformances live beside the enums' own types in `OxbowKit`.**
 `AppIntents` is a system framework with no deployment cost, and splitting a
 type's display names away from the type is how they drift.
+
+**`AppDelegate` is left with almost nothing.** `QueueHost` absorbed more than
+§5's `attachStatusObservers`: the `lazy dock` and `lazy notifier` those
+observers wire came with them, because they belong to whoever owns the moment
+before `start()`, and that is now the host. What remains in the delegate is
+`applicationShouldTerminate`, which reads `resolvedController` rather than
+`ready()` so that quitting can never *start* a resolution in order to discover
+there is nothing to shut down; and a launch-time nudge that calls `ready()` and
+discards the result, so the notifier registers as the notification centre's
+delegate as early as the app can manage. The nudge is fire-and-forget and
+races nothing — `ready()` is idempotent, so the scene's `.task` joins that
+resolution instead of starting a second one, which is the whole point of the
+type.
 
 ### 8.1 What is tested
 

@@ -59,6 +59,18 @@ metadata, over a range trimmed on a timeline in the intake.
   collapsible sections whose headers are rows rather than `DisclosureGroup`s.
   `docs/design/settings.md` §2.1 and §2.9 carry the reasoning, including two
   control choices that look right and are not.
+- **A way in from outside the app: shipped.** `Download Twitch Video` is an
+  App Intent — one Shortcuts action, which macOS 26 also surfaces in Spotlight
+  on its own, so ⌘Space, paste, Return queues a job without Oxbow ever coming
+  forward. It takes a link and four optional overrides, and anything left blank
+  resolves from `Preferences` rather than from a factory value, so the action
+  and the Settings window cannot disagree about what was asked for. The work it
+  forced was not job composition — `IntakeModel` already ran headless, which is
+  why no `JobComposer` was extracted — but the launch sequence: `QueueHost` now
+  owns engine resolution, so building the engine is no longer a side effect of
+  a window appearing and anything that enqueues without one can await it.
+  `docs/design/automation.md` carries all of it, including the two entry points
+  rejected beside it.
 - **Release infrastructure: complete but for the Homebrew tap.**
   `scripts/package-dmg.sh` builds the disk image and can sign, notarize and
   staple it; the release workflow does the whole chain from a tag.
@@ -86,25 +98,21 @@ Notification Center shipped in 0.4.0, and defaults now stick: `Preferences`
 in `Sources/OxbowKit` stores destination, a quality cap, chat on/off and chat
 text size over an **injected** `UserDefaults` — deliberately not `@AppStorage`,
 which reaches `.standard` and would have every `xcodebuild test` writing the
-real domain. What it still has no answer for is any way in from outside itself.
+real domain.
 
 Clipboard hand-off already ships: `IntakeWindow` focuses the link field on
 open and, if the clipboard holds a Twitch address, prefills it —
 `TwitchLink` is what decides a string is worth offering. Between that and the
-defaults, everything *after* switching to the app is nearly free, which leaves
-the switch as the whole remaining cost.
+defaults, everything *after* switching to the app is nearly free, which left
+the switch as the whole remaining cost — and the App Intent above is what
+removes it, for anyone who reaches for ⌘Space instead of the Dock.
 
 In rough order of delight per hour:
 
 1. **The live disk projection.** `docs/design/composite-rate-control.md` §6.1
    argues for it and `docs/design/disk-preflight.md` §9 records the two gaps it
    closes. The projection is already computed for the progress UI.
-2. **The App Intent.** `docs/design/automation.md`. One Shortcuts action,
-   which macOS 26 also surfaces in Spotlight for free — ⌘Space, paste, Return,
-   no window. Small, because `IntakeModel` already runs without one; the real
-   work is §5's `QueueHost`, which stops engine construction being a side
-   effect of a window appearing.
-3. **Channel watching.** VODs expire after 14 days, 60 for partners, and a
+2. **Channel watching.** VODs expire after 14 days, 60 for partners, and a
    missed one is unrecoverable. It is the only proposal that changes what the
    app is rather than how fast you reach it, and it needs its own design doc —
    polling, an app that runs rather than being opened, and a posture question.

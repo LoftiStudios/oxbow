@@ -20,12 +20,21 @@ struct OxbowApp: App {
     // `Window`, not `WindowGroup`. The engine is built once at launch
     // (design §2) and the app is single-window (design §4), and a
     // `WindowGroup` enforces neither: ⌘N stays live, and each new window
-    // gets its own `@State`, so a second window builds a second
-    // `QueueController` — a second `QueueEngine` over the same queue.json
-    // and the same workspace. `QueueEngine.start()` sweeps that workspace
-    // unconditionally, so opening a window would delete the working files of
-    // a download already in flight — and the first engine's pending save
-    // would never flush.
+    // gets its own `@State`.
+    //
+    // That second `@State` used to be the whole danger. A second window ran
+    // `setUp()` again and built a second `QueueController` — a second
+    // `QueueEngine` over the same queue.json and the same workspace — and
+    // `QueueEngine.start()` sweeps that workspace unconditionally, so
+    // opening a window would delete the working files of a download already
+    // in flight while the first engine's pending save never flushed. That
+    // particular disaster is now prevented twice: `setUp()` awaits
+    // `QueueHost.shared`, which resolves once and hands every later caller
+    // the same controller, so a second window would share the engine rather
+    // than construct one. `Window` is no longer the only thing standing
+    // between the app and two engines — but nothing else here changed: ⌘N
+    // would still be live, each window would still carry its own `@State`,
+    // and single-instance is still the guarantee this app wants.
     //
     // Removing the New Window command from the group would hide the menu
     // item while leaving the scene duplicable by anything else that opens
