@@ -1,0 +1,19 @@
+{
+  "data": {
+    "user": {
+      "id": "19571641",
+      "login": "ninja",
+      "videos": {
+        "edges": [
+          { "node": { "id": "2862926638", "title": "BLEV BROS SPORTS SHOW IS BACK!!!! WEEK 3!", "lengthSeconds": 5883, "publishedAt": "2026-09-02T00:59:28Z", "status": "RECORDED", "previewThumbnailURL": "https://static-cdn.jtvnw.net/cf_vods/d1m7jfoe9zdc1j/0f48c301e1f9319e9a81_ninja_321230637146_1788310763//thumb/thumb0-320x180.jpg" } },
+          { "node": { "id": "2856555054", "title": "BLEV BROS SPORTS SHOW IS BACK!!!! DAY 2!", "lengthSeconds": 6001, "publishedAt": "2026-08-26T01:00:33Z", "status": "RECORDED", "previewThumbnailURL": "https://static-cdn.jtvnw.net/cf_vods/d1m7jfoe9zdc1j/a9c2a6761d33d1f7278f_ninja_321114447834_1787706028//thumb/thumb0-320x180.jpg" } },
+          { "node": { "id": "2850155378", "title": "LIVE RIGHT NOW", "lengthSeconds": 1204, "publishedAt": "2026-09-04T18:00:00Z", "status": "RECORDING", "previewThumbnailURL": null } },
+          { "node": { "id": "2828044593", "title": "Something odd", "lengthSeconds": 7132, "publishedAt": "2026-07-24T19:02:43Z", "status": "TRANSCODING", "previewThumbnailURL": null } }
+        ],
+        "pageInfo": { "hasNextPage": true },
+        "totalCount": 1096
+      }
+    }
+  },
+  "extensions": { "durationMilliseconds": 47 }
+}
