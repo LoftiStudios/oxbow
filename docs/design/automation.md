@@ -99,8 +99,17 @@ to a directory, and `supportedContentTypes:` is only exposed on the
 first-class intent parameter type with none of that machinery to fight, and
 Oxbow is not sandboxed, so there is no security-scoped bookmark to preserve
 either — which is the one thing that would have justified the heavier type.
-**Unverified**: that Shortcuts renders a folder *picker* for a plain `URL`
-parameter was reasoned from the SDK's interface and never driven live.
+**Settled by looking, and the answer is no.** Shortcuts renders a plain `URL`
+parameter as an ordinary text field, not a folder picker — verified in the
+Shortcuts editor against the shipped action on 2026-09-04. It still works: a
+Folder variable dropped into that field coerces, and a typed path is accepted.
+But someone expecting a Choose Folder button does not get one, and this
+document previously guessed that they would.
+
+Left as it is rather than chased. The parameter's job is to let one automation
+write somewhere other than the standing default, which a variable or a path
+does; the alternative is a custom `AppEntity` with a folder query, which is a
+great deal of machinery for a field most runs leave empty.
 
 ### 3.2 The vocabulary already exists
 
@@ -375,6 +384,47 @@ where "match the window" costs a user a file rather than a warning, and a
 decision that expensive should not be inferred from a `!= nil`.
 
 ---
+
+## 7.1 A duplicate is answered, not queued twice
+
+Submitting a link whose video already has an **unfinished** job queues nothing
+and returns *Already queued <name>* instead.
+
+**Why this surface and not the window.** The intake window shows you the queue,
+so a second copy of a job is visible the instant you make one. From Spotlight
+nothing is on screen at all — `openAppWhenRun` is false, and the dialog the
+action returns is rendered so quietly that a successful run reads exactly like
+a no-op. The first person to use this queued the same six-hour VOD ten times in
+a row, each paste looking like the one before it had failed. That is the bug
+this rule exists for, and it does not exist in the window.
+
+**Unfinished means queued or running.** A failed or cancelled job must not
+block a fresh attempt: this is the one surface with no queue window to retry
+from, so treating a failure as "already queued" would strand someone
+completely. `JobStatus.isUnfinished` is the single definition.
+
+**The match is on the media identifier, before the metadata fetch.**
+`TwitchLink.parse` reduces a full URL and a bare id to the same string, so the
+guard compares the download rather than the text that was pasted, and a
+duplicate costs no network round trip. Only a job's video- or clip-download
+step answers for it — `Job.mediaIdentifier` deliberately ignores the chat step,
+whose `videoID` field carries a clip's *slug*, or `""` for a chatless job.
+
+**A duplicate is a success, not an error.** Throwing would stop a Shortcuts
+`Repeat with Each` dead, so one already-queued link in a list of twelve would
+kill the run. Both outcomes also return the base name as the action's value, so
+a following action can use the filename either way.
+
+**The intent announces itself.** Every submission posts a notification — *Added
+to Oxbow* or *Already in the queue*, with the job's name. Without it the silent
+path gives no feedback at all, which is the other half of how ten copies got
+queued. The banner is keyed on the job name, so repeats replace rather than
+stack: pasting the same link five times leaves one notification, not five. It
+carries no chime; the chime marks a download *finishing*, and spending it on
+submissions would cost it its meaning. Nothing extra is needed to keep this
+out of the window's way — `JobNotifier` already suppresses banners while Oxbow
+is frontmost, and an intent runs with it backgrounded.
+
 
 ## 8. Shape
 

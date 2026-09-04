@@ -184,16 +184,122 @@ struct DownloadTwitchVideoIntentTests {
   @Test func aSuccessfulSubmissionReturnsTheJobName() async throws {
     let model = makeModel(preferences: store())
 
-    let name = try await IntentSubmission.submit(
+    let outcome = try await IntentSubmission.submit(
       link: "https://twitch.tv/videos/123",
       quality: nil, output: nil, chatSize: nil, destination: nil,
       into: model)
 
-    #expect(name == model.outputBaseName)
-    #expect(name.isEmpty == false)
+    #expect(outcome == .queued(model.outputBaseName))
+    #expect(outcome.value.isEmpty == false)
+  }
+
+  // MARK: - The duplicate guard
+
+  /// The bug this exists for: from Spotlight there is no queue window in
+  /// sight, so pasting the same link again looks exactly like the first
+  /// paste that "did nothing". Ten identical six-hour downloads is the cost.
+  @Test func aSecondSubmissionOfAQueuedVideoQueuesNothing() async throws {
+    let counter = FetchCounter()
+    let model = makeModel(preferences: store(), fetchCounter: counter)
+
+    let outcome = try await IntentSubmission.submit(
+      link: "https://twitch.tv/videos/2820754270",
+      quality: nil, output: nil, chatSize: nil, destination: nil,
+      existingJobs: [queuedJob(videoID: "2820754270", title: "LeighXP - going deeper")],
+      into: model)
+
+    #expect(outcome == .alreadyQueued("LeighXP - going deeper"))
+    // Refused before the fetch: a duplicate should not cost a network round
+    // trip either.
+    #expect(counter.count == 0)
+  }
+
+  /// A bare VOD id and a full URL are the same download. `TwitchLink.parse`
+  /// already reduces both to the id, and the guard compares that — not the
+  /// text the user happened to paste.
+  @Test func theGuardMatchesOnTheIdentifierNotTheTypedText() async throws {
+    let model = makeModel(preferences: store())
+
+    let outcome = try await IntentSubmission.submit(
+      link: "2820754270",
+      quality: nil, output: nil, chatSize: nil, destination: nil,
+      existingJobs: [queuedJob(videoID: "2820754270", title: "Same stream")],
+      into: model)
+
+    #expect(outcome == .alreadyQueued("Same stream"))
+  }
+
+  /// Failed and cancelled jobs must NOT block a fresh attempt. The intent is
+  /// the one surface with no queue window to retry from, so treating a
+  /// failure as "already queued" would strand the user completely.
+  @Test func aFailedJobDoesNotBlockAFreshAttempt() async throws {
+    let model = makeModel(preferences: store())
+
+    let outcome = try await IntentSubmission.submit(
+      link: "https://twitch.tv/videos/2820754270",
+      quality: nil, output: nil, chatSize: nil, destination: nil,
+      existingJobs: [failedJob(videoID: "2820754270")],
+      into: model)
+
+    #expect(outcome == .queued(model.outputBaseName))
+  }
+
+  @Test func aDifferentVideoIsNotADuplicate() async throws {
+    let model = makeModel(preferences: store())
+
+    let outcome = try await IntentSubmission.submit(
+      link: "https://twitch.tv/videos/999",
+      quality: nil, output: nil, chatSize: nil, destination: nil,
+      existingJobs: [queuedJob(videoID: "2820754270", title: "Another stream")],
+      into: model)
+
+    #expect(outcome == .queued(model.outputBaseName))
+  }
+
+  // MARK: - What the user is told
+
+  /// Both outcomes return the base name as the action's value, so a
+  /// following Shortcuts action can use the filename either way — a
+  /// duplicate is a success, not a dead end.
+  @Test func bothOutcomesCarryTheBaseNameAsTheirValue() {
+    #expect(IntentSubmission.Outcome.queued("A Stream").value == "A Stream")
+    #expect(IntentSubmission.Outcome.alreadyQueued("A Stream").value == "A Stream")
+  }
+
+  /// The two must read differently, or the notification that was supposed to
+  /// stop the tenth paste says the same thing as the first nine.
+  @Test func theTwoOutcomesReadDifferently() {
+    let queued = IntentSubmission.Outcome.queued("A Stream")
+    let duplicate = IntentSubmission.Outcome.alreadyQueued("A Stream")
+
+    #expect(queued.dialog != duplicate.dialog)
+    #expect(queued.notificationTitle != duplicate.notificationTitle)
+    #expect(queued.dialog.contains("A Stream"))
+    #expect(duplicate.dialog.contains("A Stream"))
+    #expect(duplicate.dialog.lowercased().contains("already"))
   }
 
   // MARK: - Fixtures
+
+  /// A queued VOD job, as the engine would hold one.
+  private func queuedJob(videoID: String, title: String) -> Job {
+    Job(
+      id: JobID(rawValue: UUID()), created: Date(), title: title,
+      steps: [Step(
+        id: StepID(rawValue: UUID()),
+        kind: .downloadVideo(VideoRequest(videoID: videoID, quality: "")))])
+  }
+
+  /// The same job after its download failed — `Job.status` derives `.failed`
+  /// from the step, so this is a real failed job rather than a flag.
+  private func failedJob(videoID: String) -> Job {
+    Job(
+      id: JobID(rawValue: UUID()), created: Date(), title: "Gave up",
+      steps: [Step(
+        id: StepID(rawValue: UUID()),
+        kind: .downloadVideo(VideoRequest(videoID: videoID, quality: "")),
+        status: .failed(StepFailure(kind: .interrupted, summary: "The app quit.")))])
+  }
 
   /// Counts calls to a fixture's `fetchInfo` closure, so a test can assert
   /// "before any fetch" as a checked fact rather than a claim in its name.

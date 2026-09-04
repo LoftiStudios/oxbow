@@ -9,6 +9,41 @@ import OxbowKit
 /// reaches `QueueHost.shared`, which is the app's real engine.
 enum IntentSubmission {
 
+  /// What a submission did. Two outcomes, both successes.
+  ///
+  /// **A duplicate is not an error.** Throwing would stop a Shortcuts
+  /// `Repeat with Each` dead, so one already-queued link in a list of twelve
+  /// would kill the run — and "this VOD is queued" is true either way. The
+  /// caller gets a different sentence, not a failure.
+  enum Outcome: Equatable {
+    case queued(String)
+    case alreadyQueued(String)
+
+    /// The action's return value. The base name in both cases, so a
+    /// following Shortcuts action can use the filename whichever happened.
+    var value: String {
+      switch self {
+      case .queued(let name), .alreadyQueued(let name): name
+      }
+    }
+
+    var dialog: String {
+      switch self {
+      case .queued(let name): "Queued \(name)"
+      case .alreadyQueued(let name): "Already queued \(name)"
+      }
+    }
+
+    var notificationTitle: String {
+      switch self {
+      case .queued: "Added to Oxbow"
+      case .alreadyQueued: "Already in the queue"
+      }
+    }
+
+    var notificationBody: String { value }
+  }
+
   /// A refusal, in one sentence, because Spotlight shows one line.
   ///
   /// `IntakeModel`'s own refusals were written for a form with room under it,
@@ -52,11 +87,31 @@ enum IntentSubmission {
     output: DownloadOutput?,
     chatSize: ChatSize?,
     destination: URL?,
-    into model: IntakeModel) async throws -> String
+    existingJobs: [Job] = [],
+    into model: IntakeModel) async throws -> Outcome
   {
     model.linkText = link
-    guard !model.isLinkUnrecognized, model.target != nil else {
+    guard !model.isLinkUnrecognized, let target = model.target else {
       throw Failure.unrecognizedLink
+    }
+
+    // **Before the fetch, deliberately.** A duplicate should not cost a
+    // network round trip, and the identifier is available from the parsed
+    // link alone — `TwitchLink.parse` reduces a full URL and a bare id to
+    // the same string, so the guard compares the download, not the text.
+    //
+    // Only unfinished jobs count (`JobStatus.isUnfinished`): a failed or
+    // cancelled job must not block a fresh attempt, because the intent is
+    // the one surface with no queue window to retry from.
+    //
+    // The intake window deliberately has no equivalent guard. It shows you
+    // the queue, so a second copy is visible the moment you make it; from
+    // Spotlight nothing is on screen, which is how ten identical six-hour
+    // downloads get queued by someone who thought nothing had happened.
+    if let existing = existingJobs.first(where: {
+      $0.status.isUnfinished && $0.mediaIdentifier == target.identifier
+    }) {
+      return .alreadyQueued(existing.title)
     }
 
     if let quality { model.qualityCap = quality }
@@ -85,7 +140,7 @@ enum IntentSubmission {
     guard await model.add() else {
       throw Failure.refused(model.addFailure ?? "Oxbow could not build that download.")
     }
-    return model.outputBaseName
+    return .queued(model.outputBaseName)
   }
 
   private static func rewordForIntent(_ message: String) -> String {
@@ -176,15 +231,21 @@ struct DownloadTwitchVideoIntent: AppIntent {
       // On a machine nobody has configured, that is best available, with
       // chat, into ~/Downloads — the right answer, arranged by needing no
       // code.
-      let name = try await IntentSubmission.submit(
+      let outcome = try await IntentSubmission.submit(
         link: link,
         quality: quality,
         output: output,
         chatSize: chatSize,
         destination: destination,
+        existingJobs: controller.jobs,
         into: IntakeModel(controller: controller))
 
-      return .result(value: name, dialog: "Queued \(name)")
+      // Notified from here rather than inside `submit`, which stays free of
+      // app surfaces so it can be tested without one. Intent-only: the
+      // window shows you the queue, so a banner there would be noise.
+      QueueHost.shared.notifyIntentOutcome(outcome)
+
+      return .result(value: outcome.value, dialog: "\(outcome.dialog)")
     }
   }
 }

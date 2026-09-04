@@ -101,6 +101,18 @@ final class QueueHost {
     _ = notifier
   }
 
+  /// Tells the user what an App Intent just did.
+  ///
+  /// Narrow on purpose: `notifier` stays private, so nothing else in the app
+  /// can reach for it and start posting banners of its own. Inert under
+  /// `xcodebuild test`, where `AppComposition.isUserSession` is false and the
+  /// notifier is nil.
+  func notifyIntentOutcome(_ outcome: IntentSubmission.Outcome) {
+    notifier?.announceIntentSubmission(
+      title: outcome.notificationTitle,
+      body: outcome.notificationBody)
+  }
+
   /// Resolves the engine, or returns why it could not. Safe to call from
   /// anywhere, any number of times, concurrently.
   func ready() async -> QueueContent {
