@@ -25,16 +25,38 @@ import Foundation
 extension QualityCap: AppEnum {
   public static var typeDisplayRepresentation: TypeDisplayRepresentation { "Quality" }
 
+  /// **Literal strings, not a computation over `label`.**
+  /// `appintentsmetadataprocessor` — the Xcode build tool that statically
+  /// extracts `AppEnum` metadata for Shortcuts and Spotlight — parses this
+  /// property's source without executing it, and needs the title for each
+  /// case to be a compile-time string literal. Two things this replaced
+  /// both failed that, confirmed against a real `xcodebuild test` (which
+  /// `swift test` cannot, since it never runs this tool):
+  ///
+  /// - `Dictionary(uniqueKeysWithValues: allCases.map { ... })` isn't
+  ///   `[key: value, ...]` bracket syntax at all, so the whole property
+  ///   read as "not a dictionary" and every case as missing.
+  /// - `[.best: DisplayRepresentation(title: LocalizedStringResource(
+  ///   stringLiteral: QualityCap.best.label)), ...]` fixed the bracket
+  ///   syntax but still failed per-case ("must be initialized with a call
+  ///   to its initializer or a string literal") — reading the *value*
+  ///   through the runtime-computed `label` property is exactly what it
+  ///   cannot follow.
+  ///
+  /// So the wording is duplicated here, deliberately — the same literal
+  /// form `DownloadOutput` and `ChatSize` already use below, since neither
+  /// has a `label` to read either. `IntentVocabularyTests.
+  /// theQualityCapReusesItsOwnLabel` is what keeps this copy from drifting
+  /// silently: it compares each literal below against `label` at runtime
+  /// and fails the moment the two disagree.
   public static var caseDisplayRepresentations: [QualityCap: DisplayRepresentation] {
-    // Built from `label`, so the Shortcuts wording and the Settings window's
-    // wording cannot drift apart. `label` is a runtime `String`, not a
-    // literal, so it goes through `LocalizedStringResource(stringLiteral:)`
-    // explicitly rather than through `DisplayRepresentation`'s
-    // `ExpressibleByStringLiteral` conformance, which exists for literals
-    // like the ones below, not for values computed at runtime.
-    Dictionary(uniqueKeysWithValues: allCases.map {
-      ($0, DisplayRepresentation(title: LocalizedStringResource(stringLiteral: $0.label)))
-    })
+    [
+      .best: "Best available",
+      .p1080: "Up to 1080p",
+      .p720: "Up to 720p",
+      .p480: "Up to 480p",
+      .p360: "Up to 360p",
+    ]
   }
 }
 
