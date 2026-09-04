@@ -69,6 +69,12 @@ public struct ChannelFeed: Sendable {
     self.endpoint = endpoint
   }
 
+  /// The `login` parameter is interpolated unescaped into a GraphQL query
+  /// string. An invalid login containing quote characters would break out of
+  /// the string literal and rewrite the query. Callers must ensure logins
+  /// conform to Twitch's own login alphabet; `Watch.normalisedLogin(_:)` will
+  /// enforce this contract in a later release, but for now it is the caller's
+  /// responsibility.
   public func archives(forLogin login: String, limit: Int = maximumLimit)
     async throws -> [ChannelArchive]
   {
@@ -96,9 +102,8 @@ public struct ChannelFeed: Sendable {
   /// (`docs/twitch-channel-api.md` §8). 320x180 matches what the intake
   /// already fetches and rewrites.
   ///
-  /// `login` is interpolated into the query, and is constrained to Twitch's
-  /// own login alphabet by `Watch.normalisedLogin(_:)` before reaching here.
-  /// Nothing else may call this with unsanitised text.
+  /// `login` must conform to Twitch's login alphabet; see
+  /// `archives(forLogin:limit:)` for the full safety contract.
   static func query(login: String, limit: Int) -> String {
     let bounded = min(max(limit, 1), maximumLimit)
     return """
