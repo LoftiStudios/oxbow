@@ -89,6 +89,13 @@ final class WatchPoller {
     loop = nil
   }
 
+  /// A `Task` outlives the object that started it unless something cancels
+  /// it, so without this the hourly loop would keep waking for the life of
+  /// the process even after this instance is gone.
+  isolated deinit {
+    loop?.cancel()
+  }
+
   /// A person asked. Never throttled, for the same reason `UpdateModel`'s
   /// manual check is not: pressing a button is an explicit request and must
   /// produce an answer.
@@ -109,8 +116,18 @@ final class WatchPoller {
     // empty, so there is nothing here to distinguish. The throw that remains
     // is an unreadable *directory*, which is the same condition that stops
     // the queue loading, and the queue reports it first.
+    //
+    // Either way, `results` still gets cleared below rather than left as-is:
+    // an empty list and an unreadable file both mean "nothing to report",
+    // and neither is evidence that the archives found on the last successful
+    // sweep are still there. Leaving stale rows behind because this sweep
+    // couldn't ask would tell the user about downloads that may no longer
+    // exist.
     let watches = (try? store.load()) ?? []
-    guard !watches.isEmpty else { return }
+    guard !watches.isEmpty else {
+      results = []
+      return
+    }
 
     isSweeping = true
     let swept = await WatchPoll.sweep(watches) { login in
