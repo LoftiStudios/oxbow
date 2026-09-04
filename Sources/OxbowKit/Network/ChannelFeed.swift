@@ -52,9 +52,10 @@ public struct ChannelFeed: Sendable {
 
   public static let defaultEndpoint = URL(string: "https://gql.twitch.tv/gql")!
 
-  /// How much of an unreadable payload `.malformedPayload` keeps, in
-  /// `Character`s. Bounded so a runaway response cannot balloon an error
-  /// string. Not private: the test pins it.
+  /// How much of an unreadable payload `.malformedPayload` keeps, in bytes
+  /// of the raw response — truncated before UTF-8 decoding, not after, so a
+  /// runaway response cannot balloon the intermediate string either. Not
+  /// private: the test pins it.
   static let snippetLimit = 280
 
   /// The largest page the server will serve, stated by the server itself:
@@ -139,7 +140,7 @@ public struct ChannelFeed: Sendable {
     else { throw ChannelFeedError.malformedPayload(snippet: snippet(data)) }
 
     let formatter = ISO8601DateFormatter()
-    return edges.compactMap { edge -> ChannelArchive? in
+    let archives = edges.compactMap { edge -> ChannelArchive? in
       guard
         let node = edge["node"] as? [String: Any],
         let id = node["id"] as? String,
@@ -157,9 +158,32 @@ public struct ChannelFeed: Sendable {
         status: .init(rawValue: node["status"] as? String ?? ""),
         thumbnailURL: (node["previewThumbnailURL"] as? String).flatMap(URL.init(string:)))
     }
+
+    // `docs/design/channel-watching.md` §7: "a parse that fails degrades the
+    // watch to a visible error rather than to an empty list that looks like
+    // 'no new videos'." A renamed field or a timestamp format
+    // `ISO8601DateFormatter()` no longer accepts would make every closure
+    // above return nil, and `compactMap` would silently swallow every one of
+    // them — indistinguishable here from a channel with nothing new, and
+    // catastrophic combined with `Watch.seeded(withScope: .onlyNew, from:
+    // [])`, which trusts an empty result to mean "nothing to seed against".
+    // An empty `edges` is not a parse failure and must still succeed.
+    guard edges.isEmpty || archives.count == edges.count else {
+      throw ChannelFeedError.malformedPayload(snippet: snippet(data))
+    }
+    return archives
   }
 
+  /// Truncates `data` to `snippetLimit` bytes before any string conversion,
+  /// so a runaway response cannot balloon the intermediate allocation any
+  /// more than it can balloon the error string itself — then leaves the same
+  /// visible marker `VideoInfoFetchError` does, so the snippet is never
+  /// mistaken for the whole payload.
   private static func snippet(_ data: Data) -> String {
-    String(String(decoding: data, as: UTF8.self).prefix(snippetLimit))
+    guard data.count > snippetLimit else {
+      return String(decoding: data, as: UTF8.self)
+    }
+    let truncated = String(decoding: data.prefix(snippetLimit), as: UTF8.self)
+    return "\(truncated)… [truncated, \(data.count) bytes total]"
   }
 }

@@ -150,8 +150,41 @@ struct ChannelFeedTests {
       guard case .malformedPayload(let snippet) = error else {
         Issue.record("wrong case: \(error)"); return
       }
-      #expect(snippet.count <= ChannelFeed.snippetLimit)
+      // Some room over the raw limit for the truncation marker itself, but
+      // nowhere close to the 5000-byte payload — the point being tested.
+      #expect(snippet.count <= ChannelFeed.snippetLimit + 64)
+      #expect(snippet.count < 5000)
+      #expect(snippet.contains("truncated"))
     }
+  }
+
+  @Test("a per-node parse failure throws rather than degrading to an empty list")
+  func partialParseFailureThrows() async throws {
+    // One node undecodable (missing `lengthSeconds`) alongside one good node.
+    // `docs/design/channel-watching.md` §7 forbids a silent empty-list
+    // degradation here: an empty result is indistinguishable from "nothing
+    // new", which is catastrophic combined with `onlyNew` seeding.
+    let body = Data("""
+      {"data":{"user":{"id":"1","login":"ninja","videos":{"edges":[
+        {"node":{"id":"1","title":"ok","lengthSeconds":60,"publishedAt":"2026-01-01T00:00:00Z","status":"RECORDED"}},
+        {"node":{"id":"2","title":"missing duration","publishedAt":"2026-01-01T00:00:00Z","status":"RECORDED"}}
+      ]}}}}
+      """.utf8)
+    do {
+      _ = try await feed(body: body).archives(forLogin: "ninja")
+      Issue.record("expected a throw")
+    } catch let error as ChannelFeedError {
+      guard case .malformedPayload = error else {
+        Issue.record("wrong case: \(error)"); return
+      }
+    }
+  }
+
+  @Test("a legitimately empty edges list still succeeds")
+  func emptyEdgesSucceeds() async throws {
+    let body = Data(#"{"data":{"user":{"id":"1","login":"ninja","videos":{"edges":[]}}}}"#.utf8)
+    let archives = try await feed(body: body).archives(forLogin: "ninja")
+    #expect(archives.isEmpty)
   }
 
   @Test("limit is clamped to the range the server accepts")
