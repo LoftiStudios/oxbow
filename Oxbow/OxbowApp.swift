@@ -11,6 +11,11 @@ struct OxbowApp: App {
   /// the launch-time check should not queue behind helper discovery.
   @State private var updates = UpdateModel.live()
 
+  /// Built once a support directory is known, inside the guarded `.task`
+  /// below rather than here — unlike `updates`, it needs a resolved path and
+  /// must never exist during a test run. See that `.task` for why.
+  @State private var poller: WatchPoller?
+
   /// Read once. Nothing in it can change while the app runs — it is all
   /// stamped into the bundle at build time — and both the menu item and the
   /// window title need the name.
@@ -78,6 +83,19 @@ struct OxbowApp: App {
       .task {
         guard AppComposition.isUserSession else { return }
         await updates.checkAutomatically()
+      }
+      // Its own task for the same reason the update check has one: unrelated
+      // work, on an unrelated schedule.
+      //
+      // Guarded the same way and for the same reason: `OxbowTests` is hosted
+      // by this app, so `xcodebuild test` launches it for real, and an
+      // unguarded sweep would make a live Twitch request on every test run.
+      // See `AppComposition.isUserSession`.
+      .task {
+        guard AppComposition.isUserSession else { return }
+        guard let support = try? AppComposition.defaultSupportDirectory() else { return }
+        poller = WatchPoller.live(supportDirectory: support)
+        poller?.start()
       }
     }
     .defaultSize(width: 720, height: 480)
