@@ -4,7 +4,12 @@ import Foundation
 ///
 /// Deliberately the same shape as `UpdatePolicy`, which answers the same kind
 /// of question about the same kind of stored date, and carries the same guard
-/// against a clock that has run backwards.
+/// against a clock that has run backwards. It is not the same *durability*:
+/// `UpdateModel` persists `lastChecked` through a `PreferenceStore`, so its
+/// throttle survives a relaunch, while `WatchPoller.lastPolled` lives only in
+/// memory, so this one's does not — every launch sweeps regardless of when the
+/// last one ran. That is intended, not an oversight: §5.1 makes polling at
+/// launch the point of the design, not a gap in it.
 public enum WatchPollPolicy {
 
   /// How long a sweep stays satisfied.
@@ -16,8 +21,9 @@ public enum WatchPollPolicy {
   /// API; polling much less often starts to matter only past several days.
   ///
   /// This is also why `docs/design/channel-watching.md` §5.1 concludes no
-  /// background agent is needed: at this cadence, a Mac that is awake for an
-  /// hour a week still comfortably beats the deadline.
+  /// background agent is needed: polling at launch and on a timer while the
+  /// app runs is enough that a user who opens Oxbow only once a fortnight
+  /// still catches everything before it expires.
   public static let interval: TimeInterval = 3600
 
   /// Whether a sweep should run now.

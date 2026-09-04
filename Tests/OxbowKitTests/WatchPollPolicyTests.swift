@@ -40,9 +40,9 @@ struct WatchPollPolicyTests {
   @Test("the interval is well under the shortest measured retention window")
   func intervalIsFarInsideTheExpiryClock() {
     // docs/twitch-channel-api.md section 6 measured the shortest surviving
-    // archive window at 43 days. An hour is three orders of magnitude inside
-    // it; this pins that the interval never drifts into the same order as the
-    // thing it is racing.
+    // archive window at 43 days — 1,032 hours. Six hours, the bound this
+    // asserts, is two orders of magnitude inside that; this pins that the
+    // interval never drifts into the same order as the thing it is racing.
     #expect(WatchPollPolicy.interval <= 6 * 3600)
   }
 }

@@ -56,6 +56,14 @@ final class WatchPoller {
   /// question whose whole purpose is "has anything changed".
   static func live(supportDirectory: URL) -> WatchPoller {
     let configuration = URLSessionConfiguration.ephemeral
+    // `WatchPoll.sweep` is sequential, one request per watch, so a stalled
+    // request here does not cost one channel's turn — it costs `isSweeping`
+    // latched true, and every other watch queued behind it, for as long as
+    // the default sixty-second timeout allows. `UpdateModel.live()` accepts
+    // that default because it makes one request; twenty watches behind a
+    // black-holed network would make this a twenty-minute "sweeping" state.
+    configuration.timeoutIntervalForRequest = 15
+    configuration.waitsForConnectivity = false
     let session = URLSession(configuration: configuration)
     return WatchPoller(
       store: WatchStore(fileURL: AppComposition.watchStoreURL(supportDirectory: supportDirectory)),
@@ -96,9 +104,16 @@ final class WatchPoller {
     loop?.cancel()
   }
 
-  /// A person asked. Never throttled, for the same reason `UpdateModel`'s
-  /// manual check is not: pressing a button is an explicit request and must
-  /// produce an answer.
+  /// A person asked, so this bypasses `WatchPollPolicy`'s interval throttle
+  /// for the same reason `UpdateModel`'s manual check does: pressing a button
+  /// is an explicit request.
+  ///
+  /// It does **not** bypass `sweep`'s own `isSweeping` guard. If a sweep is
+  /// already in flight this returns immediately without queuing behind it or
+  /// awaiting its results, so a caller that reads `results` right after
+  /// calling this may still see the previous sweep's answer. Nothing calls
+  /// this yet; stage 2b, which will, should decide then whether to await an
+  /// in-flight sweep instead — that is a behaviour change, not a comment fix.
   func refreshNow() async {
     await sweep()
   }
@@ -111,11 +126,13 @@ final class WatchPoller {
   private func sweep() async {
     guard !isSweeping else { return }
 
-    // A watch file that cannot be read is not an empty watch list — but
-    // `WatchStore.load` already sets an unreadable file aside and returns
-    // empty, so there is nothing here to distinguish. The throw that remains
-    // is an unreadable *directory*, which is the same condition that stops
-    // the queue loading, and the queue reports it first.
+    // A watch file that cannot be *decoded* is not an empty watch list — but
+    // `WatchStore.load` already sets that case aside and returns empty, so
+    // there is nothing here to distinguish. What the `try?` still swallows is
+    // narrower: a file that exists but whose `Data(contentsOf:)` read fails —
+    // permissions changed underneath it, say — propagates out of `load()`
+    // rather than being caught by its own `do`/`catch`, and lands here as the
+    // same "nothing to report" as a genuinely empty list.
     //
     // Either way, `results` still gets cleared below rather than left as-is:
     // an empty list and an unreadable file both mean "nothing to report",

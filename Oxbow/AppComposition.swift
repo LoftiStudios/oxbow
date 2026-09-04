@@ -77,14 +77,16 @@ nonisolated enum AppComposition {
   /// Where the watch list lives, decided once so nothing downstream has to
   /// guess.
   ///
-  /// This returns a `URL` rather than a ready-made `WatchStore` because
-  /// nothing exists yet to hand a `WatchStore` to — there is no poller in
-  /// this stage of the plan, only the decision of where its file will sit
-  /// once one arrives. Keeping that decision here, beside the line in
-  /// `resolve` that places `queue.json`, means a later change that adds the
-  /// poller constructs its `WatchStore` from this URL instead of choosing a
-  /// path of its own — one site decides where every piece of Oxbow's state
-  /// on disk lives, not one per consumer.
+  /// This returns a `URL` rather than a ready-made `WatchStore` because the
+  /// caller that needs a `WatchStore` is `WatchPoller.live(supportDirectory:)`,
+  /// which builds its own from this URL, while `AppCompositionTests` needs
+  /// only the bare path to check it against where `resolve` places
+  /// `queue.json` — standing up a `WatchStore` just to read its `fileURL` back
+  /// would be a longer way to say the same thing. Keeping the decision here,
+  /// beside that line in `resolve`, means `WatchPoller` constructs its
+  /// `WatchStore` from this one URL instead of choosing a path of its own —
+  /// one site decides where every piece of Oxbow's state on disk lives, not
+  /// one per consumer.
   ///
   /// Like `queue.json` (see the `Important` note on
   /// `QueueEngine.Configuration.store`), this file must **not** live under
