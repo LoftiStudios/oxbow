@@ -16,6 +16,11 @@ public enum ChannelFeedError: Error, Equatable, Sendable {
   /// shape is not a stable contract, and a bare case name gives whoever
   /// debugs a format drift nothing to go on.
   case malformedPayload(snippet: String)
+  /// The request never reached Twitch at all — offline, DNS, TLS. Distinct
+  /// from `.server(status:)`, which blames Twitch for the user's wifi, and
+  /// from `.malformedPayload`, which would blame Twitch for a response that
+  /// never arrived.
+  case unreachable(String)
 }
 
 extension ChannelFeedError: LocalizedError {
@@ -25,6 +30,7 @@ extension ChannelFeedError: LocalizedError {
     case .integrityChallenge: "Twitch declined the request."
     case .server(let status): "Twitch answered with status \(status)."
     case .malformedPayload: "Twitch's answer could not be read."
+    case .unreachable(let detail): "Oxbow could not reach Twitch. \(detail)"
     }
   }
 }

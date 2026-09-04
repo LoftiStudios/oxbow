@@ -140,6 +140,11 @@ struct ChannelFeedTests {
     }
   }
 
+  @Test("unreachable is distinct from a server status")
+  func unreachableIsDistinctFromServer() {
+    #expect(ChannelFeedError.unreachable("offline") != ChannelFeedError.server(status: 0))
+  }
+
   @Test("unparseable output keeps a bounded snippet")
   func malformedKeepsSnippet() async throws {
     let body = Data(String(repeating: "x", count: 5000).utf8)
