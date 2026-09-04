@@ -13,22 +13,22 @@ import Foundation
 /// own and `make` stays synchronous — the engine calls it from `launch`,
 /// which must not acquire a suspension point between deciding to launch a
 /// step and marking it `.running`.
+///
+/// **A query.** It creates the directories and list files a step needs, and
+/// destroys nothing. Assemble's spent-input cleanup used to live in the
+/// branch below, which made `make` a call that deleted a job's video and
+/// chat render as a side effect of being asked what the step's context was;
+/// it is `TeardownJournal.removeSpentInputs(of:)` now, called from `launch`.
+/// That is also why there is no `TeardownJournal` here.
 struct StepContextBuilder: Sendable {
   private let workspace: Workspace
   private let ffmpegPath: URL
   private let ledger: ResumeLedger
-  private let journal: TeardownJournal
 
-  init(
-    workspace: Workspace,
-    ffmpegPath: URL,
-    ledger: ResumeLedger,
-    journal: TeardownJournal)
-  {
+  init(workspace: Workspace, ffmpegPath: URL, ledger: ResumeLedger) {
     self.workspace = workspace
     self.ffmpegPath = ffmpegPath
     self.ledger = ledger
-    self.journal = journal
   }
 
   /// Builds a step's `StepContext`: where it works, where it writes, and
@@ -191,29 +191,6 @@ struct StepContextBuilder: Sendable {
         .joined(separator: "\n") + "\n"
       try list.write(
         to: stepDirectory.appending(path: "pieces.txt"), atomically: true, encoding: .utf8)
-
-      // The re-fetched video and chat render are both dead once the pieces
-      // and the sidecar audio exist. Dropping them here rather than at job
-      // end is what keeps the recovery peak near a normal run's — resume.md
-      // §5. Scoped to this job's workspace so nothing outside it can be hit.
-      let spent = job.steps.compactMap { step -> URL? in
-        switch step.kind {
-        case .downloadVideo, .downloadClip, .renderChat: step.artifact
-        case .downloadChat, .composite, .assemble: nil
-        }
-      }
-      let unremoved = spent
-        .filter { workspace.contains($0, ofJob: job.id) }
-        .compactMap { file -> URL? in
-          do {
-            try FileManager.default.removeItem(at: file)
-            return nil
-          } catch {
-            return file
-          }
-        }
-      journal.record(
-        unremoved, context: "job \(job.id.rawValue.uuidString): re-fetched inputs spent by assemble")
 
       // Assemble's single input artifact is the sidecar audio, not a parent's
       // output — everything else it needs is in the retention area and named
