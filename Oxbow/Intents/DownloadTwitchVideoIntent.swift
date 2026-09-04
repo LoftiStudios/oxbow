@@ -138,9 +138,14 @@ struct DownloadTwitchVideoIntent: AppIntent {
   /// `IntentFile`-typed `@Parameter` overload. `URL` is a first-class,
   /// natively-supported intent parameter type (`Foundation.URL:
   /// AppIntents._IntentValue` in the same interface) with no content-type
-  /// machinery to fight, and Shortcuts already renders a folder picker for a
-  /// plain `URL` parameter. This is simpler than the brief's form, not a
-  /// workaround for one.
+  /// machinery to fight, and Oxbow is not sandboxed, so there is no
+  /// security-scoped-bookmark reason to reach for `IntentFile` either — the
+  /// one thing that would have justified the heavier type. This is simpler
+  /// than the brief's form, not a workaround for one.
+  ///
+  /// **Unverified**: that Shortcuts renders a folder *picker* for a plain
+  /// `URL` parameter was reasoned from the SDK's interface and never driven
+  /// live (`automation.md` §3.1). Expected, not confirmed.
   @Parameter(title: "Destination")
   var destination: URL?
 
