@@ -72,9 +72,9 @@ public struct ChannelFeed: Sendable {
   /// The `login` parameter is interpolated unescaped into a GraphQL query
   /// string. An invalid login containing quote characters would break out of
   /// the string literal and rewrite the query. Callers must ensure logins
-  /// conform to Twitch's own login alphabet; `Watch.normalisedLogin(_:)` will
-  /// enforce this contract in a later release, but for now it is the caller's
-  /// responsibility.
+  /// conform to Twitch's own login alphabet; `Watch.normalisedLogin(_:)`
+  /// enforces this contract, and callers should route logins through it
+  /// rather than constructing their own.
   public func archives(forLogin login: String, limit: Int = maximumLimit)
     async throws -> [ChannelArchive]
   {
