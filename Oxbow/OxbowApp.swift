@@ -24,8 +24,8 @@ struct OxbowApp: App {
     // `QueueController` — a second `QueueEngine` over the same queue.json
     // and the same workspace. `QueueEngine.start()` sweeps that workspace
     // unconditionally, so opening a window would delete the working files of
-    // a download already in flight, and `appDelegate.controller` would be
-    // clobbered so the first engine's pending save never flushed.
+    // a download already in flight — and the first engine's pending save
+    // would never flush.
     //
     // Removing the New Window command from the group would hide the menu
     // item while leaving the scene duplicable by anything else that opens
@@ -196,24 +196,7 @@ struct OxbowApp: App {
 
   private func setUp() async {
     guard content == nil else { return }
-
-    let executable = Bundle.main.executableURL ?? URL(filePath: CommandLine.arguments[0])
-    do {
-      let support = try AppComposition.defaultSupportDirectory()
-      switch AppComposition.resolve(bundleExecutable: executable, supportDirectory: support) {
-      case .ready(let configuration):
-        let controller = QueueController(configuration: configuration)
-        content = .ready(controller)
-        appDelegate.controller = controller
-        appDelegate.attachStatusObservers(to: controller)
-        await controller.start()
-      case .helperMissing(let message):
-        content = .unavailable(message)
-      }
-    } catch {
-      content = .unavailable(
-        "Oxbow could not prepare its support directory: \(error.localizedDescription)")
-    }
+    content = await QueueHost.shared.ready()
   }
 }
 
@@ -312,50 +295,21 @@ private struct AboutCommand: View {
 /// `.failed(.interrupted)`, as designed.
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
-  var controller: QueueController?
-
-  /// **`lazy`, so neither depends on when it is first reached.**
+  /// Touches the notifier's owner so it registers as the notification
+  /// centre's delegate as early as the app can manage — a response arriving
+  /// before the delegate exists is a response that goes nowhere.
   ///
-  /// These were originally built in `applicationDidFinishLaunching`, on the
-  /// assumption that it precedes the scene's `.task`. It does not: SwiftUI
-  /// runs `.task` *first*, so `attachStatusObservers(to:)` found both nil,
-  /// took its early return, and wired nothing. The dock never updated and
-  /// nothing said why.
-  ///
-  /// Reordering would only move the assumption. Built on first use instead,
-  /// whichever call site gets there first.
-  ///
-  /// Both stay `nil` under `xcodebuild test` — `OxbowTests` is hosted by this
-  /// app, and a permission prompt during a test run is a modal that hangs CI.
-  private lazy var dock: DockPresenter? =
-    AppComposition.isUserSession ? DockPresenter() : nil
-  private lazy var notifier: JobNotifier? =
-    AppComposition.isUserSession ? JobNotifier() : nil
-
-  /// Touches `notifier` so it registers as the notification centre's delegate
-  /// as early as the app can manage — a response arriving before the delegate
-  /// exists is a response that goes nowhere. If `.task` beat us to it, this is
-  /// a no-op, which is the point.
+  /// Fire-and-forget: `applicationDidFinishLaunching` cannot await, and
+  /// nothing here needs the result. `ready()` is idempotent, so the scene's
+  /// own `.task` joins this resolution rather than starting a second one.
   func applicationDidFinishLaunching(_ notification: Notification) {
-    _ = notifier
-  }
-
-  /// Wires the status surfaces to the queue. Call **before** `start()`, so
-  /// they see the first reconciled snapshot and seed from it rather than
-  /// missing it — `NotificationDecision` relies on that first snapshot to
-  /// establish a baseline silently.
-  func attachStatusObservers(to controller: QueueController) {
-    // Nil only under `xcodebuild test`, where both are deliberately absent.
-    guard let dock, let notifier else { return }
-    controller.onSnapshot = { jobs in
-      dock.apply(jobs)
-      notifier.apply(jobs)
-    }
-    controller.onEnqueue = { notifier.requestAuthorizationIfNeeded() }
+    Task { _ = await QueueHost.shared.ready() }
   }
 
   func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-    guard let controller else { return .terminateNow }
+    // `resolvedController`, not `ready()`: quitting must never *start* a
+    // resolution in order to discover there is nothing to shut down.
+    guard let controller = QueueHost.shared.resolvedController else { return .terminateNow }
     Task {
       await controller.shutDown()
       NSApp.reply(toApplicationShouldTerminate: true)
