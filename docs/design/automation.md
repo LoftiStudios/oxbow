@@ -354,6 +354,26 @@ enqueue proceeds and the warning is dropped: refusing a job the window would
 have allowed makes the two disagree, which is worse than a job that runs out of
 room in the way the window already permits.
 
+**The destination collision is the same case, and is decided the same way.**
+`IntakeModel.composedTemplate()` sets `replacesExistingFile:
+destinationCollision != nil`, and in the window that permission is paired with
+a warning the user reads before pressing Add — one definition, so the warning
+shown and the permission granted cannot drift apart. From an intent there is no
+warning, because there is no surface to put one on, and the same flag is set
+anyway. **An intent run can therefore replace a file with nothing said about
+it.** That is accepted, for §7's existing reason and one more of its own:
+refusing here a job the window would have allowed makes the two disagree, and
+the file being replaced is not an arbitrary one. The base name is derived from
+the video's own metadata (§4 of the queue design doc), so the thing already at
+that path is a previous download of the same video — a re-run overwrites it
+with equivalent content, which is what someone re-running the action asked
+for. A silent overwrite of a *different* file would need a name Oxbow does not
+let anyone choose.
+
+It is written down rather than left to the code because it is the one place
+where "match the window" costs a user a file rather than a warning, and a
+decision that expensive should not be inferred from a `!= nil`.
+
 ---
 
 ## 8. Shape
@@ -369,17 +389,59 @@ type's display names away from the type is how they drift.
 **`AppDelegate` is left with almost nothing.** `QueueHost` absorbed more than
 §5's `attachStatusObservers`: the `lazy dock` and `lazy notifier` those
 observers wire came with them, because they belong to whoever owns the moment
-before `start()`, and that is now the host. What remains in the delegate is
-`applicationShouldTerminate`, which reads `resolvedController` rather than
-`ready()` so that quitting can never *start* a resolution in order to discover
-there is nothing to shut down; and a launch-time nudge that calls `ready()` and
-discards the result, so the notifier registers as the notification centre's
-delegate as early as the app can manage. The nudge is fire-and-forget and
-races nothing — `ready()` is idempotent, so the scene's `.task` joins that
-resolution instead of starting a second one, which is the whole point of the
-type.
+before `start()`, and that is now the host. Three things remain in the
+delegate.
 
-### 8.1 What is tested
+`applicationShouldTerminate` reads `resolvedController` rather than `ready()`,
+so that quitting can never *start* a resolution in order to discover there is
+nothing to shut down.
+
+A launch-time nudge calls `ready()` and discards the result. Fire-and-forget,
+and it races nothing: `ready()` is idempotent, so the scene's `.task` joins
+that resolution instead of starting a second one, which is the whole point of
+the type.
+
+**A synchronous call to `QueueHost.registerNotificationDelegate()`, which the
+nudge above cannot stand in for.** It was written as if it could —
+"`ready()` … so the notifier registers as the notification centre's delegate as
+early as the app can manage" — and that was wrong twice. The nudge is an
+unstructured `Task`, which cannot begin until `applicationDidFinishLaunching`
+returns, and `UNUserNotificationCenter` wants its delegate set *before* the app
+finishes launching, precisely so a notification response that cold-launches the
+app is delivered. And the notifier is otherwise only built on `ready()`'s
+`.ready` branch, so a `helperMissing` launch would register no delegate and no
+`finished` category at all. The failure either way is a "Show in Finder" that
+does nothing, on the notification for a six-hour job queued from Spotlight by
+someone who then quit — silent, and outside what any test in this bundle can
+see. So it is its own synchronous call, still guarded by
+`AppComposition.isUserSession` like everything else here that can raise a
+prompt, and `lazy` is what keeps it and `attachStatusObservers` from building
+two notifiers.
+
+### 8.1 The engine is reachable before it has started
+
+`ready()` publishes the controller only *after* `await controller.start()`, and
+that is deliberate: `start()` loads the saved queue and sweeps the workspace
+unconditionally, so a job enqueued before it is either overwritten by the load
+or has its working files deleted by the sweep. The intent enqueues the moment
+it gets an engine, so publishing earlier — which was safe while only a window
+could add anything — is not safe now.
+
+The cost is a span of seconds in which the engine exists and `ready()` has not
+answered. The queue window shows its `ProgressView` through it, which is
+honest: there is nothing to draw but a queue still being reconciled.
+
+Quitting cannot wait, though. `applicationShouldTerminate` reading a value that
+is `nil` for that whole span would return `.terminateNow` and skip
+`shutDown()` — widening exactly the orphaned-`TwitchDownloaderCLI` window that
+`AppDelegate`'s hand-verified comment exists to close. So the host holds the
+controller in `liveController` from the moment it is *constructed*, and
+`resolvedController` reads that. Two ways to reach one object, with the
+distinction that matters written on the property: `ready()` for anything that
+will use the engine, `resolvedController` for the one caller that only wants to
+stop it.
+
+### 8.2 What is tested
 
 `QueueHost` resolution: that two concurrent `ready()` callers resolve once and
 receive the same outcome, that `helperMissing` is delivered rather than
@@ -387,10 +449,18 @@ awaited, and that a caller arriving after resolution gets the answer without
 re-resolving.
 
 The intent's parameter handling, driven against an `IntakeModel` built with
-stub collaborators: that omitted parameters take stored preferences, that
-overrides are applied before `load()` and therefore change which rendition
-resolves, that a refusal becomes a thrown error carrying the model's reason,
-and that no preference is written on any path.
+stub collaborators: that omitted parameters take stored preferences, that a
+refusal becomes a thrown error carrying the model's reason, and that no
+preference is written on any path.
+
+The ordering constraint takes **two** tests, one per half of it, because
+`load()` reads two fields. A `quality` override changes which rendition the cap
+selects; an `output` override changes whether the composite filter is applied
+while it selects. A single test passing `output: nil` pins only the first, and
+`settings.md` §3.4 — the reason the constraint is written down at all — is
+about the second. The `output` test's fixture is necessarily artificial: the
+composite filter's only remaining bite is a rendition with a dimension of 1,
+which the test says in its own comment.
 
 **Not tested: that Spotlight and Shortcuts actually show the action.** That
 needs the built, installed app and a look at the two front ends. It is the same
