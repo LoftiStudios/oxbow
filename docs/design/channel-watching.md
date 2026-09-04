@@ -52,7 +52,9 @@ it later and the clock is measured in weeks (§5.1). Nothing is lost.
 
 **Automatic fails hard.** A wrong quality setting, an unreachable folder, or a
 channel that streams more than expected, and the consequence is hundreds of
-gigabytes or a job queued against a destination nobody chose.
+gigabytes or a job queued against a destination nobody chose. A job that fails
+outright is worse still, because the archive is marked handled and expires
+unnoticed — see §6.3.
 
 Keeping the two visibly distinct — rather than treating automatic as a flag on
 one uniform feature — is what makes every other decision here fall out. The
@@ -270,7 +272,53 @@ chose. Two causes, one behaviour, one thing to explain and one thing to test.
 Mac, reclaiming space by deleting them is not a trade-off to weigh. It also
 contradicts the guarantee that delivered files are never touched.
 
-### 6.3 The floor belongs to the watcher, not to `submit`
+### 6.3 A failed automatic download becomes a finding again
+
+The spec as first written said nothing about this, and three shipped behaviours
+collide in the gap.
+
+`resume.md` §8 makes retention **user-cleared**: a failed job holds its resume
+directory until somebody dismisses it, and the failed row says so — "Failed —
+26 GB held, dismiss to reclaim." That is honest when a person queued the job and
+is looking at the queue. Under a watch, nobody is, so the bytes are held
+indefinitely — and because they are held on the destination volume, they count
+against §6.2's floor. A channel that fails systematically would therefore
+convert its own watch to notify-only by exhausting disk, which is the right
+outcome reached by entirely the wrong reasoning, and unexplainable to the user.
+
+The sharper problem is that §4's seen-set marks the archive the moment it is
+submitted. A failed automatic download is therefore **permanent**: the watch
+never looks at that archive again, and it expires within weeks. The feature's
+one promise is that you do not miss an archive, and the unattended path would
+be the thing that loses one.
+
+**So a failed automatic download returns to the inbox as a finding, marked as
+failed.** The watch does not retry it. A person sees the row, and Add retries it
+through the intake window like any other finding.
+
+**Not an automatic retry**, with or without backoff. A VOD that fails for a
+durable reason — subscriber-only, region-locked, removed mid-download — fails
+identically every time, so a retry loop re-queues a multi-hour job every poll
+forever, and backoff only slows the same wrong thing down. `resume.md` §8
+deferred auto-retry deliberately; this does not un-defer it.
+
+**A cancelled job is not a failure.** `JobStatus` treats `failed` and
+`cancelled` alike as finished, but they mean opposite things here: a failure is
+the app not managing something, and a cancellation is a person saying no. Only
+`.failed` returns to the inbox. Re-offering something the user just cancelled
+would be the app arguing with them.
+
+**Not a special state, either.** A failed find is an ordinary finding wearing a
+reason. It reuses the inbox, the notification, and the Add path that already
+exist, and it degrades to exactly the state §6.2 demotes to. One safe state,
+reached three ways: the disk floor, an unreachable destination, and a failure.
+
+The job itself stays in the queue with its retained bytes and its failed row,
+untouched by any of this. Reclaiming them stays a person's decision, exactly as
+`resume.md` §8 specifies — this document adds a way to notice, not a new
+policy about disk.
+
+### 6.4 The floor belongs to the watcher, not to `submit`
 
 `automation.md` §7 decided deliberately that the intent does **not** consult the
 disk-space warning: the window shows it as a warning with a remedy and leaves
@@ -330,7 +378,8 @@ depending on a notification.
 - `WatchStore` (`OxbowKit/Persistence`) — `watches.json`, mirroring `QueueStore`.
 - `WatchPoller` (app target) — decides *when*, reaches the engine through
   `QueueHost`, applies §5.2's status filter and §6.2's floor, and either files
-  a finding or calls `IntentSubmission.submit`.
+  a finding or calls `IntentSubmission.submit`. It also watches submitted jobs
+  reach a terminal status, so a failure can be filed back as a finding (§6.3).
 - `InboxModel` / `WatchingView` (app target) — the list, its counts, and the
   Add / Ignore actions.
 
@@ -341,10 +390,12 @@ they are tested without a window; timing and presentation in the app target.
 
 `OxbowKit` carries the coverage gate, so the testable decisions live there:
 feed parsing against recorded fixtures including a `RECORDING` node and a
-`totalCount` that overcounts; watermark and seen-set behaviour across a poll
-that finds nothing, something, and something already seen; the demotion rule
-against an injected `VolumeSpace` and an injected destination check; and the
-backfill sum, which must equal the durations of the edges received.
+`totalCount` that overcounts; seen-set behaviour across a poll that finds
+nothing, something, and something already seen; the demotion rule against an
+injected `VolumeSpace` and an injected destination check; the backfill sum,
+which must equal the durations of the edges received; and §6.3's rule, that an
+archive whose job reached `.failed` is a finding again while one that reached
+`.cancelled` is not — cancelling is a person saying no.
 
 The views are verified by hand, as `development.md` records for the rest of the
 SwiftUI layer.
@@ -394,3 +445,10 @@ See §6.2. It requires owning files this app deliberately does not own.
 
 See §4. The queue forgets, by design and by user action, and a watcher that
 forgets with it re-downloads what it already fetched.
+
+### 11.6 Retrying a failed automatic download
+
+See §6.3. A durable failure — subscriber-only, region-locked, removed
+mid-download — fails identically every time, so a retry loop re-queues a
+multi-hour job every poll and backoff only slows the same wrong thing down. The
+failure goes back to the inbox and a person decides.
