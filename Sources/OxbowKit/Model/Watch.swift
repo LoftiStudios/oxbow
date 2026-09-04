@@ -70,13 +70,33 @@ public struct Watch: Equatable, Sendable, Codable {
     self.seen = seen
   }
 
+  /// First path segments that address something other than a channel.
+  /// `videos`, `directory`, `settings`, `popout`, `subscriptions`,
+  /// `downloads`, `clips`, `u` and `team` are all reserved routes on
+  /// twitch.tv — a URL that starts with one of them is not a channel URL,
+  /// and taking its first segment anyway hands back a route name dressed up
+  /// as a login (`https://twitch.tv/videos/2862926638` → `"videos"`).
+  private static let reservedFirstPathSegments: Set<String> = [
+    "videos", "directory", "settings", "popout", "subscriptions",
+    "downloads", "clips", "u", "team",
+  ]
+
   /// Twitch logins are 4-25 characters of `[a-zA-Z0-9_]`. Anything else is
   /// rejected rather than cleaned up.
   ///
   /// **This is a safety boundary, not a convenience.** The login is
   /// interpolated into the GraphQL query body, so a string carrying a quote
   /// or a brace would rewrite the query. Rejecting is the only correct
-  /// answer — the same posture `TwitchLink.parse` takes about hosts.
+  /// answer for that. Separately, this takes the same posture
+  /// `TwitchLink.parse` takes about *hosts* — an unrecognised or
+  /// case-varied host is rejected, not guessed at — but not the same
+  /// posture about *paths*: `TwitchLink.parse` matches a small set of known
+  /// path shapes and rejects everything else, where this only excludes
+  /// Twitch's reserved routes (`reservedFirstPathSegments`) and the
+  /// `clips.twitch.tv` host, and otherwise takes the first path segment as
+  /// a login. That asymmetry is deliberate — a channel URL's shape is not
+  /// as constrained as a video or clip URL's — but it means the two
+  /// parsers can still disagree on inputs neither list anticipates.
   public static func normalisedLogin(_ raw: String) -> String? {
     var text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
 
@@ -84,9 +104,11 @@ public struct Watch: Equatable, Sendable, Codable {
       let candidate = text.contains("://") ? text : "https://\(text)"
       guard
         let components = URLComponents(string: candidate),
-        let host = components.host,
+        let host = components.host?.lowercased(),
+        host != "clips.twitch.tv",
         host == "twitch.tv" || host.hasSuffix(".twitch.tv"),
-        let first = components.path.split(separator: "/").first
+        let first = components.path.split(separator: "/").first,
+        !reservedFirstPathSegments.contains(first.lowercased())
       else { return nil }
       text = String(first)
     }
