@@ -44,6 +44,21 @@ struct AppCompositionTests {
     #expect(configuration.store.fileURL.path.hasPrefix(support.path))
   }
 
+  @Test func sitesTheWatchStoreBesideTheQueueFile() throws {
+    guard case .ready(let configuration) = resolve(existing: bothPresent) else {
+      Issue.record("expected .ready")
+      return
+    }
+
+    // The whole point of deciding this in one place: both files are siblings
+    // in the support directory, not one of them off in the workspace cache
+    // that `QueueEngine.start()` sweeps on every launch.
+    let watchStoreURL = AppComposition.watchStoreURL(supportDirectory: support)
+    #expect(watchStoreURL == configuration.store.fileURL.deletingLastPathComponent()
+      .appending(path: "watches.json"))
+    #expect(watchStoreURL.path == "\(support.path)/watches.json")
+  }
+
   // MARK: - User session
 
   /// The test bundle is hosted by the app, so running this suite launches

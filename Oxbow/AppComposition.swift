@@ -74,6 +74,28 @@ nonisolated enum AppComposition {
       makeProcess: { HelperProcess() }))
   }
 
+  /// Where the watch list lives, decided once so nothing downstream has to
+  /// guess.
+  ///
+  /// This returns a `URL` rather than a ready-made `WatchStore` because
+  /// nothing exists yet to hand a `WatchStore` to — there is no poller in
+  /// this stage of the plan, only the decision of where its file will sit
+  /// once one arrives. Keeping that decision here, beside the line in
+  /// `resolve` that places `queue.json`, means a later change that adds the
+  /// poller constructs its `WatchStore` from this URL instead of choosing a
+  /// path of its own — one site decides where every piece of Oxbow's state
+  /// on disk lives, not one per consumer.
+  ///
+  /// Like `queue.json` (see the `Important` note on
+  /// `QueueEngine.Configuration.store`), this file must **not** live under
+  /// `workspace.root`: `QueueEngine.start()` sweeps that directory on every
+  /// launch, and the OS is free to purge it independently. `watches.json` is
+  /// the app's own data, so it sits directly in `supportDirectory`, a
+  /// sibling of `queue.json`, never inside the workspace cache.
+  static func watchStoreURL(supportDirectory: URL) -> URL {
+    supportDirectory.appending(path: "watches.json")
+  }
+
   /// `~/Library/Application Support/studio.lofti.Oxbow`, created if absent.
   ///
   /// In a DEBUG build `OXBOW_FIXTURE_DIR` overrides it, which is what lets
