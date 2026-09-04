@@ -53,6 +53,27 @@ public struct Job: Identifiable, Codable, Sendable, Equatable {
   public var deliveredFiles: [URL] {
     steps.compactMap(\.deliveredArtifact)
   }
+
+  /// Which video or clip this job is for, or nil if it downloads no media.
+  ///
+  /// **Only the media step answers.** A `.video` job seeds its
+  /// `ChatRequest.videoID` with the same id (see `JobTemplate.renderInput`),
+  /// so reading whichever step happens to carry a `videoID` would look
+  /// correct on a VOD and be wrong everywhere else: a clip job's chat step
+  /// carries the *slug* in that field, and a chatless job's carries `""`.
+  ///
+  /// Derived rather than stored, for the reason `status` is: a stored copy
+  /// can drift from the steps it summarises.
+  public var mediaIdentifier: String? {
+    for step in steps {
+      switch step.kind {
+      case .downloadVideo(let request): return request.videoID
+      case .downloadClip(let request): return request.clipSlug
+      case .downloadChat, .renderChat, .composite, .assemble: continue
+      }
+    }
+    return nil
+  }
 }
 
 extension Job {

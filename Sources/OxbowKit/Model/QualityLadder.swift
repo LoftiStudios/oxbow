@@ -19,6 +19,14 @@ public enum QualityCap: String, Codable, CaseIterable, Sendable {
   case p480
   case p360
 
+  /// The wording the Settings window and the intake show.
+  ///
+  /// These five strings are duplicated as literals in
+  /// `IntentVocabulary.swift`, because the App Intents metadata processor
+  /// cannot read a case title through a computed property — that file's own
+  /// comment has the account. Edit one, edit both;
+  /// `IntentVocabularyTests.theQualityCapReusesItsOwnLabel` fails the moment
+  /// the two disagree.
   public var label: String {
     switch self {
     case .best: "Best available"

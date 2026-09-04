@@ -14,6 +14,30 @@ there as part of the release commit. The build number is not tracked here — it
 is the repository's commit count, stamped into the bundle at build time by
 `scripts/stamp-version.sh`.
 
+## [Unreleased]
+
+### Added
+
+- **Oxbow queues a download from Spotlight.** ⌘Space, "Download Twitch Video",
+  paste a link, Return — the job is queued and the app never comes forward.
+  macOS 26 surfaces third-party App Intents in Spotlight on its own, which is
+  what makes this reach people who have never opened Shortcuts; the same action
+  is in the Shortcuts library for people who have, where `Repeat with Each`
+  over a list of links turns it into the batch intake nobody had to build. It
+  takes a link and four optional overrides — quality, output, chat text size,
+  destination — and anything left blank uses the saved settings rather than a
+  factory value, so the action and the Settings window cannot disagree about
+  what was asked for. A refusal comes back reworded into one sentence naming a
+  parameter the action actually has, because one line is what Spotlight shows.
+  What it cannot do is wait: a composite runs for hours, macOS offers no
+  "download finished" trigger, and the notification from 0.4.0 is what tells
+  you it landed. The one piece of architecture it forced is that Oxbow now
+  builds its queue engine when the app launches rather than when the window
+  appears — which is what lets an action run with the app closed, and what
+  anything else that enqueues without a window will need.
+  `docs/design/automation.md` has the reasoning, including why drag-and-drop
+  and an `oxbow://` URL scheme were rejected beside it.
+
 ## [0.4.0] - 2026-09-01
 
 Oxbow is built to be walked away from — an eighty-eight minute composite is the

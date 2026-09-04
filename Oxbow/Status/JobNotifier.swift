@@ -90,6 +90,37 @@ final class JobNotifier: NSObject, UNUserNotificationCenterDelegate {
     center.requestAuthorization(options: [.alert, .sound]) { _, _ in }
   }
 
+  /// Announces what an App Intent just did, since nothing else will.
+  ///
+  /// **Intent-only.** From the window you can see the queue, so this would
+  /// repeat what is already on screen — and it does not have to be guarded
+  /// for that case, because `userNotificationCenter(_:willPresent:)` below
+  /// already suppresses the banner while Oxbow is frontmost. An intent runs
+  /// with the app backgrounded, which is exactly when the banner shows.
+  ///
+  /// **The identifier is keyed on the body, so repeats replace rather than
+  /// stack.** Pasting the same link five times leaves one banner saying it is
+  /// already queued, not five — which is the behaviour the whole duplicate
+  /// guard exists for.
+  ///
+  /// No chime: the chime marks a download *finishing*, and diluting it with
+  /// submissions would cost it its meaning.
+  func announceIntentSubmission(title: String, body: String) {
+    guard let center else { return }
+    // A submission may be the first thing this install ever does, and the
+    // enqueue path that normally asks is skipped entirely on a duplicate.
+    requestAuthorizationIfNeeded()
+
+    let content = UNMutableNotificationContent()
+    content.title = title
+    content.body = body
+
+    center.add(UNNotificationRequest(
+      identifier: "intent-submission-\(body)",
+      content: content,
+      trigger: nil))
+  }
+
   func apply(_ jobs: [Job]) {
     guard let center else { return }
 
