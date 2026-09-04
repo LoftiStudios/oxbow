@@ -12,11 +12,20 @@ public struct WatchStore: Sendable {
     var watches: [Watch]
   }
 
-  /// Just enough of the envelope to read the schema version. Decoding the
-  /// full envelope first would defeat the version field entirely: `watches`
-  /// has to decode before the check could run, so a v2 file that changes
-  /// `Watch`'s shape — precisely what the version signals — would throw
-  /// before anything looked at the number.
+  /// Just enough of the envelope to read the schema version.
+  ///
+  /// The version is read on its own so the check does not depend on
+  /// `watches` being decodable at all — a v2 file that changes `Watch`'s
+  /// shape, precisely what the version field exists to signal, is read as
+  /// "wrong version" rather than as whatever `Envelope`'s decode failure
+  /// would otherwise look like. It does **not** currently change what
+  /// happens on that file: with today's catch-all `catch { setAside() }`
+  /// below, decoding the full envelope first and probing first both land in
+  /// the identical recovery for every input this guards against. The probe
+  /// earns its keep the day that recovery is narrowed to something
+  /// version-aware — at that point the ordering stops being cosmetic and
+  /// starts being the only thing telling "wrong version" apart from
+  /// "corrupt".
   private struct VersionProbe: Decodable {
     var version: Int
   }

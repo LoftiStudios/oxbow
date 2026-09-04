@@ -54,13 +54,18 @@ struct WatchStoreTests {
     #expect(!FileManager.default.fileExists(atPath: file.path))
   }
 
-  /// The case the version field exists for, and the one the gate could not
-  /// see: a future schema that changes `Watch`'s shape. `watches` must be
-  /// non-empty with an element incompatible with the current `Watch` shape —
-  /// an empty array decodes as a full `Envelope` regardless of version, so it
-  /// cannot tell a version-first gate apart from one that decodes the whole
-  /// envelope and checks the version afterward. Only a genuinely undecodable
-  /// element proves the probe ran before the full decode did.
+  /// The case the version field exists for: a future schema that changes
+  /// `Watch`'s shape. `watches` holds an element the current `Watch` cannot
+  /// decode, so this file would fail to decode as `Envelope` even if nothing
+  /// checked the version at all.
+  ///
+  /// This does **not** prove the probe ran before the full decode did —
+  /// with today's catch-all `catch { setAside() }`, an implementation that
+  /// decoded the full envelope first and checked the version afterward
+  /// would pass this test identically, because both orderings recover the
+  /// same way from an undecodable `watches`. What this pins down is the
+  /// outcome users actually depend on: a version bump paired with a shape
+  /// change is set aside, not thrown past into a crash.
   @Test("a future schema version is set aside, not decoded")
   func setsAsideAFutureVersionWithAnIncompatibleWatchShape() throws {
     let file = temporaryFile()
