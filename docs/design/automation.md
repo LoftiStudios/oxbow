@@ -78,6 +78,15 @@ not "best available to ~/Downloads" — otherwise the action and the app
 disagree about what the user asked for, and the action is the one nobody is
 watching.
 
+**An unconfigured machine is not a special case, and is never nagged about.**
+`Preferences` returns `.best`, `.videoWithChat`, `.medium` and `~/Downloads`
+when nothing has been stored, so someone who has never opened the Settings
+window gets best available, with chat, into Downloads — which is the right
+answer and needs no code to arrange. The intake panel opens expanded for that
+user because a window has somewhere to be informative; the intent has nowhere,
+so it stays silent and picks well. Oxbow is opinionated: if you did not express
+a preference, you get the best one available.
+
 The link is a `String`, not a `URL`. `TwitchLink.parse` already accepts a bare
 VOD id, a bare clip slug, and a scheme-less host, and a `URL` parameter would
 reject the first two before Oxbow ever saw them.
@@ -236,11 +245,17 @@ sees that something is happening.
 behind it.** `QueueController.onEnqueue` calls
 `JobNotifier.requestAuthorizationIfNeeded()`, and the first time that fires
 from an intent there is nothing on screen to explain it. `status.md` §7.2
-already treats the timing of that prompt as a design decision; this adds a case
-it did not consider. **Unresolved.** The options are to suppress the request on
-an intent-driven enqueue, or to accept it — a system prompt naming Oxbow is not
-mysterious, merely abrupt. Decide before shipping; do not let it ship
-unnoticed.
+treats the timing of that prompt as a design decision; this is a case it did
+not consider.
+
+**It fires. The request is not suppressed on the intent path.** Someone
+queueing a six-hour job from Spotlight without opening the app is exactly the
+person the completion notification was built for, and withholding the ask to
+spare them one abrupt dialog takes the feature away from its best user. A
+system prompt naming Oxbow is abrupt, not mysterious.
+
+The same reasoning as §3.1, and the same stamp: where the intent has no window
+to explain itself in, it picks the better outcome rather than the quieter one.
 
 ---
 
