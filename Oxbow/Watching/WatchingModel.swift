@@ -45,8 +45,18 @@ final class WatchingModel {
   /// snapshot taken against the seen-set as it stood at sweep time, so
   /// persisting a dismissal does not change it — without this overlay the row
   /// would sit there until the next sweep, up to an hour of a button that
-  /// appears to do nothing. Cleared by `apply(_:)`, because a fresh sweep has
-  /// already re-read the persisted seen-set and excluded them itself.
+  /// appears to do nothing.
+  ///
+  /// **Not cleared wholesale by `apply(_:)`.** `sweep` reads the seen-set once
+  /// up front and then makes slow, sequential per-channel calls, so a sweep in
+  /// flight when someone dismisses a row can finish with results computed
+  /// before that write — still containing the just-dismissed archive. Wiping
+  /// the overlay on every `apply` would let that stale result put the row
+  /// back. Instead `apply(_:)` narrows `dismissed` to the ids still present in
+  /// the incoming results: an id absent from the new sweep was one the sweep
+  /// read after the write, so it drops out on its own; an id still present
+  /// means the sweep straddled the write, so the overlay keeps hiding it until
+  /// a sweep finally starts after the dismissal landed.
   private var dismissed: Set<String> = []
 
   /// The latest sweep, before the overlay is subtracted.
@@ -64,7 +74,14 @@ final class WatchingModel {
   /// appearing rather than linger as a row nothing can download.
   func apply(_ results: [WatchPollResult]) {
     latest = results
-    dismissed.removeAll()
+
+    let found = results.reduce(into: Set<String>()) { ids, result in
+      if case .found(let archives) = result.outcome {
+        ids.formUnion(archives.map(\.id))
+      }
+    }
+    dismissed.formIntersection(found)
+
     rebuild()
   }
 

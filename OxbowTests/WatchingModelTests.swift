@@ -122,16 +122,35 @@ struct WatchingModelTests {
     #expect(try store.load().map(\.login) == ["ninja"])
   }
 
-  @Test func aNewSweepClearsTheOverlay() throws {
-    // Once the sweep has re-read the persisted seen-set, its results already
-    // exclude what was dismissed. Keeping the overlay would then hide rows
-    // that legitimately came back — a re-uploaded archive reusing an id.
+  @Test func aSweepThatStraddlesADismissalDoesNotBringTheRowBack() throws {
+    // `sweep` reads the seen-set once up front, then makes slow sequential
+    // per-channel calls. A sweep that was already in flight when the ignore
+    // landed finishes with results computed before that write — still
+    // containing the just-dismissed archive. An identical payload reapplied
+    // is exactly that case, and the row must stay gone rather than reappear.
     let store = temporaryStore()
     try store.save([watch("ninja")])
     let model = model(store: store)
     model.apply([.init(login: "ninja", displayName: "Ninja", outcome: .found([archive("1")]))])
     model.ignore(archive("1"), from: "ninja")
 
+    model.apply([.init(login: "ninja", displayName: "Ninja", outcome: .found([archive("1")]))])
+
+    #expect(model.sections[0].archives.isEmpty)
+  }
+
+  @Test func aDismissalDropsOutOfTheOverlayOnceTheArchiveStopsAppearing() throws {
+    // A sweep computed after the write no longer carries the dismissed id at
+    // all, so it can drop out of the overlay safely — the set stays bounded
+    // instead of growing forever, and a genuinely new archive that reuses the
+    // id later is not hidden permanently by a stale dismissal.
+    let store = temporaryStore()
+    try store.save([watch("ninja")])
+    let model = model(store: store)
+    model.apply([.init(login: "ninja", displayName: "Ninja", outcome: .found([archive("1")]))])
+    model.ignore(archive("1"), from: "ninja")
+
+    model.apply([.init(login: "ninja", displayName: "Ninja", outcome: .found([]))])
     model.apply([.init(login: "ninja", displayName: "Ninja", outcome: .found([archive("1")]))])
 
     #expect(model.sections[0].archives.map(\.id) == ["1"])
