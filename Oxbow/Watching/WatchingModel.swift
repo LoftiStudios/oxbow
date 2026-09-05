@@ -155,14 +155,25 @@ final class WatchingModel {
   /// the watch it belonged to, or nil if the channel is no longer watched —
   /// which is not an error: the file can change under a list already on
   /// screen.
+  ///
+  /// **`rebuild()` runs after the persist attempt, on every exit path.**
+  /// `rebuild()` calls `refreshWatches()`, which re-reads `watches` from
+  /// disk — so calling it before the write below would snapshot the file as
+  /// it stood *before* this id was marked seen, and `watches` (and the
+  /// `sections` built from it) would stay stale until something else
+  /// happened to call `rebuild()` again. `dismissed.insert(id)` still comes
+  /// first, so the row hides instantly regardless: the overlay only depends
+  /// on that set, never on `refreshWatches()`'s snapshot.
   @discardableResult
   private func markSeen(_ id: String, in login: String) -> Watch? {
     dismissed.insert(id)
-    rebuild()
 
     guard var current = try? store.load(),
           let index = current.firstIndex(where: { $0.login == login })
-    else { return nil }
+    else {
+      rebuild()
+      return nil
+    }
 
     current[index] = current[index].marking([id])
     // Best effort. `dismissed` was already updated above, before this write
@@ -175,7 +186,9 @@ final class WatchingModel {
     // far better outcome than an alert about a file the user has no way to
     // fix, on a list they are in the middle of triaging.
     try? store.save(current)
-    return current[index]
+    let result = current[index]
+    rebuild()
+    return result
   }
 
   /// Removes `login`'s watch and persists what is left, touching nothing

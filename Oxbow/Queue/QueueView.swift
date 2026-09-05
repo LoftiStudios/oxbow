@@ -155,17 +155,11 @@ struct QueueView: View {
             // — including its `seen` set — that `AddChannelModel
             // .beginEditing(_:)` needs to seed an edit from.
             //
-            // **`refresh()` first, found the hard way.** `WatchingModel
-            // .markSeen(_:in:)` — behind both `ignore(_:from:)` and
-            // `add(_:from:)` — rebuilds `sections` from the *pre-write*
-            // watch list before it persists the new seen id, so `watching
-            // .watches` can still read the channel's old, smaller seen-set
-            // for as long as nothing rebuilds it again. Opening Edit right
-            // after Ignoring a finding — exactly this feature's own Step 5 —
-            // would seed `AddChannelModel.beginEditing(_:)` from that stale
-            // copy and save right over the ignore, undoing it. `refresh()`
-            // re-reads `watches.json`, which by now already has the write,
-            // before this ever looks at `watches`.
+            // `refresh()` here is belt-and-braces, not load-bearing:
+            // `WatchingModel.markSeen(_:in:)` already rebuilds `watches`
+            // after it persists, so this call is a no-op re-read on the
+            // normal path. Left in as cheap insurance against `watches`
+            // ever going stale again.
             onEdit: { section in
               watching?.refresh()
               guard let watch = watching?.watches.first(where: { $0.login == section.login })

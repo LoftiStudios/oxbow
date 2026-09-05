@@ -108,6 +108,25 @@ struct WatchingModelTests {
     #expect(try store.load()[0].seen == ["1"])
   }
 
+  @Test func ignoringLeavesWatchesCurrentWithoutACallerHavingToRefresh() throws {
+    // `markSeen` used to call `rebuild()` — which re-reads `watches` from
+    // disk — before persisting the write, so `watches` reflected the file as
+    // it stood a moment earlier and stayed stale until something else
+    // rebuilt it. Reading `watches` right here, with no `refresh()` in
+    // between, is exactly the trap: a caller (`sections` itself, or
+    // `QueueView`'s onEdit before it added its own belt-and-braces call)
+    // that trusted this value immediately after Ignore got the channel's old,
+    // smaller seen-set.
+    let store = temporaryStore()
+    try store.save([watch("ninja")])
+    let model = model(store: store)
+    model.apply([.init(login: "ninja", displayName: "Ninja", outcome: .found([archive("1")]))])
+
+    model.ignore(archive("1"), from: "ninja")
+
+    #expect(model.watches.first(where: { $0.login == "ninja" })?.seen == ["1"])
+  }
+
   @Test func addingPersistsAndOpensIntake() throws {
     let store = temporaryStore()
     try store.save([watch("ninja")])
