@@ -111,7 +111,14 @@ struct OxbowApp: App {
         poller?.start()
       }
     }
-    .defaultSize(width: 720, height: 480)
+    // 720 was chosen for the queue alone, the same way its old 480pt minimum
+    // was (see `QueueView`'s `.frame`) — pre-sidebar, that gave the queue
+    // 240pt of room above its floor. Grown by the sidebar's own 180pt ideal
+    // width for the same reason as the minimum: without it, the queue opens
+    // at only 60pt above its new floor instead of the 240pt it used to get,
+    // which is the same truncation this task exists to fix, just at launch
+    // instead of at minimum width.
+    .defaultSize(width: 900, height: 480)
     .windowResizability(.contentMinSize)
     .commands {
       // Replace, not add. The stock item calls

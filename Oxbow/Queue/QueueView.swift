@@ -106,6 +106,12 @@ struct QueueView: View {
             .tag(SidebarItem.watching)
         }
         .listStyle(.sidebar)
+        // Roughly fixed, the way Mail and Finder do it, rather than left to
+        // SwiftUI's default proportional split. Unconstrained, the sidebar
+        // claimed close to a third of the window at minimum width, which is
+        // most of what the queue below needs just to keep a job's title
+        // legible.
+        .navigationSplitViewColumnWidth(min: 150, ideal: 180, max: 240)
       } detail: {
         switch sidebarSelection {
         case .watching:
@@ -119,7 +125,14 @@ struct QueueView: View {
         }
       }
     }
-    .frame(minWidth: 480, minHeight: 320)
+    // 480 is the queue's own minimum, not the window's — it is what a job
+    // row needs to keep its title legible, from before this view had a
+    // sidebar at all. The +180 is the sidebar's ideal column width (set
+    // above), added on top rather than carved out of the 480, so the detail
+    // pane keeps roughly its designed minimum even if the split view ever
+    // shrinks the sidebar down to its own 150pt floor. Height is untouched:
+    // a sidebar costs no height.
+    .frame(minWidth: 480 + 180, minHeight: 320)
     .toolbar {
       // Hidden rather than merely disabled on Watching: the button opens
       // intake for a brand-new download, which is a Queue action, and a
