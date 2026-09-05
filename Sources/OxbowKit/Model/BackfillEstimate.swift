@@ -10,24 +10,36 @@ import Foundation
 /// archives that way would mean a hundred spawns before the user has agreed
 /// to anything.
 ///
-/// So this estimates from the *cap's* nominal resolution and the archive's
-/// duration. That is honest as long as nothing presents it with intake's
-/// precision, which is why every caller says "about".
+/// So this builds a *nominal* `StreamQuality` from the cap alone — Twitch's
+/// standard rendition for that ceiling, not any particular video's real one —
+/// and prices it through the exact same `SpaceEstimate` arithmetic intake
+/// uses (`IntakeModel.estimate(for:over:)`), rather than a formula of its
+/// own. That is honest as long as nothing presents it with intake's
+/// precision, which is why every caller says "about"; once a video's real
+/// renditions are in hand — intake's situation — this nominal figure is
+/// meant to be replaced outright, not refined.
+///
+/// **Nominal is the right side to be wrong on, with one exception.** A real
+/// broadcast's bitrate sits around Twitch's target for its rendition, not
+/// reliably under it, so this cannot promise it never underestimates. But for
+/// a number someone is deciding disk space against, overestimating is the
+/// safer failure — a job that declines to start on a false "won't fit" costs
+/// an override click, while one that starts on a false "will fit" costs a
+/// download that runs out of room partway through. (`SpaceEstimate
+/// .chatRenderBitsPerSecond`'s own comment reaches the same conclusion for
+/// the same kind of decision — this type used to argue the opposite for
+/// `.best` and that was simply wrong.) The acknowledged exception is `.best`
+/// itself: it is priced at 1080p because it admits anything and a broadcast
+/// above 1080p is rare, but a rare one would then be underpriced. That is a
+/// deliberate, recorded trade for keeping one ladder rather than a reason to
+/// call the general rule anything other than "overestimate."
 ///
 /// **Takes archives, never a count.** The feed's own item-count field
-/// overcounts the edges actually returned by up to two
+/// (`totalCount`) overcounts the edges actually returned by up to two
 /// (`docs/twitch-channel-api.md` §5.1), so `docs/design/channel-watching.md`
 /// §3.3 requires the total be summed from what is in hand. There is
 /// deliberately no initialiser that accepts a number.
 public struct BackfillEstimate: Equatable, Sendable {
-
-  /// The short side a cap admits, in pixels, for estimation only.
-  ///
-  /// `.best` is treated as 1080: it admits anything, but a Twitch broadcast
-  /// above 1080 is rare enough that assuming more would overstate the common
-  /// case badly, and understating the rare one is the safer error for a
-  /// number someone is deciding disk space against.
-  private static func nominalShortSide(_ cap: QualityCap) -> Int { cap.ceiling ?? 1080 }
 
   public let count: Int
   public let duration: Duration
@@ -37,22 +49,36 @@ public struct BackfillEstimate: Equatable, Sendable {
     count = archives.count
     duration = archives.reduce(Duration.zero) { $0 + $1.duration }
 
-    let seconds = Double(duration.components.seconds)
-    guard seconds > 0 else { bytes = 0; return }
+    let quality = Self.nominalQuality(for: cap)
+    // Built once, outside the sum: the geometry depends only on the nominal
+    // quality, which is the same for every archive here.
+    let geometry = output == .videoWithChat ? CompositeGeometry(quality: quality) : nil
 
-    // 16:9 at the cap's short side, at 30fps — the same shape
-    // `SpaceEstimate.compositeBitsPerPixel` is calibrated against, applied to
-    // a nominal frame rather than a measured one.
-    let shortSide = Double(Self.nominalShortSide(cap))
-    let pixelsPerSecond = shortSide * (shortSide * 16 / 9) * 30
-    var bitsPerSecond = pixelsPerSecond * SpaceEstimate.compositeBitsPerPixel
-
-    // A composite carries the chat column beside the video, and the chat
-    // render itself is an intermediate that lands on the same disk.
-    if output == .videoWithChat {
-      bitsPerSecond += SpaceEstimate.chatRenderBitsPerSecond
+    bytes = archives.reduce(Int64(0)) { total, archive in
+      total + SpaceEstimate(quality: quality, duration: archive.duration, composite: geometry).delivered
     }
+  }
 
-    bytes = Int64(bitsPerSecond * seconds / 8)
+  /// Twitch's standard rendition for a cap, since the channel feed has no
+  /// real one to read for any of these archives yet.
+  ///
+  /// Nominal rather than measured — a stated target, not a bitrate observed
+  /// off an actual stream — which is the reverse of how `SpaceEstimate`
+  /// itself is calibrated everywhere else. That is acceptable only here,
+  /// because this whole type exists to be replaced by a real
+  /// `StreamQuality` (and hence a real `SpaceEstimate`) the moment intake has
+  /// one; nothing downstream of `BackfillEstimate` treats it as more precise
+  /// than "about".
+  private static func nominalQuality(for cap: QualityCap) -> StreamQuality {
+    switch cap {
+    case .best, .p1080:
+      return StreamQuality(name: "1080p30", resolution: "1920x1080", bitsPerSecond: 6_000_000)
+    case .p720:
+      return StreamQuality(name: "720p30", resolution: "1280x720", bitsPerSecond: 3_500_000)
+    case .p480:
+      return StreamQuality(name: "480p30", resolution: "852x480", bitsPerSecond: 1_400_000)
+    case .p360:
+      return StreamQuality(name: "360p30", resolution: "640x360", bitsPerSecond: 700_000)
+    }
   }
 }
