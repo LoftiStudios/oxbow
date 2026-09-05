@@ -37,22 +37,38 @@ struct AddChannelWindow: View {
   /// same for `VolumeSpace`.
   private let volumeSpace: VolumeSpace
 
-  init(store: WatchStore, preferences: Preferences, volumeSpace: VolumeSpace = .live) {
+  /// Runs once this window closes, after `model.reset()`.
+  ///
+  /// **This is the other half of fixing the Watching pane's stale-until-next-
+  /// sweep bug.** `AddChannelModel` writes `watches.json` through its own
+  /// `WatchStore`, a different instance from the one `WatchingModel` reads
+  /// through — so a successful Add here is invisible to that model until
+  /// something tells it to look again. `OxbowApp` hands in
+  /// `{ watching?.refresh() }`; defaulting to a no-op keeps every preview and
+  /// test below from having to supply one.
+  private let onClose: () -> Void
+
+  init(
+    store: WatchStore, preferences: Preferences, volumeSpace: VolumeSpace = .live,
+    onClose: @escaping () -> Void = {}
+  ) {
     let feed = Self.liveChannelFeed
     _model = State(initialValue: AddChannelModel(
       store: store, preferences: preferences,
       fetch: { login in await Self.result { try await feed.archives(forLogin: login) } },
       fetchDisplayName: { login in await Self.result { try await feed.displayName(forLogin: login) } }))
     self.volumeSpace = volumeSpace
+    self.onClose = onClose
   }
 
   /// For previews, and for anything else that wants to drive the window
   /// without a network behind it — `AddChannelModel`'s own init takes
   /// closures for exactly this reason, and this is what lets a preview reach
   /// them, the same role `IntakeWindow.init(model:)` plays for intake.
-  init(model: AddChannelModel, volumeSpace: VolumeSpace = .live) {
+  init(model: AddChannelModel, volumeSpace: VolumeSpace = .live, onClose: @escaping () -> Void = {}) {
     _model = State(initialValue: model)
     self.volumeSpace = volumeSpace
+    self.onClose = onClose
   }
 
   var body: some View {
@@ -87,7 +103,10 @@ struct AddChannelWindow: View {
     // action — one stray ⏎ then replaces that channel's watch with `seen`
     // recomputed from the stale lookup, discarding every finding the user
     // had already acted on.
-    .onDisappear(perform: model.reset)
+    .onDisappear {
+      model.reset()
+      onClose()
+    }
   }
 
   // MARK: - Sections

@@ -36,8 +36,28 @@ struct WatchingView: View {
   /// confirmation on this side either — see `SectionHeader`'s own doc
   /// comment for why none is offered.
   let onStopWatching: (WatchingModel.Section) -> Void
+  /// Set when a Stop Watching refused rather than removing anything —
+  /// `WatchingModel.stopWatchingFailure`'s own counterpart on this side.
+  ///
+  /// The whole point of refusing rather than silently overwriting the watch
+  /// list (see that property's own doc comment) is to tell the user why; a
+  /// refusal nothing displays is indistinguishable from Stop Watching simply
+  /// not working. `AddChannelModel.addFailure` gets the identical visible
+  /// treatment in its own window, for the identical reason.
+  let stopWatchingFailure: String?
 
   var body: some View {
+    VStack(spacing: 0) {
+      if let stopWatchingFailure {
+        QueueBanner(title: "Couldn't stop watching", message: stopWatchingFailure)
+        Divider()
+      }
+      content
+    }
+  }
+
+  @ViewBuilder
+  private var content: some View {
     if sections.isEmpty {
       if isSweeping {
         // Distinct from the genuinely-empty case below, and deliberately not
@@ -138,7 +158,17 @@ private struct SectionHeader: View {
         Label("Downloads automatically", systemImage: "bolt.fill")
           .labelStyle(.iconOnly)
           .foregroundStyle(.blue)
-          .help("Downloads automatically: new archives are queued without waiting for Add.")
+          // Present tense, but honest about it: `WatchingModel.Section
+          // .downloadsAutomatically`'s own doc comment is explicit that
+          // nothing downloads automatically yet — this flag is stored intent
+          // a later stage will act on. A tooltip claiming archives "are
+          // queued without waiting for Add" would tell a user who ticked
+          // this box that downloads are already happening, when Add is still
+          // the only thing that starts one.
+          .help("""
+            Set to download automatically. Oxbow doesn't do that yet — new \
+            archives still only appear here until you press Add.
+            """)
       }
       Spacer(minLength: 0)
       if !section.settingsSummary.isEmpty {
@@ -175,7 +205,26 @@ private struct SectionHeader: View {
         settingsSummary: "Video · Up to 720p · Archive", downloadsAutomatically: false),
     ],
     isSweeping: false,
-    onAdd: { _, _ in }, onIgnore: { _, _ in }, onStopWatching: { _ in })
+    onAdd: { _, _ in }, onIgnore: { _, _ in }, onStopWatching: { _ in },
+    stopWatchingFailure: nil)
+  .frame(width: 480, height: 420)
+}
+
+// New: a refused Stop Watching has to say why, the same visible treatment
+// `AddChannelModel.addFailure` gets in its own window — see
+// `WatchingModel.stopWatchingFailure`'s own doc comment.
+#Preview("Stop Watching failed") {
+  WatchingView(
+    sections: [
+      WatchingModel.Section(
+        login: "leighxp", displayName: "LeighXP",
+        archives: [WatchingViewPreviewData.normal], failure: nil,
+        settingsSummary: "Video + chat · Best available · Medium chat · Downloads",
+        downloadsAutomatically: false),
+    ],
+    isSweeping: false,
+    onAdd: { _, _ in }, onIgnore: { _, _ in }, onStopWatching: { _ in },
+    stopWatchingFailure: "Oxbow could not read the watch list, so LeighXP was not stopped.")
   .frame(width: 480, height: 420)
 }
 
@@ -194,7 +243,8 @@ private struct SectionHeader: View {
         settingsSummary: "Video · Up to 1080p · Downloads", downloadsAutomatically: false),
     ],
     isSweeping: false,
-    onAdd: { _, _ in }, onIgnore: { _, _ in }, onStopWatching: { _ in })
+    onAdd: { _, _ in }, onIgnore: { _, _ in }, onStopWatching: { _ in },
+    stopWatchingFailure: nil)
   .frame(width: 480, height: 420)
 }
 
@@ -212,7 +262,8 @@ private struct SectionHeader: View {
         downloadsAutomatically: false),
     ],
     isSweeping: false,
-    onAdd: { _, _ in }, onIgnore: { _, _ in }, onStopWatching: { _ in })
+    onAdd: { _, _ in }, onIgnore: { _, _ in }, onStopWatching: { _ in },
+    stopWatchingFailure: nil)
   .frame(width: 480, height: 420)
 }
 
@@ -232,14 +283,16 @@ private struct SectionHeader: View {
         settingsSummary: "Video · Up to 720p · Archive", downloadsAutomatically: false),
     ],
     isSweeping: false,
-    onAdd: { _, _ in }, onIgnore: { _, _ in }, onStopWatching: { _ in })
+    onAdd: { _, _ in }, onIgnore: { _, _ in }, onStopWatching: { _ in },
+    stopWatchingFailure: nil)
   .frame(width: 480, height: 420)
 }
 
 #Preview("No channels watched") {
   WatchingView(
     sections: [], isSweeping: false,
-    onAdd: { _, _ in }, onIgnore: { _, _ in }, onStopWatching: { _ in })
+    onAdd: { _, _ in }, onIgnore: { _, _ in }, onStopWatching: { _ in },
+    stopWatchingFailure: nil)
     .frame(width: 480, height: 420)
 }
 
@@ -249,7 +302,8 @@ private struct SectionHeader: View {
   // `isSweeping`'s doc above.
   WatchingView(
     sections: [], isSweeping: true,
-    onAdd: { _, _ in }, onIgnore: { _, _ in }, onStopWatching: { _ in })
+    onAdd: { _, _ in }, onIgnore: { _, _ in }, onStopWatching: { _ in },
+    stopWatchingFailure: nil)
     .frame(width: 480, height: 420)
 }
 

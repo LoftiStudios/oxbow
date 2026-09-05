@@ -137,7 +137,16 @@ struct QueueView: View {
             isSweeping: poller?.isSweeping ?? false,
             onAdd: { archive, section in watching?.add(archive, from: section.login) },
             onIgnore: { archive, section in watching?.ignore(archive, from: section.login) },
-            onStopWatching: { section in watching?.stopWatching(section.login) })
+            onStopWatching: { section in watching?.stopWatching(section.login) },
+            stopWatchingFailure: watching?.stopWatchingFailure)
+          // Re-reads `watches.json` the moment this pane becomes visible, so
+          // a channel added from the Add Channel window while Queue was
+          // showing is there the instant someone switches over, rather than
+          // waiting for the next hourly sweep — see
+          // `WatchingModel.refresh()`'s own doc comment. The Add Channel
+          // window's own close is the other half of this fix; see
+          // `OxbowApp`'s wiring of it.
+          .onAppear { watching?.refresh() }
         case .queue, .none:
           queue
         }

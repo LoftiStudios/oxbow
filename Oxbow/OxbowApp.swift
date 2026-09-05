@@ -224,7 +224,14 @@ struct OxbowApp: App {
       // its place: this window exists to write `watches.json`, and until the
       // support directory is known there is no file to write to.
       if let watchStore {
-        AddChannelWindow(store: watchStore, preferences: addChannelPreferences)
+        AddChannelWindow(
+          store: watchStore, preferences: addChannelPreferences,
+          // The other half of the Watching pane refresh fix — see
+          // `AddChannelWindow.onClose`'s own doc comment and
+          // `WatchingModel.refresh()`'s. A channel added here writes through
+          // a `WatchStore` distinct from the one `watching` reads, so nothing
+          // tells that model to look again unless this does.
+          onClose: { watching?.refresh() })
       }
     }
     .defaultSize(width: 480, height: 640)

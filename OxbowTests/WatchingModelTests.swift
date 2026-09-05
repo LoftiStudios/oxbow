@@ -277,6 +277,70 @@ struct WatchingModelTests {
     #expect(model.stopWatchingFailure == nil)
   }
 
+  @Test func aSweepThatStraddlesAStopDoesNotResurrectTheStoppedChannel() throws {
+    // `WatchPoller.sweep` is sequential and can run for minutes, so a sweep
+    // already in flight when Stop Watching runs can still land afterwards —
+    // via `apply(_:)`, which replaces `latest` wholesale — still carrying
+    // the stopped channel's own entry. Reapplying the identical sweep here
+    // stands in for exactly that stale landing, and the row must stay gone
+    // rather than come back until the next real sweep excludes it on its
+    // own (the same class of bug `aSweepThatStraddlesADismissalDoesNotBring
+    // TheRowBack` guards against for Ignore).
+    let store = temporaryStore()
+    try store.save([watch("ninja"), watch("day9tv")])
+    let model = model(store: store)
+    let sweep = [
+      WatchPollResult(login: "ninja", displayName: "Ninja", outcome: .found([archive("1")])),
+      WatchPollResult(login: "day9tv", displayName: "Day9tv", outcome: .found([archive("2")])),
+    ]
+    model.apply(sweep)
+
+    model.stopWatching("ninja")
+    // The in-flight sweep lands after the stop, unchanged.
+    model.apply(sweep)
+
+    #expect(model.sections.map(\.login) == ["day9tv"])
+  }
+
+  @Test func stoppingAChannelDropsItsOwnDismissedIdsSoAReAddDoesNotHideThem() throws {
+    // A stopped channel gets no more sweeps to let `apply`'s own
+    // `formIntersection` drop its ids out of the overlay — left alone, they
+    // would linger forever, and a later re-add whose first sweep reuses one
+    // of those VOD ids would have a genuinely new archive hidden by a
+    // dismissal earned by a watch that no longer exists.
+    let store = temporaryStore()
+    try store.save([watch("ninja")])
+    let model = model(store: store)
+    model.apply([.init(login: "ninja", displayName: "Ninja", outcome: .found([archive("1")]))])
+    model.ignore(archive("1"), from: "ninja")
+
+    model.stopWatching("ninja")
+    try store.save([watch("ninja")])
+    model.apply([.init(login: "ninja", displayName: "Ninja", outcome: .found([archive("1")]))])
+
+    #expect(model.sections.first(where: { $0.login == "ninja" })?.archives.map(\.id) == ["1"])
+  }
+
+  // MARK: - Re-reading the watch list on demand
+
+  @Test func refreshShowsAChannelAddedToTheStoreAfterConstruction() throws {
+    // `AddChannelModel` writes through its own `WatchStore`, a different
+    // instance from the one this model reads through — nothing here notices
+    // that write on its own. Without `refresh()`, a channel added from that
+    // window stays invisible until the next hourly sweep, which is the exact
+    // flow the Watching pane's toolbar button exists for appearing to do
+    // nothing.
+    let store = temporaryStore()
+    try store.save([watch("ninja")])
+    let model = model(store: store)
+    #expect(model.sections.map(\.login) == ["ninja"])
+
+    try store.save([watch("ninja"), watch("day9tv")])
+    model.refresh()
+
+    #expect(model.sections.map(\.login).sorted() == ["day9tv", "ninja"])
+  }
+
   @Test func stopWatchingRefusesRatherThanOverwritingWhenTheStoreCannotBeRead() throws {
     // The same bug `AddChannelModelTests
     // .addRefusesRatherThanOverwritingWhenTheWatchListCannotBeRead` guards

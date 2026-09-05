@@ -88,6 +88,20 @@ final class WatchingModel {
   /// The latest sweep, before the overlay is subtracted.
   private var latest: [WatchPollResult] = []
 
+  /// Logins `stopWatching` has removed, kept so `rebuild()` can refuse to
+  /// resurrect them.
+  ///
+  /// **Why this exists rather than trusting `watches` membership alone.**
+  /// `WatchPoller.sweep` is sequential and can run for minutes, so a sweep
+  /// already in flight when someone chooses Stop Watching can still land
+  /// afterwards via `apply(_:)` — which replaces `latest` wholesale — still
+  /// carrying that channel's own entry. `rebuild()` excludes any login in
+  /// this set from `latest` outright, so that stale sweep is ignored rather
+  /// than rendered. `refreshWatches()` lifts the exclusion the moment the
+  /// login is back in `watches.json`, so re-adding a stopped channel is not
+  /// permanent.
+  private var stoppedLogins: Set<String> = []
+
   /// Set when Stop Watching refused rather than removing anything. The same
   /// idiom as `AddChannelModel.addFailure`: a context menu action has no
   /// return value for a caller to inspect, so the reason has to land
@@ -198,14 +212,41 @@ final class WatchingModel {
     }
 
     stopWatchingFailure = nil
+
     // A stopped channel's own entry in the last sweep must not resurrect its
-    // section on the next `rebuild()` — `latest` is otherwise mapped
-    // unconditionally, watch membership or not (see
-    // `anActionOnAnUnknownChannelIsIgnoredRatherThanCrashing`, which relies
-    // on exactly that for a channel that was never watched at all). Dropping
-    // it here is what makes the row disappear the moment Stop Watching is
-    // chosen, rather than lingering until the next real sweep excludes it.
+    // section on the next `rebuild()` — see `stoppedLogins`'s own doc
+    // comment for why this, rather than `watches` membership alone, is what
+    // that guard checks.
+    stoppedLogins.insert(login)
+
+    // This channel's own ids would otherwise linger in the overlay forever:
+    // `apply(_:)`'s `formIntersection` only drops an id once a sweep
+    // computed *after* the write stops carrying it, and a stopped channel
+    // gets no more sweeps to make that happen. Left alone, a later re-add
+    // whose first sweep happens to reuse one of those VOD ids would have a
+    // genuinely new archive hidden by a dismissal earned by a watch that no
+    // longer exists.
+    if let lastResult = latest.first(where: { $0.login == login }),
+       case .found(let archives) = lastResult.outcome {
+      dismissed.subtract(archives.map(\.id))
+    }
+
     latest.removeAll { $0.login == login }
+    rebuild()
+  }
+
+  /// Re-reads `watches.json` and rebuilds `sections` from it.
+  ///
+  /// **Why a caller ever needs to ask for this.** `sections` otherwise only
+  /// changes when a sweep lands (`apply(_:)`) or this model makes its own
+  /// write (`markSeen`, `stopWatching`) — nothing here notices a write made
+  /// by a *different* `WatchStore` instance, such as `AddChannelWindow`'s.
+  /// Without an explicit re-read, a channel added from that window stays
+  /// invisible until the next hourly sweep, which is the exact flow the
+  /// toolbar button exists for appearing to do nothing. `QueueView` calls
+  /// this when the Watching pane appears, and `OxbowApp` calls it once the
+  /// Add Channel window closes — see each call site's own comment.
+  func refresh() {
     rebuild()
   }
 
@@ -220,6 +261,11 @@ final class WatchingModel {
   private func refreshWatches() {
     if let loaded = try? store.load() {
       watches = loaded
+      // A login back in the watch list is no longer "stopped" — this is what
+      // lets stopping a channel and then re-adding it undo the exclusion
+      // `rebuild()` applies below, rather than leaving that channel invisible
+      // forever.
+      stoppedLogins.subtract(loaded.map(\.login))
     }
   }
 
@@ -227,7 +273,10 @@ final class WatchingModel {
     refreshWatches()
 
     var represented: Set<String> = []
-    var built: [Section] = latest.map { result in
+    var built: [Section] = latest.compactMap { result in
+      // Excludes a stopped channel's own entry even when a stale, in-flight
+      // sweep still carries it — see `stoppedLogins`'s own doc comment.
+      guard !stoppedLogins.contains(result.login) else { return nil }
       represented.insert(result.login)
       let summary = settingsSummary(forLogin: result.login)
       let automatic = downloadsAutomatically(forLogin: result.login)
