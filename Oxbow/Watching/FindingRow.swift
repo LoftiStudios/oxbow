@@ -77,10 +77,15 @@ struct FindingRow: View {
 
         // The prominent one: this is the row's whole reason to exist, and
         // Ignore is the exception a person reaches for less often.
+        //
+        // Provisional wording: `openIntake` is still a no-op
+        // (`OxbowApp.swift`), so today this only marks the archive seen and
+        // removes the row — it does not open anything. Once intake is wired
+        // up, restore the fuller promise this tooltip used to make.
         Button("Add", action: onAdd)
           .buttonStyle(.borderedProminent)
           .controlSize(.small)
-          .help("Open Add Download with this video filled in.")
+          .help("Mark this video seen so it stops being offered.")
       }
     }
     .padding(.vertical, 4)
@@ -110,8 +115,11 @@ struct FindingRow: View {
   .frame(width: 480, height: 100)
 }
 
-/// Fixtures for the previews above, and for `WatchingView`'s.
-enum FindingRowPreviewData {
+/// Fixtures for the previews above.
+///
+/// Not `WatchingView`'s: that view defines its own `WatchingViewPreviewData`
+/// and explains at length why it must — see the comment there.
+private enum FindingRowPreviewData {
   static let now = Date(timeIntervalSince1970: 1_754_000_000)
 
   static let normal = ChannelArchive(

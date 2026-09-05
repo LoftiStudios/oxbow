@@ -194,9 +194,14 @@ struct QueueView: View {
         guard let id = ids.first, ids.count == 1 else { return }
         openWindow(id: OxbowApp.infoWindowID, value: id)
       }
-      // Published for the menu bar. `focusedSceneValue` rather than
-      // `focusedValue`: the Downloads menu has to work whenever this window is
-      // frontmost, not only when the list itself holds keyboard focus.
+      // Published for the menu bar. This sits inside the Queue detail pane,
+      // so switching the sidebar to Watching tears it down and the Downloads
+      // menu greys out — even though the queue still holds jobs. That is
+      // accepted, not missed: the menu follows the visible pane, the same way
+      // its items are already hidden or disabled based on what is selected
+      // within the list. `focusedSceneValue` over `focusedValue` only buys
+      // independence from keyboard focus inside this pane, not independence
+      // from which pane is showing.
       .focusedSceneValue(\.queueActions, actions(from: controller))
       .confirmationDialog(
         removalConfirmationTitle(for: jobsPendingRemoval, from: controller),

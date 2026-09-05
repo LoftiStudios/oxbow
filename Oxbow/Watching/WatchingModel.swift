@@ -115,9 +115,15 @@ final class WatchingModel {
     else { return nil }
 
     watches[index] = watches[index].marking([id])
-    // Best effort: a failed write costs one re-offer on the next sweep, which
-    // is a far better outcome than an alert about a file the user has no way
-    // to fix, on a list they are in the middle of triaging.
+    // Best effort. `dismissed` was already updated above, before this write
+    // was attempted, and nothing rolls it back if the write fails — so a
+    // failed save does not cost "one re-offer on the next sweep": the row
+    // stays hidden by the in-memory overlay for the rest of this session (its
+    // id keeps coming back from every sweep, and `apply`'s
+    // `formIntersection` keeps retaining it), and the re-offer only arrives
+    // on the next launch, once `dismissed` itself is gone. That is still a
+    // far better outcome than an alert about a file the user has no way to
+    // fix, on a list they are in the middle of triaging.
     try? store.save(watches)
     return watches[index]
   }
