@@ -192,6 +192,60 @@ struct ChannelFeedTests {
     #expect(archives.isEmpty)
   }
 
+  // MARK: - displayName(forLogin:)
+
+  /// Its own request, asking only for `displayName` — never folded into the
+  /// archives query, so a poll (which never calls this) pays nothing extra.
+  @Test("asks for displayName alone, not the archives query")
+  func displayNameQueryShape() async throws {
+    let sent = LockedBox<URLRequest?>(nil)
+    let body = Data(#"{"data":{"user":{"displayName":"Ninja"}}}"#.utf8)
+    let feed = feed(body: body, captured: { sent.value = $0 })
+    _ = try await feed.displayName(forLogin: "ninja")
+
+    let request = try #require(sent.value)
+    let requestBody = String(decoding: try #require(request.httpBody), as: UTF8.self)
+    #expect(requestBody.contains("displayName"))
+    #expect(!requestBody.contains("videos"))
+    #expect(!requestBody.contains("type: ARCHIVE"))
+    #expect(request.value(forHTTPHeaderField: "Client-ID") == ChannelFeed.publicClientID)
+  }
+
+  @Test("decodes the channel's own capitalisation")
+  func displayNameDecoding() async throws {
+    let body = Data(#"{"data":{"user":{"displayName":"Ninja"}}}"#.utf8)
+    let name = try await feed(body: body).displayName(forLogin: "ninja")
+    #expect(name == "Ninja")
+  }
+
+  @Test("a null user is no such channel, not a failure to parse")
+  func displayNameNullUser() async throws {
+    let body = Data(#"{"data":{"user":null}}"#.utf8)
+    await #expect(throws: ChannelFeedError.noSuchChannel) {
+      try await feed(body: body).displayName(forLogin: "nobody")
+    }
+  }
+
+  @Test("a missing displayName field is a malformed payload")
+  func displayNameMissingField() async throws {
+    let body = Data(#"{"data":{"user":{}}}"#.utf8)
+    do {
+      _ = try await feed(body: body).displayName(forLogin: "ninja")
+      Issue.record("expected a throw")
+    } catch let error as ChannelFeedError {
+      guard case .malformedPayload = error else {
+        Issue.record("wrong case: \(error)"); return
+      }
+    }
+  }
+
+  @Test("a non-200 carries its status")
+  func displayNameServerStatus() async throws {
+    await #expect(throws: ChannelFeedError.server(status: 503)) {
+      try await feed(body: Data(), status: 503).displayName(forLogin: "ninja")
+    }
+  }
+
   @Test("limit is clamped to the range the server accepts")
   func limitIsClamped() async throws {
     let sent = LockedBox<URLRequest?>(nil)

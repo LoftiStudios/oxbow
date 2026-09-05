@@ -85,20 +85,41 @@ public struct ChannelFeed: Sendable {
   public func archives(forLogin login: String, limit: Int = maximumLimit)
     async throws -> [ChannelArchive]
   {
-    let (data, response) = try await fetch(request(login: login, limit: limit))
+    let (data, response) = try await fetch(request(query: Self.query(login: login, limit: limit)))
     guard response.statusCode == 200 else {
       throw ChannelFeedError.server(status: response.statusCode)
     }
     return try Self.decode(data)
   }
 
-  private func request(login: String, limit: Int) -> URLRequest {
+  /// Twitch's own name for the channel, cased however its owner set it —
+  /// `"Ninja"` where `login` is `"ninja"`.
+  ///
+  /// **Its own request, not a field folded into `archives(forLogin:
+  /// limit:)`.** That query is also `WatchPoll.sweep`'s injected fetch
+  /// closure's signature, wired through `WatchPoller`; widening it to also
+  /// ask for `displayName` would ripple into both for no benefit — a poll
+  /// already has the display name from the stored `Watch` and never needs
+  /// to ask Twitch for it again. This round trip is paid only when a
+  /// channel is added, never on a poll.
+  ///
+  /// `login` carries the same safety contract as `archives(forLogin:
+  /// limit:)`: it is interpolated unescaped into the query body, so route it
+  /// through `Watch.normalisedLogin(_:)` first.
+  public func displayName(forLogin login: String) async throws -> String {
+    let (data, response) = try await fetch(request(query: Self.displayNameQuery(login: login)))
+    guard response.statusCode == 200 else {
+      throw ChannelFeedError.server(status: response.statusCode)
+    }
+    return try Self.decodeDisplayName(data)
+  }
+
+  private func request(query: String) -> URLRequest {
     var request = URLRequest(url: endpoint)
     request.httpMethod = "POST"
     request.setValue(Self.publicClientID, forHTTPHeaderField: "Client-ID")
     request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-    request.httpBody = try? JSONEncoder().encode(
-      ["query": Self.query(login: login, limit: limit)])
+    request.httpBody = try? JSONEncoder().encode(["query": query])
     return request
   }
 
@@ -120,7 +141,20 @@ public struct ChannelFeed: Sendable {
       """
   }
 
-  private static func decode(_ data: Data) throws -> [ChannelArchive] {
+  /// `login` must conform to Twitch's login alphabet; see
+  /// `archives(forLogin:limit:)` for the full safety contract.
+  static func displayNameQuery(login: String) -> String {
+    """
+    query { user(login: "\(login)") { displayName } }
+    """
+  }
+
+  /// The `data.user` object, having already ruled out the shared failure
+  /// modes both queries in this file can hit: an unparseable body, an
+  /// integrity challenge, and an explicit null user for an unknown login.
+  /// Shared so `decode(_:)` and `decodeDisplayName(_:)` cannot drift on how
+  /// either is recognised.
+  private static func user(from data: Data) throws -> [String: Any] {
     guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
       throw ChannelFeedError.malformedPayload(snippet: snippet(data))
     }
@@ -139,9 +173,22 @@ public struct ChannelFeed: Sendable {
     // Distinguished from "absent": Twitch answers 200 with an explicit null
     // user for an unknown login.
     if payload["user"] is NSNull { throw ChannelFeedError.noSuchChannel }
+    guard let user = payload["user"] as? [String: Any] else {
+      throw ChannelFeedError.malformedPayload(snippet: snippet(data))
+    }
+    return user
+  }
+
+  private static func decodeDisplayName(_ data: Data) throws -> String {
+    guard let displayName = try user(from: data)["displayName"] as? String else {
+      throw ChannelFeedError.malformedPayload(snippet: snippet(data))
+    }
+    return displayName
+  }
+
+  private static func decode(_ data: Data) throws -> [ChannelArchive] {
     guard
-      let user = payload["user"] as? [String: Any],
-      let videos = user["videos"] as? [String: Any],
+      let videos = try user(from: data)["videos"] as? [String: Any],
       let edges = videos["edges"] as? [[String: Any]]
     else { throw ChannelFeedError.malformedPayload(snippet: snippet(data)) }
 

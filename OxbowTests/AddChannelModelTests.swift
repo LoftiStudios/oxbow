@@ -159,6 +159,20 @@ struct AddChannelModelTests {
     #expect(!model.canAdd)
   }
 
+  /// `composeWatch()` guards on `let folder`, same as the login and the
+  /// lookup — this pins that third guard down on its own, since a `Watch
+  /// .Settings` cannot exist without a destination.
+  @Test func canAddIsFalseWhenNoFolderIsSet() async {
+    let model = makeModel(fetch: { _ in .success([Self.archive("1")]) })
+    model.loginText = "ninja"
+    await model.look()
+    #expect(model.canAdd, "the positive control: addable before the folder is cleared")
+
+    model.folder = nil
+
+    #expect(!model.canAdd)
+  }
+
   // MARK: - 5. add() composes a Watch seeded by scope and persists
 
   @Test func addSeedsSeenFromScopeAndPreservesExistingWatches() async throws {
@@ -228,6 +242,70 @@ struct AddChannelModelTests {
     #expect(saved[0].seen.isEmpty, "the new watch entirely replaces the old one, seen-set included")
   }
 
+  // MARK: - 7a. add() refuses rather than overwriting on a read failure
+
+  /// The bug this guards: `try? store.load() ?? []` cannot tell "genuinely
+  /// empty" apart from "could not read it", and used to save a one-channel
+  /// list straight over whatever a transient read failure hid. `WatchStore
+  /// .load()` throws only when the file exists and could not be read as
+  /// data — every decode failure it can hit is recovered internally by
+  /// `setAside()` and never propagates — so a directory sitting where the
+  /// watch file belongs reproduces exactly that throw without touching
+  /// `WatchStore` itself.
+  @Test func addRefusesRatherThanOverwritingWhenTheWatchListCannotBeRead() async throws {
+    let file = Self.temporaryFile()
+    defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
+    try FileManager.default.createDirectory(at: file, withIntermediateDirectories: true)
+
+    let store = WatchStore(fileURL: file)
+    let model = makeModel(store: store, fetch: { _ in .success([Self.archive("1")]) })
+    model.loginText = "ninja"
+    model.scope = .allAvailable
+    await model.look()
+
+    let added = await model.add()
+
+    #expect(!added, "must refuse rather than save over a list it could not read")
+    #expect(model.addFailure != nil, "the refusal must say why, not just dismiss")
+    // Nothing was ever written: the directory placeholder is exactly what
+    // was there before `add()` ran.
+    #expect(FileManager.default.fileExists(atPath: file.path))
+    var isDirectory: ObjCBool = false
+    FileManager.default.fileExists(atPath: file.path, isDirectory: &isDirectory)
+    #expect(isDirectory.boolValue, "add() must not have replaced it with a file")
+  }
+
+  // MARK: - 7b. look() is guarded against a superseded fetch
+
+  /// The bug this guards: a slower fetch for an earlier login landing after
+  /// a faster one for the current login would populate `lookup` — and so
+  /// whatever `add()` composes — with the wrong channel's archives.
+  @Test func aSupersededLookupNeverOverwritesTheNewerOne() async {
+    let gate = Gate()
+    let model = makeModel(fetch: { login in
+      if login == "stale" {
+        await gate.wait()
+        return .success([Self.archive("stale-archive")])
+      }
+      return .success([Self.archive("fresh-archive")])
+    })
+
+    model.loginText = "stale"
+    let first = Task { await model.look() }
+    await waitUntil("the first lookup is in flight") { model.lookup == .loading }
+
+    model.loginText = "fresh"
+    await model.look()
+    #expect(model.lookup == .loaded([Self.archive("fresh-archive")]))
+
+    await gate.open()
+    await first.value
+
+    #expect(
+      model.lookup == .loaded([Self.archive("fresh-archive")]),
+      "the superseded lookup must not land after the current one")
+  }
+
   // MARK: - 7. A failed lookup keeps its reason
 
   /// The same distinction `WatchPollResult` draws between `.failed` and
@@ -248,6 +326,54 @@ struct AddChannelModelTests {
     if case .loaded(let archives) = model.lookup {
       Issue.record("a failure must never read as .loaded([]): \(archives)")
     }
+  }
+
+  // MARK: - 8. add() resolves the real display name, falling back on failure
+
+  /// The bug this guards: `composeWatch()` used to seed `displayName` with
+  /// the normalised (lowercased) login and nothing ever corrected it, so
+  /// `watches.json` — and the Watching sidebar reading it — would head the
+  /// channel "ninja" forever rather than "Ninja". `add()` now resolves the
+  /// real name once, right before persisting.
+  @Test func addResolvesTheRealDisplayNameBeforePersisting() async throws {
+    let store = WatchStore(fileURL: Self.temporaryFile())
+    defer { try? FileManager.default.removeItem(at: store.fileURL.deletingLastPathComponent()) }
+
+    let model = makeModel(
+      store: store,
+      fetch: { _ in .success([Self.archive("1")]) },
+      fetchDisplayName: { _ in .success("Ninja") })
+    model.loginText = "ninja"
+    model.scope = .allAvailable
+
+    await model.look()
+    #expect(await model.add())
+
+    let saved = try store.load()
+    let ninja = try #require(saved.first { $0.login == "ninja" })
+    #expect(ninja.displayName == "Ninja")
+  }
+
+  /// The positive control's failure twin: a missing display name is
+  /// cosmetic, not a reason to refuse the whole add, so it falls back to the
+  /// normalised login rather than blocking `add()`.
+  @Test func aFailedDisplayNameLookupFallsBackToTheNormalisedLoginRatherThanBlockingAdd() async throws {
+    let store = WatchStore(fileURL: Self.temporaryFile())
+    defer { try? FileManager.default.removeItem(at: store.fileURL.deletingLastPathComponent()) }
+
+    let model = makeModel(
+      store: store,
+      fetch: { _ in .success([Self.archive("1")]) },
+      fetchDisplayName: { _ in .failure(.noSuchChannel) })
+    model.loginText = "ninja"
+    model.scope = .allAvailable
+
+    await model.look()
+    #expect(await model.add(), "a display-name failure must not block adding the channel")
+
+    let saved = try store.load()
+    let ninja = try #require(saved.first { $0.login == "ninja" })
+    #expect(ninja.displayName == "ninja")
   }
 
   // MARK: - Fixtures
@@ -285,12 +411,48 @@ struct AddChannelModelTests {
   private func makeModel(
     store: WatchStore? = nil,
     preferences: Preferences = AddChannelModelTests.store(),
-    fetch: @escaping (String) async -> Result<[ChannelArchive], ChannelFeedError> = { _ in .success([]) })
+    fetch: @escaping (String) async -> Result<[ChannelArchive], ChannelFeedError> = { _ in .success([]) },
+    fetchDisplayName: @escaping (String) async -> Result<String, ChannelFeedError> = { login in .success(login) })
     -> AddChannelModel
   {
     AddChannelModel(
       store: store ?? WatchStore(fileURL: Self.temporaryFile()),
       preferences: preferences,
-      fetch: fetch)
+      fetch: fetch,
+      fetchDisplayName: fetchDisplayName)
+  }
+
+  /// Lets a test hold a fetch open while it drives the model past it. The
+  /// same helper `IntakeModelTests` uses for its own generation regression
+  /// test.
+  private actor Gate {
+    private var isOpen = false
+    private var continuation: CheckedContinuation<Void, Never>?
+
+    func wait() async {
+      guard !isOpen else { return }
+      await withCheckedContinuation { continuation = $0 }
+    }
+
+    func open() {
+      isOpen = true
+      continuation?.resume()
+      continuation = nil
+    }
+  }
+
+  /// Yields until `condition` holds, bounded so a broken implementation fails
+  /// the test rather than hanging it.
+  private func waitUntil(
+    _ description: String,
+    yields: Int = 10_000,
+    _ condition: () -> Bool)
+    async
+  {
+    for _ in 0..<yields {
+      if condition() { return }
+      await Task.yield()
+    }
+    Issue.record("timed out waiting until \(description)")
   }
 }

@@ -59,6 +59,14 @@ final class AddChannelModel {
 
   private(set) var lookup: Lookup = .idle
 
+  /// Set when Add refused. Only reachable if `canAdd` and `composeWatch()`
+  /// ever disagreed, which they cannot, or if the watch list could not be
+  /// read back before saving over it (see `add()`) — but a sheet that closes
+  /// on a watch that was never persisted is exactly the silent failure this
+  /// whole path exists to avoid, so the refusal says so out loud instead of
+  /// dismissing. The same idiom as `IntakeModel.addFailure`.
+  private(set) var addFailure: String?
+
   // MARK: - Collaborators
 
   private let store: WatchStore
@@ -70,11 +78,29 @@ final class AddChannelModel {
   /// unvalidated ever reaches it.
   private let fetch: (String) async -> Result<[ChannelArchive], ChannelFeedError>
 
-  /// Both collaborators are closures rather than `WatchPoller`/`ChannelFeed`
-  /// instances so a test can supply a canned answer without a network or a
-  /// real support directory — `WatchStore` alone is concrete because it is
-  /// already an injectable value type with no network of its own
-  /// (`WatchStoreTests` tests it the same way, against a scratch file).
+  /// Resolves the channel's real display name, once, in `add()` — never in
+  /// `look()` or `composeWatch()`, both of which run far more often than a
+  /// channel is actually added (`composeWatch()` on every `canAdd`
+  /// re-evaluation) and must not each pay for a second network round trip.
+  /// Takes the normalised login for the same reason `fetch` does. A failure
+  /// falls back to the login itself rather than blocking the add — see
+  /// `resolvedDisplayName(for:)`.
+  private let fetchDisplayName: (String) async -> Result<String, ChannelFeedError>
+
+  /// Distinguishes the fetch in flight from one the user has already
+  /// superseded by editing the login. Without it, a slower fetch for an
+  /// earlier login can land after a faster one for the current login and
+  /// populate the model with the wrong channel's archives — and `add()`
+  /// would then compose a `Watch` for the current login seeded from another
+  /// channel's archive list entirely. The same guard `IntakeModel
+  /// .generation` keeps for its own fetch, and for the same reason.
+  private var generation = 0
+
+  /// Both fetch collaborators are closures rather than `WatchPoller`/
+  /// `ChannelFeed` instances so a test can supply a canned answer without a
+  /// network or a real support directory — `WatchStore` alone is concrete
+  /// because it is already an injectable value type with no network of its
+  /// own (`WatchStoreTests` tests it the same way, against a scratch file).
   ///
   /// **Settings seed from `preferences` here and are then this model's own**
   /// — design doc §3.2. Unlike `IntakeModel`, which re-reads `Preferences` on
@@ -84,10 +110,12 @@ final class AddChannelModel {
   init(
     store: WatchStore,
     preferences: Preferences,
-    fetch: @escaping (String) async -> Result<[ChannelArchive], ChannelFeedError>)
+    fetch: @escaping (String) async -> Result<[ChannelArchive], ChannelFeedError>,
+    fetchDisplayName: @escaping (String) async -> Result<String, ChannelFeedError>)
   {
     self.store = store
     self.fetch = fetch
+    self.fetchDisplayName = fetchDisplayName
     self.qualityCap = preferences.qualityCap
     self.output = preferences.output
     self.chatSize = preferences.chatSize
@@ -114,16 +142,28 @@ final class AddChannelModel {
   /// Refuses at the guard rather than after: an unnormalised `loginText`
   /// never reaches `fetch`, which is the whole safety property this type
   /// exists to hold (`Watch.normalisedLogin`'s own doc comment).
+  ///
+  /// Guarded by `generation`: a fetch superseded by a later edit to the
+  /// login must not settle `lookup` after the one that replaced it has —
+  /// otherwise the model, and any `Watch` `add()` composes from it, would
+  /// describe whichever channel happened to answer last rather than the one
+  /// currently typed.
   func look() async {
     guard let login = normalisedLogin else {
       lookup = .idle
       return
     }
 
+    generation += 1
+    let issued = generation
     lookup = .loading
     switch await fetch(login) {
-    case .success(let archives): lookup = .loaded(archives)
-    case .failure(let error): lookup = .failed(error.localizedDescription)
+    case .success(let archives):
+      guard issued == generation else { return }
+      lookup = .loaded(archives)
+    case .failure(let error):
+      guard issued == generation else { return }
+      lookup = .failed(error.localizedDescription)
     }
   }
 
@@ -179,11 +219,13 @@ final class AddChannelModel {
     let settings = Watch.Settings(
       destinationPath: folder.path, qualityCap: qualityCap,
       output: output, chatSize: chatSize)
-    // `displayName` has nothing better to be seeded from: the channel feed
-    // query (`ChannelFeed.query(login:limit:)`) asks for `id`/`login` and a
-    // video list, never the channel's own display name. The normalised
-    // login is at least honest about what is known, rather than a guess at
-    // capitalisation nobody asked for.
+    // `displayName` seeds with the normalised login as a placeholder, not
+    // the real thing. `composeWatch()` is synchronous and runs on every
+    // `canAdd` re-evaluation, so it cannot itself perform the network fetch
+    // `ChannelFeed.displayName(forLogin:)` needs — that only happens once,
+    // in `add()`, right before this watch is persisted, and only `add()`'s
+    // copy of `displayName` is the one that gets saved. See
+    // `resolvedDisplayName(for:)`.
     let watch = Watch(
       login: login, displayName: login, settings: settings,
       downloadsAutomatically: downloadsAutomatically, seen: [])
@@ -203,14 +245,44 @@ final class AddChannelModel {
   /// channel's state across two records, one of which nothing above this
   /// ever looks at again.
   ///
+  /// **Refuses rather than saves over an unreadable list.** `WatchStore
+  /// .load()` throws only when the watch file exists but could not be read —
+  /// every decode failure it can hit is already recovered internally by
+  /// moving the file aside (`WatchStore.setAside()`). So a throw here means
+  /// there are watches on disk this call could not see, and saving anyway —
+  /// what `try? store.load() ?? []` used to do — would silently overwrite
+  /// every one of them with a list of exactly one. `addFailure` carries why,
+  /// the same idiom as `IntakeModel.addFailure`, so the sheet can show it
+  /// rather than closing on a watch list that just lost every other channel.
+  ///
   /// Returns whether it landed, the same contract `IntakeModel.add()` keeps
   /// with its own sheet, so the caller can decide whether to dismiss on a
   /// fact rather than a hope.
   @discardableResult
   func add() async -> Bool {
-    guard let watch = composeWatch() else { return false }
+    guard var watch = composeWatch() else {
+      addFailure = """
+        Oxbow could not build that watch. Check the login, the lookup, and \
+        the destination folder.
+        """
+      return false
+    }
 
-    var watches = (try? store.load()) ?? []
+    let existing: [Watch]
+    do {
+      existing = try store.load()
+    } catch {
+      addFailure = """
+        Oxbow could not read the existing watch list, so adding this \
+        channel was refused rather than risk losing it. \
+        \(error.localizedDescription)
+        """
+      return false
+    }
+
+    watch.displayName = await resolvedDisplayName(for: watch.login)
+
+    var watches = existing
     if let index = watches.firstIndex(where: { $0.login == watch.login }) {
       watches[index] = watch
     } else {
@@ -219,9 +291,25 @@ final class AddChannelModel {
 
     do {
       try store.save(watches)
+      addFailure = nil
       return true
     } catch {
+      addFailure = "Oxbow could not save the watch list: \(error.localizedDescription)"
       return false
+    }
+  }
+
+  /// Twitch's own display name for `login`, or the normalised login itself
+  /// when the lookup fails.
+  ///
+  /// **A missing display name must not block adding a channel.** The name is
+  /// cosmetic — the sidebar heading, nothing `WatchPoll` reads to decide
+  /// what to download — so a network hiccup here is not a reason to refuse
+  /// the whole add the way an unreadable watch list is.
+  private func resolvedDisplayName(for login: String) async -> String {
+    switch await fetchDisplayName(login) {
+    case .success(let name): return name
+    case .failure: return login
     }
   }
 }
