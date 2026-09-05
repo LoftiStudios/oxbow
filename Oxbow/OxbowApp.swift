@@ -34,6 +34,17 @@ struct OxbowApp: App {
   /// window title need the name.
   private let about = AboutInfo.main
 
+  /// Handed to `AddChannelWindow`'s `init` below, hoisted here rather than
+  /// built with `Preferences()` inline at that call site. `body` is a
+  /// computed property SwiftUI re-evaluates on every state change this scene
+  /// depends on, and `AddChannelWindow.init` only keeps its `preferences`
+  /// argument long enough to seed `AddChannelModel`'s own `@State` — so a
+  /// fresh `Preferences()` built inline there was constructed and discarded
+  /// on every re-render for no reason. `Preferences()`'s default init is
+  /// cheap (it wraps `.standard` and two closures, nothing eager), but a
+  /// value with no reason to be rebuilt should not be.
+  @State private var addChannelPreferences = Preferences()
+
   var body: some Scene {
     // `Window`, not `WindowGroup`. The engine is built once at launch
     // (design §2) and the app is single-window (design §4), and a
@@ -198,7 +209,7 @@ struct OxbowApp: App {
       // its place: this window exists to write `watches.json`, and until the
       // support directory is known there is no file to write to.
       if let watchStore {
-        AddChannelWindow(store: watchStore, preferences: Preferences())
+        AddChannelWindow(store: watchStore, preferences: addChannelPreferences)
       }
     }
     .defaultSize(width: 480, height: 640)
