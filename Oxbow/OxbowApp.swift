@@ -11,10 +11,39 @@ struct OxbowApp: App {
   /// the launch-time check should not queue behind helper discovery.
   @State private var updates = UpdateModel.live()
 
+  /// Built once a support directory is known, inside the guarded `.task`
+  /// below rather than here — unlike `updates`, it needs a resolved path and
+  /// must never exist during a test run. See that `.task` for why.
+  @State private var poller: WatchPoller?
+
+  /// The Watching list. Built alongside `poller`, from a `WatchStore` over
+  /// the same `watches.json` — `WatchPoller` only ever reads that file, and
+  /// `WatchingModel` is the one writer (see its own doc comment), so both
+  /// need to agree on the same path rather than each deriving it separately.
+  @State private var watching: WatchingModel?
+
+  /// The same `WatchStore` `watching` was built from, kept alongside it so
+  /// `AddChannelWindow` can open a second writer over `watches.json` without
+  /// resolving the support directory a second time. Optional, and nil for
+  /// the identical reason `watching` is: both are built together, behind the
+  /// same `AppComposition.isUserSession` guard, in the `.task` below.
+  @State private var watchStore: WatchStore?
+
   /// Read once. Nothing in it can change while the app runs — it is all
   /// stamped into the bundle at build time — and both the menu item and the
   /// window title need the name.
   private let about = AboutInfo.main
+
+  /// Handed to `AddChannelWindow`'s `init` below, hoisted here rather than
+  /// built with `Preferences()` inline at that call site. `body` is a
+  /// computed property SwiftUI re-evaluates on every state change this scene
+  /// depends on, and `AddChannelWindow.init` only keeps its `preferences`
+  /// argument long enough to seed `AddChannelModel`'s own `@State` — so a
+  /// fresh `Preferences()` built inline there was constructed and discarded
+  /// on every re-render for no reason. `Preferences()`'s default init is
+  /// cheap (it wraps `.standard` and two closures, nothing eager), but a
+  /// value with no reason to be rebuilt should not be.
+  @State private var addChannelPreferences = Preferences()
 
   var body: some Scene {
     // `Window`, not `WindowGroup`. The engine is built once at launch
@@ -46,7 +75,9 @@ struct OxbowApp: App {
         // banner, so a payload-missing launch gets the `+`-disabled window
         // design §6 describes rather than a bare page with no chrome.
         if let content {
-          QueueView(content: content, updates: updates)
+          QueueView(
+            content: content, updates: updates, watching: watching, poller: poller,
+            canAddChannel: watchStore != nil)
         } else {
           // This spinner covers `QueueEngine.start()` too, deliberately.
           // `QueueHost.ready()` answers only after the saved queue is loaded
@@ -79,8 +110,37 @@ struct OxbowApp: App {
         guard AppComposition.isUserSession else { return }
         await updates.checkAutomatically()
       }
+      // Its own task for the same reason the update check has one: unrelated
+      // work, on an unrelated schedule.
+      //
+      // Guarded the same way and for the same reason: `OxbowTests` is hosted
+      // by this app, so `xcodebuild test` launches it for real, and an
+      // unguarded sweep would make a live Twitch request on every test run.
+      // See `AppComposition.isUserSession`.
+      .task {
+        guard AppComposition.isUserSession else { return }
+        guard poller == nil else { return }
+        guard let support = try? AppComposition.defaultSupportDirectory() else { return }
+        let store = WatchStore(fileURL: AppComposition.watchStoreURL(supportDirectory: support))
+        watching = WatchingModel(
+          store: store,
+          // The intake window this should open does not exist yet — that is
+          // the next plan's Add Channel work. Until then Add can still mark
+          // an archive seen; it just cannot hand it anywhere.
+          openIntake: { _, _ in })
+        watchStore = store
+        poller = WatchPoller.live(supportDirectory: support)
+        poller?.start()
+      }
     }
-    .defaultSize(width: 720, height: 480)
+    // 720 was chosen for the queue alone, the same way its old 480pt minimum
+    // was (see `QueueView`'s `.frame`) — pre-sidebar, that gave the queue
+    // 240pt of room above its floor. Grown by the sidebar's own 180pt ideal
+    // width for the same reason as the minimum: without it, the queue opens
+    // at only 60pt above its new floor instead of the 240pt it used to get,
+    // which is the same truncation this task exists to fix, just at launch
+    // instead of at minimum width.
+    .defaultSize(width: 900, height: 480)
     .windowResizability(.contentMinSize)
     .commands {
       // Replace, not add. The stock item calls
@@ -134,6 +194,30 @@ struct OxbowApp: App {
     // Add Download window nobody asked for — and its `IntakeModel` is
     // rebuilt empty anyway, so what reappears is a blank form, not the one
     // that was there.
+    .restorationBehavior(.disabled)
+
+    // Add Channel, its own window for the same reasons intake is one — a
+    // form that can legitimately grow (§3.3's priced backfill line joins the
+    // usual settings) belongs in something that sizes to its own content
+    // rather than a sheet capped by the queue window's height.
+    //
+    // `Window`, so the toolbar button on the Watching pane re-focuses the one
+    // that exists rather than stacking a second lookup on top of the first.
+    Window("Add Channel", id: Self.addChannelWindowID) {
+      // Unreachable before `watchStore` resolves — the same guard `intake`
+      // above puts on `controller` — and there is nothing honest to show in
+      // its place: this window exists to write `watches.json`, and until the
+      // support directory is known there is no file to write to.
+      if let watchStore {
+        AddChannelWindow(store: watchStore, preferences: addChannelPreferences)
+      }
+    }
+    .defaultSize(width: 480, height: 640)
+    .windowResizability(.contentMinSize)
+    .defaultPosition(.center)
+    // Not restored, matching intake: a channel half-typed into a login field
+    // is not a form worth resurrecting on the next launch, and its
+    // `AddChannelModel` is rebuilt empty regardless.
     .restorationBehavior(.disabled)
 
     // Get Info, one window per download.
@@ -203,6 +287,9 @@ struct OxbowApp: App {
 
   /// The id both the menu item and `QueueView`'s toolbar button open.
   static let intakeWindowID = "intake"
+
+  /// The id `QueueView`'s toolbar button opens from the Watching pane.
+  static let addChannelWindowID = "addChannel"
 
   private var controller: QueueController? {
     if case .ready(let controller) = content { return controller }

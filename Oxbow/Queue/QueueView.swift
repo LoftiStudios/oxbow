@@ -6,6 +6,26 @@ struct QueueView: View {
   let content: QueueContent
   let updates: UpdateModel
 
+  /// The Watching list and the sweep that feeds it.
+  ///
+  /// Both optional for the same reason: `OxbowApp` builds them only once it
+  /// has resolved a support directory, behind the same
+  /// `AppComposition.isUserSession` guard that keeps `WatchPoller` off the
+  /// network during `xcodebuild test` — see the guarded `.task` there. A
+  /// test-hosted window simply sees nil here, and the Watching pane below
+  /// falls back to `WatchingView`'s own empty state rather than this view
+  /// having to invent a second "no data yet" state of its own.
+  let watching: WatchingModel?
+  let poller: WatchPoller?
+
+  /// Whether `OxbowApp` has resolved a support directory yet, and so has a
+  /// `WatchStore` ready for the Add Channel window to write to. `watching`
+  /// itself would say the same thing, but reading `watching == nil` here
+  /// would tie this button's enabled state to a model whose only other job
+  /// is holding the sweep results — a coincidence, not a dependency this
+  /// view should be built to notice if it ever stopped holding.
+  let canAddChannel: Bool
+
   /// Opens the intake window (`OxbowApp.intakeWindowID`). Intake is a window
   /// rather than a sheet on this one — see `IntakeWindow` for why — so the
   /// toolbar button hands off to the scene instead of presenting anything.
@@ -15,6 +35,18 @@ struct QueueView: View {
   @Environment(\.openURL) private var openURL
 
   @State private var selection: Set<JobID> = []
+
+  /// Which sidebar destination is showing. Optional because `List`'s
+  /// selection binding requires it — a `List` reports "nothing selected" as
+  /// nil, most visibly when someone command-clicks the current row off — but
+  /// the initial value is Queue, and the detail switch below treats a later
+  /// nil the same way rather than showing a blank pane.
+  @State private var sidebarSelection: SidebarItem? = .queue
+
+  private enum SidebarItem: Hashable {
+    case queue
+    case watching
+  }
 
   /// A removal waiting on the user, and the dialog's own presentation flag.
   ///
@@ -61,22 +93,101 @@ struct QueueView: View {
           onDismiss: { updates.dismiss() })
         Divider()
       }
-      queue
-    }
-    .frame(minWidth: 480, minHeight: 320)
-    .toolbar {
-      ToolbarItem(placement: .primaryAction) {
-        Button {
-          openWindow(id: OxbowApp.intakeWindowID)
-        } label: {
-          Label("Add Download", systemImage: "plus")
+      // Both banners span this whole split view rather than sitting inside
+      // the detail pane. They are about the app — a missing helper means
+      // nothing can download regardless of which sidebar item is showing —
+      // so putting them in the detail pane would hide "Downloads unavailable"
+      // behind whichever destination happened to be selected.
+      NavigationSplitView {
+        List(selection: $sidebarSelection) {
+          Label("Queue", systemImage: "tray.full")
+            .tag(SidebarItem.queue)
+          // `.badge` before `.tag`, not after — verified the hard way. With
+          // `.tag` applied first, clicking this row on macOS 26 stopped
+          // changing `sidebarSelection` at all: the row highlighted, an
+          // AppKit selection action fired, and the binding never saw it. No
+          // such regression is on record anywhere the settings.md §7 probe
+          // looked, so treat this order as load-bearing rather than
+          // stylistic until Apple documents otherwise.
+          Label("Watching", systemImage: "eye")
+            .badge(watching?.unreadCount ?? 0)
+            .tag(SidebarItem.watching)
         }
-        // Kept alongside ⌘N deliberately: the shortcut is the fast path for
-        // people who know it, and the button is how everyone else finds the
-        // feature at all.
-        .help("Add Download (⌘N)")
-        .disabled(controller == nil)
+        .listStyle(.sidebar)
+        // Roughly fixed, the way Mail and Finder do it, rather than left to
+        // SwiftUI's default proportional split. Unconstrained, the sidebar
+        // claimed close to a third of the window at minimum width, which is
+        // most of what the queue below needs just to keep a job's title
+        // legible.
+        .navigationSplitViewColumnWidth(min: 150, ideal: 180, max: 240)
+      } detail: {
+        switch sidebarSelection {
+        case .watching:
+          WatchingView(
+            sections: watching?.sections ?? [],
+            isSweeping: poller?.isSweeping ?? false,
+            onAdd: { archive, section in watching?.add(archive, from: section.login) },
+            onIgnore: { archive, section in watching?.ignore(archive, from: section.login) })
+        case .queue, .none:
+          queue
+        }
       }
+    }
+    // 480 is the queue's own minimum, not the window's — it is what a job
+    // row needs to keep its title legible, from before this view had a
+    // sidebar at all. The +180 is the sidebar's ideal column width (set
+    // above), added on top rather than carved out of the 480, so the detail
+    // pane keeps roughly its designed minimum even if the split view ever
+    // shrinks the sidebar down to its own 150pt floor. Height is untouched:
+    // a sidebar costs no height.
+    .frame(minWidth: 480 + 180, minHeight: 320)
+    .toolbar {
+      // Two different buttons behind the same placement, switched on which
+      // pane is showing — never both, and never neither. `Add Download`
+      // opens intake for a brand-new job, which is a Queue action, and a
+      // finding row already has its own Add for adding *that* video; leaving
+      // it visible next to a highlighted finding would invite the guess that
+      // it acts on the row, when it does not. `Add Channel` is the reverse:
+      // it is how a person reaches the window at all, including — per
+      // `docs/design/channel-watching.md` §3 — the moment nothing is watched
+      // yet and `WatchingView`'s own empty state has no control of its own to
+      // offer. Living in this toolbar rather than in that empty state is what
+      // keeps the button reachable whether the list is empty or full,
+      // matching where `Add Download` already sits for the Queue pane.
+      if sidebarSelection == .watching {
+        ToolbarItem(placement: .primaryAction) {
+          Button {
+            openWindow(id: OxbowApp.addChannelWindowID)
+          } label: {
+            Label("Add Channel", systemImage: "plus")
+          }
+          .help("Watch a Twitch channel for new archives")
+          .disabled(!canAddChannel)
+        }
+      } else {
+        ToolbarItem(placement: .primaryAction) {
+          Button {
+            openWindow(id: OxbowApp.intakeWindowID)
+          } label: {
+            Label("Add Download", systemImage: "plus")
+          }
+          // Kept alongside ⌘N deliberately: the shortcut is the fast path for
+          // people who know it, and the button is how everyone else finds the
+          // feature at all.
+          .help("Add Download (⌘N)")
+          .disabled(controller == nil)
+        }
+      }
+    }
+    // `initial: true` because `poller` and `watching` are built by `OxbowApp`
+    // independently of when this view appears — a sweep can finish while the
+    // queue is still loading, before this view exists to observe it. Without
+    // replaying the current value on appear, that first sweep's results would
+    // sit in `poller.results` unseen until a second one arrives, up to an
+    // hour later.
+    .onChange(of: poller?.results, initial: true) { _, results in
+      guard let results else { return }
+      watching?.apply(results)
     }
   }
 
@@ -122,9 +233,14 @@ struct QueueView: View {
         guard let id = ids.first, ids.count == 1 else { return }
         openWindow(id: OxbowApp.infoWindowID, value: id)
       }
-      // Published for the menu bar. `focusedSceneValue` rather than
-      // `focusedValue`: the Downloads menu has to work whenever this window is
-      // frontmost, not only when the list itself holds keyboard focus.
+      // Published for the menu bar. This sits inside the Queue detail pane,
+      // so switching the sidebar to Watching tears it down and the Downloads
+      // menu greys out — even though the queue still holds jobs. That is
+      // accepted, not missed: the menu follows the visible pane, the same way
+      // its items are already hidden or disabled based on what is selected
+      // within the list. `focusedSceneValue` over `focusedValue` only buys
+      // independence from keyboard focus inside this pane, not independence
+      // from which pane is showing.
       .focusedSceneValue(\.queueActions, actions(from: controller))
       .confirmationDialog(
         removalConfirmationTitle(for: jobsPendingRemoval, from: controller),
@@ -220,7 +336,10 @@ struct QueueView: View {
     with the dotnet publish command in docs/development.md, then build the \
     app again.
     """),
-    updates: UpdateModel { .upToDate })
+    updates: UpdateModel { .upToDate },
+    watching: nil,
+    poller: nil,
+    canAddChannel: false)
   .frame(width: 720, height: 420)
 }
 
@@ -230,7 +349,12 @@ struct QueueView: View {
       ReleaseVersion("0.3.0")!,
       URL(string: "https://github.com/LoftiStudios/oxbow/releases/tag/v0.3.0")!)
   }
-  return QueueView(content: .unavailable("No helper in this build."), updates: updates)
+  return QueueView(
+    content: .unavailable("No helper in this build."),
+    updates: updates,
+    watching: nil,
+    poller: nil,
+    canAddChannel: false)
     .frame(width: 720, height: 420)
     .task { await updates.checkAutomatically() }
 }
