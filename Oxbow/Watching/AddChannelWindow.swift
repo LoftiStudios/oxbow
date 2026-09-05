@@ -146,6 +146,23 @@ struct AddChannelWindow: View {
         model.reseedFromPreferences()
       }
     }
+    // Catches an edit request that arrives while this window is already
+    // open. `Window`'s single-instance guarantee means `openWindow` just
+    // refocuses an open window rather than recreating it, so `.onAppear`
+    // above never fires a second time — without this, choosing Edit… on a
+    // watched channel while the window was already open (in Add mode, or
+    // editing a different channel) did nothing visible, and left
+    // `pendingEdit` set for the *next* ordinary Add Channel open to
+    // stumble into, locking it into Edit mode for a channel nobody asked
+    // about this time. Unlike `QueueView`'s identical hazard for
+    // `pendingIntake` — accepted there because its worst case is a delayed
+    // prefill — this one puts the wrong mode on screen outright, so it gets
+    // fixed rather than documented away.
+    .onChange(of: pendingEdit) { _, newValue in
+      guard let newValue else { return }
+      model.beginEditing(newValue)
+      pendingEdit = nil
+    }
     // The scene outlives the window, so closing it has to do what dismissing
     // a sheet would have done for free. See `AddChannelModel.reset()` — and,
     // for the open half of the same problem, `reseedFromPreferences()`
@@ -331,9 +348,15 @@ struct AddChannelWindow: View {
         .toggleStyle(.checkbox)
         Spacer(minLength: 0)
       }
-      Text("New archives are queued and downloaded on their own, using the "
-        + "settings above. Off, Oxbow only tells you about them in Watching "
-        + "and downloads nothing until you press Add on a finding.")
+      // Matches `WatchingView`'s tooltip on this same flag, worded for the
+      // moment someone decides whether to tick this rather than for a
+      // watch already ticked — same honesty, different point in the flow.
+      // The caption used to promise archives are "queued and downloaded on
+      // their own"; a fix to the tooltip corrected that claim there but left
+      // this one standing, and this is the more prominent of the two: it is
+      // what someone actually reads right before deciding.
+      Text("Oxbow doesn't do that yet. On or off, new archives only appear "
+        + "in Watching until you press Add on a finding.")
         .font(.caption)
         .foregroundStyle(.secondary)
 

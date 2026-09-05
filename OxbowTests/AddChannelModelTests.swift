@@ -508,6 +508,59 @@ struct AddChannelModelTests {
     #expect(ninja.displayName == "ninja")
   }
 
+  // MARK: - 9a. A write landing during the display-name await is not lost
+
+  /// The bug: `add()` used to `store.load()`, then `await` the display-name
+  /// fetch — up to 15 seconds — and only then `store.save()` the copy it had
+  /// read before the await. `AddChannelWindow` is a non-modal `Window`, so
+  /// the Watching pane stays live and interactive the whole time; a write it
+  /// makes mid-await (Ignore, Add, or Stop Watching, all through
+  /// `WatchingModel`'s own `WatchStore`) would be silently clobbered by that
+  /// stale copy once the save finally ran. Moving the fetch before the load
+  /// closes the whole window: this pins it down by holding the fetch open
+  /// with a gate, writing through a second, independent `WatchStore` while
+  /// `add()` is suspended on it, and checking that write survives.
+  @Test func aWriteLandingDuringTheDisplayNameAwaitIsNotClobbered() async throws {
+    let store = WatchStore(fileURL: Self.temporaryFile())
+    defer { try? FileManager.default.removeItem(at: store.fileURL.deletingLastPathComponent()) }
+    try store.save([Self.watch(login: "day9tv", seen: [])])
+
+    let gate = Gate()
+    var fetchStarted = false
+    let model = makeModel(
+      store: store,
+      fetch: { _ in .success([Self.archive("1")]) },
+      fetchDisplayName: { _ in
+        fetchStarted = true
+        await gate.wait()
+        return .success("Ninja")
+      })
+    model.loginText = "ninja"
+    model.scope = .allAvailable
+    await model.look()
+
+    let addTask = Task { await model.add() }
+    await waitUntil("the display-name fetch has started") { fetchStarted }
+
+    // Stands in for `WatchingModel.markSeen` (Ignore/Add) or `stopWatching`
+    // writing through their own `WatchStore` instance while this window's
+    // own `add()` is still suspended on the network.
+    var concurrent = try store.load()
+    concurrent[0] = concurrent[0].marking(["new-finding"])
+    try store.save(concurrent)
+
+    await gate.open()
+    let added = await addTask.value
+
+    #expect(added)
+    let saved = try store.load()
+    #expect(saved.contains { $0.login == "ninja" }, "the new watch must still land")
+    let day9tv = try #require(saved.first { $0.login == "day9tv" })
+    #expect(
+      day9tv.seen.contains("new-finding"),
+      "a write that landed during the await must not be clobbered by a stale load")
+  }
+
   // MARK: - 10. Editing seeds from the watch, never from Preferences
 
   /// Requirement 1: a watch set to one thing six weeks ago has to reopen

@@ -51,11 +51,22 @@ struct WatchingView: View {
   /// not working. `AddChannelModel.addFailure` gets the identical visible
   /// treatment in its own window, for the identical reason.
   let stopWatchingFailure: String?
+  /// Set when Ignore or Add could not persist because the watch list could
+  /// not be read — `WatchingModel.markSeenFailure`'s own counterpart on this
+  /// side, for the identical reason `stopWatchingFailure` above gets one:
+  /// `dismissed` already hides the row the moment either button is pressed,
+  /// so without this a read failure made the row vanish with nothing on
+  /// screen to say why.
+  let markSeenFailure: String?
 
   var body: some View {
     VStack(spacing: 0) {
       if let stopWatchingFailure {
         QueueBanner(title: "Couldn't stop watching", message: stopWatchingFailure)
+        Divider()
+      }
+      if let markSeenFailure {
+        QueueBanner(title: "Couldn't save that", message: markSeenFailure)
         Divider()
       }
       content
@@ -226,7 +237,7 @@ private struct SectionHeader: View {
     ],
     isSweeping: false,
     onAdd: { _, _ in }, onIgnore: { _, _ in }, onEdit: { _ in }, onStopWatching: { _ in },
-    stopWatchingFailure: nil)
+    stopWatchingFailure: nil, markSeenFailure: nil)
   .frame(width: 480, height: 420)
 }
 
@@ -244,7 +255,28 @@ private struct SectionHeader: View {
     ],
     isSweeping: false,
     onAdd: { _, _ in }, onIgnore: { _, _ in }, onEdit: { _ in }, onStopWatching: { _ in },
-    stopWatchingFailure: "Oxbow could not read the watch list, so LeighXP was not stopped.")
+    stopWatchingFailure: "Oxbow could not read the watch list, so LeighXP was not stopped.",
+    markSeenFailure: nil)
+  .frame(width: 480, height: 420)
+}
+
+// New: Ignore and Add both hide their row through `dismissed` before ever
+// touching the store, so a read failure used to make the row vanish with
+// nothing on screen to say why — `WatchingModel.markSeenFailure`'s own doc
+// comment.
+#Preview("Ignore or Add failed") {
+  WatchingView(
+    sections: [
+      WatchingModel.Section(
+        login: "leighxp", displayName: "LeighXP",
+        archives: [WatchingViewPreviewData.normal], failure: nil,
+        settingsSummary: "Video + chat · Best available · Medium chat · Downloads",
+        downloadsAutomatically: false),
+    ],
+    isSweeping: false,
+    onAdd: { _, _ in }, onIgnore: { _, _ in }, onEdit: { _ in }, onStopWatching: { _ in },
+    stopWatchingFailure: nil,
+    markSeenFailure: "Oxbow could not read the watch list: the file could not be read.")
   .frame(width: 480, height: 420)
 }
 
@@ -264,7 +296,7 @@ private struct SectionHeader: View {
     ],
     isSweeping: false,
     onAdd: { _, _ in }, onIgnore: { _, _ in }, onEdit: { _ in }, onStopWatching: { _ in },
-    stopWatchingFailure: nil)
+    stopWatchingFailure: nil, markSeenFailure: nil)
   .frame(width: 480, height: 420)
 }
 
@@ -283,7 +315,7 @@ private struct SectionHeader: View {
     ],
     isSweeping: false,
     onAdd: { _, _ in }, onIgnore: { _, _ in }, onEdit: { _ in }, onStopWatching: { _ in },
-    stopWatchingFailure: nil)
+    stopWatchingFailure: nil, markSeenFailure: nil)
   .frame(width: 480, height: 420)
 }
 
@@ -304,7 +336,7 @@ private struct SectionHeader: View {
     ],
     isSweeping: false,
     onAdd: { _, _ in }, onIgnore: { _, _ in }, onEdit: { _ in }, onStopWatching: { _ in },
-    stopWatchingFailure: nil)
+    stopWatchingFailure: nil, markSeenFailure: nil)
   .frame(width: 480, height: 420)
 }
 
@@ -312,7 +344,7 @@ private struct SectionHeader: View {
   WatchingView(
     sections: [], isSweeping: false,
     onAdd: { _, _ in }, onIgnore: { _, _ in }, onEdit: { _ in }, onStopWatching: { _ in },
-    stopWatchingFailure: nil)
+    stopWatchingFailure: nil, markSeenFailure: nil)
     .frame(width: 480, height: 420)
 }
 
@@ -323,7 +355,7 @@ private struct SectionHeader: View {
   WatchingView(
     sections: [], isSweeping: true,
     onAdd: { _, _ in }, onIgnore: { _, _ in }, onEdit: { _ in }, onStopWatching: { _ in },
-    stopWatchingFailure: nil)
+    stopWatchingFailure: nil, markSeenFailure: nil)
     .frame(width: 480, height: 420)
 }
 

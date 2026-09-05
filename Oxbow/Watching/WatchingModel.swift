@@ -83,6 +83,17 @@ final class WatchingModel {
   /// read after the write, so it drops out on its own; an id still present
   /// means the sweep straddled the write, so the overlay keeps hiding it until
   /// a sweep finally starts after the dismissal landed.
+  ///
+  /// **Only responsible for the window before a write lands, and for a write
+  /// that never lands at all.** `rebuild()` also reconciles against the
+  /// watch's own persisted `seen` set (`Watch.findings(in:)`), which is what
+  /// actually keeps a genuinely-seen archive hidden for good — this overlay
+  /// dropping an id once a sweep stops carrying it (bounding its own size,
+  /// rather than growing forever) is safe precisely because `seen` is what
+  /// hides it permanently, not this. The one case this still has to cover on
+  /// its own is `markSeen`'s best-effort write failing: `seen` on disk never
+  /// actually gained the id then, so only this overlay keeps the row hidden
+  /// for the rest of the session.
   private var dismissed: Set<String> = []
 
   /// The latest sweep, before the overlay is subtracted.
@@ -107,6 +118,20 @@ final class WatchingModel {
   /// return value for a caller to inspect, so the reason has to land
   /// somewhere a view can read it after the fact.
   private(set) var stopWatchingFailure: String?
+
+  /// Set when Ignore or Add could not persist to the watch's seen-set because
+  /// the store could not be read — `markSeen`'s own counterpart to
+  /// `stopWatchingFailure` and `AddChannelModel.addFailure`.
+  ///
+  /// **Why this exists at all.** `markSeen` already hides the row via
+  /// `dismissed` before it ever touches the store, so an unreadable
+  /// `watches.json` used to fail *completely* silently: the row vanished,
+  /// `add(_:from:)` opened no intake window, and nothing on screen said why.
+  /// The other three writers of `watches.json` — `AddChannelModel.add()` in
+  /// both its modes, and `stopWatching` below — all refuse loudly on the
+  /// identical condition; this is `markSeen`'s turn to do the same rather
+  /// than being the one silent exception.
+  private(set) var markSeenFailure: String?
 
   init(store: WatchStore, openIntake: @escaping (ChannelArchive, Watch) -> Void) {
     self.store = store
@@ -168,9 +193,29 @@ final class WatchingModel {
   private func markSeen(_ id: String, in login: String) -> Watch? {
     dismissed.insert(id)
 
-    guard var current = try? store.load(),
-          let index = current.firstIndex(where: { $0.login == login })
-    else {
+    var current: [Watch]
+    do {
+      current = try store.load()
+    } catch {
+      // Distinct from "this channel is no longer watched" below: that is a
+      // normal, silent nil (the file can change under a list already on
+      // screen), but this is the identical unreadable-store condition
+      // `AddChannelModel.add()` and `stopWatching` already refuse loudly on.
+      // Without this branch, `dismissed.insert(id)` above had already hidden
+      // the row, so the whole thing failed with no window opened (`add(_:
+      // from:)`'s `guard let watch = markSeen(...) else { return }`) and no
+      // message anywhere — the row simply vanished.
+      //
+      // `rebuild()` before the assignment, not after: `rebuild()` itself
+      // clears `markSeenFailure` as one of its own first steps (see its own
+      // doc comment), so setting the message first would have it wiped out
+      // by the very call meant to refresh `watches` around it.
+      rebuild()
+      markSeenFailure = "Oxbow could not read the watch list: \(error.localizedDescription)"
+      return nil
+    }
+
+    guard let index = current.firstIndex(where: { $0.login == login }) else {
       rebuild()
       return nil
     }
@@ -224,7 +269,9 @@ final class WatchingModel {
       return
     }
 
-    stopWatchingFailure = nil
+    // `rebuild()` below clears `stopWatchingFailure` on its own — see its own
+    // doc comment on why that, not an explicit `nil` here, is the right
+    // place for it.
 
     // A stopped channel's own entry in the last sweep must not resurrect its
     // section on the next `rebuild()` — see `stoppedLogins`'s own doc
@@ -282,7 +329,26 @@ final class WatchingModel {
     }
   }
 
+  /// Rebuilds `sections`, and — as a side effect — clears any stale write
+  /// failure still on screen.
+  ///
+  /// **Why the failures clear here rather than only where they were set.**
+  /// `stopWatchingFailure` used to be cleared only by a *later successful
+  /// stop* — an arbitrary condition that cut both ways: it left the banner
+  /// on screen through a pane switch, an Ignore, an Add, or a sweep landing
+  /// (`refresh()`, `markSeen`, `apply(_:)` all reach `rebuild()` without
+  /// ever touching it), and yet a successful stop of a *different* channel
+  /// cleared it while the login that actually failed was still watched,
+  /// implying the problem was resolved when it was not. Both `stopWatching`
+  /// and `markSeen`'s own failure branches `return` before ever reaching
+  /// this method, so setting a failure and having it clear here never race —
+  /// the banner survives exactly until the next thing happens, which is an
+  /// honest "this is no longer the latest word" rather than a specific,
+  /// misleading claim about what that next thing was.
   private func rebuild() {
+    stopWatchingFailure = nil
+    markSeenFailure = nil
+
     refreshWatches()
 
     var represented: Set<String> = []
@@ -295,9 +361,25 @@ final class WatchingModel {
       let automatic = downloadsAutomatically(forLogin: result.login)
       switch result.outcome {
       case .found(let archives):
+        // Reconciled against the watch's own `seen` set, not only the
+        // in-memory `dismissed` overlay. `dismissed` only ever catches what
+        // *this* model wrote through *this* `store` — a seen-set written
+        // through a different `WatchStore`, which is exactly what
+        // `AddChannelModel` does, would otherwise leave rows on screen the
+        // watch itself already says are seen. Re-adding an already-watched
+        // channel with Only new is the concrete case: its caption promises
+        // "everything Twitch has right now is marked seen", but without
+        // this the inbox kept showing them until the next sweep, up to an
+        // hour later. `Watch.findings(in:)` is the same filter `WatchPoller`
+        // itself applies, so this closes the whole class of "some other
+        // writer changed `seen`" rather than just this one instance —
+        // `dismissed` is left responsible only for the write-failed case its
+        // own doc comment already describes.
+        let notYetSeen = watches.first(where: { $0.login == result.login })?
+          .findings(in: archives) ?? archives
         return Section(
           login: result.login, displayName: result.displayName,
-          archives: archives.filter { !dismissed.contains($0.id) }, failure: nil,
+          archives: notYetSeen.filter { !dismissed.contains($0.id) }, failure: nil,
           settingsSummary: summary, downloadsAutomatically: automatic)
       case .failed(let error):
         return Section(

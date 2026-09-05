@@ -108,6 +108,28 @@ struct WatchingModelTests {
     #expect(try store.load()[0].seen == ["1"])
   }
 
+  /// The bug: `rebuild()` used to filter a sweep's archives only through the
+  /// in-memory `dismissed` overlay, which only ever catches what *this*
+  /// model itself wrote through *this* `store`. A seen-set written through a
+  /// different `WatchStore` — exactly what `AddChannelModel` does when
+  /// Only new re-adds an already-watched channel — left rows on screen the
+  /// watch itself already says are seen, for up to an hour until the next
+  /// sweep excluded them on its own. No race is needed to reach it: the
+  /// watch file already has "1" seen before the very first sweep this test
+  /// applies.
+  @Test func rebuildAlsoExcludesArchivesTheWatchsOwnSeenSetAlreadyMarks() throws {
+    let store = temporaryStore()
+    try store.save([watch("ninja", seen: ["1"])])
+    let model = model(store: store)
+
+    model.apply([.init(login: "ninja", displayName: "Ninja",
+                       outcome: .found([archive("1"), archive("2")]))])
+
+    #expect(
+      model.sections[0].archives.map(\.id) == ["2"],
+      "id 1 is already in the watch's own seen set, not just the in-memory overlay")
+  }
+
   @Test func ignoringLeavesWatchesCurrentWithoutACallerHavingToRefresh() throws {
     // `markSeen` used to call `rebuild()` — which re-reads `watches` from
     // disk — before persisting the write, so `watches` reflected the file as
@@ -187,6 +209,37 @@ struct WatchingModelTests {
     #expect(try store.load().map(\.login) == ["ninja"])
   }
 
+  // MARK: - markSeen refuses loudly on an unreadable store
+
+  /// The bug: `dismissed.insert(id)` already hides the row before `markSeen`
+  /// ever touches the store, so an unreadable `watches.json` used to fail
+  /// completely silently — the row vanished, `add(_:from:)` opened no
+  /// intake window, and nothing on screen said why. The other three writers
+  /// of `watches.json` (`AddChannelModel.add()` in both modes, and
+  /// `stopWatching`) all refuse loudly on the identical condition; this pins
+  /// `markSeen`'s own turn to do the same, for both call shapes.
+  @Test func ignoringOnAnUnreadableStoreSurfacesTheFailureRatherThanFailingSilently() throws {
+    let store = try unreadableStore()
+    defer { try? FileManager.default.removeItem(at: store.fileURL.deletingLastPathComponent()) }
+    let model = model(store: store)
+
+    model.ignore(archive("1"), from: "ninja")
+
+    #expect(model.markSeenFailure != nil, "the refusal must say why, not just vanish")
+  }
+
+  @Test func addingOnAnUnreadableStoreSurfacesTheFailureAndOpensNoIntakeWindow() throws {
+    let store = try unreadableStore()
+    defer { try? FileManager.default.removeItem(at: store.fileURL.deletingLastPathComponent()) }
+    let opened = OpenedBox()
+    let model = WatchingModel(store: store, openIntake: { archive, _ in opened.id = archive.id })
+
+    model.add(archive("1"), from: "ninja")
+
+    #expect(opened.id == nil, "no watch to hand to intake means no window should open")
+    #expect(model.markSeenFailure != nil, "the refusal must say why, not just vanish")
+  }
+
   @Test func aSweepThatStraddlesADismissalDoesNotBringTheRowBack() throws {
     // `sweep` reads the seen-set once up front, then makes slow sequential
     // per-channel calls. A sweep that was already in flight when the ignore
@@ -204,11 +257,20 @@ struct WatchingModelTests {
     #expect(model.sections[0].archives.isEmpty)
   }
 
-  @Test func aDismissalDropsOutOfTheOverlayOnceTheArchiveStopsAppearing() throws {
+  @Test func aDismissalDropsOutOfTheOverlayButTheArchiveStaysHiddenViaTheWatchsOwnSeenSet() throws {
     // A sweep computed after the write no longer carries the dismissed id at
-    // all, so it can drop out of the overlay safely — the set stays bounded
-    // instead of growing forever, and a genuinely new archive that reuses the
-    // id later is not hidden permanently by a stale dismissal.
+    // all, so it drops out of the `dismissed` overlay safely — that set
+    // stays bounded instead of growing forever, rather than accumulating
+    // every id ever acted on for the life of the app.
+    //
+    // **Before finding 3's fix, that alone made a later sweep that happened
+    // to reuse the same id show it as brand new** — `dismissed` was the
+    // *only* thing hiding it. Now `rebuild()` also reconciles against the
+    // watch's own `seen` set (`Watch.findings(in:)`), which `ignore()`
+    // already committed this id to when it persisted — so the row must stay
+    // hidden regardless of what `dismissed` has since forgotten.
+    // `dismissed` is left responsible only for the write-failed case its own
+    // doc comment describes.
     let store = temporaryStore()
     try store.save([watch("ninja")])
     let model = model(store: store)
@@ -218,7 +280,9 @@ struct WatchingModelTests {
     model.apply([.init(login: "ninja", displayName: "Ninja", outcome: .found([]))])
     model.apply([.init(login: "ninja", displayName: "Ninja", outcome: .found([archive("1")]))])
 
-    #expect(model.sections[0].archives.map(\.id) == ["1"])
+    #expect(
+      model.sections[0].archives.isEmpty,
+      "the watch's own seen set still hides it, even once dismissed has forgotten it")
   }
 
   // MARK: - Every watched channel gets a section
@@ -377,6 +441,40 @@ struct WatchingModelTests {
     let stillThere = FileManager.default.fileExists(
       atPath: store.fileURL.path, isDirectory: &isDirectory)
     #expect(stillThere && isDirectory.boolValue, "must refuse rather than save over what it could not read")
+  }
+
+  // MARK: - stopWatchingFailure is cleared at the right moments
+
+  /// The bug: `stopWatchingFailure` used to clear only on a *later
+  /// successful stop* — of any channel — which cut both ways. It survived a
+  /// pane switch or an unrelated Ignore/Add indefinitely (nothing else ever
+  /// touched it), yet a successful stop of a *different* channel cleared it
+  /// while the login that actually failed was still watched, implying the
+  /// problem had been resolved when it had not. `rebuild()` now clears it on
+  /// every path that reaches it (`refresh()`, `apply(_:)`, `markSeen`, and a
+  /// later `stopWatching` of any channel) — an honest "something else has
+  /// happened since" rather than a specific, misleading claim.
+  @Test func stopWatchingFailureIsClearedByAnyLaterActionNotJustAMatchingStop() throws {
+    let file = URL.temporaryDirectory
+      .appending(path: "watching-\(UUID().uuidString)")
+      .appending(path: "watches.json")
+    try FileManager.default.createDirectory(at: file, withIntermediateDirectories: true)
+    let store = WatchStore(fileURL: file)
+    let model = model(store: store)
+
+    model.stopWatching("ninja")
+    #expect(model.stopWatchingFailure != nil, "precondition: the refusal is visible")
+
+    // Fixes the underlying store and takes some other, unrelated action —
+    // standing in for switching away from the Watching pane and back, since
+    // `refresh()` is what that re-appearance calls.
+    try FileManager.default.removeItem(at: file)
+    try store.save([watch("day9tv")])
+    model.refresh()
+
+    #expect(
+      model.stopWatchingFailure == nil,
+      "a later, unrelated action must not leave a stale refusal on screen indefinitely")
   }
 }
 

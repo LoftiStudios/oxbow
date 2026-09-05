@@ -515,6 +515,21 @@ final class AddChannelModel {
   /// Returns whether it landed, the same contract `IntakeModel.add()` keeps
   /// with its own window, so the caller can decide whether to dismiss on a
   /// fact rather than a hope.
+  ///
+  /// **The display-name fetch happens before `store.load()`, not after.**
+  /// `AddChannelWindow` is a non-modal `Window`, so the Watching pane stays
+  /// live and interactive for as long as this `await` takes — up to 15
+  /// seconds (`liveChannelFeed`'s timeout). If the load ran first and the
+  /// fetch second, that whole window would sit between reading the list and
+  /// writing it back, and anything the Watching pane wrote in the meantime —
+  /// `markSeen` from an Ignore or Add, or `stopWatching` — would be silently
+  /// overwritten by the stale copy this call read before the fetch even
+  /// started. A stopped channel would come back, and `WatchingModel
+  /// .refreshWatches()` would then read it out of `stoppedLogins`, disarming
+  /// the exact guard that exists to keep a stopped channel from resurrecting.
+  /// Only Add has a suspension point to worry about here — `composeEditedWatch()`
+  /// runs no fetch, so Edit's load→mutate→save has nothing between them for
+  /// another write to land in.
   @discardableResult
   func add() async -> Bool {
     guard var watch = isEditing ? composeEditedWatch() : composeWatch() else {
@@ -523,6 +538,16 @@ final class AddChannelModel {
         the destination folder.
         """
       return false
+    }
+
+    // Only Add pays for this: `editingWatch.displayName` was already
+    // resolved the moment this channel was first added, and re-fetching it
+    // on every edit would be a network call for a name that has not
+    // changed, to save over a value that already has one. Run before
+    // `store.load()` below — see this method's own doc comment for why the
+    // order matters.
+    if !isEditing {
+      watch.displayName = await resolvedDisplayName(for: watch.login)
     }
 
     let existing: [Watch]
@@ -535,14 +560,6 @@ final class AddChannelModel {
         refused rather than risk losing it. \(error.localizedDescription)
         """
       return false
-    }
-
-    // Only Add pays for this: `editingWatch.displayName` was already
-    // resolved the moment this channel was first added, and re-fetching it
-    // on every edit would be a network call for a name that has not
-    // changed, to save over a value that already has one.
-    if !isEditing {
-      watch.displayName = await resolvedDisplayName(for: watch.login)
     }
 
     var watches = existing

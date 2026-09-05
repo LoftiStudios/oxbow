@@ -39,9 +39,11 @@ struct QueueView: View {
   ///
   /// **Set here, not consumed here.** Unlike `pendingIntake`, nothing in
   /// this view reads the value back — it only writes it, then opens the Add
-  /// Channel window, whose own `.onAppear` (mirroring `IntakeWindow`'s
-  /// handling of `pendingIntake`) is what applies it to `AddChannelModel`
-  /// and clears it. This view already has `openWindow` and already does the
+  /// Channel window, whose own `.onAppear` and `.onChange(of:)` (the latter
+  /// catching a request that arrives while the window is already open — see
+  /// `AddChannelWindow`'s own comment on why this one needed the second hook
+  /// where `pendingIntake` below did not) apply it to `AddChannelModel` and
+  /// clear it. This view already has `openWindow` and already does the
   /// identical two-step for the ordinary Add Channel toolbar button just
   /// below, so Edit reuses the same window rather than inventing a second
   /// path to it — see `WatchingView.onEdit`'s own doc comment for why.
@@ -168,7 +170,8 @@ struct QueueView: View {
               openWindow(id: OxbowApp.addChannelWindowID)
             },
             onStopWatching: { section in watching?.stopWatching(section.login) },
-            stopWatchingFailure: watching?.stopWatchingFailure)
+            stopWatchingFailure: watching?.stopWatchingFailure,
+            markSeenFailure: watching?.markSeenFailure)
           // Re-reads `watches.json` the moment this pane becomes visible, so
           // a channel added from the Add Channel window while Queue was
           // showing is there the instant someone switches over, rather than
