@@ -6,6 +6,18 @@ struct QueueView: View {
   let content: QueueContent
   let updates: UpdateModel
 
+  /// The Watching list and the sweep that feeds it.
+  ///
+  /// Both optional for the same reason: `OxbowApp` builds them only once it
+  /// has resolved a support directory, behind the same
+  /// `AppComposition.isUserSession` guard that keeps `WatchPoller` off the
+  /// network during `xcodebuild test` — see the guarded `.task` there. A
+  /// test-hosted window simply sees nil here, and the Watching pane below
+  /// falls back to `WatchingView`'s own empty state rather than this view
+  /// having to invent a second "no data yet" state of its own.
+  let watching: WatchingModel?
+  let poller: WatchPoller?
+
   /// Opens the intake window (`OxbowApp.intakeWindowID`). Intake is a window
   /// rather than a sheet on this one — see `IntakeWindow` for why — so the
   /// toolbar button hands off to the scene instead of presenting anything.
@@ -15,6 +27,18 @@ struct QueueView: View {
   @Environment(\.openURL) private var openURL
 
   @State private var selection: Set<JobID> = []
+
+  /// Which sidebar destination is showing. Optional because `List`'s
+  /// selection binding requires it — a `List` reports "nothing selected" as
+  /// nil, most visibly when someone command-clicks the current row off — but
+  /// the initial value is Queue, and the detail switch below treats a later
+  /// nil the same way rather than showing a blank pane.
+  @State private var sidebarSelection: SidebarItem? = .queue
+
+  private enum SidebarItem: Hashable {
+    case queue
+    case watching
+  }
 
   /// A removal waiting on the user, and the dialog's own presentation flag.
   ///
@@ -61,22 +85,70 @@ struct QueueView: View {
           onDismiss: { updates.dismiss() })
         Divider()
       }
-      queue
+      // Both banners span this whole split view rather than sitting inside
+      // the detail pane. They are about the app — a missing helper means
+      // nothing can download regardless of which sidebar item is showing —
+      // so putting them in the detail pane would hide "Downloads unavailable"
+      // behind whichever destination happened to be selected.
+      NavigationSplitView {
+        List(selection: $sidebarSelection) {
+          Label("Queue", systemImage: "tray.full")
+            .tag(SidebarItem.queue)
+          // `.badge` before `.tag`, not after — verified the hard way. With
+          // `.tag` applied first, clicking this row on macOS 26 stopped
+          // changing `sidebarSelection` at all: the row highlighted, an
+          // AppKit selection action fired, and the binding never saw it. No
+          // such regression is on record anywhere the settings.md §7 probe
+          // looked, so treat this order as load-bearing rather than
+          // stylistic until Apple documents otherwise.
+          Label("Watching", systemImage: "eye")
+            .badge(watching?.unreadCount ?? 0)
+            .tag(SidebarItem.watching)
+        }
+        .listStyle(.sidebar)
+      } detail: {
+        switch sidebarSelection {
+        case .watching:
+          WatchingView(
+            sections: watching?.sections ?? [],
+            onAdd: { archive, section in watching?.add(archive, from: section.login) },
+            onIgnore: { archive, section in watching?.ignore(archive, from: section.login) })
+        case .queue, .none:
+          queue
+        }
+      }
     }
     .frame(minWidth: 480, minHeight: 320)
     .toolbar {
-      ToolbarItem(placement: .primaryAction) {
-        Button {
-          openWindow(id: OxbowApp.intakeWindowID)
-        } label: {
-          Label("Add Download", systemImage: "plus")
+      // Hidden rather than merely disabled on Watching: the button opens
+      // intake for a brand-new download, which is a Queue action, and a
+      // finding row already has its own Add button for adding *that* video.
+      // Leaving this one visible next to a highlighted finding would invite
+      // the guess that it acts on the row, when it does not.
+      if sidebarSelection != .watching {
+        ToolbarItem(placement: .primaryAction) {
+          Button {
+            openWindow(id: OxbowApp.intakeWindowID)
+          } label: {
+            Label("Add Download", systemImage: "plus")
+          }
+          // Kept alongside ⌘N deliberately: the shortcut is the fast path for
+          // people who know it, and the button is how everyone else finds the
+          // feature at all.
+          .help("Add Download (⌘N)")
+          .disabled(controller == nil)
         }
-        // Kept alongside ⌘N deliberately: the shortcut is the fast path for
-        // people who know it, and the button is how everyone else finds the
-        // feature at all.
-        .help("Add Download (⌘N)")
-        .disabled(controller == nil)
       }
+    }
+    // `initial: true` because `poller` and `watching` are built by `OxbowApp`
+    // independently of when this view appears — a sweep can finish while the
+    // queue is still loading, before this view exists to observe it. Without
+    // replaying the current value on appear, that first sweep's results would
+    // sit in `poller.results` unseen until a second one arrives, up to an
+    // hour later.
+    .onChange(of: poller?.results, initial: true) { _, results in
+      guard let results else { return }
+      watching?.apply(results)
     }
   }
 
@@ -220,7 +292,9 @@ struct QueueView: View {
     with the dotnet publish command in docs/development.md, then build the \
     app again.
     """),
-    updates: UpdateModel { .upToDate })
+    updates: UpdateModel { .upToDate },
+    watching: nil,
+    poller: nil)
   .frame(width: 720, height: 420)
 }
 
@@ -230,7 +304,11 @@ struct QueueView: View {
       ReleaseVersion("0.3.0")!,
       URL(string: "https://github.com/LoftiStudios/oxbow/releases/tag/v0.3.0")!)
   }
-  return QueueView(content: .unavailable("No helper in this build."), updates: updates)
+  return QueueView(
+    content: .unavailable("No helper in this build."),
+    updates: updates,
+    watching: nil,
+    poller: nil)
     .frame(width: 720, height: 420)
     .task { await updates.checkAutomatically() }
 }

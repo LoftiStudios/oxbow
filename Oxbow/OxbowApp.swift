@@ -16,6 +16,12 @@ struct OxbowApp: App {
   /// must never exist during a test run. See that `.task` for why.
   @State private var poller: WatchPoller?
 
+  /// The Watching list. Built alongside `poller`, from a `WatchStore` over
+  /// the same `watches.json` — `WatchPoller` only ever reads that file, and
+  /// `WatchingModel` is the one writer (see its own doc comment), so both
+  /// need to agree on the same path rather than each deriving it separately.
+  @State private var watching: WatchingModel?
+
   /// Read once. Nothing in it can change while the app runs — it is all
   /// stamped into the bundle at build time — and both the menu item and the
   /// window title need the name.
@@ -51,7 +57,7 @@ struct OxbowApp: App {
         // banner, so a payload-missing launch gets the `+`-disabled window
         // design §6 describes rather than a bare page with no chrome.
         if let content {
-          QueueView(content: content, updates: updates)
+          QueueView(content: content, updates: updates, watching: watching, poller: poller)
         } else {
           // This spinner covers `QueueEngine.start()` too, deliberately.
           // `QueueHost.ready()` answers only after the saved queue is loaded
@@ -95,6 +101,12 @@ struct OxbowApp: App {
         guard AppComposition.isUserSession else { return }
         guard poller == nil else { return }
         guard let support = try? AppComposition.defaultSupportDirectory() else { return }
+        watching = WatchingModel(
+          store: WatchStore(fileURL: AppComposition.watchStoreURL(supportDirectory: support)),
+          // The intake window this should open does not exist yet — that is
+          // the next plan's Add Channel work. Until then Add can still mark
+          // an archive seen; it just cannot hand it anywhere.
+          openIntake: { _, _ in })
         poller = WatchPoller.live(supportDirectory: support)
         poller?.start()
       }
