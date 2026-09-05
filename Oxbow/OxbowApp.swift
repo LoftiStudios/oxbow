@@ -41,6 +41,15 @@ struct OxbowApp: App {
   /// has to outlive whichever `WatchingModel` happened to set it.
   @State private var pendingIntake: PendingIntake?
 
+  /// A watch waiting to be edited, set by `QueueView` when a Watching
+  /// section's context menu chooses Edit and consumed by `AddChannelWindow`
+  /// on its own `.onAppear` — the identical shape `pendingIntake` above
+  /// takes for its own hand-off, for the identical reason: `AddChannelWindow`
+  /// is a `Window`, not a `WindowGroup`, so the one long-lived instance of
+  /// its state needs somewhere outside itself to receive which watch to
+  /// edit before the window has even appeared to consume it.
+  @State private var pendingChannelEdit: Watch?
+
   /// Read once. Nothing in it can change while the app runs — it is all
   /// stamped into the bundle at build time — and both the menu item and the
   /// window title need the name.
@@ -89,7 +98,8 @@ struct OxbowApp: App {
         if let content {
           QueueView(
             content: content, updates: updates, watching: watching, poller: poller,
-            canAddChannel: watchStore != nil, pendingIntake: $pendingIntake)
+            canAddChannel: watchStore != nil, pendingIntake: $pendingIntake,
+            pendingChannelEdit: $pendingChannelEdit)
         } else {
           // This spinner covers `QueueEngine.start()` too, deliberately.
           // `QueueHost.ready()` answers only after the saved queue is loaded
@@ -226,6 +236,7 @@ struct OxbowApp: App {
       if let watchStore {
         AddChannelWindow(
           store: watchStore, preferences: addChannelPreferences,
+          pendingEdit: $pendingChannelEdit,
           // The other half of the Watching pane refresh fix — see
           // `AddChannelWindow.onClose`'s own doc comment and
           // `WatchingModel.refresh()`'s. A channel added here writes through

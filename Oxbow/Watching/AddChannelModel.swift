@@ -110,6 +110,58 @@ final class AddChannelModel {
   /// dismissing. The same idiom as `IntakeModel.addFailure`.
   private(set) var addFailure: String?
 
+  // MARK: - Editing an existing watch
+
+  /// The watch this window is editing, or nil while it is composing a
+  /// brand-new one.
+  ///
+  /// **Carries the whole original watch, not just its login.** Saving an
+  /// edit has to hand back `seen` and `displayName` exactly as they already
+  /// were — that is the entire point of this feature (`docs/design/
+  /// channel-watching.md` §3.2's "offer an Edit", read together with §3.1's
+  /// scope only ever applying once) — and both live only here, never
+  /// reconstructed from the fields this window lets someone change. Set by
+  /// `beginEditing(_:)`, cleared by `reset()` so a window that closes on an
+  /// edit and reopens for Add does not stay stuck in editing mode.
+  private(set) var editingWatch: Watch?
+
+  /// Whether this window is editing `editingWatch` rather than composing a
+  /// new watch. `AddChannelWindow` reads this to decide what to show: no
+  /// scope picker (§3.1's scope only ever seeds a seen-set once, at
+  /// creation), no backfill estimate (nothing is being taken), a fixed
+  /// login, and Edit rather than Add on the title and the confirm button.
+  var isEditing: Bool { editingWatch != nil }
+
+  /// Switches this window into editing `watch`, seeding every field from the
+  /// watch itself — never from `Preferences`, the way a brand-new channel
+  /// does. That is the whole reason §3.2 offers an Edit at all: a watch set
+  /// to 720p six weeks ago has to reopen showing 720p, whatever today's
+  /// global default happens to be.
+  ///
+  /// The login is carried into `loginText` so the window can display it, but
+  /// nothing here re-enables looking it up: `AddChannelWindow` renders it as
+  /// fixed text while `isEditing` is true. Changing which channel a watch
+  /// points at is not an edit, it is a different watch — a different `seen`
+  /// set, and a different identity everything keying on `login`
+  /// (`WatchingModel.Section.id`, `stopWatching(_:)`) assumes is stable.
+  func beginEditing(_ watch: Watch) {
+    editingWatch = watch
+    loginText = watch.login
+    qualityCap = watch.settings.qualityCap
+    output = watch.settings.output
+    chatSize = watch.settings.chatSize
+    folder = watch.settings.destination
+    downloadsAutomatically = watch.downloadsAutomatically
+    // No lookup has run for this open, and none is coming — clears any
+    // leftover state from a previous Add-mode session on this same
+    // long-lived model, the identical concern `reset()` already handles for
+    // the opposite direction.
+    lookup = .idle
+    lookupLogin = nil
+    addFailure = nil
+    generation += 1
+  }
+
   // MARK: - Collaborators
 
   private let store: WatchStore
@@ -210,6 +262,11 @@ final class AddChannelModel {
     scope = .onlyNew
     downloadsAutomatically = false
     addFailure = nil
+    // Leaving this set would trap the next open in editing mode: `Window`
+    // means this same model instance answers the very next open, whether
+    // that is Edit on a different channel or the ordinary Add Channel
+    // toolbar button — see `editingWatch`'s own doc comment.
+    editingWatch = nil
     reseedFromPreferences()
     // Invalidates a fetch still in flight the same way a new login does, so
     // a late arrival cannot settle `lookup` into the window it just emptied.
@@ -337,11 +394,17 @@ final class AddChannelModel {
 
   // MARK: - Composing the watch
 
-  /// Exactly the condition under which `composeWatch()` returns something —
-  /// one definition, so the button's enabled state and what Add can actually
-  /// build cannot drift apart (the same contract `IntakeModel.canAdd` keeps
-  /// with `composedTemplate()`).
-  var canAdd: Bool { composeWatch() != nil }
+  /// Exactly the condition under which `add()` would actually save something
+  /// — one definition, so the button's enabled state and what Add (or, while
+  /// `isEditing`, Edit) can actually build cannot drift apart (the same
+  /// contract `IntakeModel.canAdd` keeps with `composedTemplate()`). Branches
+  /// on `isEditing` because the two modes compose from entirely different
+  /// sources — `composeWatch()` needs a settled, non-empty lookup;
+  /// `composeEditedWatch()` needs none, since nothing about which archives
+  /// exist changes what an edit saves.
+  var canAdd: Bool {
+    isEditing ? composeEditedWatch() != nil : composeWatch() != nil
+  }
 
   /// The watch this window would add, or nil if it is not in a state to add
   /// one.
@@ -389,8 +452,45 @@ final class AddChannelModel {
     return watch.seeded(withScope: scope, from: archives)
   }
 
-  /// Adds the watch, replacing any existing watch for the same login rather
-  /// than duplicating it.
+  /// The watch `add()` would save while `isEditing`, or nil if there is
+  /// nothing yet to save one from.
+  ///
+  /// **Login, `displayName` and `seen` all come from `editingWatch`, never
+  /// from anything editable in this window.** That is requirement 4 in full:
+  /// an edit changes only what this window actually offers to change — the
+  /// four settings and the automatic-download flag — and must not lose the
+  /// one thing it never offers to change. Nothing here re-derives `seen`
+  /// from a scope or a lookup the way `composeWatch()` does, because editing
+  /// runs no lookup at all — there is no fresh archive list to seed against,
+  /// only the watch's own history to carry forward untouched.
+  ///
+  /// Guarded on `folder` alone, the one field `Watch.Settings` cannot exist
+  /// without — the login needs no guard, since it comes from `editingWatch`
+  /// rather than from typed, possibly-unnormalised text.
+  private func composeEditedWatch() -> Watch? {
+    guard let editingWatch, let folder else { return nil }
+
+    let settings = Watch.Settings(
+      destinationPath: folder.path, qualityCap: qualityCap,
+      output: output, chatSize: chatSize)
+    return Watch(
+      login: editingWatch.login, displayName: editingWatch.displayName,
+      settings: settings, downloadsAutomatically: downloadsAutomatically,
+      seen: editingWatch.seen)
+  }
+
+  /// Adds or saves the watch, replacing any existing watch for the same
+  /// login rather than duplicating it.
+  ///
+  /// **One method for both modes, not two.** Add and Edit differ only in
+  /// what they compose from (`composeWatch()`'s fresh lookup versus
+  /// `composeEditedWatch()`'s carried-forward `seen`) and whether the
+  /// resolved display name is worth a network round trip for — everything
+  /// after that, replace-not-duplicate and refuse-rather-than-overwrite
+  /// alike, is one rule the two modes cannot be allowed to drift apart on.
+  /// A second, hand-rolled `save()` next to this would be exactly the
+  /// second place to keep the refusal rule correct that this feature's own
+  /// brief warns against.
   ///
   /// **Replace, not append.** `WatchingModel.Section.id` is the login and
   /// `markSeen` finds a watch with `firstIndex(where: { $0.login == login })`
@@ -405,16 +505,19 @@ final class AddChannelModel {
   /// moving the file aside (`WatchStore.setAside()`). So a throw here means
   /// there are watches on disk this call could not see, and saving anyway —
   /// what `try? store.load() ?? []` used to do — would silently overwrite
-  /// every one of them with a list of exactly one. `addFailure` carries why,
-  /// the same idiom as `IntakeModel.addFailure`, so the window can show it
-  /// rather than closing on a watch list that just lost every other channel.
+  /// every one of them with a list of exactly one. For an edit this is the
+  /// identical bug in a different costume: it would not just fail to save
+  /// the change, it would take every *other* watched channel down with it.
+  /// `addFailure` carries why, the same idiom as `IntakeModel.addFailure`,
+  /// so the window can show it rather than closing on a watch list that
+  /// just lost every other channel.
   ///
   /// Returns whether it landed, the same contract `IntakeModel.add()` keeps
   /// with its own window, so the caller can decide whether to dismiss on a
   /// fact rather than a hope.
   @discardableResult
   func add() async -> Bool {
-    guard var watch = composeWatch() else {
+    guard var watch = isEditing ? composeEditedWatch() : composeWatch() else {
       addFailure = """
         Oxbow could not build that watch. Check the login, the lookup, and \
         the destination folder.
@@ -427,14 +530,20 @@ final class AddChannelModel {
       existing = try store.load()
     } catch {
       addFailure = """
-        Oxbow could not read the existing watch list, so adding this \
-        channel was refused rather than risk losing it. \
-        \(error.localizedDescription)
+        Oxbow could not read the existing watch list, so \
+        \(isEditing ? "saving this channel" : "adding this channel") was \
+        refused rather than risk losing it. \(error.localizedDescription)
         """
       return false
     }
 
-    watch.displayName = await resolvedDisplayName(for: watch.login)
+    // Only Add pays for this: `editingWatch.displayName` was already
+    // resolved the moment this channel was first added, and re-fetching it
+    // on every edit would be a network call for a name that has not
+    // changed, to save over a value that already has one.
+    if !isEditing {
+      watch.displayName = await resolvedDisplayName(for: watch.login)
+    }
 
     var watches = existing
     if let index = watches.firstIndex(where: { $0.login == watch.login }) {

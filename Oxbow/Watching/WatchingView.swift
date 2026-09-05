@@ -32,6 +32,12 @@ struct WatchingView: View {
   let isSweeping: Bool
   let onAdd: (ChannelArchive, WatchingModel.Section) -> Void
   let onIgnore: (ChannelArchive, WatchingModel.Section) -> Void
+  /// Opens the Add Channel window in editing mode, seeded from this
+  /// section's own watch — `docs/design/channel-watching.md` §3.2's "offer
+  /// an Edit". Reached from the same context menu as Stop Watching, since
+  /// both are things a section header offers about its own channel and
+  /// nothing else on screen does.
+  let onEdit: (WatchingModel.Section) -> Void
   /// Stops watching the channel a section's header menu named. No
   /// confirmation on this side either — see `SectionHeader`'s own doc
   /// comment for why none is offered.
@@ -95,7 +101,10 @@ struct WatchingView: View {
               }
             }
           } header: {
-            SectionHeader(section: section, onStopWatching: { onStopWatching(section) })
+            SectionHeader(
+              section: section,
+              onEdit: { onEdit(section) },
+              onStopWatching: { onStopWatching(section) })
           }
         }
       }
@@ -135,7 +144,7 @@ private struct FailureRow: View {
 
 /// A section's header: the channel name, what it is frozen to download at
 /// (§3.2), a mark for automatic downloading when it is on, and — the only
-/// place this is offered — Stop Watching.
+/// place either is offered — Edit and Stop Watching.
 ///
 /// **No confirmation dialog on Stop Watching.** Unlike removing a queued
 /// download, this destroys nothing: it edits `watches.json` alone, and
@@ -145,6 +154,7 @@ private struct FailureRow: View {
 /// tooltip say plainly that downloaded files stay put.
 private struct SectionHeader: View {
   let section: WatchingModel.Section
+  let onEdit: () -> Void
   let onStopWatching: () -> Void
 
   var body: some View {
@@ -178,6 +188,16 @@ private struct SectionHeader: View {
     }
     .textCase(nil)
     .contextMenu {
+      // Above Stop Watching, matching how a Mac menu orders a reversible
+      // action before a destructive-adjacent one — this changes settings,
+      // that removes the channel entirely.
+      Button {
+        onEdit()
+      } label: {
+        Label("Edit…", systemImage: "pencil")
+      }
+      .help("Change \(section.displayName)'s frozen settings.")
+
       Button {
         onStopWatching()
       } label: {
@@ -205,7 +225,7 @@ private struct SectionHeader: View {
         settingsSummary: "Video · Up to 720p · Archive", downloadsAutomatically: false),
     ],
     isSweeping: false,
-    onAdd: { _, _ in }, onIgnore: { _, _ in }, onStopWatching: { _ in },
+    onAdd: { _, _ in }, onIgnore: { _, _ in }, onEdit: { _ in }, onStopWatching: { _ in },
     stopWatchingFailure: nil)
   .frame(width: 480, height: 420)
 }
@@ -223,7 +243,7 @@ private struct SectionHeader: View {
         downloadsAutomatically: false),
     ],
     isSweeping: false,
-    onAdd: { _, _ in }, onIgnore: { _, _ in }, onStopWatching: { _ in },
+    onAdd: { _, _ in }, onIgnore: { _, _ in }, onEdit: { _ in }, onStopWatching: { _ in },
     stopWatchingFailure: "Oxbow could not read the watch list, so LeighXP was not stopped.")
   .frame(width: 480, height: 420)
 }
@@ -243,7 +263,7 @@ private struct SectionHeader: View {
         settingsSummary: "Video · Up to 1080p · Downloads", downloadsAutomatically: false),
     ],
     isSweeping: false,
-    onAdd: { _, _ in }, onIgnore: { _, _ in }, onStopWatching: { _ in },
+    onAdd: { _, _ in }, onIgnore: { _, _ in }, onEdit: { _ in }, onStopWatching: { _ in },
     stopWatchingFailure: nil)
   .frame(width: 480, height: 420)
 }
@@ -262,7 +282,7 @@ private struct SectionHeader: View {
         downloadsAutomatically: false),
     ],
     isSweeping: false,
-    onAdd: { _, _ in }, onIgnore: { _, _ in }, onStopWatching: { _ in },
+    onAdd: { _, _ in }, onIgnore: { _, _ in }, onEdit: { _ in }, onStopWatching: { _ in },
     stopWatchingFailure: nil)
   .frame(width: 480, height: 420)
 }
@@ -283,7 +303,7 @@ private struct SectionHeader: View {
         settingsSummary: "Video · Up to 720p · Archive", downloadsAutomatically: false),
     ],
     isSweeping: false,
-    onAdd: { _, _ in }, onIgnore: { _, _ in }, onStopWatching: { _ in },
+    onAdd: { _, _ in }, onIgnore: { _, _ in }, onEdit: { _ in }, onStopWatching: { _ in },
     stopWatchingFailure: nil)
   .frame(width: 480, height: 420)
 }
@@ -291,7 +311,7 @@ private struct SectionHeader: View {
 #Preview("No channels watched") {
   WatchingView(
     sections: [], isSweeping: false,
-    onAdd: { _, _ in }, onIgnore: { _, _ in }, onStopWatching: { _ in },
+    onAdd: { _, _ in }, onIgnore: { _, _ in }, onEdit: { _ in }, onStopWatching: { _ in },
     stopWatchingFailure: nil)
     .frame(width: 480, height: 420)
 }
@@ -302,7 +322,7 @@ private struct SectionHeader: View {
   // `isSweeping`'s doc above.
   WatchingView(
     sections: [], isSweeping: true,
-    onAdd: { _, _ in }, onIgnore: { _, _ in }, onStopWatching: { _ in },
+    onAdd: { _, _ in }, onIgnore: { _, _ in }, onEdit: { _ in }, onStopWatching: { _ in },
     stopWatchingFailure: nil)
     .frame(width: 480, height: 420)
 }

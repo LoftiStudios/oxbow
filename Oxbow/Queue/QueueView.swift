@@ -35,6 +35,18 @@ struct QueueView: View {
   /// window actually appearing, using the `openWindow` this view already has.
   @Binding var pendingIntake: PendingIntake?
 
+  /// A watch waiting to be edited, from `OxbowApp`'s own `@State`.
+  ///
+  /// **Set here, not consumed here.** Unlike `pendingIntake`, nothing in
+  /// this view reads the value back — it only writes it, then opens the Add
+  /// Channel window, whose own `.onAppear` (mirroring `IntakeWindow`'s
+  /// handling of `pendingIntake`) is what applies it to `AddChannelModel`
+  /// and clears it. This view already has `openWindow` and already does the
+  /// identical two-step for the ordinary Add Channel toolbar button just
+  /// below, so Edit reuses the same window rather than inventing a second
+  /// path to it — see `WatchingView.onEdit`'s own doc comment for why.
+  @Binding var pendingChannelEdit: Watch?
+
   /// Opens the intake window (`OxbowApp.intakeWindowID`). Intake is a window
   /// rather than a sheet on this one — see `IntakeWindow` for why — so the
   /// toolbar button hands off to the scene instead of presenting anything.
@@ -137,6 +149,30 @@ struct QueueView: View {
             isSweeping: poller?.isSweeping ?? false,
             onAdd: { archive, section in watching?.add(archive, from: section.login) },
             onIgnore: { archive, section in watching?.ignore(archive, from: section.login) },
+            // `watching?.watches`, not `section` itself: `Section` carries
+            // only what `WatchingView` needs to render a row (login, name,
+            // findings, the settings summary text), never the full `Watch`
+            // — including its `seen` set — that `AddChannelModel
+            // .beginEditing(_:)` needs to seed an edit from.
+            //
+            // **`refresh()` first, found the hard way.** `WatchingModel
+            // .markSeen(_:in:)` — behind both `ignore(_:from:)` and
+            // `add(_:from:)` — rebuilds `sections` from the *pre-write*
+            // watch list before it persists the new seen id, so `watching
+            // .watches` can still read the channel's old, smaller seen-set
+            // for as long as nothing rebuilds it again. Opening Edit right
+            // after Ignoring a finding — exactly this feature's own Step 5 —
+            // would seed `AddChannelModel.beginEditing(_:)` from that stale
+            // copy and save right over the ignore, undoing it. `refresh()`
+            // re-reads `watches.json`, which by now already has the write,
+            // before this ever looks at `watches`.
+            onEdit: { section in
+              watching?.refresh()
+              guard let watch = watching?.watches.first(where: { $0.login == section.login })
+              else { return }
+              pendingChannelEdit = watch
+              openWindow(id: OxbowApp.addChannelWindowID)
+            },
             onStopWatching: { section in watching?.stopWatching(section.login) },
             stopWatchingFailure: watching?.stopWatchingFailure)
           // Re-reads `watches.json` the moment this pane becomes visible, so
@@ -375,7 +411,8 @@ struct QueueView: View {
     watching: nil,
     poller: nil,
     canAddChannel: false,
-    pendingIntake: .constant(nil))
+    pendingIntake: .constant(nil),
+    pendingChannelEdit: .constant(nil))
   .frame(width: 720, height: 420)
 }
 
@@ -391,7 +428,8 @@ struct QueueView: View {
     watching: nil,
     poller: nil,
     canAddChannel: false,
-    pendingIntake: .constant(nil))
+    pendingIntake: .constant(nil),
+    pendingChannelEdit: .constant(nil))
     .frame(width: 720, height: 420)
     .task { await updates.checkAutomatically() }
 }

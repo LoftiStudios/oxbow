@@ -508,6 +508,159 @@ struct AddChannelModelTests {
     #expect(ninja.displayName == "ninja")
   }
 
+  // MARK: - 10. Editing seeds from the watch, never from Preferences
+
+  /// Requirement 1: a watch set to one thing six weeks ago has to reopen
+  /// showing exactly that, whatever today's global default is. Every field
+  /// set below differs from both the watch and the preferences it is seeded
+  /// against, so a `beginEditing` that accidentally read `preferences`
+  /// instead could not pass this by accident.
+  @Test func beginEditingSeedsEveryFieldFromTheWatchNotFromPreferences() {
+    let preferences = Self.store {
+      $0.destination = URL(filePath: "/Volumes/Defaults")
+      $0.qualityCap = .best
+      $0.output = .videoWithChat
+      $0.chatSize = .small
+    }
+    let watch = Watch(
+      login: "leighxp", displayName: "LeighXP",
+      settings: .init(
+        destinationPath: "/Volumes/Frozen", qualityCap: .p720,
+        output: .video, chatSize: .large),
+      downloadsAutomatically: true, seen: ["1", "2"])
+    let model = makeModel(preferences: preferences)
+
+    model.beginEditing(watch)
+
+    #expect(model.isEditing)
+    #expect(model.loginText == "leighxp")
+    #expect(model.qualityCap == .p720, "from the watch, not preferences' .best")
+    #expect(model.output == .video, "from the watch, not preferences' .videoWithChat")
+    #expect(model.chatSize == .large, "from the watch, not preferences' .small")
+    #expect(model.folder == URL(filePath: "/Volumes/Frozen"), "from the watch, not preferences' Defaults")
+    #expect(model.downloadsAutomatically, "from the watch, not the false default")
+  }
+
+  /// Requirement 3: scope only ever seeds a seen-set at creation, so it must
+  /// not even be composable while editing — there is nothing here that would
+  /// make it apply. `estimate` must likewise read nil: no lookup ever runs
+  /// while editing, so there is nothing to price and nothing is being taken.
+  @Test func editingHasNoEstimateSinceNothingIsBeingTaken() {
+    let model = makeModel()
+    model.beginEditing(Self.watch(login: "leighxp", seen: ["1"]))
+
+    #expect(model.estimate == nil)
+    #expect(!model.hasArchivesToConfigure)
+  }
+
+  // MARK: - 11. Saving an edit preserves seen, login and displayName
+
+  /// Requirement 4, and the riskiest one: an edit must not lose what the
+  /// watch has already seen. `add()` composes from `editingWatch` while
+  /// `isEditing`, never from a scope or a fresh lookup, so the seen-set
+  /// carried in below has to come back completely untouched.
+  @Test func savingAnEditPreservesTheSeenSetLoginAndDisplayName() async throws {
+    let store = WatchStore(fileURL: Self.temporaryFile())
+    defer { try? FileManager.default.removeItem(at: store.fileURL.deletingLastPathComponent()) }
+    let original = Self.watch(login: "leighxp", seen: ["ignored-1", "queued-2"])
+    try store.save([original])
+
+    let model = makeModel(store: store)
+    model.beginEditing(original)
+    model.qualityCap = .p480
+    model.folder = URL(filePath: "/Users/someone/NewDestination")
+
+    let saved = await model.add()
+
+    #expect(saved)
+    let watches = try store.load()
+    #expect(watches.count == 1, "an edit replaces, it does not add a second entry")
+    let edited = try #require(watches.first { $0.login == "leighxp" })
+    #expect(edited.seen == ["ignored-1", "queued-2"], "the ignored finding must not come back")
+    #expect(edited.displayName == original.displayName, "unchanged — never re-fetched for an edit")
+    #expect(edited.settings.qualityCap == .p480, "the new cap took effect")
+    #expect(edited.settings.destinationPath == "/Users/someone/NewDestination")
+  }
+
+  /// Requirement 4 restated from the other side: everything about the
+  /// *other* watches in the file must survive an edit to one of them, the
+  /// same replace-not-clobber contract `add()` already keeps for a
+  /// brand-new channel.
+  @Test func savingAnEditPreservesEveryOtherWatchedChannel() async throws {
+    let store = WatchStore(fileURL: Self.temporaryFile())
+    defer { try? FileManager.default.removeItem(at: store.fileURL.deletingLastPathComponent()) }
+    let target = Self.watch(login: "leighxp", seen: ["1"])
+    try store.save([Self.watch(login: "day9tv"), target])
+
+    let model = makeModel(store: store)
+    model.beginEditing(target)
+    model.output = .videoWithChat
+
+    #expect(await model.add())
+
+    let watches = try store.load()
+    #expect(watches.count == 2)
+    #expect(watches.contains { $0.login == "day9tv" })
+  }
+
+  /// Requirement 4's other half, and the same class of bug already found
+  /// twice in this feature: an edit must refuse rather than save over a
+  /// watch list it could not read, exactly like `add()` already does for a
+  /// brand-new channel (`addRefusesRatherThanOverwritingWhenTheWatchListCannotBeRead`).
+  @Test func savingAnEditRefusesRatherThanOverwritingWhenTheWatchListCannotBeRead() async throws {
+    let file = Self.temporaryFile()
+    defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
+    try FileManager.default.createDirectory(at: file, withIntermediateDirectories: true)
+
+    let store = WatchStore(fileURL: file)
+    let model = makeModel(store: store)
+    model.beginEditing(Self.watch(login: "leighxp", seen: ["1"]))
+
+    let saved = await model.add()
+
+    #expect(!saved, "must refuse rather than save over a list it could not read")
+    #expect(model.addFailure != nil, "the refusal must say why, not just dismiss")
+    var isDirectory: ObjCBool = false
+    FileManager.default.fileExists(atPath: file.path, isDirectory: &isDirectory)
+    #expect(isDirectory.boolValue, "add() must not have replaced it with a file")
+  }
+
+  // MARK: - 12. canAdd while editing
+
+  @Test func canAddIsTrueWhileEditingWithNoLookupInvolved() {
+    let model = makeModel()
+    model.beginEditing(Self.watch(login: "leighxp"))
+
+    #expect(model.canAdd, "editing needs no lookup — only the fields this window lets you change")
+  }
+
+  @Test func canAddIsFalseWhileEditingIfTheFolderIsCleared() {
+    let model = makeModel()
+    model.beginEditing(Self.watch(login: "leighxp"))
+    #expect(model.canAdd, "the positive control")
+
+    model.folder = nil
+
+    #expect(!model.canAdd)
+  }
+
+  // MARK: - 13. reset() leaves editing mode
+
+  /// The bug this guards: `AddChannelWindow` is one long-lived `Window`, so
+  /// without clearing `editingWatch` on close, the ordinary Add Channel
+  /// toolbar button — opening the very same model — would find the window
+  /// still stuck showing Edit's UI for whichever channel was last edited.
+  @Test func resetClearsEditingModeEntirely() {
+    let model = makeModel()
+    model.beginEditing(Self.watch(login: "leighxp", seen: ["1"]))
+    #expect(model.isEditing, "precondition")
+
+    model.reset()
+
+    #expect(!model.isEditing)
+    #expect(model.editingWatch == nil)
+  }
+
   // MARK: - Fixtures
 
   private static func store(_ configure: (inout Preferences) -> Void = { _ in }) -> Preferences {

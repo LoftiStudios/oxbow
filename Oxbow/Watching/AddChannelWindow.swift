@@ -48,8 +48,22 @@ struct AddChannelWindow: View {
   /// test below from having to supply one.
   private let onClose: () -> Void
 
+  /// A watch waiting to be edited, from `OxbowApp`'s own `@State`.
+  ///
+  /// **A binding, not a plain value, so this window can clear it — the
+  /// identical shape `IntakeWindow.pendingIntake` uses for the identical
+  /// reason.** `AddChannelWindow` is a `Window`, not a `WindowGroup`, so
+  /// `OxbowApp` holds the one instance of this scene's worth of state across
+  /// opens and closes. A watch left set here after being consumed would
+  /// resurrect Edit mode on the very next ordinary Add Channel open — the
+  /// same staleness bug `IntakeWindow`'s own comment on `pendingIntake`
+  /// describes, just for this window's Add/Edit split instead of that one's
+  /// finding hand-off.
+  @Binding private var pendingEdit: Watch?
+
   init(
     store: WatchStore, preferences: Preferences, volumeSpace: VolumeSpace = .live,
+    pendingEdit: Binding<Watch?> = .constant(nil),
     onClose: @escaping () -> Void = {}
   ) {
     let feed = Self.liveChannelFeed
@@ -58,6 +72,7 @@ struct AddChannelWindow: View {
       fetch: { login in await Self.result { try await feed.archives(forLogin: login) } },
       fetchDisplayName: { login in await Self.result { try await feed.displayName(forLogin: login) } }))
     self.volumeSpace = volumeSpace
+    _pendingEdit = pendingEdit
     self.onClose = onClose
   }
 
@@ -65,9 +80,20 @@ struct AddChannelWindow: View {
   /// without a network behind it — `AddChannelModel`'s own init takes
   /// closures for exactly this reason, and this is what lets a preview reach
   /// them, the same role `IntakeWindow.init(model:)` plays for intake.
-  init(model: AddChannelModel, volumeSpace: VolumeSpace = .live, onClose: @escaping () -> Void = {}) {
+  ///
+  /// `pendingEdit` defaults to a constant `nil`: no preview below exercises
+  /// the Watching hand-off, so none of them need a real binding to clear —
+  /// the previews that show editing mode call `model.beginEditing(_:)`
+  /// directly instead, the same way `IntakeWindow`'s own previews apply a
+  /// `PendingIntake` straight to the model rather than through a binding.
+  init(
+    model: AddChannelModel, volumeSpace: VolumeSpace = .live,
+    pendingEdit: Binding<Watch?> = .constant(nil),
+    onClose: @escaping () -> Void = {}
+  ) {
     _model = State(initialValue: model)
     self.volumeSpace = volumeSpace
+    _pendingEdit = pendingEdit
     self.onClose = onClose
   }
 
@@ -76,7 +102,14 @@ struct AddChannelWindow: View {
       Form {
         channel
 
-        if model.hasArchivesToConfigure {
+        // Editing shows the four settings with no scope choice above them
+        // (requirement 3) and no priced backfill below them (requirement 5)
+        // — `settings` itself already withholds the estimate on its own,
+        // since `model.estimate` is nil while editing (no lookup ever runs),
+        // but `scope` has no such self-gate and must not be reachable at all.
+        if model.isEditing {
+          settings
+        } else if model.hasArchivesToConfigure {
           scope
           settings
         }
@@ -89,12 +122,30 @@ struct AddChannelWindow: View {
     .frame(minWidth: 460, minHeight: 360)
     .background(HostWindowReader(window: $hostWindow))
     .defaultFocus($isLoginFocused, true)
-    // Re-reads the four standing preferences before anything else runs, so a
-    // Settings change made while this window was closed is on screen the
-    // moment it reopens — see `AddChannelModel.reseedFromPreferences()`, and
-    // `IntakeWindow`'s identical `.onAppear` call for the reasoning this
-    // mirrors.
-    .onAppear { model.reseedFromPreferences() }
+    // Dynamic, not the scene's own static "Add Channel" title — requirement
+    // 6. `JobInfoWindow.navigationTitle` is the precedent for overriding a
+    // `Window` scene's title from inside its content this way.
+    .navigationTitle(model.isEditing ? "Edit Channel" : "Add Channel")
+    // A pending edit wins over the standing preferences: someone who chose
+    // Edit on a specific channel did not mean to see today's global
+    // defaults. Checked first, and `reseedFromPreferences()` runs only in
+    // the branch that does not consume one — `beginEditing(_:)` seeds
+    // everything editing needs on its own, from the watch, and re-seeding
+    // from `Preferences` afterwards would immediately undo the freeze this
+    // whole window exists to respect (§3.2).
+    .onAppear {
+      if let pendingEdit {
+        model.beginEditing(pendingEdit)
+        self.pendingEdit = nil
+      } else {
+        // Re-reads the four standing preferences before anything else runs,
+        // so a Settings change made while this window was closed is on
+        // screen the moment it reopens — see
+        // `AddChannelModel.reseedFromPreferences()`, and `IntakeWindow`'s
+        // identical `.onAppear` call for the reasoning this mirrors.
+        model.reseedFromPreferences()
+      }
+    }
     // The scene outlives the window, so closing it has to do what dismissing
     // a sheet would have done for free. See `AddChannelModel.reset()` — and,
     // for the open half of the same problem, `reseedFromPreferences()`
@@ -111,49 +162,68 @@ struct AddChannelWindow: View {
 
   // MARK: - Sections
 
-  /// The login, and what came back for it.
+  /// The login, and what came back for it — or, while editing, the login
+  /// alone, fixed.
+  ///
+  /// **Editing shows the login but never lets it be typed** (requirement 2).
+  /// Changing which channel a watch points at is not an edit, it is a
+  /// different watch with a different `seen` set — `WatchingModel
+  /// .stopWatching(_:)` and `Section.id` both key on the login as a stable
+  /// identity, and a text field here would invite treating it as just
+  /// another setting. There is also nothing to look up: `AddChannelModel
+  /// .beginEditing(_:)` runs no fetch, so the Look Up button and everything
+  /// below it that only makes sense once a lookup has settled — the
+  /// unrecognised-login warning, the archive summary, a failure message —
+  /// would all be reading state that can never become anything but idle.
+  @ViewBuilder
   private var channel: some View {
     Section {
-      HStack {
-        TextField("Login", text: $model.loginText, prompt: Text("Twitch channel login or URL"))
-          .focused($isLoginFocused)
-          .onSubmit { Task { await model.look() } }
-        // A deliberate action rather than intake's debounced `.task(id:)`.
-        // A pasted link is unambiguously finished the moment it lands; a
-        // login is typed a character at a time and there is no clipboard
-        // signal telling this window someone is done. Rather than guess with
-        // a timer, `look()` runs only when asked — by this button, or ⏎.
-        Button("Look Up") { Task { await model.look() } }
-          .disabled(model.normalisedLogin == nil || model.displayedLookup == .loading)
-      }
-
-      if model.isLoginUnrecognised {
-        Label("That does not look like a Twitch channel.", systemImage: "xmark.circle")
-          .font(.callout)
-          .foregroundStyle(.red)
+      if model.isEditing {
+        Text(model.loginText)
+          .font(.headline)
       } else {
-        // `displayedLookup`, not `lookup` — a settled result for a login
-        // that has since been edited away must read as `.idle`, not show
-        // the previous channel's summary under the current one's text field.
-        // See `AddChannelModel.displayedLookup`'s own doc comment.
-        switch model.displayedLookup {
-        case .idle:
-          EmptyView()
-        case .loading:
-          ProgressView()
-            .controlSize(.small)
-        case .loaded(let archives):
-          lookupSummary(archives)
-        case .failed(let message):
-          // Red, matching `isLoginUnrecognised` above rather than intake's
-          // orange `metadataFailure`: intake's failure still leaves a job
-          // composable from the id-derived fallback name, but
-          // `AddChannelModel.composeWatch()` has nothing to fall back to
-          // without archives in hand — this is a full stop, not a
-          // degraded-but-workable state.
-          Label(message, systemImage: "exclamationmark.triangle")
+        HStack {
+          TextField("Login", text: $model.loginText, prompt: Text("Twitch channel login or URL"))
+            .focused($isLoginFocused)
+            .onSubmit { Task { await model.look() } }
+          // A deliberate action rather than intake's debounced `.task(id:)`.
+          // A pasted link is unambiguously finished the moment it lands; a
+          // login is typed a character at a time and there is no clipboard
+          // signal telling this window someone is done. Rather than guess
+          // with a timer, `look()` runs only when asked — by this button,
+          // or ⏎.
+          Button("Look Up") { Task { await model.look() } }
+            .disabled(model.normalisedLogin == nil || model.displayedLookup == .loading)
+        }
+
+        if model.isLoginUnrecognised {
+          Label("That does not look like a Twitch channel.", systemImage: "xmark.circle")
             .font(.callout)
             .foregroundStyle(.red)
+        } else {
+          // `displayedLookup`, not `lookup` — a settled result for a login
+          // that has since been edited away must read as `.idle`, not show
+          // the previous channel's summary under the current one's text
+          // field. See `AddChannelModel.displayedLookup`'s own doc comment.
+          switch model.displayedLookup {
+          case .idle:
+            EmptyView()
+          case .loading:
+            ProgressView()
+              .controlSize(.small)
+          case .loaded(let archives):
+            lookupSummary(archives)
+          case .failed(let message):
+            // Red, matching `isLoginUnrecognised` above rather than
+            // intake's orange `metadataFailure`: intake's failure still
+            // leaves a job composable from the id-derived fallback name,
+            // but `AddChannelModel.composeWatch()` has nothing to fall back
+            // to without archives in hand — this is a full stop, not a
+            // degraded-but-workable state.
+            Label(message, systemImage: "exclamationmark.triangle")
+              .font(.callout)
+              .foregroundStyle(.red)
+          }
         }
       }
     }
@@ -300,11 +370,23 @@ struct AddChannelWindow: View {
   /// What copies onto the watch says, and why. Always ends the same way —
   /// this is a one-time freeze, not a promise that nothing here can ever be
   /// changed again.
+  ///
+  /// **A different note while editing**, because the add-mode wording is
+  /// wrong there in a way that matters: "these settings start from your
+  /// defaults" is false the moment they were seeded by `beginEditing(_:)`
+  /// from the watch instead, and pointing back at "the Watching list" to
+  /// revisit them is circular when the Watching list's own context menu is
+  /// how this form got opened in the first place.
   private var saveNote: String {
-    "These settings start from your defaults, but adding this channel "
-      + "copies them onto it — they become this channel's own, and a later "
-      + "change in Settings will not reach it. The Watching list will be "
-      + "where they can be revisited."
+    guard model.isEditing else {
+      return "These settings start from your defaults, but adding this "
+        + "channel copies them onto it — they become this channel's own, "
+        + "and a later change in Settings will not reach it. The Watching "
+        + "list will be where they can be revisited."
+    }
+    return "Saving replaces what this channel was frozen to. Videos "
+      + "already marked seen stay that way — only what happens from here "
+      + "on changes."
   }
 
   /// What running the backfill this scope and these settings describe would
@@ -407,7 +489,8 @@ struct AddChannelWindow: View {
       if isAdding { ProgressView().controlSize(.small) }
       Button("Cancel") { dismiss() }
         .keyboardShortcut(.cancelAction)
-      Button("Add") { add() }
+      // Requirement 6: Edit rather than Add, while editing.
+      Button(model.isEditing ? "Edit" : "Add") { add() }
         .keyboardShortcut(.defaultAction)
         .disabled(!model.canAdd || isAdding)
     }
@@ -605,4 +688,21 @@ extension VolumeSpace {
   let model = previewModel(failure: .noSuchChannel)
   return AddChannelWindow(model: model, volumeSpace: .previewFull(free: 500_000_000_000))
     .task { await model.look() }
+}
+
+/// Editing an existing watch — Task 3. No scope picker, no priced backfill,
+/// a fixed login, and Edit rather than Add on the title and the confirm
+/// button — every one of `AddChannelModel.beginEditing(_:)`'s consequences
+/// visible in one canvas. `previewModel`'s own fetch is never called here:
+/// editing runs no lookup, so this calls `beginEditing(_:)` directly on a
+/// freshly built model instead of routing through it.
+#Preview("Editing") {
+  let model = previewModel(login: "leighxp")
+  model.beginEditing(Watch(
+    login: "leighxp", displayName: "LeighXP",
+    settings: .init(
+      destinationPath: "/Users/preview/Movies/LeighXP", qualityCap: .p720,
+      output: .videoWithChat, chatSize: .medium),
+    downloadsAutomatically: true, seen: ["1", "2", "3"]))
+  return AddChannelWindow(model: model, volumeSpace: .previewFull(free: 500_000_000_000))
 }
