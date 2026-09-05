@@ -39,6 +39,38 @@ import Foundation
 /// (`docs/twitch-channel-api.md` §5.1), so `docs/design/channel-watching.md`
 /// §3.3 requires the total be summed from what is in hand. There is
 /// deliberately no initialiser that accepts a number.
+///
+/// **What `bytes` means: everything still held, plus the one job in flight.**
+/// It is neither `Σ SpaceEstimate.delivered` nor `Σ SpaceEstimate.total`,
+/// because both answer a different question than "will running this backfill
+/// fit." `delivered` alone understates it — that is what the archives will
+/// occupy once every job is *done*, not what the disk must hold while the
+/// backfill is *running*, and intake's own single-job warning
+/// (`docs/design/disk-preflight.md` §5) and `VolumeSpace.shortfall` both check
+/// against `total` for exactly that reason: the failure this exists to
+/// prevent is running out of room mid-job, not mid-archive. But `total` alone
+/// overstates it just as badly the other way — a backfill's jobs run
+/// sequentially, and `TeardownJournal` guarantees each job's transient scratch
+/// (the source download and, for `.videoWithChat`, the chat render) is torn
+/// down before the next job starts, so at most one archive's transient
+/// overhead exists on disk at any instant. Summing `total` across every
+/// archive prices as if all of them were mid-flight at once.
+///
+/// So this sums what persists — `delivered`, for every archive, since none of
+/// those ever get torn down — and adds only the *largest* single overshoot
+/// (`total - delivered`) rather than every archive's: at the moment of peak
+/// usage, one job is still mid-flight with its full transient overhead, and
+/// every job before it has already been reduced to its delivered file. Taking
+/// the maximum rather than assuming the longest archive is worst is one line
+/// cheaper than trusting that duration alone predicts it, and stays correct
+/// if a future geometry or cap ever makes overhead non-monotonic in duration.
+/// An empty set costs nothing and a single archive comes out to exactly its
+/// own `total`, both as a consequence of the formula rather than as cases it
+/// special-cases.
+///
+/// This is still an instance of the "overestimate is the safe side" doctrine
+/// above, not an exception to it: it is a tighter bound than `Σ total`, never
+/// a looser one than `Σ delivered`.
 public struct BackfillEstimate: Equatable, Sendable {
 
   public let count: Int
@@ -50,13 +82,18 @@ public struct BackfillEstimate: Equatable, Sendable {
     duration = archives.reduce(Duration.zero) { $0 + $1.duration }
 
     let quality = Self.nominalQuality(for: cap)
-    // Built once, outside the sum: the geometry depends only on the nominal
+    // Built once, outside the loop: the geometry depends only on the nominal
     // quality, which is the same for every archive here.
     let geometry = output == .videoWithChat ? CompositeGeometry(quality: quality) : nil
 
-    bytes = archives.reduce(Int64(0)) { total, archive in
-      total + SpaceEstimate(quality: quality, duration: archive.duration, composite: geometry).delivered
+    var deliveredTotal = Int64(0)
+    var peakOverhead = Int64(0)
+    for archive in archives {
+      let estimate = SpaceEstimate(quality: quality, duration: archive.duration, composite: geometry)
+      deliveredTotal += estimate.delivered
+      peakOverhead = max(peakOverhead, estimate.total - estimate.delivered)
     }
+    bytes = deliveredTotal + peakOverhead
   }
 
   /// Twitch's standard rendition for a cap, since the channel feed has no

@@ -36,23 +36,48 @@ struct BackfillEstimateTests {
     #expect(low.bytes < best.bytes)
   }
 
-  @Test("with-chat prices the composite, not the source plus the composite")
-  func chatPricesTheCompositeAlone() {
-    // Not "chat costs more": `SpaceEstimate.delivered` is the composite ALONE
-    // once one exists (never source-plus-composite — the source is a
-    // transient that `total`, the peak, accounts for instead). A composite is
-    // a controlled quality-based re-encode, not the raw stream, and at every
-    // nominal cap in `nominalQuality` it in fact re-encodes smaller than the
-    // plain download: measured here, `withChat.bytes` is honestly, not
-    // coincidentally, the lower figure. So this pins that the two paths are
-    // wired to genuinely different numbers, not a size relationship the
-    // corrected formula never promised.
+  @Test("with-chat's peak overhead includes the chat render, so it prices higher than plain video")
+  func chatAddsRenderOverheadToThePeak() {
+    // Under the corrected formula `bytes = Σ delivered + max(total - delivered)`,
+    // `.videoWithChat`'s single-archive `total - delivered` includes
+    // `SpaceEstimate.chatRender` (the transient render the source-plus-chat
+    // job tears down before delivering the composite) on top of the source
+    // overhead a plain download already carries. So — unlike the old,
+    // delivered-only formula this replaces, where the composite could price
+    // *below* the plain download — the with-chat figure is pinned here to
+    // come out strictly higher, because the peak term now actually reflects
+    // what a with-chat job holds mid-flight.
     let archives = [archive("1", hours: 5)]
     let plain = BackfillEstimate(archives: archives, cap: .p720, output: .video)
     let withChat = BackfillEstimate(archives: archives, cap: .p720, output: .videoWithChat)
     #expect(plain.bytes > 0)
-    #expect(withChat.bytes > 0)
-    #expect(withChat.bytes != plain.bytes)
+    #expect(withChat.bytes > plain.bytes)
+  }
+
+  @Test(
+    "the nominal bitrate ladder produces the expected byte figures, per cap",
+    arguments: [
+      // cap, nominal bits/sec (from `nominalQuality`), expected bytes for a
+      // 1-hour archive at `.video` (source only, so bytes == source
+      // == bitsPerSecond * 3600 / 8 exactly — no chat/composite term to
+      // muddy a direct read of the ladder).
+      (QualityCap.best, 6_000_000, Int64(2_700_000_000)),
+      (QualityCap.p1080, 6_000_000, Int64(2_700_000_000)),
+      (QualityCap.p720, 3_500_000, Int64(1_575_000_000)),
+      (QualityCap.p480, 1_400_000, Int64(630_000_000)),
+      (QualityCap.p360, 700_000, Int64(315_000_000)),
+    ]
+  )
+  func nominalBitrateLadder(cap: QualityCap, bitsPerSecond: Int, expectedBytes: Int64) {
+    // Table asserted against a computed rather than merely restated
+    // expectation, so a typo in `nominalQuality` (e.g. 1_400_000 becoming
+    // 14_000_000) fails this even though the hand-written column above would
+    // silently "agree" with the same typo if copied from the source.
+    #expect(expectedBytes == Int64(bitsPerSecond) * 3600 / 8)
+
+    let estimate = BackfillEstimate(archives: [archive("1", hours: 1)], cap: cap, output: .video)
+    let tolerance = Int64(1) // exact arithmetic at this duration; no rounding slack needed
+    #expect(abs(estimate.bytes - expectedBytes) <= tolerance)
   }
 
   @Test("cost scales with duration")
