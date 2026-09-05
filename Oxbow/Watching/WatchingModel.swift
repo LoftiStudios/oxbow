@@ -25,11 +25,37 @@ final class WatchingModel {
     /// "no new videos". A quiet channel has a nil failure and an empty list;
     /// a broken one has a message.
     var failure: String?
+    /// What this channel is frozen to download at, read in
+    /// `IntakeModel.optionsSummary`'s own register — same fields, same
+    /// separator, same terse phrasing — so a quality cap or a destination
+    /// does not read differently depending on which window shows it.
+    ///
+    /// `docs/design/channel-watching.md` §3.2: a watch's settings are frozen
+    /// at add time and never surface again on their own, so this is the one
+    /// place left that can still answer "what did I actually sign this
+    /// channel up for?"
+    var settingsSummary: String
+    /// Whether this channel fetches on its own rather than only telling.
+    ///
+    /// Off by default and consequential (§2, §11.1) — a watch that has it on
+    /// has to look different from one that does not, or the one control that
+    /// matters most is also the one nobody can see they turned on. Nothing
+    /// downloads automatically yet (that is a later stage); this shows the
+    /// stored intent, not a running behaviour.
+    var downloadsAutomatically: Bool
 
     var id: String { login }
   }
 
   private(set) var sections: [Section] = []
+
+  /// The current watch list, kept in step with `watches.json` so a section
+  /// can show what its channel is set to, and so a channel that has never
+  /// been polled — just added, or waiting for its first sweep — still gets
+  /// one. Refreshed at the top of every `rebuild()`, not only at `init`,
+  /// because the file can gain or lose a channel (`Add Channel`,
+  /// `stopWatching`) between sweeps.
+  private(set) var watches: [Watch] = []
 
   /// Findings not yet acted on. Failures deliberately do not count — a badge
   /// that includes them would tell someone there is something to download
@@ -62,9 +88,19 @@ final class WatchingModel {
   /// The latest sweep, before the overlay is subtracted.
   private var latest: [WatchPollResult] = []
 
+  /// Set when Stop Watching refused rather than removing anything. The same
+  /// idiom as `AddChannelModel.addFailure`: a context menu action has no
+  /// return value for a caller to inspect, so the reason has to land
+  /// somewhere a view can read it after the fact.
+  private(set) var stopWatchingFailure: String?
+
   init(store: WatchStore, openIntake: @escaping (ChannelArchive, Watch) -> Void) {
     self.store = store
     self.openIntake = openIntake
+    // Populates `sections` from whatever is already watched before the first
+    // sweep ever lands — requirement 1's "never polled" case starts the
+    // instant a channel is added, not once `WatchPoller` gets around to it.
+    rebuild()
   }
 
   /// Replaces the list with a new sweep.
@@ -110,11 +146,11 @@ final class WatchingModel {
     dismissed.insert(id)
     rebuild()
 
-    guard var watches = try? store.load(),
-          let index = watches.firstIndex(where: { $0.login == login })
+    guard var current = try? store.load(),
+          let index = current.firstIndex(where: { $0.login == login })
     else { return nil }
 
-    watches[index] = watches[index].marking([id])
+    current[index] = current[index].marking([id])
     // Best effort. `dismissed` was already updated above, before this write
     // was attempted, and nothing rolls it back if the write fails — so a
     // failed save does not cost "one re-offer on the next sweep": the row
@@ -124,22 +160,137 @@ final class WatchingModel {
     // on the next launch, once `dismissed` itself is gone. That is still a
     // far better outcome than an alert about a file the user has no way to
     // fix, on a list they are in the middle of triaging.
-    try? store.save(watches)
-    return watches[index]
+    try? store.save(current)
+    return current[index]
+  }
+
+  /// Removes `login`'s watch and persists what is left, touching nothing
+  /// else about the other channels' settings or seen-sets.
+  ///
+  /// **Does not delete anything already downloaded.** This edits
+  /// `watches.json` — the list of channels being watched — never a file a
+  /// past download produced. Stopping a watch and deleting its archive are
+  /// two different decisions, and this makes only the first one.
+  ///
+  /// **Refuses rather than overwriting when the store cannot be read** — the
+  /// same rule `AddChannelModel.add()` follows, guarding the identical bug:
+  /// `try? store.load() ?? []` cannot tell "nothing else is watched" apart
+  /// from "the file could not be read", and saving a filtered list built
+  /// from the wrong one of those would silently erase every other channel
+  /// this call was never asked to touch.
+  func stopWatching(_ login: String) {
+    let existing: [Watch]
+    do {
+      existing = try store.load()
+    } catch {
+      stopWatchingFailure = """
+        Oxbow could not read the watch list, so \(login) was not stopped. \
+        \(error.localizedDescription)
+        """
+      return
+    }
+
+    do {
+      try store.save(existing.filter { $0.login != login })
+    } catch {
+      stopWatchingFailure = "Oxbow could not save the watch list: \(error.localizedDescription)"
+      return
+    }
+
+    stopWatchingFailure = nil
+    // A stopped channel's own entry in the last sweep must not resurrect its
+    // section on the next `rebuild()` — `latest` is otherwise mapped
+    // unconditionally, watch membership or not (see
+    // `anActionOnAnUnknownChannelIsIgnoredRatherThanCrashing`, which relies
+    // on exactly that for a channel that was never watched at all). Dropping
+    // it here is what makes the row disappear the moment Stop Watching is
+    // chosen, rather than lingering until the next real sweep excludes it.
+    latest.removeAll { $0.login == login }
+    rebuild()
+  }
+
+  /// Re-reads the watch list so `rebuild()` can show every channel actually
+  /// being watched, including one no sweep has produced a result for yet —
+  /// added moments ago, or resolved by `stopWatching` just above.
+  ///
+  /// Best effort: a failed read leaves `watches` exactly as it was, the same
+  /// posture `markSeen`'s write takes — every write this model makes already
+  /// refuses outright rather than leaving a state this would need to
+  /// recover from.
+  private func refreshWatches() {
+    if let loaded = try? store.load() {
+      watches = loaded
+    }
   }
 
   private func rebuild() {
-    sections = latest.map { result in
+    refreshWatches()
+
+    var represented: Set<String> = []
+    var built: [Section] = latest.map { result in
+      represented.insert(result.login)
+      let summary = settingsSummary(forLogin: result.login)
+      let automatic = downloadsAutomatically(forLogin: result.login)
       switch result.outcome {
       case .found(let archives):
-        Section(
+        return Section(
           login: result.login, displayName: result.displayName,
-          archives: archives.filter { !dismissed.contains($0.id) }, failure: nil)
+          archives: archives.filter { !dismissed.contains($0.id) }, failure: nil,
+          settingsSummary: summary, downloadsAutomatically: automatic)
       case .failed(let error):
-        Section(
+        return Section(
           login: result.login, displayName: result.displayName,
-          archives: [], failure: error.localizedDescription)
+          archives: [], failure: error.localizedDescription,
+          settingsSummary: summary, downloadsAutomatically: automatic)
       }
     }
+
+    // Every watched channel the sweep above didn't already account for —
+    // never polled, or waiting on its first sweep since launch — still gets
+    // a section (requirement 1), rather than staying invisible until a
+    // sweep finally reaches it.
+    for watch in watches where !represented.contains(watch.login) {
+      built.append(Section(
+        login: watch.login, displayName: watch.displayName,
+        archives: [], failure: nil,
+        settingsSummary: settingsSummary(for: watch.settings),
+        downloadsAutomatically: watch.downloadsAutomatically))
+    }
+
+    sections = built
+  }
+
+  private func settingsSummary(forLogin login: String) -> String {
+    guard let watch = watches.first(where: { $0.login == login }) else { return "" }
+    return settingsSummary(for: watch.settings)
+  }
+
+  private func downloadsAutomatically(forLogin login: String) -> Bool {
+    watches.first(where: { $0.login == login })?.downloadsAutomatically ?? false
+  }
+
+  /// `IntakeModel.optionsSummary`'s own register, applied to a watch's
+  /// frozen settings instead of one intake submission: the output first
+  /// (folded with the chat size, when it applies), the quality cap, then the
+  /// destination — the same order, the same "·" separator, the same terse
+  /// phrasing, so a person does not learn a second vocabulary for the same
+  /// four settings depending on which window shows them.
+  private func settingsSummary(for settings: Watch.Settings) -> String {
+    let outputLabel: String
+    switch settings.output {
+    case .videoWithChat: outputLabel = "Video + chat"
+    case .video: outputLabel = "Video"
+    }
+
+    var summary = "\(outputLabel) · \(settings.qualityCap.label)"
+    // Chat size is meaningless when nothing renders chat — `IntakeWindow`
+    // hides its own picker on the same condition
+    // (`IntakeModel.withholdsChatSizeFromSave`), so this withholds it from
+    // the summary line for the identical reason.
+    if settings.output == .videoWithChat {
+      summary += " · \(settings.chatSize.rawValue.capitalized) chat"
+    }
+    summary += " · \(settings.destination.lastPathComponent)"
+    return summary
   }
 }

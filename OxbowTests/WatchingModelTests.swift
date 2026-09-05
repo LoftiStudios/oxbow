@@ -13,11 +13,28 @@ struct WatchingModelTests {
       .appending(path: "watches.json"))
   }
 
-  private func watch(_ login: String, seen: Set<String> = []) -> Watch {
+  private func watch(
+    _ login: String, seen: Set<String> = [],
+    settings: Watch.Settings = .init(
+      destinationPath: "/Users/x/Downloads", qualityCap: .best,
+      output: .videoWithChat, chatSize: .medium),
+    downloadsAutomatically: Bool = false
+  ) -> Watch {
     Watch(login: login, displayName: login.capitalized,
-          settings: .init(destinationPath: "/Users/x/Downloads", qualityCap: .best,
-                          output: .videoWithChat, chatSize: .medium),
-          downloadsAutomatically: false, seen: seen)
+          settings: settings, downloadsAutomatically: downloadsAutomatically, seen: seen)
+  }
+
+  /// A `WatchStore` whose file is actually a directory — `WatchStore.load()`
+  /// throws only in this exact shape (a set-aside-worthy decode failure is
+  /// recovered internally, so it never propagates), the same trick
+  /// `AddChannelModelTests` uses to reach `AddChannelModel.add()`'s own
+  /// read-failure branch.
+  private func unreadableStore() throws -> WatchStore {
+    let file = URL.temporaryDirectory
+      .appending(path: "watching-\(UUID().uuidString)")
+      .appending(path: "watches.json")
+    try FileManager.default.createDirectory(at: file, withIntermediateDirectories: true)
+    return WatchStore(fileURL: file)
   }
 
   private func archive(_ id: String) -> ChannelArchive {
@@ -183,6 +200,100 @@ struct WatchingModelTests {
     model.apply([.init(login: "ninja", displayName: "Ninja", outcome: .found([archive("1")]))])
 
     #expect(model.sections[0].archives.map(\.id) == ["1"])
+  }
+
+  // MARK: - Every watched channel gets a section
+
+  @Test func aChannelNeverPolledStillGetsASectionWithItsSettings() throws {
+    // Today: a channel with nothing in `latest` does not appear at all. The
+    // model has to load the watch list itself, not only wait for a sweep,
+    // or a channel added a moment ago is invisible until the poller catches
+    // up to it — which can be minutes away (`WatchingView.isSweeping`'s own
+    // doc comment).
+    let store = temporaryStore()
+    try store.save([watch("ninja",
+      settings: .init(destinationPath: "/Users/x/Downloads", qualityCap: .best,
+                      output: .videoWithChat, chatSize: .medium))])
+    let model = model(store: store)
+
+    #expect(model.sections.map(\.login) == ["ninja"])
+    #expect(model.sections[0].archives.isEmpty)
+    #expect(model.sections[0].failure == nil)
+    #expect(model.sections[0].settingsSummary
+      == "Video + chat · Best available · Medium chat · Downloads")
+  }
+
+  @Test func twoChannelsWithDifferentSettingsShowTheirOwnSummaries() throws {
+    let store = temporaryStore()
+    try store.save([
+      watch("ninja", settings: .init(
+        destinationPath: "/Users/x/Downloads", qualityCap: .best,
+        output: .videoWithChat, chatSize: .medium)),
+      watch("day9tv", settings: .init(
+        destinationPath: "/Users/x/Archive", qualityCap: .p720,
+        output: .video, chatSize: .large)),
+    ])
+    let model = model(store: store)
+
+    let summaries = Dictionary(uniqueKeysWithValues: model.sections.map { ($0.login, $0.settingsSummary) })
+    #expect(summaries["ninja"] == "Video + chat · Best available · Medium chat · Downloads")
+    // Chat size is withheld when the output does not include chat, matching
+    // `IntakeModel.withholdsChatSizeFromSave` — a chat-less watch has no
+    // chat size to show.
+    #expect(summaries["day9tv"] == "Video · Up to 720p · Archive")
+  }
+
+  @Test func automaticDownloadingIsVisibleOnTheSectionWhenItIsOn() throws {
+    let store = temporaryStore()
+    try store.save([
+      watch("ninja", downloadsAutomatically: true),
+      watch("day9tv", downloadsAutomatically: false),
+    ])
+    let model = model(store: store)
+
+    let automatic = Dictionary(
+      uniqueKeysWithValues: model.sections.map { ($0.login, $0.downloadsAutomatically) })
+    #expect(automatic["ninja"] == true)
+    #expect(automatic["day9tv"] == false)
+  }
+
+  // MARK: - Stopping a watch
+
+  @Test func stopWatchingRemovesTheWatchAndPersistsPreservingOthers() throws {
+    let store = temporaryStore()
+    try store.save([watch("ninja"), watch("day9tv")])
+    let model = model(store: store)
+    model.apply([
+      .init(login: "ninja", displayName: "Ninja", outcome: .found([archive("1")])),
+      .init(login: "day9tv", displayName: "Day9tv", outcome: .found([archive("2")]))])
+
+    model.stopWatching("ninja")
+
+    #expect(try store.load().map(\.login) == ["day9tv"])
+    // Gone immediately, not just on the next sweep — `ninja`'s own row from
+    // the sweep just applied must not linger because `latest` still carries
+    // it (see `stopWatching`'s own doc comment).
+    #expect(model.sections.map(\.login) == ["day9tv"])
+    #expect(model.stopWatchingFailure == nil)
+  }
+
+  @Test func stopWatchingRefusesRatherThanOverwritingWhenTheStoreCannotBeRead() throws {
+    // The same bug `AddChannelModelTests
+    // .addRefusesRatherThanOverwritingWhenTheWatchListCannotBeRead` guards
+    // against: a `try? store.load() ?? []` here would read the unreadable
+    // file as "nothing is watched" and save a filtered list over it,
+    // permanently losing every channel this call was never asked to touch.
+    let store = try unreadableStore()
+    defer { try? FileManager.default.removeItem(at: store.fileURL.deletingLastPathComponent()) }
+    let model = model(store: store)
+
+    model.stopWatching("ninja")
+
+    #expect(model.stopWatchingFailure != nil, "the refusal must say why, not just dismiss")
+    var isDirectory: ObjCBool = false
+    let stillThere = FileManager.default.fileExists(
+      atPath: store.fileURL.path, isDirectory: &isDirectory)
+    #expect(stillThere && isDirectory.boolValue, "must refuse rather than save over what it could not read")
   }
 }
 

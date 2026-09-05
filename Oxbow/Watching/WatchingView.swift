@@ -32,6 +32,10 @@ struct WatchingView: View {
   let isSweeping: Bool
   let onAdd: (ChannelArchive, WatchingModel.Section) -> Void
   let onIgnore: (ChannelArchive, WatchingModel.Section) -> Void
+  /// Stops watching the channel a section's header menu named. No
+  /// confirmation on this side either — see `SectionHeader`'s own doc
+  /// comment for why none is offered.
+  let onStopWatching: (WatchingModel.Section) -> Void
 
   var body: some View {
     if sections.isEmpty {
@@ -58,7 +62,7 @@ struct WatchingView: View {
     } else {
       List {
         ForEach(sections) { section in
-          Section(section.displayName) {
+          Section {
             if let failure = section.failure {
               FailureRow(message: failure)
             } else {
@@ -70,6 +74,8 @@ struct WatchingView: View {
                   onIgnore: { onIgnore(archive, section) })
               }
             }
+          } header: {
+            SectionHeader(section: section, onStopWatching: { onStopWatching(section) })
           }
         }
       }
@@ -107,19 +113,69 @@ private struct FailureRow: View {
   }
 }
 
+/// A section's header: the channel name, what it is frozen to download at
+/// (§3.2), a mark for automatic downloading when it is on, and — the only
+/// place this is offered — Stop Watching.
+///
+/// **No confirmation dialog on Stop Watching.** Unlike removing a queued
+/// download, this destroys nothing: it edits `watches.json` alone, and
+/// every file a past download produced is untouched. A confirmation here
+/// would be warning about a loss that does not happen, so the wording
+/// carries that instead of a dialog — both the button's own label and its
+/// tooltip say plainly that downloaded files stay put.
+private struct SectionHeader: View {
+  let section: WatchingModel.Section
+  let onStopWatching: () -> Void
+
+  var body: some View {
+    HStack(alignment: .firstTextBaseline, spacing: 6) {
+      Text(section.displayName)
+      // Only shown when it is actually on: off is the default and the
+      // ordinary case, and marking every quiet channel "Manual" would be
+      // the loud thing `WatchingView`'s own doc comment already argues
+      // against for a "no new videos" row under every quiet section.
+      if section.downloadsAutomatically {
+        Label("Downloads automatically", systemImage: "bolt.fill")
+          .labelStyle(.iconOnly)
+          .foregroundStyle(.blue)
+          .help("Downloads automatically: new archives are queued without waiting for Add.")
+      }
+      Spacer(minLength: 0)
+      if !section.settingsSummary.isEmpty {
+        Text(section.settingsSummary)
+          .foregroundStyle(.secondary)
+      }
+    }
+    .textCase(nil)
+    .contextMenu {
+      Button {
+        onStopWatching()
+      } label: {
+        Label("Stop Watching", systemImage: "eye.slash")
+      }
+      .help("""
+        Stops watching \(section.displayName). Files already downloaded are \
+        not deleted.
+        """)
+    }
+  }
+}
+
 #Preview("Two channels, findings") {
   WatchingView(
     sections: [
       WatchingModel.Section(
         login: "leighxp", displayName: "LeighXP",
         archives: [WatchingViewPreviewData.normal, WatchingViewPreviewData.longTitle],
-        failure: nil),
+        failure: nil, settingsSummary: "Video + chat · Best available · Medium chat · Downloads",
+        downloadsAutomatically: false),
       WatchingModel.Section(
         login: "quietchannel", displayName: "A Quiet Channel",
-        archives: [], failure: nil),
+        archives: [], failure: nil,
+        settingsSummary: "Video · Up to 720p · Archive", downloadsAutomatically: false),
     ],
     isSweeping: false,
-    onAdd: { _, _ in }, onIgnore: { _, _ in })
+    onAdd: { _, _ in }, onIgnore: { _, _ in }, onStopWatching: { _ in })
   .frame(width: 480, height: 420)
 }
 
@@ -128,19 +184,62 @@ private struct FailureRow: View {
     sections: [
       WatchingModel.Section(
         login: "leighxp", displayName: "LeighXP",
-        archives: [WatchingViewPreviewData.normal], failure: nil),
+        archives: [WatchingViewPreviewData.normal], failure: nil,
+        settingsSummary: "Video + chat · Best available · Medium chat · Downloads",
+        downloadsAutomatically: false),
       WatchingModel.Section(
         login: "brokenchannel", displayName: "A Broken Channel",
         archives: [],
-        failure: "The response did not include the expected video list."),
+        failure: "The response did not include the expected video list.",
+        settingsSummary: "Video · Up to 1080p · Downloads", downloadsAutomatically: false),
     ],
     isSweeping: false,
-    onAdd: { _, _ in }, onIgnore: { _, _ in })
+    onAdd: { _, _ in }, onIgnore: { _, _ in }, onStopWatching: { _ in })
+  .frame(width: 480, height: 420)
+}
+
+// New for Task 2: a watched channel that has never turned up anything —
+// either the last sweep found nothing, or it hasn't been polled yet — must
+// still show its own section with its settings, not a bare header or
+// nothing at all (`docs/design/channel-watching.md` §3.2's whole premise).
+#Preview("Channel with no findings") {
+  WatchingView(
+    sections: [
+      WatchingModel.Section(
+        login: "quietchannel", displayName: "A Quiet Channel",
+        archives: [], failure: nil,
+        settingsSummary: "Video + chat · Best available · Small chat · Downloads",
+        downloadsAutomatically: false),
+    ],
+    isSweeping: false,
+    onAdd: { _, _ in }, onIgnore: { _, _ in }, onStopWatching: { _ in })
+  .frame(width: 480, height: 420)
+}
+
+// Automatic downloading is off by default and consequential (§2, §11.1) — a
+// channel that has it on has to be visibly different from one that does not.
+#Preview("One channel downloads automatically") {
+  WatchingView(
+    sections: [
+      WatchingModel.Section(
+        login: "leighxp", displayName: "LeighXP",
+        archives: [WatchingViewPreviewData.normal], failure: nil,
+        settingsSummary: "Video + chat · Best available · Medium chat · Downloads",
+        downloadsAutomatically: true),
+      WatchingModel.Section(
+        login: "quietchannel", displayName: "A Quiet Channel",
+        archives: [], failure: nil,
+        settingsSummary: "Video · Up to 720p · Archive", downloadsAutomatically: false),
+    ],
+    isSweeping: false,
+    onAdd: { _, _ in }, onIgnore: { _, _ in }, onStopWatching: { _ in })
   .frame(width: 480, height: 420)
 }
 
 #Preview("No channels watched") {
-  WatchingView(sections: [], isSweeping: false, onAdd: { _, _ in }, onIgnore: { _, _ in })
+  WatchingView(
+    sections: [], isSweeping: false,
+    onAdd: { _, _ in }, onIgnore: { _, _ in }, onStopWatching: { _ in })
     .frame(width: 480, height: 420)
 }
 
@@ -148,7 +247,9 @@ private struct FailureRow: View {
   // The window between launch and the first sweep landing: `sections` is
   // still empty, but this must not read as "no channels watched" — see
   // `isSweeping`'s doc above.
-  WatchingView(sections: [], isSweeping: true, onAdd: { _, _ in }, onIgnore: { _, _ in })
+  WatchingView(
+    sections: [], isSweeping: true,
+    onAdd: { _, _ in }, onIgnore: { _, _ in }, onStopWatching: { _ in })
     .frame(width: 480, height: 420)
 }
 
