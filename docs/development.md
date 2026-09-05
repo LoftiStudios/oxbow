@@ -365,6 +365,47 @@ floor for one run, and `--lcov <path>` writes an lcov file if you want to feed
 an editor's coverage gutter. Under Actions the per-file table is written to the
 job summary.
 
+### The FFmpeg-gated tests, and why a green run does not cover them
+
+Two suites run against the real `build/ffmpeg/ffmpeg` instead of a fixture, and
+both are gated so a checkout without that binary still goes green:
+
+| Suite | Gate | Cost when it runs |
+|---|---|---|
+| `SidecarRewriteFFmpegTests` | `build/ffmpeg/ffmpeg` exists | well under a second |
+| `ResumeEndToEndTests` | `OXBOW_RESUME_E2E=1` *and* the binary | network, real encodes, minutes |
+
+**Neither runs on a pull request.** `ci.yml` runs `scripts/coverage.sh` and
+deliberately builds no FFmpeg, so `SidecarRewriteFFmpegTests` skips there — and
+a skip nobody looks at is indistinguishable from a pass. Treat a green
+`swift test` on a checkout with no FFmpeg as saying nothing at all about resume
+or the sidecar.
+
+`full-build.yml` now runs `SidecarRewriteFFmpegTests` against the binary it has
+already built, on pushes to main and nightly, and fails the job outright if
+that binary is missing rather than letting the suite skip. That is the backstop,
+not the loop you should be working in: it is not a PR gate and a cold run is
+tens of minutes, so on anything touching FFmpeg arguments, run it locally.
+
+Run it deliberately after touching resume, the sidecar, or `ArgumentBuilder`'s
+`.composite` case, and read the result rather than the exit code:
+
+```bash
+./scripts/build-ffmpeg.sh && swift test --filter SidecarRewriteFFmpegTests
+```
+
+It must say `Suite "Sidecar rewrite spans the whole source" passed`. With no
+binary it says `skipped` instead and the run is still green — so read that
+line, not the exit code.
+
+**Run it against `MINIMAL=1` too when you change what FFmpeg is asked to do.**
+The minimal component set is the variant that breaks first, and it is the only
+cheap check that a new argument has not reached for a component we do not
+build. Both of the gaps this suite has found so far were minimal-only: the
+`ipod` muxer that `audio.m4a` resolves to, missing outright, and — in the test
+itself — an `s16le` input and a `pcm_s16le` encoder it had no reason to need.
+`docs/ffmpeg.md` §4 records the component surface each invocation implies.
+
 Build the bundled FFmpeg (LGPL, arm64, verified):
 
 ```bash

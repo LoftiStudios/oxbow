@@ -10,6 +10,7 @@
 #
 #   - the pinned vendor/TwitchDownloader submodule still publishes,
 #   - scripts/build-ffmpeg.sh still produces a verified LGPL binary,
+#   - the OxbowKit suites gated on a real FFmpeg binary actually run,
 #   - scripts/embed-helpers.sh really embeds AND signs, inside-out,
 #   - the assembled bundle satisfies the rules in docs/signing.md §2-§4.
 #
@@ -113,6 +114,25 @@ jobs:
           fi
           version_out="$(build/ffmpeg/ffmpeg -hide_banner -version 2>/dev/null || true)"
           head -2 <<<"${version_out}"
+
+      - name: Run the FFmpeg-gated OxbowKit tests
+        # ci.yml runs the whole OxbowKit suite but builds no FFmpeg, so every
+        # suite gated on build/ffmpeg/ffmpeg skips there — and a skip nobody
+        # looks at is indistinguishable from a pass. This job is the only place
+        # a bundled binary exists, so it is the only place they can run at all.
+        # It costs under a second against the binary built above.
+        #
+        # ResumeEndToEndTests stays out deliberately: it needs the network and
+        # minutes of real encoding, and has its own OXBOW_RESUME_E2E gate.
+        run: |
+          set -euo pipefail
+          # Without this the suite's own .enabled(if:) would skip it and
+          # `swift test` would still exit 0 — the exact invisible pass this
+          # step exists to prevent.
+          [ -x build/ffmpeg/ffmpeg ] || {
+            echo "::error::no build/ffmpeg/ffmpeg — the gated suite would skip silently"; exit 1;
+          }
+          swift test --filter SidecarRewriteFFmpegTests
 
       - name: Install .NET 10
         uses: actions/setup-dotnet@v4
