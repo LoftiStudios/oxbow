@@ -22,6 +22,13 @@ struct OxbowApp: App {
   /// need to agree on the same path rather than each deriving it separately.
   @State private var watching: WatchingModel?
 
+  /// The same `WatchStore` `watching` was built from, kept alongside it so
+  /// `AddChannelWindow` can open a second writer over `watches.json` without
+  /// resolving the support directory a second time. Optional, and nil for
+  /// the identical reason `watching` is: both are built together, behind the
+  /// same `AppComposition.isUserSession` guard, in the `.task` below.
+  @State private var watchStore: WatchStore?
+
   /// Read once. Nothing in it can change while the app runs — it is all
   /// stamped into the bundle at build time — and both the menu item and the
   /// window title need the name.
@@ -57,7 +64,9 @@ struct OxbowApp: App {
         // banner, so a payload-missing launch gets the `+`-disabled window
         // design §6 describes rather than a bare page with no chrome.
         if let content {
-          QueueView(content: content, updates: updates, watching: watching, poller: poller)
+          QueueView(
+            content: content, updates: updates, watching: watching, poller: poller,
+            canAddChannel: watchStore != nil)
         } else {
           // This spinner covers `QueueEngine.start()` too, deliberately.
           // `QueueHost.ready()` answers only after the saved queue is loaded
@@ -101,12 +110,14 @@ struct OxbowApp: App {
         guard AppComposition.isUserSession else { return }
         guard poller == nil else { return }
         guard let support = try? AppComposition.defaultSupportDirectory() else { return }
+        let store = WatchStore(fileURL: AppComposition.watchStoreURL(supportDirectory: support))
         watching = WatchingModel(
-          store: WatchStore(fileURL: AppComposition.watchStoreURL(supportDirectory: support)),
+          store: store,
           // The intake window this should open does not exist yet — that is
           // the next plan's Add Channel work. Until then Add can still mark
           // an archive seen; it just cannot hand it anywhere.
           openIntake: { _, _ in })
+        watchStore = store
         poller = WatchPoller.live(supportDirectory: support)
         poller?.start()
       }
@@ -172,6 +183,30 @@ struct OxbowApp: App {
     // Add Download window nobody asked for — and its `IntakeModel` is
     // rebuilt empty anyway, so what reappears is a blank form, not the one
     // that was there.
+    .restorationBehavior(.disabled)
+
+    // Add Channel, its own window for the same reasons intake is one — a
+    // form that can legitimately grow (§3.3's priced backfill line joins the
+    // usual settings) belongs in something that sizes to its own content
+    // rather than a sheet capped by the queue window's height.
+    //
+    // `Window`, so the toolbar button on the Watching pane re-focuses the one
+    // that exists rather than stacking a second lookup on top of the first.
+    Window("Add Channel", id: Self.addChannelWindowID) {
+      // Unreachable before `watchStore` resolves — the same guard `intake`
+      // above puts on `controller` — and there is nothing honest to show in
+      // its place: this window exists to write `watches.json`, and until the
+      // support directory is known there is no file to write to.
+      if let watchStore {
+        AddChannelWindow(store: watchStore, preferences: Preferences())
+      }
+    }
+    .defaultSize(width: 480, height: 640)
+    .windowResizability(.contentMinSize)
+    .defaultPosition(.center)
+    // Not restored, matching intake: a channel half-typed into a login field
+    // is not a form worth resurrecting on the next launch, and its
+    // `AddChannelModel` is rebuilt empty regardless.
     .restorationBehavior(.disabled)
 
     // Get Info, one window per download.
@@ -241,6 +276,9 @@ struct OxbowApp: App {
 
   /// The id both the menu item and `QueueView`'s toolbar button open.
   static let intakeWindowID = "intake"
+
+  /// The id `QueueView`'s toolbar button opens from the Watching pane.
+  static let addChannelWindowID = "addChannel"
 
   private var controller: QueueController? {
     if case .ready(let controller) = content { return controller }

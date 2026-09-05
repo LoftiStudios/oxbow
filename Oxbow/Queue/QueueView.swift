@@ -18,6 +18,14 @@ struct QueueView: View {
   let watching: WatchingModel?
   let poller: WatchPoller?
 
+  /// Whether `OxbowApp` has resolved a support directory yet, and so has a
+  /// `WatchStore` ready for the Add Channel window to write to. `watching`
+  /// itself would say the same thing, but reading `watching == nil` here
+  /// would tie this button's enabled state to a model whose only other job
+  /// is holding the sweep results — a coincidence, not a dependency this
+  /// view should be built to notice if it ever stopped holding.
+  let canAddChannel: Bool
+
   /// Opens the intake window (`OxbowApp.intakeWindowID`). Intake is a window
   /// rather than a sheet on this one — see `IntakeWindow` for why — so the
   /// toolbar button hands off to the scene instead of presenting anything.
@@ -134,12 +142,29 @@ struct QueueView: View {
     // a sidebar costs no height.
     .frame(minWidth: 480 + 180, minHeight: 320)
     .toolbar {
-      // Hidden rather than merely disabled on Watching: the button opens
-      // intake for a brand-new download, which is a Queue action, and a
-      // finding row already has its own Add button for adding *that* video.
-      // Leaving this one visible next to a highlighted finding would invite
-      // the guess that it acts on the row, when it does not.
-      if sidebarSelection != .watching {
+      // Two different buttons behind the same placement, switched on which
+      // pane is showing — never both, and never neither. `Add Download`
+      // opens intake for a brand-new job, which is a Queue action, and a
+      // finding row already has its own Add for adding *that* video; leaving
+      // it visible next to a highlighted finding would invite the guess that
+      // it acts on the row, when it does not. `Add Channel` is the reverse:
+      // it is how a person reaches the window at all, including — per
+      // `docs/design/channel-watching.md` §3 — the moment nothing is watched
+      // yet and `WatchingView`'s own empty state has no control of its own to
+      // offer. Living in this toolbar rather than in that empty state is what
+      // keeps the button reachable whether the list is empty or full,
+      // matching where `Add Download` already sits for the Queue pane.
+      if sidebarSelection == .watching {
+        ToolbarItem(placement: .primaryAction) {
+          Button {
+            openWindow(id: OxbowApp.addChannelWindowID)
+          } label: {
+            Label("Add Channel", systemImage: "plus")
+          }
+          .help("Watch a Twitch channel for new archives")
+          .disabled(!canAddChannel)
+        }
+      } else {
         ToolbarItem(placement: .primaryAction) {
           Button {
             openWindow(id: OxbowApp.intakeWindowID)
@@ -313,7 +338,8 @@ struct QueueView: View {
     """),
     updates: UpdateModel { .upToDate },
     watching: nil,
-    poller: nil)
+    poller: nil,
+    canAddChannel: false)
   .frame(width: 720, height: 420)
 }
 
@@ -327,7 +353,8 @@ struct QueueView: View {
     content: .unavailable("No helper in this build."),
     updates: updates,
     watching: nil,
-    poller: nil)
+    poller: nil,
+    canAddChannel: false)
     .frame(width: 720, height: 420)
     .task { await updates.checkAutomatically() }
 }
