@@ -306,6 +306,138 @@ struct AddChannelModelTests {
       "the superseded lookup must not land after the current one")
   }
 
+  // MARK: - 7c. A settled lookup must not survive editing the login away from it
+
+  /// The bug this guards, distinct from 7b above: no second fetch is ever in
+  /// flight here. The user looks up `day9tv`, then edits the field to
+  /// `ninja` without pressing Look Up again — `generation` never advances,
+  /// because nothing asked `look()` to run. Without `lookupLogin` and
+  /// `displayedLookup`, `canAdd` (which only checks that a login normalises
+  /// and that *some* lookup loaded) would stay true, and `composeWatch()`
+  /// would build a watch for `ninja` seeded from `day9tv`'s archives —
+  /// under the default `.onlyNew` scope, that marks `day9tv`'s ids seen on
+  /// a `ninja` watch and leaves every one of `ninja`'s real archives
+  /// unseen, the exact inverse of what the scope caption promises.
+  @Test func editingTheLoginAfterALookupSettlesInvalidatesItRatherThanComposingFromTheOldOne() async throws {
+    let store = WatchStore(fileURL: Self.temporaryFile())
+    defer { try? FileManager.default.removeItem(at: store.fileURL.deletingLastPathComponent()) }
+
+    let model = makeModel(store: store, fetch: { login in .success([Self.archive("\(login)-archive")]) })
+
+    model.loginText = "day9tv"
+    await model.look()
+    #expect(model.canAdd, "the positive control: addable right after its own lookup")
+
+    model.loginText = "ninja"
+
+    #expect(!model.canAdd, "a lookup that describes a different login must not make this one addable")
+    #expect(
+      model.displayedLookup == .idle,
+      "a settled result for a login no longer typed must read as idle, not show day9tv's counts")
+    #expect(model.estimate == nil, "must not price day9tv's archives as ninja's backfill")
+
+    let added = await model.add()
+
+    #expect(!added, "must refuse rather than compose a watch for ninja out of day9tv's archives")
+    #expect(model.addFailure != nil, "the refusal must say why, not just dismiss")
+    let saved = try store.load()
+    #expect(saved.isEmpty, "no watch — for either channel — must have been persisted")
+  }
+
+  // MARK: - 9. reset() and reseedFromPreferences()
+
+  /// Mirrors `IntakeModelTests.resetReseedsFromTheStoreAndUnticksTheBox`:
+  /// every value mutated below differs from both what the store holds and
+  /// its factory default, so a `reset()` that merely left things in place,
+  /// or that reset to a hardcoded default instead of reading the store,
+  /// could not pass this by accident.
+  ///
+  /// The bug this guards: `AddChannelWindow` is a `Window`, not a
+  /// `WindowGroup`, so without a `reset()` called on close, reopening after
+  /// a successful add shows that same channel's form again — fully composed,
+  /// with Add still the default action. One stray ⏎ then replaces that
+  /// channel's watch with `seen` recomputed from the stale lookup.
+  @Test func resetClearsTheChannelsOwnStateAndReseedsStandingPreferencesFromTheStore() async {
+    let preferences = Self.store {
+      $0.destination = URL(filePath: "/Volumes/Archive")
+      $0.qualityCap = .p480
+      $0.output = .video
+      $0.chatSize = .large
+    }
+    let model = makeModel(preferences: preferences, fetch: { _ in .success([Self.archive("1")]) })
+
+    // No lookup has happened yet, so `add()` refuses and leaves a reason
+    // behind — the failure `reset()` also has to clear.
+    model.loginText = "ninja"
+    #expect(await model.add() == false)
+    #expect(model.addFailure != nil, "precondition")
+
+    await model.look()
+    model.scope = .allAvailable
+    model.downloadsAutomatically = true
+    model.qualityCap = .p1080
+    model.output = .videoWithChat
+    model.chatSize = .small
+    model.folder = URL(filePath: "/Users/someone/Movies")
+
+    model.reset()
+
+    #expect(model.loginText == "")
+    #expect(model.lookup == .idle)
+    #expect(model.lookupLogin == nil)
+    #expect(model.scope == .onlyNew)
+    #expect(model.downloadsAutomatically == false)
+    #expect(model.addFailure == nil)
+    #expect(model.qualityCap == .p480, "reseeded from the store, not left at the mutated value")
+    #expect(model.output == .video)
+    #expect(model.chatSize == .large)
+    #expect(model.folder == URL(filePath: "/Volumes/Archive"))
+  }
+
+  /// The bug: Add Channel is one `Window` for the app's whole run, seeded
+  /// once at construction and re-seeded only by `reset()`, which fires once
+  /// per *close*. A Settings change made between a close and the next open —
+  /// the ordinary sequence, not an edge case — never reaches the model until
+  /// `reseedFromPreferences()` reads the store again on open. Also proves the
+  /// narrower half of the contract: unlike `reset()`, this must leave a
+  /// channel already typed and looked up alone.
+  @Test func reseedFromPreferencesPicksUpAStoreChangedSinceConstructionButLeavesTheChannelAlone() async {
+    let preferences = Self.store {
+      $0.destination = URL(filePath: "/Users/someone/Movies")
+      $0.qualityCap = .best
+      $0.output = .videoWithChat
+      $0.chatSize = .medium
+    }
+    let model = makeModel(preferences: preferences, fetch: { _ in .success([Self.archive("1")]) })
+    #expect(model.qualityCap == .best, "precondition: seeded at construction")
+
+    // Stands in for Settings writing to the same store while this window is
+    // closed — a second `Preferences` value over the same backing store, the
+    // same technique `IntakeModelTests` uses for the identical reason.
+    var mutator = preferences
+    mutator.qualityCap = .p480
+    mutator.output = .video
+    mutator.chatSize = .small
+    mutator.destination = URL(filePath: "/Users/someone/Archive")
+
+    // In-progress state a real open can land on — the window does not
+    // always start from a close — which `reseedFromPreferences()` must not
+    // clobber the way `reset()` deliberately does.
+    model.loginText = "ninja"
+    await model.look()
+    model.scope = .allAvailable
+
+    model.reseedFromPreferences()
+
+    #expect(model.qualityCap == .p480)
+    #expect(model.output == .video)
+    #expect(model.chatSize == .small)
+    #expect(model.folder == URL(filePath: "/Users/someone/Archive"))
+    #expect(model.loginText == "ninja", "reseeding must not clobber an in-progress channel")
+    #expect(model.canAdd, "the lookup already in hand must survive a reseed")
+    #expect(model.scope == .allAvailable)
+  }
+
   // MARK: - 7. A failed lookup keeps its reason
 
   /// The same distinction `WatchPollResult` draws between `.failed` and

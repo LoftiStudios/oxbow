@@ -38,7 +38,7 @@ struct AddChannelWindow: View {
   private let volumeSpace: VolumeSpace
 
   init(store: WatchStore, preferences: Preferences, volumeSpace: VolumeSpace = .live) {
-    let feed = Self.liveChannelFeed()
+    let feed = Self.liveChannelFeed
     _model = State(initialValue: AddChannelModel(
       store: store, preferences: preferences,
       fetch: { login in await Self.result { try await feed.archives(forLogin: login) } },
@@ -60,7 +60,7 @@ struct AddChannelWindow: View {
       Form {
         channel
 
-        if hasArchivesToConfigure {
+        if model.hasArchivesToConfigure {
           scope
           settings
         }
@@ -73,6 +73,21 @@ struct AddChannelWindow: View {
     .frame(minWidth: 460, minHeight: 360)
     .background(HostWindowReader(window: $hostWindow))
     .defaultFocus($isLoginFocused, true)
+    // Re-reads the four standing preferences before anything else runs, so a
+    // Settings change made while this window was closed is on screen the
+    // moment it reopens — see `AddChannelModel.reseedFromPreferences()`, and
+    // `IntakeWindow`'s identical `.onAppear` call for the reasoning this
+    // mirrors.
+    .onAppear { model.reseedFromPreferences() }
+    // The scene outlives the window, so closing it has to do what dismissing
+    // a sheet would have done for free. See `AddChannelModel.reset()` — and,
+    // for the open half of the same problem, `reseedFromPreferences()`
+    // above. Without this, reopening after a successful add shows that
+    // channel's form again, fully composed, with Add still the default
+    // action — one stray ⏎ then replaces that channel's watch with `seen`
+    // recomputed from the stale lookup, discarding every finding the user
+    // had already acted on.
+    .onDisappear(perform: model.reset)
   }
 
   // MARK: - Sections
@@ -90,7 +105,7 @@ struct AddChannelWindow: View {
         // signal telling this window someone is done. Rather than guess with
         // a timer, `look()` runs only when asked — by this button, or ⏎.
         Button("Look Up") { Task { await model.look() } }
-          .disabled(model.normalisedLogin == nil || model.lookup == .loading)
+          .disabled(model.normalisedLogin == nil || model.displayedLookup == .loading)
       }
 
       if model.isLoginUnrecognised {
@@ -98,7 +113,11 @@ struct AddChannelWindow: View {
           .font(.callout)
           .foregroundStyle(.red)
       } else {
-        switch model.lookup {
+        // `displayedLookup`, not `lookup` — a settled result for a login
+        // that has since been edited away must read as `.idle`, not show
+        // the previous channel's summary under the current one's text field.
+        // See `AddChannelModel.displayedLookup`'s own doc comment.
+        switch model.displayedLookup {
         case .idle:
           EmptyView()
         case .loading:
@@ -237,9 +256,22 @@ struct AddChannelWindow: View {
       // being fetched; this line only has something to add once `.allAvailable`
       // gives it a real backfill to price.
       if let estimate = model.estimate, estimate.count > 0 {
-        Text(backfillCaption(for: estimate))
-          .font(.caption)
-          .foregroundStyle(.secondary)
+        if model.output == .videoWithChat {
+          // `.help` carries the mechanism, not the caption itself — this is
+          // the one control in the window that can move a number the
+          // counter-intuitive way (turning chat *on* can shrink the figure;
+          // see `backfillMechanismNote`), and a caption already carrying two
+          // clauses ("about … at its peak · … free on …") has no room left
+          // to defend itself against its own surprise.
+          Text(backfillCaption(for: estimate))
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .help(backfillMechanismNote)
+        } else {
+          Text(backfillCaption(for: estimate))
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
       }
     } header: {
       Text("Settings")
@@ -271,11 +303,31 @@ struct AddChannelWindow: View {
   /// the backfill leaves behind once every job is done — that would be the
   /// sum of what each archive delivers. It is what the disk has to hold
   /// while the backfill is *running*: every archive already delivered, plus
-  /// one job's own transient overhead, which is largest for whichever output
-  /// this picks — turning chat on adds a render pass with a transient of its
-  /// own, so the peak (and this line) rises with it. Wording this as a
+  /// one job's own transient overhead — only one job runs at a time
+  /// (`TeardownJournal` tears down each one's scratch before the next
+  /// starts, per `BackfillEstimate`'s own doc comment), so only one
+  /// transient ever coexists with the delivered sum. Wording this as a
   /// standing total would promise a number the backfill never actually sits
   /// at.
+  ///
+  /// **Does NOT rise whenever chat is turned on — above roughly five
+  /// archives it falls, and this line has to be read that way.** An earlier
+  /// version of this comment claimed the opposite ("turning chat on adds a
+  /// render pass with a transient of its own, so the peak … rises with it"),
+  /// which is only true for a short backfill. `h264_videotoolbox`'s constant
+  /// quality mode re-encodes the composite to about 47% of Twitch's own
+  /// source bitrate at 1080p (`SpaceEstimate.compositeBitsPerPixel` against
+  /// `CompositeGeometry.pixelRate`; `docs/design/disk-preflight.md` §5 records
+  /// the same property in absolute terms — 15 GB of composite against 23 GB
+  /// of source for the same six-hour job), while a plain video download pays
+  /// the full source bitrate for every archive it keeps. Chat's own
+  /// transient render pass is real, but it is paid once per *running job*,
+  /// not once per archive, so it is a fixed cost that a longer backfill
+  /// dilutes rather than a per-archive one that compounds. Past a small
+  /// handful of archives — near five, by the same arithmetic — the saving on
+  /// every archive already delivered outweighs that one fixed cost, and
+  /// `Σ composite + one transient` drops below `Σ source`. Below that count
+  /// the line still reads higher with chat on; above it, lower.
   private func backfillCaption(for estimate: BackfillEstimate) -> String {
     let needed = "about " + Int64(estimate.bytes).formatted(.byteCount(style: .file))
     guard let folder = model.folder, let available = volumeSpace.availableBytes(folder) else {
@@ -284,6 +336,18 @@ struct AddChannelWindow: View {
     let free = available.formatted(.byteCount(style: .file))
     let name = volumeSpace.volumeName(folder) ?? folder.lastPathComponent
     return "Running this backfill will need \(needed) at its peak · \(free) free on \(name)"
+  }
+
+  /// Why turning chat on can *shrink* `backfillCaption`'s figure instead of
+  /// growing it — see that function's own doc comment for the arithmetic.
+  /// This is the only control in the window that moves a number the
+  /// counter-intuitive way, so it is the one that has to say why: toggling
+  /// Video → Video + chat and watching the estimate drop, with nothing on
+  /// screen attributing it to anything, reads as a broken estimator rather
+  /// than as the correct answer.
+  private var backfillMechanismNote: String {
+    "The chat build is re-encoded rather than kept at Twitch's own bitrate, "
+      + "so across several archives it usually lands smaller than video alone."
   }
 
   private var destination: some View {
@@ -330,18 +394,6 @@ struct AddChannelWindow: View {
     }
     .padding(.horizontal, 20)
     .padding(.vertical, 14)
-  }
-
-  // MARK: - Helpers
-
-  /// Whether a lookup settled with at least one archive to show scope and
-  /// settings against. An empty result is not an error — `lookupSummary`
-  /// above says so plainly — but there is nothing yet for a scope choice or
-  /// a priced backfill to mean, so both stay hidden rather than showing a
-  /// picker over nothing and a total of zero.
-  private var hasArchivesToConfigure: Bool {
-    if case .loaded(let archives) = model.lookup { return !archives.isEmpty }
-    return false
   }
 
   // MARK: - Actions
@@ -407,7 +459,17 @@ struct AddChannelWindow: View {
   /// `supportDirectory` to build a `WatchStore` from (its caller already has
   /// one), so there is nothing to gain by routing through it, only a
   /// parameter it does not need.
-  private static func liveChannelFeed() -> ChannelFeed {
+  ///
+  /// **A lazy `static let`, not a function called from `init`.** SwiftUI
+  /// re-evaluates a view's `init` on every scene-body re-render, but
+  /// `_model = State(initialValue:)` only ever keeps the first result — every
+  /// later call built a configuration, a session and a `ChannelFeed` purely
+  /// to throw them away unread. Nothing about this value is per-window: the
+  /// configuration is fixed and the session carries no state that should
+  /// differ between one `AddChannelWindow` and the next, so one shared,
+  /// lazily-built instance for the process is strictly more correct than a
+  /// fresh one nobody asked for.
+  private static let liveChannelFeed: ChannelFeed = {
     let configuration = URLSessionConfiguration.ephemeral
     configuration.timeoutIntervalForRequest = 15
     configuration.waitsForConnectivity = false
@@ -419,7 +481,7 @@ struct AddChannelWindow: View {
       }
       return (data, http)
     })
-  }
+  }()
 }
 
 // MARK: - Previews
