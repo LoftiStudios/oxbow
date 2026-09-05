@@ -318,6 +318,31 @@ the exact failure the feature exists to prevent. The sidebar also gives the
 unread count somewhere to live, so "things are waiting" is visible without
 depending on a notification.
 
+### 8.1 A macOS 26 regression: `.badge()` before `.tag()` breaks selection
+
+Building this sidebar's `List` hit a genuine SwiftUI bug on macOS 26: apply
+`.badge()` to a row's label before `.tag()`, and clicking that row stops
+changing the `List`'s selection binding at all. AppKit still fires — the row
+highlights — but the value SwiftUI hands back to `selection` never updates.
+Neither modifier's documentation says order matters, and nothing else in this
+codebase's use of `.badge()` (§7.1 of `settings.md`, the menu-item icon
+regression) is the same failure — that one is about auto-iconing menu items,
+not about a `List` losing clicks.
+
+Bisected by hand against the built sidebar, one row shape at a time:
+
+| Row content | Click-to-select |
+|---|---|
+| `Text` alone, `.tag()` only | works |
+| `Label`, `.tag()` only | works |
+| `Label`, `.tag()` then `.badge()` | **broken** |
+| `Label`, `.badge()` then `.tag()` | works |
+
+The fix is the order, not the presence, of the two modifiers: `.badge()`
+always before `.tag()`. `QueueView`'s sidebar carries an inline comment at the
+call site recording this as load-bearing; this section is the place to look
+for the reasoning and the bisection behind it.
+
 ---
 
 ## 9. Shape
