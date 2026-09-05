@@ -21,17 +21,39 @@ import OxbowKit
 /// thing on a screen that is trying to be quiet.
 struct WatchingView: View {
   let sections: [WatchingModel.Section]
+  /// Whether `WatchPoller` is mid-sweep right now.
+  ///
+  /// Sweeps are sequential, one request per channel with a 15-second
+  /// timeout (`WatchPoller.live`), so with several watches the gap between
+  /// launch and the first sweep landing can run to minutes. Without this,
+  /// `sections.isEmpty` cannot tell that window apart from having nothing
+  /// watched at all, and would spend it telling someone with several watches
+  /// that they have none.
+  let isSweeping: Bool
   let onAdd: (ChannelArchive, WatchingModel.Section) -> Void
   let onIgnore: (ChannelArchive, WatchingModel.Section) -> Void
 
   var body: some View {
     if sections.isEmpty {
-      // Not "loading" and not "checking" — there is a real difference between
-      // no results yet and nothing to check in the first place, and until the
-      // next plan adds a way to watch a channel from here, this *is* that
-      // second case for everyone who opens it.
-      ContentUnavailableView {
-        Label("No channels watched yet", systemImage: "eye")
+      if isSweeping {
+        // Distinct from the genuinely-empty case below, and deliberately not
+        // claiming anything about what it will find: a sweep that turns up
+        // nothing lands right back here with `isSweeping` false, which is
+        // exactly the "No channels watched yet" state — still honest, since
+        // nothing here can create a watch from the UI yet either.
+        ContentUnavailableView {
+          Label("Checking your channels", systemImage: "eye")
+        } description: {
+          Text("Looking for new videos. This can take a while with several channels.")
+        }
+      } else {
+        // Not "loading" — there is a real difference between nothing to check
+        // in the first place and a sweep still in flight, and until the next
+        // plan adds a way to watch a channel from here, this *is* the nothing-
+        // to-check case for everyone who opens it.
+        ContentUnavailableView {
+          Label("No channels watched yet", systemImage: "eye")
+        }
       }
     } else {
       List {
@@ -96,6 +118,7 @@ private struct FailureRow: View {
         login: "quietchannel", displayName: "A Quiet Channel",
         archives: [], failure: nil),
     ],
+    isSweeping: false,
     onAdd: { _, _ in }, onIgnore: { _, _ in })
   .frame(width: 480, height: 420)
 }
@@ -111,12 +134,21 @@ private struct FailureRow: View {
         archives: [],
         failure: "The response did not include the expected video list."),
     ],
+    isSweeping: false,
     onAdd: { _, _ in }, onIgnore: { _, _ in })
   .frame(width: 480, height: 420)
 }
 
 #Preview("No channels watched") {
-  WatchingView(sections: [], onAdd: { _, _ in }, onIgnore: { _, _ in })
+  WatchingView(sections: [], isSweeping: false, onAdd: { _, _ in }, onIgnore: { _, _ in })
+    .frame(width: 480, height: 420)
+}
+
+#Preview("Checking, first sweep") {
+  // The window between launch and the first sweep landing: `sections` is
+  // still empty, but this must not read as "no channels watched" — see
+  // `isSweeping`'s doc above.
+  WatchingView(sections: [], isSweeping: true, onAdd: { _, _ in }, onIgnore: { _, _ in })
     .frame(width: 480, height: 420)
 }
 
