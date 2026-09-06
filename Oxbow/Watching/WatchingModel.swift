@@ -5,10 +5,16 @@ import OxbowKit
 /// The Watching list: what the last sweep found, and the two things a person
 /// can do about it.
 ///
-/// **The only writer to `watches.json`.** Polling is read-only by design
-/// (`docs/design/channel-watching.md` §4) — the seen-set changes when someone
-/// Adds or Ignores, and nowhere else. Keeping both writes here is what stops
-/// the poller and the UI racing over the same file.
+/// **Not the only writer to `watches.json` any more.** This used to be —
+/// polling was read-only by design (`docs/design/channel-watching.md` §4),
+/// and the seen-set changed only when someone Added or Ignored. Automatic
+/// downloading added two more: `WatchPoller.markSubmitted` marks an archive
+/// seen the moment it queues it, and `AutoDownloadObserver.forget` un-marks
+/// one the moment its job fails. Both write through their own `WatchStore`
+/// over the same file, out of band, with nobody looking — which is exactly
+/// why `rebuild()` reconciles every section (and, now, the `dismissed`
+/// overlay) against each watch's own persisted `seen` on every read, rather
+/// than trusting only what this model itself last wrote.
 @MainActor
 @Observable
 final class WatchingModel {
@@ -39,9 +45,10 @@ final class WatchingModel {
     ///
     /// Off by default and consequential (§2, §11.1) — a watch that has it on
     /// has to look different from one that does not, or the one control that
-    /// matters most is also the one nobody can see they turned on. Nothing
-    /// downloads automatically yet (that is a later stage); this shows the
-    /// stored intent, not a running behaviour.
+    /// matters most is also the one nobody can see they turned on. Automatic
+    /// downloading is real now (`WatchPoller.actOnFindings`); this shows the
+    /// stored intent, not a running behaviour, which is what makes it correct
+    /// to read even while a sweep is between decisions.
     var downloadsAutomatically: Bool
 
     var id: String { login }
@@ -84,6 +91,21 @@ final class WatchingModel {
   /// all (which, for a channel `seen` already excludes it from, means the
   /// sweep excluded it too — `WatchPoll.sweep` applies the identical filter
   /// before this model ever sees the result).
+  ///
+  /// **Also narrowed by `rebuild()`, against every watch's own `seen` — this
+  /// is the second, newer way an id must stop being masked here.** A manual
+  /// Add persists the archive into `seen` and into this overlay together
+  /// (`markSeen`). If that download later fails, `AutoDownloadObserver
+  /// .forget` un-marks it — through a different `WatchStore` instance over
+  /// the same file, out of band, with nobody looking — but this overlay
+  /// never heard about that: it only ever narrows itself in `apply(_:)`,
+  /// against a sweep's *found* ids, and the archive is still found (it has
+  /// not expired). Without reconciling against `seen` too, the row would
+  /// stay masked here even though the watch itself now says it is unseen,
+  /// and it would only reappear after a relaunch throws this whole set away.
+  /// `rebuild()` is where every other reconciliation against `seen` already
+  /// happens (`Watch.findings(in:)`), so this is that same rule applied one
+  /// layer up, to the overlay sitting in front of it.
   private var dismissed: Set<String> = []
 
   /// The latest sweep. `rebuild()` looks a login up in here; it never
@@ -346,6 +368,15 @@ final class WatchingModel {
     markSeenFailure = nil
 
     refreshWatches()
+
+    // `dismissed` yields to disk here, in both directions — see that
+    // property's own doc comment for the concrete failure this closes.
+    // Pruned against every watch actually on disk, not just whichever
+    // section is being built below, because an id an observer un-marked
+    // belongs to exactly one watch and this is one pass over all of them
+    // rather than one lookup per archive.
+    let stillSeen = watches.reduce(into: Set<String>()) { $0.formUnion($1.seen) }
+    dismissed.formIntersection(stillSeen)
 
     sections = watches.map { watch in
       let outcome = latest.first(where: { $0.login == watch.login })?.outcome

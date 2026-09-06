@@ -291,6 +291,41 @@ struct WatchingModelTests {
       "the watch's own seen set still hides it, even once dismissed has forgotten it")
   }
 
+  /// Finding 5. A manual Add persists the archive into `seen` *and* into
+  /// `dismissed` together (`markSeen`). If that download later fails,
+  /// `AutoDownloadObserver.forget` un-marks it on disk, through a different
+  /// `WatchStore` over the same file — but `dismissed` never hears about
+  /// that; it only narrows itself in `apply(_:)` against a sweep's *found*
+  /// ids, and the archive is still found (it has not expired). Before this
+  /// fix, the row stayed hidden here regardless — reappearing only after a
+  /// relaunch threw `dismissed` away, which is exactly what Task 4's own
+  /// test could not catch, since it exercises the observer in isolation
+  /// rather than through this model's overlay.
+  @Test func aFailedDownloadsArchiveReappearsInTheSameSessionOnceTheWatchForgetsIt() throws {
+    let store = temporaryStore()
+    try store.save([watch("ninja")])
+    let model = model(store: store)
+    model.apply([.init(login: "ninja", displayName: "Ninja", outcome: .found([archive("1")]))])
+
+    model.add(archive("1"), from: "ninja")
+    #expect(model.sections[0].archives.isEmpty, "precondition: Add hid the row and marked it seen")
+
+    // Stands in for `AutoDownloadObserver.forget`: the job for "1" failed,
+    // so it is un-marked on disk through a second `WatchStore` instance over
+    // the same file — out of band, with nobody looking.
+    var current = try store.load()
+    current[0] = current[0].forgetting(["1"])
+    try store.save(current)
+
+    // A later sweep still finds "1" — it has not expired — and republishes
+    // the identical payload.
+    model.apply([.init(login: "ninja", displayName: "Ninja", outcome: .found([archive("1")]))])
+
+    #expect(
+      model.sections[0].archives.map(\.id) == ["1"],
+      "a failed download's archive must return to the inbox in this session, not only after relaunch")
+  }
+
   // MARK: - Every watched channel gets a section
 
   @Test func aChannelNeverPolledStillGetsASectionWithItsSettings() throws {
