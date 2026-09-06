@@ -222,6 +222,23 @@ final class WatchPoller {
     let floor = Preferences().freeSpaceFloor
     let resultsByLogin = Dictionary(uniqueKeysWithValues: results.map { ($0.login, $0) })
 
+    // Resolved once, up front, rather than only right before submitting —
+    // this sweep needs `controller.jobs` to decide what to offer (see
+    // `excludingArchivesWithFailedJobs`, used in the loop below), not only
+    // to act on that decision once it is made.
+    //
+    // Falls back to an empty job list rather than returning early when the
+    // engine is not `.ready`: the floor and destination checks below owe
+    // nothing to the queue being reachable, and bailing out here would drop
+    // this sweep's demotions along with its submissions for a condition
+    // that, in practice, `QueueHost` resolves once at launch and never
+    // un-resolves.
+    let readyState = await QueueHost.shared.ready()
+    let controller: QueueController? = {
+      guard case .ready(let controller) = readyState else { return nil }
+      return controller
+    }()
+
     var newDemotions: [String: AutoDownloadPolicy.Reason] = [:]
     var toSubmit: [(watch: Watch, archives: [ChannelArchive])] = []
 
@@ -231,7 +248,13 @@ final class WatchPoller {
       // must not use — but this is not one. The floor and destination
       // checks below are unaffected by whether the feed answered, and a
       // watch with nothing found submits nothing regardless of why.
-      let findings = resultsByLogin[watch.login]?.findings ?? []
+      //
+      // Filtered through `Self.excludingArchivesWithFailedJobs` before
+      // `decide()` ever sees them — see that function's own doc comment for
+      // why a `.failed` job has to remove its archive from the unattended
+      // path entirely, not merely fail to duplicate it.
+      let findings = Self.excludingArchivesWithFailedJobs(
+        resultsByLogin[watch.login]?.findings ?? [], jobs: controller?.jobs ?? [])
       let destination = watch.settings.destination
       let destinationExists = FileManager.default.fileExists(atPath: destination.path)
       // An unreadable volume is treated as below the floor, not as
@@ -263,11 +286,12 @@ final class WatchPoller {
 
     guard !toSubmit.isEmpty else { return }
 
-    // Resolved once and reused for every submission below — the same
-    // engine `DownloadTwitchVideoIntent.perform()` binds once, for the same
-    // reason its own comment gives: a second call was never wrong, only
-    // harder to read.
-    guard case .ready(let controller) = await QueueHost.shared.ready() else { return }
+    // Resolved once, above — the same engine `DownloadTwitchVideoIntent
+    // .perform()` binds once, for the same reason its own comment gives: a
+    // second call was never wrong, only harder to read. `controller` is nil
+    // exactly when the engine was not `.ready` up there, in which case there
+    // is nothing to submit into regardless of what this sweep decided.
+    guard let controller else { return }
 
     // Sequential, matching `WatchPoll.sweep`'s own reasoning
     // (`docs/twitch-channel-api.md` §4): issuing a dozen submissions at once
@@ -279,6 +303,56 @@ final class WatchPoller {
         await submit(archive, from: watch, into: controller)
       }
     }
+  }
+
+  /// `findings` with any archive removed whose `mediaIdentifier` already has
+  /// a `.failed` job in `jobs` — the fix for a durably failing archive being
+  /// re-downloaded automatically, every sweep, for its entire retention
+  /// window.
+  ///
+  /// **The loop this closes.** `AutoDownloadObserver.forget` un-marks a
+  /// failed automatic download's archive from `seen` so a *person* can
+  /// retry it (§6.3) — but the very next sweep loads that watch fresh, sees
+  /// the archive as unseen again, and — automatic still being on —
+  /// resubmits it unattended. `IntentSubmission.submit`'s duplicate guard
+  /// only blocks *unfinished* jobs (`JobStatus.isUnfinished`), so the
+  /// finished `.failed` job blocks nothing there. It fails the same way,
+  /// `forget` un-marks it again, and the cycle repeats: one full download
+  /// attempt per poll interval, forever, each one leaving behind a fresh
+  /// retained resume directory keyed on that attempt's own `JobID`
+  /// (`resume.md` §8 reclaims none of them without a person dismissing).
+  /// `docs/design/channel-watching.md` §6.3 rules this out in as many words.
+  ///
+  /// **The same move Task 4 used for the relaunch hazard, applied here
+  /// instead of adding state.** `AutoDownloadObserver.baseline`'s own doc
+  /// comment picks the snapshot already in hand over a fourth persisted
+  /// "already handled" record; this does the same thing one level up —
+  /// `WatchPoller` already holds `controller.jobs` for every sweep, so
+  /// checking it for a `.failed` sibling costs nothing new to store. The
+  /// archive still shows in the inbox — `Watch.findings(in:)` is untouched,
+  /// and `seen` is never written here — so a person can still Add it
+  /// deliberately; this only removes it from the path nobody is watching.
+  ///
+  /// **A `.cancelled` job does not count**, for the identical reason
+  /// `AutoDownloadObserver.mediaIdentifiersAlreadyAnswered` excludes it: a
+  /// cancellation is a person saying no, not the app having tried and lost,
+  /// so it must not block a future unattended attempt the way a real
+  /// failure does.
+  ///
+  /// A `static` pure function, deliberately, rather than inlined in
+  /// `actOnFindings` — the same reason `AutoDownloadPolicy.decide` (the
+  /// sibling decision this filters findings before ever reaching) takes no
+  /// collaborators of its own: it is testable against plain `Job` and
+  /// `ChannelArchive` fixtures, with no store, no clock and no `QueueHost`.
+  /// `nonisolated` for the identical reason — it touches no property of
+  /// this `@MainActor` class, so a test can call it directly rather than
+  /// hopping actors to reach a function that never needed the hop.
+  nonisolated static func excludingArchivesWithFailedJobs(
+    _ findings: [ChannelArchive], jobs: [Job]
+  ) -> [ChannelArchive] {
+    let failedMediaIdentifiers = Set(
+      jobs.compactMap { $0.status == .failed ? $0.mediaIdentifier : nil })
+    return findings.filter { !failedMediaIdentifiers.contains($0.id) }
   }
 
   /// Submits one archive through the one composition path, then marks it
