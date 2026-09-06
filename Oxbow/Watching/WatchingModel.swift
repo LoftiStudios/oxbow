@@ -181,6 +181,15 @@ final class WatchingModel {
   /// which is not an error: the file can change under a list already on
   /// screen.
   ///
+  /// **A failed save still hides the row and still returns the watch** — the
+  /// action is never blocked or rolled back — **but now sets
+  /// `markSeenFailure`**, so the banner says the row will come back on the
+  /// next launch instead of the user having no idea whether Ignore or Add did
+  /// anything at all. See the `store.save` call below for why silently
+  /// swallowing the error, the behaviour before this, was worse than either
+  /// alternative: it made a failed persist indistinguishable from a
+  /// completed one.
+  ///
   /// **`rebuild()` runs after the persist attempt, on every exit path.**
   /// `rebuild()` calls `refreshWatches()`, which re-reads `watches` from
   /// disk — so calling it before the write below would snapshot the file as
@@ -221,16 +230,35 @@ final class WatchingModel {
     }
 
     current[index] = current[index].marking([id])
-    // Best effort. `dismissed` was already updated above, before this write
-    // was attempted, and nothing rolls it back if the write fails — so a
-    // failed save does not cost "one re-offer on the next sweep": the row
-    // stays hidden by the in-memory overlay for the rest of this session (its
-    // id keeps coming back from every sweep, and `apply`'s
+    // Best effort — this does not throw, and does not undo `dismissed.insert`
+    // above, so the row stays hidden and (for `add(_:from:)`) intake still
+    // opens even when the write below fails. `dismissed` was already updated
+    // before this write was attempted, and nothing rolls it back if it fails
+    // — so a failed save does not cost "one re-offer on the next sweep": the
+    // row stays hidden by the in-memory overlay for the rest of this session
+    // (its id keeps coming back from every sweep, and `apply`'s
     // `formIntersection` keeps retaining it), and the re-offer only arrives
-    // on the next launch, once `dismissed` itself is gone. That is still a
-    // far better outcome than an alert about a file the user has no way to
-    // fix, on a list they are in the middle of triaging.
-    try? store.save(current)
+    // on the next launch, once `dismissed` itself is gone.
+    //
+    // That silent fallback used to be the whole story, which made a failed
+    // save indistinguishable from a completed one — no hide-then-reappear, no
+    // banner, nothing. An unresponsive button would have been more honest
+    // than an action that looks done and was not, so this now sets
+    // `markSeenFailure`, the same as the read failure above, and `rebuild()`
+    // first for the identical reason: it clears `markSeenFailure` as one of
+    // its own first steps, so setting the message before it would just have
+    // it wiped out again.
+    do {
+      try store.save(current)
+    } catch {
+      let result = current[index]
+      rebuild()
+      markSeenFailure = """
+        Oxbow could not save the watch list, so this will show up again the \
+        next time Oxbow launches. \(error.localizedDescription)
+        """
+      return result
+    }
     let result = current[index]
     rebuild()
     return result

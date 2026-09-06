@@ -246,6 +246,74 @@ struct WatchingModelTests {
     #expect(model.markSeenFailure != nil, "the refusal must say why, not just vanish")
   }
 
+  /// A `WatchStore` whose directory reads fine but cannot be written to.
+  /// `load()` neither writes nor needs write access, so it keeps succeeding;
+  /// `save()` fails at its very first write (`data.write(to: scratch)`,
+  /// creating the scratch file the atomic replace needs) because the
+  /// directory itself has no write bit. That is the split this needs:
+  /// `unreadableStore()` above makes `load()` itself throw, which is
+  /// `markSeen`'s *other* failure branch — this one is behind `try?
+  /// store.save`, the one that used to swallow the error with nothing on
+  /// screen to show for it.
+  private func writeProtectedStore(seeding watches: [Watch]) throws -> WatchStore {
+    let dir = URL.temporaryDirectory.appending(path: "watching-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    let store = WatchStore(fileURL: dir.appending(path: "watches.json"))
+    // Seed while the directory is still writable — `store.save` below is the
+    // one write this test wants to survive.
+    try store.save(watches)
+    // 0o500 (r-x) keeps read and traversal, so the existing `watches.json`
+    // stays fully readable, but drops write, so nothing new can be created
+    // in the directory — including the scratch file `save()` writes before
+    // its atomic replace.
+    try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: dir.path)
+    return store
+  }
+
+  /// The regression: `rebuild()` now reconciles `dismissed` against every
+  /// watch's own persisted `seen` (the correct fix that lets a failed
+  /// download's archive return to the inbox in the same session — see
+  /// `aFailedDownloadsArchiveReappearsInTheSameSessionOnceTheWatchForgetsIt`
+  /// above). That reconciliation reads `seen` fresh off disk on every
+  /// `rebuild()`, including the one `markSeen` runs on its own failure path —
+  /// so when `store.save` fails silently (`try?`), the id never actually
+  /// lands in `seen`, and `markSeenFailure` was never set for this branch
+  /// (only the `store.load()` throw above set it). Ignore or Add on a channel
+  /// whose persist fails used to look like nothing happened at all: no
+  /// message, and nothing to tell it apart from a completed action.
+  ///
+  /// **Confirming this exercises the save branch, not the load branch:**
+  /// unlike `unreadableStore()`, `store.load()` against this fixture must
+  /// keep succeeding throughout — asserted directly below, both before
+  /// `ignore()` runs and after, the second one also pinning that "1" never
+  /// actually made it into `seen` (proof the save itself failed, not that it
+  /// silently succeeded).
+  @Test func ignoringOnAWriteProtectedStoreSurfacesTheSaveFailureRatherThanFailingSilently() throws {
+    let store = try writeProtectedStore(seeding: [watch("ninja")])
+    let dir = store.fileURL.deletingLastPathComponent()
+    defer {
+      // Restore the write bit before cleanup — `removeItem` on a read-only
+      // directory would itself fail and leak the fixture.
+      try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: dir.path)
+      try? FileManager.default.removeItem(at: dir)
+    }
+    // Confirms `load()` still works against this fixture — a store that
+    // could not be read at all would reach `markSeen`'s *other* failure
+    // branch instead, the one `ignoringOnAnUnreadableStoreSurfacesTheFailure
+    // RatherThanFailingSilently` above already covers.
+    #expect(try store.load().map(\.login) == ["ninja"], "precondition: load must still succeed")
+
+    let model = model(store: store)
+    model.apply([.init(login: "ninja", displayName: "Ninja", outcome: .found([archive("1")]))])
+
+    model.ignore(archive("1"), from: "ninja")
+
+    #expect(model.markSeenFailure != nil, "a failed save must say why, not just vanish")
+    #expect(
+      try store.load()[0].seen.isEmpty,
+      "the save must have actually failed — \"1\" never reached seen on disk")
+  }
+
   @Test func aSweepThatStraddlesADismissalDoesNotBringTheRowBack() throws {
     // `sweep` reads the seen-set once up front, then makes slow sequential
     // per-channel calls. A sweep that was already in flight when the ignore
