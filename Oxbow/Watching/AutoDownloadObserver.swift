@@ -69,6 +69,27 @@ final class AutoDownloadObserver {
   /// §6.3 exists to prevent. So a job's absence from this baseline reads as
   /// "previously unfinished," which forces a job already `.failed` at first
   /// sight to be acted on rather than seeded past.
+  ///
+  /// **That same rule would double-fire across a relaunch, so `apply(_:)`
+  /// checks the snapshot itself rather than adding more persisted state.**
+  /// Sequence: job A fails and un-marks archive `12345`; a person re-Adds
+  /// it, creating job B which marks `12345` seen again; A is deliberately
+  /// left untouched (requirement 6) and sits `.failed`, user-cleared per
+  /// `resume.md` §8, possibly for a long time; the app quits and relaunches
+  /// before A is dismissed. The new observer's `baseline` starts empty, so
+  /// A reads as freshly failed on the first snapshot — exactly the rule
+  /// above requires — and would un-mark `12345` a second time even though B
+  /// already answered it. Adding a persisted "already handled" record would
+  /// fix this at the cost of the exact bookkeeping `Watch.forgetting`'s own
+  /// doc comment says has already burned this feature once. The snapshot
+  /// already carries the answer for free: before un-marking a newly-failed
+  /// job's media, `apply(_:)` looks for another job *in that same snapshot*
+  /// for the same `mediaIdentifier` that is `.done`, `.queued`, or
+  /// `.running` — a success or a retry already in flight — and skips
+  /// un-marking when one exists, because the failure has already been
+  /// answered. A `.cancelled` sibling does not count: per the type's own
+  /// doc comment above, a cancellation is a person saying no, not the app
+  /// doing better, so it never blocks the un-mark.
   private var baseline: [JobID: JobStatus] = [:]
 
   init(store: WatchStore) {
@@ -91,7 +112,31 @@ final class AutoDownloadObserver {
     baseline = NotificationDecision.statuses(of: jobs)
 
     guard !newlyFailed.isEmpty else { return }
-    forget(newlyFailed)
+    let answered = mediaIdentifiersAlreadyAnswered(in: jobs)
+    let toForget = newlyFailed.filter { !answered.contains($0) }
+    guard !toForget.isEmpty else { return }
+    forget(toForget)
+  }
+
+  /// Media identifiers this same snapshot already has a better outcome for
+  /// than the failure being considered — see `baseline`'s doc comment for
+  /// the relaunch hazard this exists to close.
+  ///
+  /// `.done` means a retry already succeeded; `.queued` or `.running` means
+  /// one is already in flight. Either way, un-marking now would be wrong:
+  /// it would either put an archive back in the inbox that is already
+  /// sitting on disk, or race a retry that is still working. `.failed` and
+  /// `.cancelled` jobs are excluded on purpose — a second failure is not an
+  /// answer to the first, and per this type's own doc comment a
+  /// cancellation is a person saying no, not the app doing better, so
+  /// neither should block the un-mark.
+  private func mediaIdentifiersAlreadyAnswered(in jobs: [Job]) -> Set<String> {
+    Set(jobs.compactMap { job -> String? in
+      switch job.status {
+      case .done, .queued, .running: return job.mediaIdentifier
+      case .failed, .cancelled: return nil
+      }
+    })
   }
 
   /// Un-marks every watch whose `seen` set contains one of

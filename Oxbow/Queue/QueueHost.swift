@@ -212,20 +212,23 @@ final class QueueHost {
   /// alongside `dock` and `notifier` rather than opening a second
   /// subscription of its own.
   ///
-  /// **Gated behind the same `dock`/`notifier` guard, even though it needs
-  /// no OS permission of its own.** `OxbowTests` is hosted by this app, so
+  /// **Gated on `AppComposition.isUserSession` directly, ahead of the
+  /// `dock`/`notifier` unwrap.** `OxbowTests` is hosted by this app, so
   /// `xcodebuild test` builds a real `QueueController` against the
   /// developer's own `queue.json` — but `WatchingModel` and `WatchPoller`
   /// are deliberately never constructed in that case (`OxbowApp`'s own
-  /// `AppComposition.isUserSession`-guarded `.task`), specifically so a test
-  /// run never touches the developer's real `watches.json`. Wiring this
-  /// observer outside that guard would make it the first thing to break
-  /// that invariant: a `.failed` job already sitting in a developer's own
-  /// queue would have its archive silently un-marked on every test run.
-  /// `dock` and `notifier` are themselves nil only under `xcodebuild test`
-  /// (see their own declarations), so gating on them is gating on exactly
-  /// the condition this observer needs to avoid too.
+  /// `AppComposition.isUserSession`-guarded `.task`), specifically so a
+  /// test run never touches the developer's real `watches.json`. `dock` and
+  /// `notifier` merely *happen* to be nil under exactly that same condition
+  /// today (see their own declarations) — nothing enforces that the two
+  /// stay in lockstep, so unwrapping them was gating this observer on a
+  /// coincidence, not on the requirement. Of the three surfaces wired
+  /// below, `AutoDownloadObserver` is the one that *writes* user data
+  /// (`Watch.forgetting` mutates `watches.json`) rather than only
+  /// displaying it, so it is the one whose safety this guard must not lose
+  /// silently if `dock` or `notifier` ever gets a non-nil test double.
   private func attachStatusObservers(to controller: QueueController, supportDirectory: URL) {
+    guard AppComposition.isUserSession else { return }
     guard let dock, let notifier else { return }
     let autoDownloadObserver = AutoDownloadObserver(
       store: WatchStore(fileURL: AppComposition.watchStoreURL(supportDirectory: supportDirectory)))
