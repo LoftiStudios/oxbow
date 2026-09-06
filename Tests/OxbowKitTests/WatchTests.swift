@@ -65,6 +65,25 @@ struct WatchTests {
     #expect(watch(seen: ["1"]).marking(["2", "3"]).seen == ["1", "2", "3"])
   }
 
+  @Test("forgetting is subtractive and returns a new value")
+  func forgettingIsSubtractive() {
+    #expect(watch(seen: ["1", "2", "3"]).forgetting(["2"]).seen == ["1", "3"])
+  }
+
+  @Test("forgetting an id not present is a no-op, not an error")
+  func forgettingAnAbsentIdIsANoOp() {
+    #expect(watch(seen: ["1"]).forgetting(["9"]).seen == ["1"])
+  }
+
+  @Test("a forgotten archive is a finding again")
+  func forgottenArchiveIsAFindingAgain() {
+    // The whole point: a failed automatic download has to come back to the
+    // inbox, and it does so by no longer being in `seen` — nothing else
+    // needs to change for `findings(in:)` to surface it again.
+    let watch = watch(seen: ["1"]).forgetting(["1"])
+    #expect(watch.findings(in: [archive("1")]).map(\.id) == ["1"])
+  }
+
   // MARK: Login normalisation
 
   @Test("a channel URL reduces to its login")

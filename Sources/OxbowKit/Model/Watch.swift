@@ -148,4 +148,31 @@ public struct Watch: Equatable, Sendable, Codable {
     copy.seen.formUnion(ids)
     return copy
   }
+
+  /// The inverse of `marking(_:)`: a copy with `ids` removed from `seen`.
+  ///
+  /// **On its own this looks like dead API — `seen` only ever grows, by
+  /// design (§4 above).** It exists for exactly one caller: an automatic
+  /// download that fails has to return to the inbox as a finding, and that
+  /// cannot be expressed against a monotonic set — the archive is already in
+  /// `seen`, marked there the moment it was queued, and nothing about a
+  /// failure is a new archive to seed.
+  ///
+  /// The alternative was a fourth overlay set living alongside `dismissed`,
+  /// `latest` and `watches` in `WatchingModel` — one more piece of state
+  /// tracking what a persisted set already tracks, kept in sync by hand. A
+  /// design review of that exact shape found six bugs traceable to it, and
+  /// the fix (`docs/design/channel-watching.md` §4, and the commits that
+  /// made `watches` the model's spine instead of a stale poll snapshot)
+  /// deleted three of the compensations it had accumulated. Adding a fourth
+  /// overlay to cover the failure case would be repeating the mistake the
+  /// same afternoon it was fixed. A failure is a `seen` removal and nothing
+  /// else — `WatchingModel`'s existing reconciliation against `seen`
+  /// (`findings(in:)`) does the rest for free. See
+  /// `docs/design/channel-watching.md` §6.3.
+  public func forgetting(_ ids: some Sequence<String>) -> Watch {
+    var copy = self
+    copy.seen.subtract(ids)
+    return copy
+  }
 }

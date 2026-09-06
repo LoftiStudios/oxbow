@@ -24,6 +24,7 @@ struct PreferencesTests {
     #expect(store.qualityCap == .best)
     #expect(store.output == .videoWithChat)
     #expect(store.chatSize == .medium)
+    #expect(store.freeSpaceFloor == Preferences.factoryFreeSpaceFloor)
   }
 
   @Test func hasSavedDefaultsStartsFalse() throws {
@@ -39,12 +40,14 @@ struct PreferencesTests {
     writer.qualityCap = .p720
     writer.output = .video
     writer.chatSize = .large
+    writer.freeSpaceFloor = 12_000_000_000
 
     let reader = store(defaults)
     #expect(reader.destination == URL(filePath: "/Volumes/Archive/VODs"))
     #expect(reader.qualityCap == .p720)
     #expect(reader.output == .video)
     #expect(reader.chatSize == .large)
+    #expect(reader.freeSpaceFloor == 12_000_000_000)
   }
 
   // MARK: - optionsPanelIsExpanded
@@ -88,6 +91,7 @@ struct PreferencesTests {
       { (p: inout Preferences) in p.qualityCap = .p480 },
       { (p: inout Preferences) in p.output = .video },
       { (p: inout Preferences) in p.chatSize = .small },
+      { (p: inout Preferences) in p.freeSpaceFloor = 1_000_000_000 },
     ] {
       let defaults = InMemoryPreferenceStore()
       var writer = store(defaults)
@@ -106,6 +110,7 @@ struct PreferencesTests {
     store.output = .video
     store.chatSize = .large
     store.optionsPanelIsExpanded = false
+    store.freeSpaceFloor = 5_000_000_000
 
     store.restoreDefaults()
 
@@ -114,7 +119,27 @@ struct PreferencesTests {
     #expect(store.output == .videoWithChat)
     #expect(store.chatSize == .medium)
     #expect(store.optionsPanelIsExpanded)
+    #expect(store.freeSpaceFloor == Preferences.factoryFreeSpaceFloor)
     #expect(store.hasSavedDefaults == false)
+  }
+
+  // MARK: - freeSpaceFloor
+
+  /// The same failure mode `QualityLadderTests.rawValuesArePersistedAndPinned`
+  /// pins the quality cap's raw values against: a rename of the stored key or
+  /// a change to the factory value's unit must fail a test, not silently
+  /// orphan whatever is already on disk.
+  @Test func freeSpaceFloorKeyAndFactoryValueArePinned() throws {
+    let defaults = InMemoryPreferenceStore()
+    defaults.set(Int64(7_000_000_000), forKey: "freeSpaceFloor")
+    #expect(store(defaults).freeSpaceFloor == 7_000_000_000)
+
+    // The factory value: the peak `docs/design/disk-preflight.md` §5 prices
+    // for a six-hour 1080p60 job with chat (23 + 10 + 15 GB, "about 49 GB"),
+    // in bytes. A change here means either the estimator's own worked
+    // example changed or someone rounded this to something tidier — the
+    // test exists to force that to be a deliberate edit.
+    #expect(Preferences.factoryFreeSpaceFloor == 49_000_000_000)
   }
 
   // MARK: - A destination that no longer resolves

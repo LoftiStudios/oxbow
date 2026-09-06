@@ -97,6 +97,7 @@ public struct Preferences {
     static let chatSize = "defaultChatSize"
     static let hasSavedDefaults = "hasSavedDefaults"
     static let optionsExpanded = "intakeOptionsExpanded"
+    static let freeSpaceFloor = "freeSpaceFloor"
   }
 
   private let store: PreferenceStore
@@ -175,6 +176,45 @@ public struct Preferences {
     }
   }
 
+  /// Below this much free space on a watch's destination volume, automatic
+  /// downloading declines to start a job rather than risk it.
+  ///
+  /// **Stored as an `Int64` count of bytes — that is a storage format, not
+  /// an implementation detail.** A saved value is meaningless without the
+  /// unit it was written in; if this is ever changed to kilobytes or a
+  /// fractional gigabyte, every value already on disk silently means
+  /// something else the moment the new build reads it back. `QualityCap`'s
+  /// raw strings carry the identical trap for the same reason — see its own
+  /// comment.
+  public var freeSpaceFloor: Int64 {
+    get {
+      (store.object(forKey: Key.freeSpaceFloor) as? Int64) ?? Self.factoryFreeSpaceFloor
+    }
+    set {
+      store.set(newValue, forKey: Key.freeSpaceFloor)
+      recordSave()
+    }
+  }
+
+  /// The factory free-space floor, derived from the one worked example this
+  /// project actually has for what a job can peak at.
+  ///
+  /// `docs/design/disk-preflight.md` §5 prices a six-hour 1080p60 job with
+  /// chat — source 23 GB, chat-render intermediate 10 GB, composite output
+  /// 15 GB — at **"about 49 GB"** needed on the volume holding the workspace
+  /// (`SpaceEstimate.total`, where all three coexist while the composite is
+  /// being written). That is not a worst case picked to be safe; it is the
+  /// document's own arithmetic for an ordinary long stream, and per §3.2 the
+  /// composite term alone can run another ~3x over that for a busy title.
+  ///
+  /// A floor set below a single job's peak is a floor that never fires in
+  /// time to help — automatic downloading would start the job, discover the
+  /// shortfall the same way an unattended job discovers it today, and fail
+  /// partway through instead of before it began. So the factory floor is
+  /// that peak, not a round number chosen to look like enough: **49 GB**, in
+  /// bytes.
+  public static let factoryFreeSpaceFloor: Int64 = 49_000_000_000
+
   /// Whether the intake's options panel opens expanded.
   ///
   /// **Its own stored value, not derived from `hasSavedDefaults`.** Deriving
@@ -211,7 +251,7 @@ public struct Preferences {
 
   public mutating func restoreDefaults() {
     for key in [Key.destination, Key.qualityCap, Key.output, Key.chatSize,
-                Key.hasSavedDefaults, Key.optionsExpanded] {
+                Key.hasSavedDefaults, Key.optionsExpanded, Key.freeSpaceFloor] {
       store.removeObject(forKey: key)
     }
   }
