@@ -79,7 +79,10 @@ if [[ -n "${MINIMAL:-}" ]]; then
     --enable-demuxer=concat,rawvideo,mpegts,mov,ffmetadata,matroska,image2,aac,mp3,wav
     --enable-decoder=rawvideo,h264,hevc,aac,mp3,pcm_s16le,png
     --enable-encoder=h264_videotoolbox,hevc_videotoolbox,aac,rawvideo,png
-    --enable-muxer=mp4,mov,matroska,mpegts,rawvideo,image2,null
+    # `ipod` is what an `.m4a` extension resolves to. ArgumentBuilder writes the
+    # resume sidecar as `audio.m4a` with no `-f`, so without this a resumed
+    # composite fails at muxer init on a MINIMAL build.
+    --enable-muxer=mp4,mov,matroska,mpegts,rawvideo,image2,null,ipod
     --enable-parser=h264,hevc,aac,mpegaudio,png
     --enable-bsf=aac_adtstoasc,h264_mp4toannexb,hevc_mp4toannexb,extract_extradata
     --enable-filter=format,scale,null,copy,unsharp,setpts,fps,hstack,aformat,anull,aresample,atrim,trim,transpose,crop,pad
@@ -125,9 +128,10 @@ done
 "${FFMPEG_BIN}" -hide_banner -encoders 2>/dev/null | grep -q 'libx264' \
   && die "libx264 present — this is a GPL build."
 
-# The chat renderer pipes raw frames in; the VOD finalizer concatenates parts.
+# The chat renderer pipes raw frames in; the VOD finalizer concatenates parts;
+# a resumed composite writes its audio sidecar to `audio.m4a`, which is `ipod`.
 for component in "demuxers rawvideo" "demuxers concat" "demuxers ffmetadata" \
-                 "demuxers mpegts" "muxers mp4" "protocols pipe"; do
+                 "demuxers mpegts" "muxers mp4" "muxers ipod" "protocols pipe"; do
   set -- ${component}
   "${FFMPEG_BIN}" -hide_banner -"$1" 2>/dev/null | grep -qE "(^| )$2( |$)" \
     || die "Required component missing: $2 ($1)"

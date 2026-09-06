@@ -27,16 +27,23 @@ private func bundledFFmpegExists() -> Bool {
 /// That gate exists for real network access and multi-minute real encodes;
 /// this needs neither. The synthetic source below is built entirely from the
 /// bundled FFmpeg's own demuxers and encoders — no `lavfi`, `testsrc`, or
-/// `sine`, none of which exist in this `--disable-everything` build (see
-/// `docs/ffmpeg.md`) — by feeding raw video and raw PCM straight from
-/// `/dev/zero` through `rawvideo` and `wav`/`pcm_s16le`, the same technique
-/// `Tests/OxbowKitTests/Fixtures/fragmented-3-frames.mp4` established for a
-/// video-only fixture. One short `h264_videotoolbox`/`aac` encode of a few
-/// seconds of silence and black frames costs a fraction of a second — this
-/// runs the real composite argv through the real bundled binary and is still
-/// no slower than the fixture-based tests around it. It needs the bundled
-/// FFmpeg binary, though, which the default suite otherwise never touches,
-/// so the whole suite is skipped — not failed — when it is absent.
+/// `sine`, none of which exist even in the full build (see `docs/ffmpeg.md`)
+/// — by feeding black frames from `/dev/zero` through `rawvideo`, the same
+/// technique `Tests/OxbowKitTests/Fixtures/fragmented-3-frames.mp4`
+/// established for a video-only fixture, and silence through `wav`. Both of
+/// those demuxers are in the `MINIMAL=1` component list as well as the full
+/// one, so this holds against either build variant; `writeSilentWAV` below
+/// records why the audio track cannot simply be `/dev/zero` too.
+///
+/// One short `h264_videotoolbox`/`aac` encode of a few seconds of silence and
+/// black frames costs a fraction of a second — this runs the real composite
+/// argv through the real bundled binary and is still no slower than the
+/// fixture-based tests around it. It needs the bundled FFmpeg binary, though,
+/// which the default suite otherwise never touches, so the whole suite is
+/// skipped — not failed — when it is absent. The run stays green either way,
+/// and no CI job that runs the OxbowKit suite has the binary, so
+/// `docs/development.md` records where this does run and how to run it
+/// yourself before trusting a green result.
 @Suite("Sidecar rewrite spans the whole source", .enabled(if: bundledFFmpegExists()))
 struct SidecarRewriteFFmpegTests {
 
@@ -72,13 +79,20 @@ struct SidecarRewriteFFmpegTests {
   }
 
   /// The final `time=HH:MM:SS.ss` FFmpeg's default stats line reports for a
-  /// decode — the same technique `ResumeEndToEndTests.finalTime` uses against
-  /// the real VOD, reimplemented locally so this suite has no dependency on
-  /// that one and can be `.enabled(if:)`-gated independently of it.
+  /// pass over `file` — the same technique `ResumeEndToEndTests.finalTime`
+  /// uses against the real VOD, reimplemented locally so this suite has no
+  /// dependency on that one and can be `.enabled(if:)`-gated independently.
+  ///
+  /// `-c copy` rather than a decode. Writing to `-f null` otherwise picks the
+  /// null muxer's default encoder for the stream, which for AAC audio is
+  /// `pcm_s16le` — a *decoder* in the `MINIMAL=1` set but not an encoder, so
+  /// the measurement failed there on a file the composite had just written
+  /// perfectly well. Stream copy needs no encoder at all, reads the same
+  /// packet timestamps, and is the cheaper of the two.
   private func duration(of file: URL, scratch: URL) throws -> Double {
-    let result = try run(["-hide_banner", "-i", file.path, "-f", "null", "-"], in: scratch)
+    let result = try run(["-hide_banner", "-i", file.path, "-c", "copy", "-f", "null", "-"], in: scratch)
     guard result.status == 0 else {
-      throw TestError("decode of \(file.lastPathComponent) failed (\(result.status)):\n\(result.output)")
+      throw TestError("measuring \(file.lastPathComponent) failed (\(result.status)):\n\(result.output)")
     }
     let pattern = #"time=\s*(\d+):(\d+):(\d+\.\d+)"#
     let regex = try NSRegularExpression(pattern: pattern)
@@ -87,8 +101,50 @@ struct SidecarRewriteFFmpegTests {
           let hRange = Range(last.range(at: 1), in: result.output), let h = Double(result.output[hRange]),
           let mRange = Range(last.range(at: 2), in: result.output), let m = Double(result.output[mRange]),
           let sRange = Range(last.range(at: 3), in: result.output), let s = Double(result.output[sRange])
-    else { throw TestError("no time= in decode of \(file.lastPathComponent):\n\(result.output.suffix(1000))") }
+    else { throw TestError("no time= measuring \(file.lastPathComponent):\n\(result.output.suffix(1000))") }
     return h * 3600 + m * 60 + s
+  }
+
+  /// Writes `seconds` of 44.1 kHz mono silence as a WAV file.
+  ///
+  /// The audio has to reach FFmpeg through a demuxer that the `MINIMAL=1`
+  /// component set in `scripts/build-ffmpeg.sh` also has. Raw PCM straight
+  /// from `/dev/zero` needs `-f s16le`, and `s16le` is absent from that
+  /// build's `--enable-demuxer` list — so the video half of this source built
+  /// fine there while the audio half failed with `Unknown input format`.
+  /// `wav` is on the list, and prefixing the same zero bytes with a 44-byte
+  /// RIFF header yields the identical silent `pcm_s16le` track through a
+  /// demuxer both variants ship. Adding `s16le` to that list would have
+  /// worked too, but `docs/ffmpeg.md` §2 keeps the minimal set derived from
+  /// what Oxbow actually invokes, and a test is not a reason to widen it.
+  ///
+  /// The header also carries the rate, channel count and length, so this
+  /// input needs no `-f`, `-ar`, `-ac` or `-t` of its own.
+  private func writeSilentWAV(seconds: Double, to url: URL) throws {
+    let sampleRate = 44100
+    let bytesPerSample = 2  // pcm_s16le, one channel
+    let dataBytes = Int(Double(sampleRate) * seconds) * bytesPerSample
+
+    var header = Data()
+    func append(_ value: some FixedWidthInteger) {
+      withUnsafeBytes(of: value.littleEndian) { header.append(contentsOf: $0) }
+    }
+    func append(_ ascii: String) { header.append(contentsOf: Array(ascii.utf8)) }
+
+    append("RIFF")
+    append(UInt32(36 + dataBytes))  // everything in the file after this field
+    append("WAVEfmt ")
+    append(UInt32(16))  // fmt chunk size
+    append(UInt16(1))  // PCM, uncompressed
+    append(UInt16(1))  // mono
+    append(UInt32(sampleRate))
+    append(UInt32(sampleRate * bytesPerSample))  // byte rate
+    append(UInt16(bytesPerSample))  // block align
+    append(UInt16(8 * bytesPerSample))  // bits per sample
+    append("data")
+    append(UInt32(dataBytes))
+
+    try (header + Data(count: dataBytes)).write(to: url)
   }
 
   @Test func aResumedSidecarSpansTheWholeSourceNotTheTail() throws {
@@ -98,16 +154,19 @@ struct SidecarRewriteFFmpegTests {
     defer { try? FileManager.default.removeItem(at: scratch) }
 
     // A synthetic source with both a video and an audio track, entirely from
-    // the bundled FFmpeg's own component set: black yuv420p frames and
-    // silent PCM, both read straight from /dev/zero and capped with -t.
+    // the bundled FFmpeg's own component set: black yuv420p frames read
+    // straight from /dev/zero and capped by the output -t, and silence from a
+    // WAV whose own header already fixes its length at sourceDuration.
     let sourceDuration = 6.0
+    let silence = scratch.appending(path: "silence.wav")
+    try writeSilentWAV(seconds: sourceDuration, to: silence)
     let source = scratch.appending(path: "source.mp4")
     let build = try run([
       "-y", "-hide_banner", "-loglevel", "error",
       "-f", "rawvideo", "-pix_fmt", "yuv420p", "-s", "64x64", "-r", "10",
-      "-i", "/dev/zero", "-t", "\(sourceDuration)",
-      "-f", "s16le", "-ar", "44100", "-ac", "1",
-      "-i", "/dev/zero", "-t", "\(sourceDuration)",
+      "-i", "/dev/zero",
+      "-i", silence.path,
+      "-t", "\(sourceDuration)",
       "-c:v", "h264_videotoolbox", "-b:v", "200k", "-pix_fmt", "yuv420p",
       "-c:a", "aac", "-b:a", "64k",
       "-movflags", "+faststart",

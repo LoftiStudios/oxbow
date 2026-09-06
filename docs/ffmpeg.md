@@ -97,6 +97,7 @@ directly rather than through the CLI:
 | Chat render in | `ChatRenderArgs` default | `-framerate {fps} -f rawvideo -analyzeduration MAX -probesize MAX -pix_fmt {bgra\|rgba} -video_size {w}x{h} -i -` |
 | Chat mask in | `ChatRenderer.GetFfmpegProcess` | same, with `-pix_fmt gray` |
 | Composite | Oxbow's own `ArgumentBuilder` (`.composite` case) | `-i video.mp4 -i chat.mp4 -filter_complex "…hstack=inputs=2…" -map [out] -map 0:a:0? -c:v h264_videotoolbox -b:v {bitrate} -pix_fmt yuv420p -c:a copy -progress pipe:1 out.mp4` |
+| Composite sidecar, on resume | same, `needsUnseekedSource` branch | a second output: `-map 2:a:0? -c:a copy audio.m4a` |
 
 This implies: `concat` / `rawvideo` / `mpegts` / `mov` / `ffmetadata` demuxers,
 `mp4` + `mov` muxers, `rawvideo` decoder, `h264_videotoolbox` encoder, `file` +
@@ -104,6 +105,16 @@ This implies: `concat` / `rawvideo` / `mpegts` / `mov` / `ffmetadata` demuxers,
 AAC stream-copy from `.ts` into `.mp4` work, and is easy to miss. The composite
 row additionally requires the `hstack` filter, absent from the `MINIMAL=1`
 component list until it was added alongside this row.
+
+The sidecar row requires the **`ipod` muxer**, and it is the same trap one step
+later. `ArgumentBuilder` writes the sidecar to `audio.m4a` and passes no `-f`,
+so FFmpeg resolves the muxer from the extension — and `.m4a` is `ipod`, not
+`mp4`. It was missing from the `MINIMAL=1` list until
+`SidecarRewriteFFmpegTests` was first run against that variant, where a resumed
+composite failed outright at `Error initializing the muxer`. The full build has
+always had it, which is exactly why nothing caught it earlier: the minimal set
+is the variant that breaks first, and §2's "standing liability" is not
+hypothetical.
 
 Two details worth recording:
 
