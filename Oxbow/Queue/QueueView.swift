@@ -232,14 +232,31 @@ struct QueueView: View {
         }
       }
     }
-    // `initial: true` because `poller` and `watching` are built by `OxbowApp`
-    // independently of when this view appears — a sweep can finish while the
-    // queue is still loading, before this view exists to observe it. Without
-    // replaying the current value on appear, that first sweep's results would
-    // sit in `poller.results` unseen until a second one arrives, up to an
-    // hour later.
-    .onChange(of: poller?.results, initial: true) { _, results in
-      guard let results else { return }
+    // Keyed on `isSweeping` falling to `false`, not on `results` changing.
+    //
+    // `WatchPoller.sweep()` publishes `results` *before* `actOnFindings`
+    // runs — awaiting a metadata fetch per archive it is about to submit —
+    // and only sets `isSweeping = false` once that has finished. Watching
+    // `results` directly used to mean this view (and `WatchingModel.apply`)
+    // almost always rendered mid-submission, since SwiftUI re-renders on the
+    // `results` mutation well before the submissions it is about to trigger
+    // have landed: a row for an archive already being downloaded stayed
+    // listed as un-actioned for up to the length of that fetch, and a
+    // person pressing Add on it got a second job for the same video, since
+    // intake deliberately runs no duplicate guard of its own. Gating on
+    // `isSweeping` instead means this only applies once `markSubmitted`'s
+    // writes have actually happened, so the rows this view shows already
+    // reflect them.
+    //
+    // `initial: true` for the identical reason the old trigger needed it:
+    // `poller` and `watching` are built by `OxbowApp` independently of when
+    // this view appears, and a sweep can finish — `isSweeping` already back
+    // to `false` — before this view exists to observe the transition. Firing
+    // once on appear regardless of the current value replays whatever the
+    // last sweep already settled, the same way the old trigger replayed
+    // `results`.
+    .onChange(of: poller?.isSweeping, initial: true) { _, isSweeping in
+      guard isSweeping == false, let results = poller?.results else { return }
       watching?.apply(results)
     }
     // See `pendingIntake`'s own doc comment above: this is the one place that
