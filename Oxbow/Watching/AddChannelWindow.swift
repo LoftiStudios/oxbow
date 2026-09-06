@@ -354,12 +354,17 @@ struct AddChannelWindow: View {
       // This used to say Oxbow didn't do this yet, on or off; automatic
       // downloading is real now, so what it says has to actually depend on
       // the checkbox above it rather than being true regardless of it.
-      Text(model.downloadsAutomatically
-        ? "New archives from this channel are queued and downloaded on "
-          + "their own. A destination that's low on space or unavailable "
-          + "pauses this channel until that clears — Watching will say so."
-        : "New archives only appear in Watching until you press Add on a "
-          + "finding.")
+      //
+      // **"New archives" is the wrong noun under `.allAvailable`.** That
+      // scope is not shown, and so cannot be true, while editing
+      // (`isEditing` skips `scope` above), but for a brand-new watch it is
+      // the most expensive path this feature has: the existing backfill is
+      // included, not only what appears after today, and saying "new" here
+      // would understate a first sweep that can queue up to a hundred
+      // archives at once (finding 4's own batch bound caps what actually
+      // runs unattended, but the caption still has to describe what was
+      // just agreed to, not what the bound happens to let through).
+      Text(automaticDownloadCaption)
         .font(.caption)
         .foregroundStyle(.secondary)
 
@@ -455,6 +460,34 @@ struct AddChannelWindow: View {
   /// every archive already delivered outweighs that one fixed cost, and
   /// `Σ composite + one transient` drops below `Σ source`. Below that count
   /// the line still reads higher with chat on; above it, lower.
+  /// What the automatic-download checkbox's caption says, honestly, for
+  /// whichever combination of the checkbox and (for a brand-new watch) the
+  /// backfill scope is currently chosen.
+  ///
+  /// **The `.allAvailable` case is the one this exists for.** "New archives
+  /// … are queued and downloaded on their own" is true for `.onlyNew` and
+  /// for editing (where scope never applies again, §3.1) — nothing already
+  /// listed is a finding under either. It is false the moment scope is
+  /// `.allAvailable`: every archive on screen becomes a finding, and ticking
+  /// automatic alongside it means the *existing* catalogue is queued right
+  /// now, not only whatever appears later. That is the specific combination
+  /// §3.3 calls out as the one click that can queue a hundred archives, so
+  /// the caption for it says so in the same terms rather than reusing the
+  /// word "new" for something that is not.
+  private var automaticDownloadCaption: String {
+    guard model.downloadsAutomatically else {
+      return "New archives only appear in Watching until you press Add on a finding."
+    }
+    let pausesNote = "A destination that's low on space or unavailable pauses this "
+      + "channel until that clears — Watching will say so."
+    guard !model.isEditing, model.scope == .allAvailable else {
+      return "New archives from this channel are queued and downloaded on their own. "
+        + pausesNote
+    }
+    return "Every archive shown above is queued and downloaded now, not just new ones "
+      + "— and any archive published after today is queued the same way. " + pausesNote
+  }
+
   private func backfillCaption(for estimate: BackfillEstimate) -> String {
     let needed = "about " + Int64(estimate.bytes).formatted(.byteCount(style: .file))
     guard let folder = model.folder, let available = volumeSpace.availableBytes(folder) else {

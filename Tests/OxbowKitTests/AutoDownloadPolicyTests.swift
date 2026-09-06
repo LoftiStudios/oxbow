@@ -21,6 +21,15 @@ struct AutoDownloadPolicyTests {
 
   private let floor: Int64 = Preferences.factoryFreeSpaceFloor
 
+  /// What `decide()` itself now prices a set of findings at, via the same
+  /// `BackfillEstimate` arithmetic — so a test can pick an `availableBytes`
+  /// that is exactly, not approximately, enough for a given prefix, instead
+  /// of guessing at a margin generous enough to survive the batch bound
+  /// unrelated tests are not exercising.
+  private func cost(_ archives: [ChannelArchive]) -> Int64 {
+    BackfillEstimate(archives: archives, cap: settings.qualityCap, output: settings.output).bytes
+  }
+
   // 1. downloadsAutomatically == false returns .notAutomatic, not .submit([])
   @Test("a watch with automatic downloading off returns notAutomatic, not an empty submit")
   func offReturnsNotAutomatic() {
@@ -33,9 +42,11 @@ struct AutoDownloadPolicyTests {
   // 2. Only isDownloadable archives are submitted.
   @Test("a recording live broadcast is skipped, even though it is a finding")
   func recordingIsSkipped() {
+    // Priced exactly enough for the one downloadable finding — the batch
+    // bound (finding 4) is not what this test is about.
     let decision = AutoDownloadPolicy.decide(
       watch: watch(), findings: [archive("1", status: .recording), archive("2")],
-      availableBytes: floor + 1, destinationExists: true, floor: floor)
+      availableBytes: floor + cost([archive("2")]), destinationExists: true, floor: floor)
     #expect(decision == .submit([archive("2")]))
   }
 
@@ -62,10 +73,14 @@ struct AutoDownloadPolicyTests {
   // beyond confirming availableBytes (whatever it is) is what gets compared.
   @Test("availableBytes, whatever volume it was resolved for, is what is compared to the floor")
   func availableBytesIsComparedDirectly() {
-    // Exactly at the floor is not below it.
+    // Exactly enough left, after taking this one finding, to still sit at
+    // the floor — not below it. The entry gate above (`availableBytes >=
+    // floor`) and the batch bound below both key off the identical `>=`, so
+    // this pins both at once: the finding is neither refused outright nor
+    // trimmed away by the bound.
     let atFloor = AutoDownloadPolicy.decide(
       watch: watch(), findings: [archive("1")],
-      availableBytes: floor, destinationExists: true, floor: floor)
+      availableBytes: floor + cost([archive("1")]), destinationExists: true, floor: floor)
     #expect(atFloor == .submit([archive("1")]))
   }
 
@@ -81,8 +96,38 @@ struct AutoDownloadPolicyTests {
 
     let secondSweep = AutoDownloadPolicy.decide(
       watch: watch(), findings: [archive("1")],
-      availableBytes: floor + 1, destinationExists: true, floor: floor)
+      availableBytes: floor + cost([archive("1")]), destinationExists: true, floor: floor)
     #expect(secondSweep == .submit([archive("1")]))
+  }
+
+  // 9. The batch bound (finding 4): with room for two of three equally-sized
+  // findings, the third is left for a later sweep rather than run the volume
+  // below the floor. Order is preserved — the findings taken are a prefix,
+  // not whichever happen to fit.
+  @Test("a sweep submits only as many findings as keep free space at or above the floor")
+  func stopsSubmittingOnceTheRunningCostWouldBreachTheFloor() {
+    let archives = [archive("1"), archive("2"), archive("3")]
+    let twoFit = cost([archive("1"), archive("2")])
+
+    let decision = AutoDownloadPolicy.decide(
+      watch: watch(), findings: archives,
+      // Enough for the first two and nothing more: adding the third would
+      // take the volume below the floor by construction.
+      availableBytes: floor + twoFit, destinationExists: true, floor: floor)
+
+    #expect(decision == .submit([archive("1"), archive("2")]))
+  }
+
+  // 10. The stopped-at finding is not silently dropped — it is simply not in
+  // this sweep's `.submit`, which is what leaves it as an ordinary finding
+  // for the next one to reconsider once space has changed.
+  @Test("a finding the batch bound stops at is excluded from submit, not queued anyway")
+  func excludedFindingIsNotInTheSubmitSet() {
+    let onlyOneFits = cost([archive("1")])
+    let decision = AutoDownloadPolicy.decide(
+      watch: watch(), findings: [archive("1"), archive("2")],
+      availableBytes: floor + onlyOneFits, destinationExists: true, floor: floor)
+    #expect(decision == .submit([archive("1")]))
   }
 
   // 7. An empty finding list with automatic on returns .submit([]).

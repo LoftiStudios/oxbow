@@ -66,8 +66,9 @@ public enum AutoDownloadPolicy {
   ///     read here so this stays clockless and storeless.
   /// - Returns: `.notAutomatic` if the watch has automatic downloading off;
   ///   otherwise `.demoted` if the destination is unreachable or the volume
-  ///   is at or below the floor; otherwise `.submit` of just the findings
-  ///   that are safe to queue unattended.
+  ///   is at or below the floor; otherwise `.submit` of a *prefix* of the
+  ///   findings that are safe to queue unattended — see the batch-bound
+  ///   paragraph below for why this is not necessarily all of them.
   ///
   /// **Demotion here is per-call, not per-watch state.** Nothing is
   /// recorded anywhere — the next sweep calls this again with whatever the
@@ -75,6 +76,26 @@ public enum AutoDownloadPolicy {
   /// submits normally again with no recovery step required. A demotion that
   /// stuck would be indistinguishable from the user having turned the
   /// checkbox off, which is exactly the confusion §6.2 rules out.
+  ///
+  /// **The floor gates submission once per call; it does not by itself gate
+  /// how much that one call submits.** Checking `availableBytes` against
+  /// `floor` above answers "may this sweep submit anything at all" — it says
+  /// nothing about *how many* findings are safe to hand back, and returning
+  /// every downloadable finding regardless of their combined size turns one
+  /// sweep into an unbounded write against whatever margin the floor left.
+  /// With 60 GB free and the 49 GB factory floor, a single sweep over a
+  /// freshly backfilled "All available" watch could submit a hundred
+  /// archives and run the disk to zero before the next sweep ever gets a
+  /// chance to notice. So this walks `findings` in the order given and prices
+  /// the running prefix with `BackfillEstimate` — the same arithmetic
+  /// `docs/design/channel-watching.md` §3.3 already uses to price a backfill
+  /// before a person commits to it, not a second estimator invented for this
+  /// narrower case — stopping the moment adding one more finding would leave
+  /// the volume below `floor`. Findings past that point are not refused or
+  /// skipped, only left for a later sweep: they remain ordinary findings in
+  /// the inbox, and once space frees up on this volume — a person deleting
+  /// something, most likely — a later sweep picks up wherever this one
+  /// stopped.
   public static func decide(
     watch: Watch, findings: [ChannelArchive], availableBytes: Int64,
     destinationExists: Bool, floor: Int64
@@ -94,6 +115,24 @@ public enum AutoDownloadPolicy {
 
     // §5.2: a RECORDING broadcast is the newest item and exactly what a poll
     // finds first; it is skipped here and picked up once it has ended.
-    return .submit(findings.filter(\.isDownloadable))
+    let downloadable = findings.filter(\.isDownloadable)
+
+    // Grows one finding at a time rather than pricing the whole set once and
+    // dividing it back down: `BackfillEstimate`'s peak-overhead term is not
+    // linear in the archive count (see its own doc comment), so the cost of
+    // the first three findings cannot be read off the cost of all ten. This
+    // is at most a few dozen `BackfillEstimate` calls over a page capped at
+    // 100 (§7) — arithmetic, not I/O — so paying for correctness here rather
+    // than approximating is free.
+    var accepted: [ChannelArchive] = []
+    for finding in downloadable {
+      let candidate = accepted + [finding]
+      let cost = BackfillEstimate(
+        archives: candidate, cap: watch.settings.qualityCap, output: watch.settings.output
+      ).bytes
+      guard availableBytes - cost >= floor else { break }
+      accepted = candidate
+    }
+    return .submit(accepted)
   }
 }
