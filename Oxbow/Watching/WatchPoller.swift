@@ -156,7 +156,17 @@ final class WatchPoller {
     // exist.
     let watches = (try? store.load()) ?? []
     guard !watches.isEmpty else {
+      // `demotions` clears alongside `results` here rather than inside
+      // `actOnFindings`: this early return is the only path that skips that
+      // call, so a guard there would never run. Without this, demoting a
+      // channel and then removing every watch would leave the dictionary
+      // holding a stale demotion under that login — and re-adding the same
+      // login later would show it as demoted before the next sweep ever
+      // looks at it, the exact "checkbox looks off when it isn't" confusion
+      // `docs/design/channel-watching.md` §6.2 rules out, arrived at through
+      // the reset path instead of the decision path.
       results = []
+      demotions = [:]
       return
     }
 
@@ -188,17 +198,27 @@ final class WatchPoller {
   /// comment and `docs/design/automation.md` §4 — or records the demotion.
   ///
   /// **`watches` is the list `sweep()` loaded before the network round
-  /// trips, not a fresh read.** That is fine for *deciding*: every field
-  /// `AutoDownloadPolicy.decide` reads (`downloadsAutomatically`, `settings`)
-  /// is frozen at add time and does not change out from under a sweep in
-  /// progress. It stops being fine the moment something here writes back to
-  /// the store — see `markSubmitted(_:login:)`.
+  /// trips, not a fresh read.** "Frozen" here means *not read live off
+  /// `Preferences`* — unlike the free-space floor, re-read fresh for every
+  /// watch below — not that a watch's `downloadsAutomatically` and
+  /// `settings` cannot change at all. They can: `AddChannelModel.add()` in
+  /// edit mode rewrites both, live, through its own `WatchStore` on the same
+  /// file, precisely so a person can edit a channel's destination or quality
+  /// (`docs/design/channel-watching.md` §3.2). Deciding against this stale
+  /// snapshot is fine either way — the next sweep re-decides from whatever
+  /// is on disk *then*. What is narrower is `submit(_:from:into:)` below,
+  /// which passes this same snapshot's settings into `IntentSubmission
+  /// .submit` to **compose** the job, not merely to decide: an edit that
+  /// lands while one of this sweep's archives is already in flight can
+  /// queue that one archive under settings that were just superseded. Self-
+  /// correcting next sweep, and not worth locking or coordinating around —
+  /// see `markSubmitted(_:login:)` for the write-back hazard this same gap
+  /// causes on the other side of the store.
   private func actOnFindings(watches: [Watch], results: [WatchPollResult]) async {
-    guard !watches.isEmpty else {
-      demotions = [:]
-      return
-    }
-
+    // No empty-list guard here: `sweep()`'s own early return is the only
+    // caller that could reach this with an empty `watches`, and that return
+    // happens before this is ever called — clearing `demotions` there
+    // instead (see `sweep()`) is what actually reaches the empty-list case.
     let floor = Preferences().freeSpaceFloor
     let resultsByLogin = Dictionary(uniqueKeysWithValues: results.map { ($0.login, $0) })
 
@@ -287,6 +307,22 @@ final class WatchPoller {
       // a failure discovered later, in the queue rather than at
       // composition. Nothing here retries it: a durable refusal fails
       // identically next sweep too.
+      //
+      // **Known limitation, not fixed here:** a throw here means no `Job`
+      // was ever created — `IntentSubmission.submit` can refuse before that
+      // point, for an unrecognised link or a composite whose parent
+      // broadcast has expired so there is no chat to download. Such an
+      // archive is never marked seen, so the automatic path retries it
+      // every sweep, forever, each retry costing a metadata fetch. Task 4's
+      // failed-download rule cannot see it either, since that watches
+      // `Job.status` and no job exists to watch. Nothing is silently lost —
+      // the row stays visible as an ordinary finding, so a person can still
+      // Add it and read the refusal in the intake window — but the retry
+      // cost is real and unbounded. The obvious fix is a per-archive
+      // refusal counter, and that is deliberately not being added now: it
+      // is more of exactly the persistent per-archive state this feature
+      // has been bitten by repeatedly (see `seen` itself, and `demotions`
+      // above).
     }
   }
 
@@ -307,8 +343,17 @@ final class WatchPoller {
   /// discipline `WatchingModel.markSeen` already keeps for its own writes.
   ///
   /// Best effort, like every other writer's use of this store: nothing here
-  /// has a surface to show a person a save failure mid-sweep, and a lost
-  /// mark costs one re-offer next sweep rather than a lost archive.
+  /// has a surface to show a person a save failure mid-sweep. A lost mark
+  /// costs one re-offer next sweep only while the job it was for is still
+  /// unfinished — `IntentSubmission.submit`'s duplicate guard tests
+  /// `status.isUnfinished`, so a re-offer against a job still in the queue
+  /// is caught there and folds back into `.alreadyQueued`. If the job has
+  /// already finished by the next sweep and the mark never landed, that
+  /// guard has nothing to catch: the archive looks unseen again and gets
+  /// downloaded a second time, the exact outcome `seen` exists to prevent
+  /// (§4). Surfacing the I/O error mid-sweep would be worse than this
+  /// narrow, rare window, so the write stays best-effort — this comment
+  /// just stops promising it is free.
   private func markSubmitted(_ archiveID: String, login: String) {
     guard var current = try? store.load() else { return }
     guard let index = current.firstIndex(where: { $0.login == login }) else { return }
