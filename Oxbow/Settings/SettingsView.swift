@@ -2,8 +2,9 @@ import AppKit
 import SwiftUI
 import OxbowKit
 
-/// The four standing preferences, and the only way to see or change them
-/// without starting a download.
+/// The standing preferences — the four the intake's checkbox can also set,
+/// plus the automatic-download floor, which only this window can set — and
+/// the only way to see or change any of them without starting a download.
 ///
 /// Not a duplicate of the intake's Download Options panel — two views on one
 /// store with different jobs (design doc §5). The panel captures a decision
@@ -37,6 +38,9 @@ struct SettingsView: View {
   @State private var qualityCap: QualityCap
   @State private var output: DownloadOutput
   @State private var chatSize: ChatSize
+  /// Mirrors `Preferences.freeSpaceFloor` — see that property's own doc
+  /// comment for why it is a byte count rather than a picked rendition.
+  @State private var freeSpaceFloor: Int64
 
   /// `Preferences()` defaults to `UserDefaults.standard` — correct here,
   /// unlike the preview below: this is the real Settings window, reading and
@@ -47,6 +51,7 @@ struct SettingsView: View {
     _qualityCap = State(initialValue: preferences.qualityCap)
     _output = State(initialValue: preferences.output)
     _chatSize = State(initialValue: preferences.chatSize)
+    _freeSpaceFloor = State(initialValue: preferences.freeSpaceFloor)
   }
 
   var body: some View {
@@ -91,6 +96,33 @@ struct SettingsView: View {
         }
       }
 
+      // One value, global — not a row per watch. Free space is a fact about
+      // a volume, not about any one channel watching it, and several watches
+      // on the same disk each asking their own question of it would be
+      // several answers to one fact (`docs/design/channel-watching.md` §6.2).
+      // A `Picker` over a handful of rungs, the same shape `Quality` above
+      // uses, rather than a free-form field: nothing else in this store is
+      // typed in, and a byte count typed as "50" with no unit invites a
+      // fifty-*byte* floor from a slipped keystroke.
+      Picker("Automatic download floor", selection: freeSpaceFloorBinding) {
+        ForEach(FreeSpaceFloorRung.allCases, id: \.self) { rung in
+          Text(rung.label).tag(rung.rawValue)
+        }
+      }
+      // Said in the words a user thinks in, not the mechanism
+      // (`AutoDownloadPolicy.decide`, `.belowFloor`) that reads this value.
+      // What actually pauses — the automatic half only, never the polling or
+      // the inbox — matters here: without it, this row reads as a disk quota
+      // Oxbow enforces, which is the "budget" `channel-watching.md` §6.2
+      // explicitly rejects.
+      Text("""
+        The point below which Oxbow stops downloading a watched channel on \
+        its own. It keeps checking and listing what it finds either way — \
+        only automatic downloading pauses, until there's more room.
+        """)
+        .font(.caption)
+        .foregroundStyle(.secondary)
+
       Section {
         Button("Restore Defaults") {
           preferences.restoreDefaults()
@@ -108,6 +140,7 @@ struct SettingsView: View {
           qualityCap = preferences.qualityCap
           output = preferences.output
           chatSize = preferences.chatSize
+          freeSpaceFloor = preferences.freeSpaceFloor
         }
       }
     }
@@ -153,6 +186,10 @@ struct SettingsView: View {
     Binding(get: { chatSize }, set: { chatSize = $0; preferences.chatSize = $0 })
   }
 
+  private var freeSpaceFloorBinding: Binding<Int64> {
+    Binding(get: { freeSpaceFloor }, set: { freeSpaceFloor = $0; preferences.freeSpaceFloor = $0 })
+  }
+
   /// A sheet on this window, the normal path — never `runModal()` for the
   /// case where `hostWindow` is already known. `IntakeWindow.chooseFolder()`
   /// carries the comment explaining why: an app-modal panel appears detached
@@ -188,6 +225,44 @@ struct SettingsView: View {
       destination = url
       preferences.destination = url
     }
+  }
+}
+
+// MARK: - The floor's rungs
+
+/// A handful of fixed choices for `Preferences.freeSpaceFloor`, the same
+/// "cap as first-class state" shape `QualityCap` uses and for a related
+/// reason: a `Picker` needs a small closed set, not an arbitrary `Int64`
+/// somebody types in.
+///
+/// **Not in `OxbowKit`, unlike `QualityCap`.** `QualityCap` is resolved and
+/// bucketed against real video metadata by tested, storeless logic
+/// (`QualityLadder`) that has to live where `IntakeModel` can reach it
+/// without a view. This enum only ever feeds one `Picker` in one window and
+/// is never resolved against anything — it exists to give this row a set of
+/// labelled values, nothing more, so it stays here with the view that is its
+/// only reader.
+///
+/// **49 GB is one of the rungs, not a value the ladder happens to miss.**
+/// It is `Preferences.factoryFreeSpaceFloor` — see that constant's own doc
+/// comment for where the number comes from — and Restore Defaults has to
+/// land on a rung this `Picker` actually offers, or the control would show no
+/// selection at all for the very value it just restored.
+private enum FreeSpaceFloorRung: Int64, CaseIterable {
+  case ten = 10_000_000_000
+  case twentyFive = 25_000_000_000
+  case factory = 49_000_000_000
+  case oneHundred = 100_000_000_000
+  case twoFifty = 250_000_000_000
+  case fiveHundred = 500_000_000_000
+
+  /// Formatted the same way `AutoDownloadPolicy.Reason.sentence` formats the
+  /// numbers in a demotion message — one vocabulary for "how big is this" on
+  /// both sides of the same preference.
+  var label: String {
+    let formatter = ByteCountFormatter()
+    formatter.countStyle = .file
+    return formatter.string(fromByteCount: rawValue)
   }
 }
 

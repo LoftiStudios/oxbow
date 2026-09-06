@@ -149,6 +149,7 @@ struct QueueView: View {
           WatchingView(
             sections: watching?.sections ?? [],
             isSweeping: poller?.isSweeping ?? false,
+            demotions: poller?.demotions ?? [:],
             onAdd: { archive, section in watching?.add(archive, from: section.login) },
             onIgnore: { archive, section in watching?.ignore(archive, from: section.login) },
             // `watching?.watches`, not `section` itself: `Section` carries

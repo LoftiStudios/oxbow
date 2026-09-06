@@ -351,12 +351,15 @@ struct AddChannelWindow: View {
       // Matches `WatchingView`'s tooltip on this same flag, worded for the
       // moment someone decides whether to tick this rather than for a
       // watch already ticked — same honesty, different point in the flow.
-      // The caption used to promise archives are "queued and downloaded on
-      // their own"; a fix to the tooltip corrected that claim there but left
-      // this one standing, and this is the more prominent of the two: it is
-      // what someone actually reads right before deciding.
-      Text("Oxbow doesn't do that yet. On or off, new archives only appear "
-        + "in Watching until you press Add on a finding.")
+      // This used to say Oxbow didn't do this yet, on or off; automatic
+      // downloading is real now, so what it says has to actually depend on
+      // the checkbox above it rather than being true regardless of it.
+      Text(model.downloadsAutomatically
+        ? "New archives from this channel are queued and downloaded on "
+          + "their own. A destination that's low on space or unavailable "
+          + "pauses this channel until that clears — Watching will say so."
+        : "New archives only appear in Watching until you press Add on a "
+          + "finding.")
         .font(.caption)
         .foregroundStyle(.secondary)
 

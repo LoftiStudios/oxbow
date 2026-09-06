@@ -19,6 +19,15 @@ import OxbowKit
 /// list of several watched channels, most of them quiet, is the ordinary
 /// case, and a "no new videos" row under every one of them would be the loud
 /// thing on a screen that is trying to be quiet.
+///
+/// **A demoted channel must not look like a quiet one either — the same
+/// requirement applied to `AutoDownloadPolicy`'s decision instead of a fetch
+/// failure.** A watch that hit the free-space floor or lost its destination
+/// keeps polling and keeps listing what it finds; only its automatic half
+/// paused. `DemotionRow` says so beside those findings, and `SectionHeader`
+/// swaps its bolt for a paused one, so both the list and the header answer
+/// "why didn't this just download?" without anyone having to guess that
+/// nothing being queued and nothing being found are different problems.
 struct WatchingView: View {
   let sections: [WatchingModel.Section]
   /// Whether `WatchPoller` is mid-sweep right now.
@@ -30,6 +39,13 @@ struct WatchingView: View {
   /// watched at all, and would spend it telling someone with several watches
   /// that they have none.
   let isSweeping: Bool
+  /// Which watches the last sweep demoted to notify-only, keyed by login —
+  /// `WatchPoller.demotions`, passed straight through the same way
+  /// `isSweeping` is: this view has no store of its own to compute it from,
+  /// and `WatchingModel.Section` (built from `watches.json` and a sweep's
+  /// findings) has nothing to say about *why* automatic downloading paused,
+  /// only that a channel is set to want it.
+  let demotions: [String: AutoDownloadPolicy.Reason]
   let onAdd: (ChannelArchive, WatchingModel.Section) -> Void
   let onIgnore: (ChannelArchive, WatchingModel.Section) -> Void
   /// Opens the Add Channel window in editing mode, seeded from this
@@ -103,6 +119,17 @@ struct WatchingView: View {
             if let failure = section.failure {
               FailureRow(message: failure)
             } else {
+              // Demotion never withholds a finding — `AutoDownloadPolicy
+              // .decide` only withholds automatic *submission* — so a
+              // demoted channel's rows below are the exact `FindingRow`s an
+              // ordinary, non-automatic channel would show. This row only
+              // explains why they were not queued unattended; it never
+              // replaces them, which is what tells a demoted channel apart
+              // from a failed one (`FailureRow` above stands in for its rows,
+              // this stands alongside them).
+              if let reason = demotions[section.login] {
+                DemotionRow(reason: reason)
+              }
               ForEach(section.archives, id: \.id) { archive in
                 FindingRow(
                   archive: archive,
@@ -114,6 +141,7 @@ struct WatchingView: View {
           } header: {
             SectionHeader(
               section: section,
+              demotionReason: demotions[section.login],
               onEdit: { onEdit(section) },
               onStopWatching: { onStopWatching(section) })
           }
@@ -153,6 +181,36 @@ private struct FailureRow: View {
   }
 }
 
+/// A demoted channel's explanation, shown alongside its ordinary findings —
+/// never instead of them (see the call site's own comment).
+///
+/// **A different icon and message from `FailureRow`, deliberately — the same
+/// distinction §7 of `docs/design/channel-watching.md` draws for a failed
+/// sweep, applied here a second time.** A triangle there means the sweep
+/// itself broke and there is nothing underneath it to look at, which is
+/// exactly the shape a "no new videos" row must never be confused with. A
+/// demotion is a different situation again: the sweep succeeded, its
+/// findings are listed right below, and only the unattended half paused. The
+/// paused icon reused here for that reason also appears on the section
+/// header itself (`SectionHeader.demotionReason`) — one glance at either
+/// place answers the same question the same way.
+private struct DemotionRow: View {
+  let reason: AutoDownloadPolicy.Reason
+
+  var body: some View {
+    Label {
+      Text(reason.sentence)
+        .foregroundStyle(.secondary)
+        .fixedSize(horizontal: false, vertical: true)
+    } icon: {
+      Image(systemName: "pause.circle.fill")
+        .foregroundStyle(.orange)
+    }
+    .padding(.vertical, 4)
+    .accessibilityElement(children: .combine)
+  }
+}
+
 /// A section's header: the channel name, what it is frozen to download at
 /// (§3.2), a mark for automatic downloading when it is on, and — the only
 /// place either is offered — Edit and Stop Watching.
@@ -165,6 +223,9 @@ private struct FailureRow: View {
 /// tooltip say plainly that downloaded files stay put.
 private struct SectionHeader: View {
   let section: WatchingModel.Section
+  /// Why this channel's automatic downloading is paused this sweep, or nil
+  /// when it is not — `demotions[section.login]` from the call site.
+  let demotionReason: AutoDownloadPolicy.Reason?
   let onEdit: () -> Void
   let onStopWatching: () -> Void
 
@@ -176,20 +237,31 @@ private struct SectionHeader: View {
       // the loud thing `WatchingView`'s own doc comment already argues
       // against for a "no new videos" row under every quiet section.
       if section.downloadsAutomatically {
-        Label("Downloads automatically", systemImage: "bolt.fill")
-          .labelStyle(.iconOnly)
-          .foregroundStyle(.blue)
-          // Present tense, but honest about it: `WatchingModel.Section
-          // .downloadsAutomatically`'s own doc comment is explicit that
-          // nothing downloads automatically yet — this flag is stored intent
-          // a later stage will act on. A tooltip claiming archives "are
-          // queued without waiting for Add" would tell a user who ticked
-          // this box that downloads are already happening, when Add is still
-          // the only thing that starts one.
-          .help("""
-            Set to download automatically. Oxbow doesn't do that yet — new \
-            archives still only appear here until you press Add.
-            """)
+        if let demotionReason {
+          // A different glyph and colour from the steady "on" state below,
+          // not just a different tooltip — this has to read at a glance,
+          // without hovering, as something other than the ordinary
+          // automatic-downloading mark (requirement: a demoted watch must be
+          // visibly distinguishable from one quietly working as intended,
+          // never only from a channel with nothing new).
+          Label("Downloads paused", systemImage: "bolt.slash.fill")
+            .labelStyle(.iconOnly)
+            .foregroundStyle(.orange)
+            .help(demotionReason.sentence)
+        } else {
+          Label("Downloads automatically", systemImage: "bolt.fill")
+            .labelStyle(.iconOnly)
+            .foregroundStyle(.blue)
+            // Present tense and true: automatic downloading is real now —
+            // findings this channel turns up queue on their own, without
+            // Add, as long as the destination stays reachable and the disk
+            // stays above the floor set in Settings. The demoted branch
+            // above is what covers the moment either of those stops holding.
+            .help("""
+              Set to download automatically. New archives from this channel \
+              are queued and downloaded on their own, without waiting for Add.
+              """)
+        }
       }
       Spacer(minLength: 0)
       if !section.settingsSummary.isEmpty {
@@ -235,7 +307,7 @@ private struct SectionHeader: View {
         archives: [], failure: nil,
         settingsSummary: "Video · Up to 720p · Archive", downloadsAutomatically: false),
     ],
-    isSweeping: false,
+    isSweeping: false, demotions: [:],
     onAdd: { _, _ in }, onIgnore: { _, _ in }, onEdit: { _ in }, onStopWatching: { _ in },
     stopWatchingFailure: nil, markSeenFailure: nil)
   .frame(width: 480, height: 420)
@@ -253,7 +325,7 @@ private struct SectionHeader: View {
         settingsSummary: "Video + chat · Best available · Medium chat · Downloads",
         downloadsAutomatically: false),
     ],
-    isSweeping: false,
+    isSweeping: false, demotions: [:],
     onAdd: { _, _ in }, onIgnore: { _, _ in }, onEdit: { _ in }, onStopWatching: { _ in },
     stopWatchingFailure: "Oxbow could not read the watch list, so LeighXP was not stopped.",
     markSeenFailure: nil)
@@ -273,7 +345,7 @@ private struct SectionHeader: View {
         settingsSummary: "Video + chat · Best available · Medium chat · Downloads",
         downloadsAutomatically: false),
     ],
-    isSweeping: false,
+    isSweeping: false, demotions: [:],
     onAdd: { _, _ in }, onIgnore: { _, _ in }, onEdit: { _ in }, onStopWatching: { _ in },
     stopWatchingFailure: nil,
     markSeenFailure: "Oxbow could not read the watch list: the file could not be read.")
@@ -294,7 +366,7 @@ private struct SectionHeader: View {
         failure: "The response did not include the expected video list.",
         settingsSummary: "Video · Up to 1080p · Downloads", downloadsAutomatically: false),
     ],
-    isSweeping: false,
+    isSweeping: false, demotions: [:],
     onAdd: { _, _ in }, onIgnore: { _, _ in }, onEdit: { _ in }, onStopWatching: { _ in },
     stopWatchingFailure: nil, markSeenFailure: nil)
   .frame(width: 480, height: 420)
@@ -313,7 +385,7 @@ private struct SectionHeader: View {
         settingsSummary: "Video + chat · Best available · Small chat · Downloads",
         downloadsAutomatically: false),
     ],
-    isSweeping: false,
+    isSweeping: false, demotions: [:],
     onAdd: { _, _ in }, onIgnore: { _, _ in }, onEdit: { _ in }, onStopWatching: { _ in },
     stopWatchingFailure: nil, markSeenFailure: nil)
   .frame(width: 480, height: 420)
@@ -334,7 +406,49 @@ private struct SectionHeader: View {
         archives: [], failure: nil,
         settingsSummary: "Video · Up to 720p · Archive", downloadsAutomatically: false),
     ],
+    isSweeping: false, demotions: [:],
+    onAdd: { _, _ in }, onIgnore: { _, _ in }, onEdit: { _ in }, onStopWatching: { _ in },
+    stopWatchingFailure: nil, markSeenFailure: nil)
+  .frame(width: 480, height: 420)
+}
+
+// New for Task 5: a watch demoted for the disk-floor reason still shows its
+// findings, unlike a failed sweep — `DemotionRow` sits above them rather than
+// replacing them, and the header's bolt turns orange rather than vanishing.
+#Preview("Channel demoted, below floor") {
+  WatchingView(
+    sections: [
+      WatchingModel.Section(
+        login: "leighxp", displayName: "LeighXP",
+        archives: [WatchingViewPreviewData.normal, WatchingViewPreviewData.longTitle],
+        failure: nil, settingsSummary: "Video + chat · Best available · Medium chat · Archive",
+        downloadsAutomatically: true),
+      WatchingModel.Section(
+        login: "quietchannel", displayName: "A Quiet Channel",
+        archives: [], failure: nil,
+        settingsSummary: "Video · Up to 720p · Downloads", downloadsAutomatically: false),
+    ],
     isSweeping: false,
+    demotions: ["leighxp": .belowFloor(available: 12_000_000_000, floor: 49_000_000_000)],
+    onAdd: { _, _ in }, onIgnore: { _, _ in }, onEdit: { _ in }, onStopWatching: { _ in },
+    stopWatchingFailure: nil, markSeenFailure: nil)
+  .frame(width: 480, height: 420)
+}
+
+// New for Task 5: the other of the two demotion causes — an unreachable
+// destination takes precedence over the floor when both apply
+// (`AutoDownloadPolicy.decide`), so this is its own reason, its own sentence.
+#Preview("Channel demoted, destination unreachable") {
+  WatchingView(
+    sections: [
+      WatchingModel.Section(
+        login: "leighxp", displayName: "LeighXP",
+        archives: [WatchingViewPreviewData.normal], failure: nil,
+        settingsSummary: "Video + chat · Best available · Medium chat · Archive",
+        downloadsAutomatically: true),
+    ],
+    isSweeping: false,
+    demotions: ["leighxp": .destinationUnreachable("/Volumes/Archive")],
     onAdd: { _, _ in }, onIgnore: { _, _ in }, onEdit: { _ in }, onStopWatching: { _ in },
     stopWatchingFailure: nil, markSeenFailure: nil)
   .frame(width: 480, height: 420)
@@ -342,7 +456,7 @@ private struct SectionHeader: View {
 
 #Preview("No channels watched") {
   WatchingView(
-    sections: [], isSweeping: false,
+    sections: [], isSweeping: false, demotions: [:],
     onAdd: { _, _ in }, onIgnore: { _, _ in }, onEdit: { _ in }, onStopWatching: { _ in },
     stopWatchingFailure: nil, markSeenFailure: nil)
     .frame(width: 480, height: 420)
@@ -353,7 +467,7 @@ private struct SectionHeader: View {
   // still empty, but this must not read as "no channels watched" — see
   // `isSweeping`'s doc above.
   WatchingView(
-    sections: [], isSweeping: true,
+    sections: [], isSweeping: true, demotions: [:],
     onAdd: { _, _ in }, onIgnore: { _, _ in }, onEdit: { _ in }, onStopWatching: { _ in },
     stopWatchingFailure: nil, markSeenFailure: nil)
     .frame(width: 480, height: 420)
