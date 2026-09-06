@@ -49,8 +49,10 @@ struct WatchingModelTests {
 
   // MARK: - Derivation
 
-  @Test func sectionsMirrorTheSweep() {
-    let model = model(store: temporaryStore())
+  @Test func sectionsMirrorTheSweep() throws {
+    let store = temporaryStore()
+    try store.save([watch("ninja"), watch("day9tv")])
+    let model = model(store: store)
     model.apply([
       .init(login: "ninja", displayName: "Ninja", outcome: .found([archive("1"), archive("2")])),
       .init(login: "day9tv", displayName: "Day9tv", outcome: .found([archive("3")]))])
@@ -60,9 +62,11 @@ struct WatchingModelTests {
     #expect(model.unreadCount == 3)
   }
 
-  @Test func aFailedChannelKeepsItsReasonAndIsNotCountedAsUnread() {
+  @Test func aFailedChannelKeepsItsReasonAndIsNotCountedAsUnread() throws {
     // Section 7: a failure must read as a failure, never as an empty list.
-    let model = model(store: temporaryStore())
+    let store = temporaryStore()
+    try store.save([watch("gone")])
+    let model = model(store: store)
     model.apply([.init(login: "gone", displayName: "Gone", outcome: .failed(.noSuchChannel))])
 
     #expect(model.sections[0].failure != nil)
@@ -70,8 +74,10 @@ struct WatchingModelTests {
     #expect(model.unreadCount == 0)
   }
 
-  @Test func aChannelWithNothingNewIsNotShownAsAFailure() {
-    let model = model(store: temporaryStore())
+  @Test func aChannelWithNothingNewIsNotShownAsAFailure() throws {
+    let store = temporaryStore()
+    try store.save([watch("quiet")])
+    let model = model(store: store)
     model.apply([.init(login: "quiet", displayName: "Quiet", outcome: .found([]))])
 
     #expect(model.sections[0].failure == nil)
@@ -391,6 +397,15 @@ struct WatchingModelTests {
     // would linger forever, and a later re-add whose first sweep reuses one
     // of those VOD ids would have a genuinely new archive hidden by a
     // dismissal earned by a watch that no longer exists.
+    //
+    // **Through `refresh()`, not a fresh `apply(_:)`** — re-sweeping after
+    // the re-add would mask the exact bug this pins: `latest` still holds
+    // the *original* sweep's entry for "1" throughout (untouched by
+    // `stopWatching`, see its own comment), so the only thing standing
+    // between that entry and the row it should now show again is whether
+    // `dismissed` still contains "1". `refresh()` is what production calls
+    // once the re-add's window closes, and the next real sweep can be up to
+    // an hour away.
     let store = temporaryStore()
     try store.save([watch("ninja")])
     let model = model(store: store)
@@ -399,7 +414,7 @@ struct WatchingModelTests {
 
     model.stopWatching("ninja")
     try store.save([watch("ninja")])
-    model.apply([.init(login: "ninja", displayName: "Ninja", outcome: .found([archive("1")]))])
+    model.refresh()
 
     #expect(model.sections.first(where: { $0.login == "ninja" })?.archives.map(\.id) == ["1"])
   }
@@ -475,6 +490,225 @@ struct WatchingModelTests {
     #expect(
       model.stopWatchingFailure == nil,
       "a later, unrelated action must not leave a stale refusal on screen indefinitely")
+  }
+
+  // MARK: - The class invariant, under random interleaving
+
+  /// Both existing race tests (`aSweepThatStraddlesADismissalDoesNotBring
+  /// TheRowBack`, `aSweepThatStraddlesAStopDoesNotResurrectTheStoppedChannel`)
+  /// fake staleness by re-applying an *identical* payload — which pins one
+  /// instance of the bug, not the property the class is supposed to have.
+  /// This drives `apply`, `ignore`, `add`, `stopWatching`, `refresh`, and a
+  /// write through a second `WatchStore` (standing in for `AddChannelModel`
+  /// writing the same file) in a random order, and checks two things after
+  /// *every* step rather than only at the end:
+  ///
+  /// 1. `sections` and `watches` name exactly the same logins — no section
+  ///    for a channel that is not watched, no watched channel missing one.
+  /// 2. A watched channel's archives are exactly its newest sweep's findings,
+  ///    minus whatever its own persisted `seen` set has since gained.
+  ///
+  /// Deliberately does not inject a failed store write anywhere in the
+  /// interleaving — that path (`dismissed`'s one remaining job) already has
+  /// its own dedicated tests above. Every write here succeeds, so invariant 2
+  /// never has to account for "pending a failed write" to hold.
+  @Test func watchesIsAlwaysTheSpineUnderRandomInterleaving() throws {
+    let seed: UInt64 = 0x5EED_C0FFEE
+    var rng = SeededGenerator(seed: seed)
+
+    let store = temporaryStore()
+    let loginPool = ["ninja", "day9tv", "asmongold"]
+    // Scoped per login, deliberately: real Twitch archive ids are unique
+    // platform-wide, so two different channels never share one. `dismissed`
+    // is not scoped by login (it never has been — see its own doc comment),
+    // and sharing one raw id pool across logins here would manufacture
+    // cross-channel id collisions no real sweep could ever produce, hiding
+    // one channel's finding behind an unrelated channel's dismissal for a
+    // reason that has nothing to do with the property this test checks.
+    func ids(for login: String) -> [String] { (1...4).map { "\(login)-\($0)" } }
+
+    try store.save([watch("ninja"), watch("day9tv")])
+    let model = model(store: store)
+
+    // This test's own record of what the last sweep actually handed
+    // `apply(_:)` for each login — the ground truth invariant 2 checks
+    // against. Never cleared by a stop: a real `latest` array is not either
+    // (see `WatchingModel.stopWatching`'s own comment), so a channel that is
+    // stopped and re-added is checked against the same stale sweep the model
+    // itself would still be holding.
+    var lastFound: [String: [ChannelArchive]] = [:]
+    var lastFailed: Set<String> = []
+
+    func currentLogins() throws -> [String] { try store.load().map(\.login) }
+
+    func performSweep() throws {
+      // One `apply(_:)` call for every currently watched login, exactly the
+      // shape `WatchPoller.sweep` produces — never one call per login.
+      // `dismissed.formIntersection(found)` inside `apply(_:)` only narrows
+      // against the ids the *whole* array carries; splitting this into one
+      // call per login would starve that intersection of every other
+      // login's ids on each call and shrink `dismissed` for reasons that
+      // have nothing to do with a real sweep.
+      //
+      // Mirrors `WatchPoll.sweep` in the other respect too: a raw fetch per
+      // login, immediately narrowed through that login's *own*
+      // `findings(in:)` — against whatever `seen` was at this exact moment
+      // — before the result ever reaches `apply(_:)`. `lastFound` records
+      // that *carried*, already-narrowed list, not the raw fetch: "the
+      // newest sweep carries it" is about what the sweep actually reported,
+      // and a later re-add with a fresh, emptied `seen` cannot retroactively
+      // widen what an earlier, now-stale sweep once said. That is exactly
+      // the asymmetry the sixth bug turned on, so the ground truth here has
+      // to preserve it.
+      var results: [WatchPollResult] = []
+      for watchEntry in try store.load() {
+        if Bool.random(using: &rng) {
+          let raw = ids(for: watchEntry.login).filter { _ in Bool.random(using: &rng) }.map(archive)
+          let carried = watchEntry.findings(in: raw)
+          results.append(.init(login: watchEntry.login, displayName: watchEntry.displayName,
+                               outcome: .found(carried)))
+          lastFound[watchEntry.login] = carried
+          lastFailed.remove(watchEntry.login)
+        } else {
+          results.append(.init(login: watchEntry.login, displayName: watchEntry.displayName,
+                               outcome: .failed(.noSuchChannel)))
+          lastFailed.insert(watchEntry.login)
+        }
+      }
+      // `apply(_:)` sets `latest = results` — wholesale, not merged (its own
+      // doc comment) — so a login this sweep does not cover (because it was
+      // unwatched when `WatchPoll.sweep` ran) loses its entry outright, not
+      // only until a later sweep adds it back. A completely stale entry
+      // surviving *through* a real sweep that had every chance to refresh it
+      // is not what "the newest sweep carries it" means; the ground truth
+      // has to go stale the same way `latest` actually does.
+      let covered = Set(results.map(\.login))
+      for login in lastFound.keys where !covered.contains(login) { lastFound[login] = nil }
+      lastFailed.formIntersection(covered)
+      model.apply(results)
+    }
+
+    func performIgnoreOrAdd() throws {
+      guard let login = try currentLogins().randomElement(using: &rng),
+            let id = ids(for: login).randomElement(using: &rng)
+      else { return }
+      if Bool.random(using: &rng) {
+        model.ignore(archive(id), from: login)
+      } else {
+        model.add(archive(id), from: login)
+      }
+    }
+
+    func performStop() throws {
+      guard let login = try currentLogins().randomElement(using: &rng) else { return }
+      model.stopWatching(login)
+    }
+
+    func performForeignWrite() throws {
+      // Stands in for `AddChannelModel` writing `watches.json` through its
+      // own, separate `WatchStore` instance. Only ever adds — the model's
+      // own doc comment is explicit that `WatchingModel` is "the only writer"
+      // that ever *removes* a watch (`stopWatching`, which is also the only
+      // place that cleans `dismissed` of a removed watch's ids); a foreign
+      // write pruning some other channel here would be testing a shape
+      // `AddChannelModel` never actually takes; `stopWatching` above is the
+      // only removal path this interleaving needs to cover.
+      let foreign = WatchStore(fileURL: store.fileURL)
+      var current = try foreign.load()
+      if let addable = loginPool.first(where: { candidate in
+        !current.contains { $0.login == candidate }
+      }) {
+        current.append(watch(addable))
+        try foreign.save(current)
+      }
+    }
+
+    func checkInvariants(step: Int) throws {
+      let watchedLogins = Set(model.watches.map(\.login))
+      #expect(Set(model.sections.map(\.login)) == watchedLogins,
+        "seed \(seed) step \(step): sections must name exactly the watched logins")
+
+      for watchEntry in model.watches {
+        let expectedIDs: Set<String>
+        if lastFailed.contains(watchEntry.login) {
+          expectedIDs = []
+        } else if let carried = lastFound[watchEntry.login] {
+          expectedIDs = Set(carried.map(\.id)).subtracting(watchEntry.seen)
+        } else {
+          expectedIDs = []
+        }
+        let actualIDs = Set(
+          model.sections.first(where: { $0.login == watchEntry.login })?.archives.map(\.id) ?? [])
+        #expect(actualIDs == expectedIDs,
+          "seed \(seed) step \(step) login \(watchEntry.login): archives must be exactly the newest sweep's findings minus seen")
+      }
+    }
+
+    try checkInvariants(step: 0)
+    for step in 1...300 {
+      switch Int.random(in: 0..<6, using: &rng) {
+      case 0, 1: try performSweep()
+      case 2, 3: try performIgnoreOrAdd()
+      case 4: try performStop()
+      default: try performForeignWrite()
+      }
+      // `refresh()` is folded in here rather than its own case so a stray
+      // `AddChannelModel`-shaped write always gets picked up promptly, the
+      // same as production wiring it to the window closing.
+      if step.isMultiple(of: 7) { model.refresh() }
+      try checkInvariants(step: step)
+    }
+  }
+
+  /// The sixth bug, confirmed live. `stopWatching` used to remove the login's
+  /// own entry from `latest` outright — irreversible — while `stoppedLogins`
+  /// (a reversible tombstone `refreshWatches()` lifted the moment the login
+  /// was back in the file) guarded the same race with the opposite lifetime.
+  /// Re-adding a stopped channel lifted the reversible guard and exposed the
+  /// irreversible one: the channel's own last-known findings were gone for
+  /// good, so it fell into the never-polled branch — `archives: []`,
+  /// `failure: nil` — reading as "nothing new" when the re-add (with "All
+  /// available") asked for the whole back catalogue.
+  ///
+  /// **Through `refresh()`, not `apply(_:)`.** `stoppingAChannelDropsItsOwn
+  /// DismissedIdsSoAReAddDoesNotHideThem` above walks the same sequence but
+  /// recovers by re-applying the sweep — a path production never takes after
+  /// a re-add; the window closing calls `refresh()` (see `OxbowApp`), and the
+  /// next real sweep is up to an hour away. This is the sequence that
+  /// actually happens.
+  @Test func reAddingAStoppedChannelAndRefreshingShowsItsLastFindingsAgain() throws {
+    let store = temporaryStore()
+    try store.save([watch("ninja")])
+    let model = model(store: store)
+    model.apply([.init(login: "ninja", displayName: "Ninja",
+                       outcome: .found([archive("1"), archive("2")]))])
+
+    model.stopWatching("ninja")
+    // Re-add with "All available" — a fresh `Watch` with an empty `seen`,
+    // the same shape `AddChannelModel.add(_:)` writes for that scope.
+    try store.save([watch("ninja")])
+    model.refresh()
+
+    #expect(
+      model.sections.first(where: { $0.login == "ninja" })?.archives.map(\.id).sorted()
+        == ["1", "2"],
+      "the re-added channel's own last sweep must still be there once it is watched again")
+  }
+}
+
+/// A tiny deterministic PRNG so a failure found by chance is reproducible —
+/// `SystemRandomNumberGenerator` cannot be seeded, and reproducing exactly
+/// the interleaving that broke the invariant is the entire point of fuzzing
+/// it. (splitmix64.)
+private struct SeededGenerator: RandomNumberGenerator {
+  private var state: UInt64
+  init(seed: UInt64) { state = seed == 0 ? 0xdeadbeef : seed }
+  mutating func next() -> UInt64 {
+    state &+= 0x9E37_79B9_7F4A_7C15
+    var z = state
+    z = (z ^ (z >> 30)) &* 0xBF58_476D_1CE4_E5B9
+    z = (z ^ (z >> 27)) &* 0x94D0_49BB_1331_11EB
+    return z ^ (z >> 31)
   }
 }
 

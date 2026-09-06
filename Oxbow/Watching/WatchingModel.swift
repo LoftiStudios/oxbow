@@ -65,53 +65,31 @@ final class WatchingModel {
   private let store: WatchStore
   private let openIntake: (ChannelArchive, Watch) -> Void
 
-  /// Archive ids acted on since the last sweep.
+  /// Archive ids `markSeen` could not persist.
   ///
-  /// **This is why Add and Ignore feel instant.** `WatchPoller.results` is a
-  /// snapshot taken against the seen-set as it stood at sweep time, so
-  /// persisting a dismissal does not change it — without this overlay the row
-  /// would sit there until the next sweep, up to an hour of a button that
-  /// appears to do nothing.
+  /// **Vestigial by design, kept for one narrow case.** This used to be the
+  /// only thing standing between a dismissal and the row it hid reappearing —
+  /// `rebuild()` filtered `latest` through this overlay and nothing else. It
+  /// no longer carries that weight: `rebuild()` now reconciles every section
+  /// against the watch's own persisted `seen` set (`Watch.findings(in:)`),
+  /// and `markSeen` persists that write *before* it ever calls `rebuild()`,
+  /// so a row is hidden by `seen` before this overlay is even consulted. The
+  /// one thing that reconciliation cannot cover is `markSeen`'s write
+  /// failing outright (it is `try?`, deliberately best-effort — see that
+  /// method's own comment): `seen` on disk never gains the id then, so this
+  /// is what keeps the row hidden for the rest of the session regardless.
   ///
-  /// **Not cleared wholesale by `apply(_:)`.** `sweep` reads the seen-set once
-  /// up front and then makes slow, sequential per-channel calls, so a sweep in
-  /// flight when someone dismisses a row can finish with results computed
-  /// before that write — still containing the just-dismissed archive. Wiping
-  /// the overlay on every `apply` would let that stale result put the row
-  /// back. Instead `apply(_:)` narrows `dismissed` to the ids still present in
-  /// the incoming results: an id absent from the new sweep was one the sweep
-  /// read after the write, so it drops out on its own; an id still present
-  /// means the sweep straddled the write, so the overlay keeps hiding it until
-  /// a sweep finally starts after the dismissal landed.
-  ///
-  /// **Only responsible for the window before a write lands, and for a write
-  /// that never lands at all.** `rebuild()` also reconciles against the
-  /// watch's own persisted `seen` set (`Watch.findings(in:)`), which is what
-  /// actually keeps a genuinely-seen archive hidden for good — this overlay
-  /// dropping an id once a sweep stops carrying it (bounding its own size,
-  /// rather than growing forever) is safe precisely because `seen` is what
-  /// hides it permanently, not this. The one case this still has to cover on
-  /// its own is `markSeen`'s best-effort write failing: `seen` on disk never
-  /// actually gained the id then, so only this overlay keeps the row hidden
-  /// for the rest of the session.
+  /// Narrowed back down by `apply(_:)`, the same way it always was, so a
+  /// failed id does not sit here forever once a sweep stops carrying it at
+  /// all (which, for a channel `seen` already excludes it from, means the
+  /// sweep excluded it too — `WatchPoll.sweep` applies the identical filter
+  /// before this model ever sees the result).
   private var dismissed: Set<String> = []
 
-  /// The latest sweep, before the overlay is subtracted.
+  /// The latest sweep. `rebuild()` looks a login up in here; it never
+  /// iterates this directly — see `rebuild()`'s own comment for why `watches`
+  /// is the collection that drives what gets shown.
   private var latest: [WatchPollResult] = []
-
-  /// Logins `stopWatching` has removed, kept so `rebuild()` can refuse to
-  /// resurrect them.
-  ///
-  /// **Why this exists rather than trusting `watches` membership alone.**
-  /// `WatchPoller.sweep` is sequential and can run for minutes, so a sweep
-  /// already in flight when someone chooses Stop Watching can still land
-  /// afterwards via `apply(_:)` — which replaces `latest` wholesale — still
-  /// carrying that channel's own entry. `rebuild()` excludes any login in
-  /// this set from `latest` outright, so that stale sweep is ignored rather
-  /// than rendered. `refreshWatches()` lifts the exclusion the moment the
-  /// login is back in `watches.json`, so re-adding a stopped channel is not
-  /// permanent.
-  private var stoppedLogins: Set<String> = []
 
   /// Set when Stop Watching refused rather than removing anything. The same
   /// idiom as `AddChannelModel.addFailure`: a context menu action has no
@@ -273,12 +251,6 @@ final class WatchingModel {
     // doc comment on why that, not an explicit `nil` here, is the right
     // place for it.
 
-    // A stopped channel's own entry in the last sweep must not resurrect its
-    // section on the next `rebuild()` — see `stoppedLogins`'s own doc
-    // comment for why this, rather than `watches` membership alone, is what
-    // that guard checks.
-    stoppedLogins.insert(login)
-
     // This channel's own ids would otherwise linger in the overlay forever:
     // `apply(_:)`'s `formIntersection` only drops an id once a sweep
     // computed *after* the write stops carrying it, and a stopped channel
@@ -286,12 +258,26 @@ final class WatchingModel {
     // whose first sweep happens to reuse one of those VOD ids would have a
     // genuinely new archive hidden by a dismissal earned by a watch that no
     // longer exists.
-    if let lastResult = latest.first(where: { $0.login == login }),
-       case .found(let archives) = lastResult.outcome {
-      dismissed.subtract(archives.map(\.id))
+    //
+    // Subtracts the watch's own persisted `seen` — every id it ever marked,
+    // not only whatever the most recent sweep still happened to be carrying.
+    // `seen` only grows, so it is the complete history; the latest sweep is
+    // only ever a subset of it (anything it already excluded via that same
+    // `seen`), and cleaning up against the subset would leave exactly the
+    // ids a *successful* Ignore or Add had already excluded from it still
+    // sitting in the overlay, ready to hide a re-added watch's identical
+    // finding for no reason a re-add's own fresh `seen` would ever explain.
+    if let removed = existing.first(where: { $0.login == login }) {
+      dismissed.subtract(removed.seen)
     }
 
-    latest.removeAll { $0.login == login }
+    // `latest` itself is left untouched, deliberately. `login` is no longer
+    // in `watches` the moment `refreshWatches()` re-reads the file `rebuild()`
+    // is about to trigger, and `rebuild()` only ever looks a result up for a
+    // login it is already showing a section for — so a stale entry sitting
+    // here for an unwatched channel is inert, not a leak. Removing it used to
+    // matter when `rebuild()` iterated `latest` directly; now that `watches`
+    // is what it iterates, there is nothing left for that removal to guard.
     rebuild()
   }
 
@@ -321,16 +307,26 @@ final class WatchingModel {
   private func refreshWatches() {
     if let loaded = try? store.load() {
       watches = loaded
-      // A login back in the watch list is no longer "stopped" — this is what
-      // lets stopping a channel and then re-adding it undo the exclusion
-      // `rebuild()` applies below, rather than leaving that channel invisible
-      // forever.
-      stoppedLogins.subtract(loaded.map(\.login))
     }
   }
 
   /// Rebuilds `sections`, and — as a side effect — clears any stale write
   /// failure still on screen.
+  ///
+  /// **`watches` is the spine; `latest` is a lookup.** This used to iterate
+  /// `latest` — a poll snapshot owned by `WatchPoller`, computed against
+  /// whatever the seen-set was minutes ago at sweep time — and append
+  /// `watches` afterwards for whatever that snapshot missed. Every derived
+  /// section was keyed on the stale collection, with the authoritative one
+  /// reduced to an afterthought, and every one of this type's races traced
+  /// back to that: a section for a channel `stopWatching` had already
+  /// removed, or a channel not yet appearing until its own entry showed up
+  /// in a sweep. Mapping over `watches` instead makes both errors
+  /// structural rather than guarded against: a login not in `watches` gets
+  /// no section because it is never iterated, and a login in `watches` gets
+  /// exactly one section because it is iterated exactly once — the "channel
+  /// never polled" case is no longer a second pass patching a gap, just the
+  /// ordinary outcome of `latest` not having an entry yet.
   ///
   /// **Why the failures clear here rather than only where they were set.**
   /// `stopWatchingFailure` used to be cleared only by a *later successful
@@ -351,15 +347,9 @@ final class WatchingModel {
 
     refreshWatches()
 
-    var represented: Set<String> = []
-    var built: [Section] = latest.compactMap { result in
-      // Excludes a stopped channel's own entry even when a stale, in-flight
-      // sweep still carries it — see `stoppedLogins`'s own doc comment.
-      guard !stoppedLogins.contains(result.login) else { return nil }
-      represented.insert(result.login)
-      let summary = settingsSummary(forLogin: result.login)
-      let automatic = downloadsAutomatically(forLogin: result.login)
-      switch result.outcome {
+    sections = watches.map { watch in
+      let outcome = latest.first(where: { $0.login == watch.login })?.outcome
+      switch outcome {
       case .found(let archives):
         // Reconciled against the watch's own `seen` set, not only the
         // in-memory `dismissed` overlay. `dismissed` only ever catches what
@@ -370,47 +360,36 @@ final class WatchingModel {
         // channel with Only new is the concrete case: its caption promises
         // "everything Twitch has right now is marked seen", but without
         // this the inbox kept showing them until the next sweep, up to an
-        // hour later. `Watch.findings(in:)` is the same filter `WatchPoller`
+        // hour later. `Watch.findings(in:)` is the same filter `WatchPoll`
         // itself applies, so this closes the whole class of "some other
         // writer changed `seen`" rather than just this one instance —
         // `dismissed` is left responsible only for the write-failed case its
-        // own doc comment already describes.
-        let notYetSeen = watches.first(where: { $0.login == result.login })?
-          .findings(in: archives) ?? archives
+        // own doc comment already describes. No fallback to the unfiltered
+        // `archives` here, deliberately: `watch` is always in hand — it is
+        // what this map is iterating — so there is nothing for a fallback
+        // to cover, and one that read "leave it unfiltered" would fail open
+        // the moment a future edit ever made the lookup optional again.
         return Section(
-          login: result.login, displayName: result.displayName,
-          archives: notYetSeen.filter { !dismissed.contains($0.id) }, failure: nil,
-          settingsSummary: summary, downloadsAutomatically: automatic)
+          login: watch.login, displayName: watch.displayName,
+          archives: watch.findings(in: archives).filter { !dismissed.contains($0.id) },
+          failure: nil, settingsSummary: settingsSummary(for: watch.settings),
+          downloadsAutomatically: watch.downloadsAutomatically)
       case .failed(let error):
         return Section(
-          login: result.login, displayName: result.displayName,
+          login: watch.login, displayName: watch.displayName,
           archives: [], failure: error.localizedDescription,
-          settingsSummary: summary, downloadsAutomatically: automatic)
+          settingsSummary: settingsSummary(for: watch.settings),
+          downloadsAutomatically: watch.downloadsAutomatically)
+      case nil:
+        // Never polled — added moments ago, or waiting on its first sweep
+        // since launch (requirement 1) — rather than staying invisible
+        // until a sweep finally reaches it.
+        return Section(
+          login: watch.login, displayName: watch.displayName,
+          archives: [], failure: nil, settingsSummary: settingsSummary(for: watch.settings),
+          downloadsAutomatically: watch.downloadsAutomatically)
       }
     }
-
-    // Every watched channel the sweep above didn't already account for —
-    // never polled, or waiting on its first sweep since launch — still gets
-    // a section (requirement 1), rather than staying invisible until a
-    // sweep finally reaches it.
-    for watch in watches where !represented.contains(watch.login) {
-      built.append(Section(
-        login: watch.login, displayName: watch.displayName,
-        archives: [], failure: nil,
-        settingsSummary: settingsSummary(for: watch.settings),
-        downloadsAutomatically: watch.downloadsAutomatically))
-    }
-
-    sections = built
-  }
-
-  private func settingsSummary(forLogin login: String) -> String {
-    guard let watch = watches.first(where: { $0.login == login }) else { return "" }
-    return settingsSummary(for: watch.settings)
-  }
-
-  private func downloadsAutomatically(forLogin login: String) -> Bool {
-    watches.first(where: { $0.login == login })?.downloadsAutomatically ?? false
   }
 
   /// `IntakeModel.optionsSummary`'s own register, applied to a watch's
