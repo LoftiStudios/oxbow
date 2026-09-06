@@ -635,6 +635,68 @@ struct AddChannelModelTests {
     #expect(edited.settings.destinationPath == "/Users/someone/NewDestination")
   }
 
+  /// Finding 2: `beginEditing(_:)` opens a window between capturing
+  /// `editingWatch` and someone actually pressing Edit, and this stage added
+  /// two writers — `WatchPoller.markSubmitted` and `AutoDownloadObserver
+  /// .forget` — that can land in it with nobody touching anything. If a
+  /// sweep marks a fresh archive seen while this edit sits open, saving the
+  /// edit must not silently undo that mark by writing back the smaller
+  /// `seen` this window opened with — the exact "downloaded again,
+  /// unattended" outcome the design doc rules out.
+  @Test func savingAnEditPicksUpASeenMarkAddedWhileTheWindowWasOpen() async throws {
+    let store = WatchStore(fileURL: Self.temporaryFile())
+    defer { try? FileManager.default.removeItem(at: store.fileURL.deletingLastPathComponent()) }
+    let original = Self.watch(login: "leighxp", seen: ["1"])
+    try store.save([original])
+
+    let model = makeModel(store: store)
+    model.beginEditing(original)
+
+    // Stands in for `WatchPoller.markSubmitted`: a sweep queues archive "2"
+    // and marks it seen through a second `WatchStore` over the same file,
+    // while this edit window is still open.
+    var current = try store.load()
+    current[0] = current[0].marking(["2"])
+    try store.save(current)
+
+    model.qualityCap = .p480
+    #expect(await model.add())
+
+    let edited = try #require(try store.load().first { $0.login == "leighxp" })
+    #expect(
+      edited.seen == ["1", "2"],
+      "the sweep's mark must survive the edit, not be overwritten by the window's stale snapshot")
+  }
+
+  /// The mirror of the test above: a failure un-marks an archive while this
+  /// edit window is open, and saving the edit must not silently re-mark it
+  /// seen from the stale snapshot — that would keep the failed archive out
+  /// of the inbox and let it expire, breaking §6.3's one promise.
+  @Test func savingAnEditPreservesAnUnmarkMadeWhileTheWindowWasOpen() async throws {
+    let store = WatchStore(fileURL: Self.temporaryFile())
+    defer { try? FileManager.default.removeItem(at: store.fileURL.deletingLastPathComponent()) }
+    let original = Self.watch(login: "leighxp", seen: ["1", "2"])
+    try store.save([original])
+
+    let model = makeModel(store: store)
+    model.beginEditing(original)
+
+    // Stands in for `AutoDownloadObserver.forget`: a job for archive "2"
+    // failed and it was returned to the inbox, while this edit window is
+    // still open.
+    var current = try store.load()
+    current[0] = current[0].forgetting(["2"])
+    try store.save(current)
+
+    model.qualityCap = .p480
+    #expect(await model.add())
+
+    let edited = try #require(try store.load().first { $0.login == "leighxp" })
+    #expect(
+      edited.seen == ["1"],
+      "the failure's un-mark must survive the edit, not be reverted by the window's stale snapshot")
+  }
+
   /// Requirement 4 restated from the other side: everything about the
   /// *other* watches in the file must survive an edit to one of them, the
   /// same replace-not-clobber contract `add()` already keeps for a

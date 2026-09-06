@@ -464,6 +464,16 @@ final class AddChannelModel {
   /// runs no lookup at all — there is no fresh archive list to seed against,
   /// only the watch's own history to carry forward untouched.
   ///
+  /// **`seen` here is a starting point, not the final answer.** `add()`
+  /// overwrites it again, right before saving, with whatever `existing`
+  /// holds for this login at that moment — see that method's own doc
+  /// comment for why `editingWatch.seen` alone is stale the instant a sweep
+  /// or a failed download's un-mark lands during however long this window
+  /// sits open before Edit is pressed. Kept here anyway, rather than left
+  /// out, so `composeEditedWatch()` alone still returns something coherent
+  /// for `canAdd` to gate on and for `add()` to fall back to if the login
+  /// has since vanished from the store.
+  ///
   /// Guarded on `folder` alone, the one field `Watch.Settings` cannot exist
   /// without — the login needs no guard, since it comes from `editingWatch`
   /// rather than from typed, possibly-unnormalised text.
@@ -527,9 +537,29 @@ final class AddChannelModel {
   /// started. A stopped channel would come back, and `WatchingModel
   /// .refreshWatches()` would then read it out of `stoppedLogins`, disarming
   /// the exact guard that exists to keep a stopped channel from resurrecting.
-  /// Only Add has a suspension point to worry about here — `composeEditedWatch()`
-  /// runs no fetch, so Edit's load→mutate→save has nothing between them for
-  /// another write to land in.
+  ///
+  /// **Edit is not exempt from a stale read, even though `composeEditedWatch()`
+  /// runs no fetch of its own.** This used to say it was — "Edit's
+  /// load→mutate→save has nothing between them for another write to land
+  /// in" — which was true only because the only other writer of
+  /// `watches.json` was a person clicking Ignore or Add elsewhere in the
+  /// same running app. This stage added two writers that fire on their own
+  /// schedule, with nobody touching anything: `WatchPoller.markSubmitted`
+  /// marks an archive seen the moment it is queued, and
+  /// `AutoDownloadObserver.forget` un-marks one the moment a job fails. The
+  /// real window here is not the gap inside this method — it is
+  /// `beginEditing(_:)` opening this window through however long someone
+  /// takes to press Edit, which is unbounded. A sweep landing in that window
+  /// can mark three archives seen; an edit saved after it, still carrying
+  /// `editingWatch.seen` from before the sweep, un-marks all three the
+  /// moment it saves, and the next sweep re-submits them — duplicate,
+  /// unattended downloads of videos already sitting on disk. Read backwards,
+  /// a failure `forget()` un-marks during that same window gets re-marked
+  /// seen by the stale edit and never returns to the inbox, silently
+  /// breaking §6.3's one promise. So `watch.seen` is re-derived from
+  /// `existing` — loaded fresh immediately below, not from the snapshot
+  /// `beginEditing(_:)` captured — the moment that load lands, before this
+  /// ever writes anything back.
   @discardableResult
   func add() async -> Bool {
     guard var watch = isEditing ? composeEditedWatch() : composeWatch() else {
@@ -560,6 +590,18 @@ final class AddChannelModel {
         refused rather than risk losing it. \(error.localizedDescription)
         """
       return false
+    }
+
+    // Re-derive `seen` from what is actually on disk right now, not from
+    // `editingWatch` — see this method's own doc comment above for the two
+    // ways a stale `seen` silently misbehaves. Falls back to
+    // `editingWatch.seen` only when this login has vanished from the store
+    // entirely (stopped while this window sat open) — carrying forward
+    // whatever this window last knew is still better than saving an empty
+    // `seen` and re-surfacing every archive this channel has ever produced
+    // as brand new.
+    if isEditing, let editingWatch {
+      watch.seen = existing.first(where: { $0.login == editingWatch.login })?.seen ?? editingWatch.seen
     }
 
     var watches = existing
