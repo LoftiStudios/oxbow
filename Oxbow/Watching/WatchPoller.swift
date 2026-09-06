@@ -35,6 +35,20 @@ final class WatchPoller {
 
   private(set) var lastPolled: Date?
 
+  /// Which watches were demoted to notify-only this sweep, keyed by login,
+  /// for `WatchingView` to show.
+  ///
+  /// **Replaced wholesale every sweep, never accumulated.**
+  /// `AutoDownloadPolicy.decide`'s own doc comment is explicit that demotion
+  /// is per-call, not per-watch state: the next sweep re-asks the disk and
+  /// the destination and gets whatever the world looks like *then*, so a
+  /// drive that came back submits normally again with no recovery step. A
+  /// dictionary merged forward instead of replaced would keep reporting a
+  /// channel demoted after the disk freed up, which is indistinguishable
+  /// from the checkbox having been turned off — exactly the confusion
+  /// `docs/design/channel-watching.md` §6.2 rules out.
+  private(set) var demotions: [String: AutoDownloadPolicy.Reason] = [:]
+
   private let store: WatchStore
   private let feed: ChannelFeed
   private let now: () -> Date
@@ -163,6 +177,142 @@ final class WatchPoller {
     }
     results = swept
     lastPolled = now()
+    await actOnFindings(watches: watches, results: swept)
     isSweeping = false
+  }
+
+  /// Acts on one sweep's findings: for each watch, asks `AutoDownloadPolicy`
+  /// whether its automatic path may submit what it found, and either queues
+  /// each archive through `IntentSubmission.submit` — the one composition
+  /// path, per `Oxbow/Intents/DownloadTwitchVideoIntent.swift`'s own doc
+  /// comment and `docs/design/automation.md` §4 — or records the demotion.
+  ///
+  /// **`watches` is the list `sweep()` loaded before the network round
+  /// trips, not a fresh read.** That is fine for *deciding*: every field
+  /// `AutoDownloadPolicy.decide` reads (`downloadsAutomatically`, `settings`)
+  /// is frozen at add time and does not change out from under a sweep in
+  /// progress. It stops being fine the moment something here writes back to
+  /// the store — see `markSubmitted(_:login:)`.
+  private func actOnFindings(watches: [Watch], results: [WatchPollResult]) async {
+    guard !watches.isEmpty else {
+      demotions = [:]
+      return
+    }
+
+    let floor = Preferences().freeSpaceFloor
+    let resultsByLogin = Dictionary(uniqueKeysWithValues: results.map { ($0.login, $0) })
+
+    var newDemotions: [String: AutoDownloadPolicy.Reason] = [:]
+    var toSubmit: [(watch: Watch, archives: [ChannelArchive])] = []
+
+    for watch in watches {
+      // A failed fetch reads as no findings here, exactly the flattening
+      // `WatchPollResult.findings`'s own doc comment says a *health* check
+      // must not use — but this is not one. The floor and destination
+      // checks below are unaffected by whether the feed answered, and a
+      // watch with nothing found submits nothing regardless of why.
+      let findings = resultsByLogin[watch.login]?.findings ?? []
+      let destination = watch.settings.destination
+      let destinationExists = FileManager.default.fileExists(atPath: destination.path)
+      // An unreadable volume is treated as below the floor, not as
+      // unlimited. `decide()` takes this figure on faith, and the failure
+      // mode of guessing "plenty of room" is an unattended multi-gigabyte
+      // download; the failure mode of guessing "none" is a channel sitting
+      // notify-only until the next sweep re-probes. Only the second is
+      // recoverable by doing nothing.
+      let availableBytes = VolumeSpace.live.availableBytes(destination) ?? 0
+
+      switch AutoDownloadPolicy.decide(
+        watch: watch, findings: findings, availableBytes: availableBytes,
+        destinationExists: destinationExists, floor: floor)
+      {
+      case .notAutomatic:
+        continue
+      case .demoted(let reason):
+        newDemotions[watch.login] = reason
+      case .submit(let archives):
+        guard !archives.isEmpty else { continue }
+        toSubmit.append((watch, archives))
+      }
+    }
+
+    // Published as a whole, once, rather than as each watch is decided —
+    // so a caller reading `demotions` mid-sweep never sees a partial one
+    // that looks like the sweep already finished.
+    demotions = newDemotions
+
+    guard !toSubmit.isEmpty else { return }
+
+    // Resolved once and reused for every submission below — the same
+    // engine `DownloadTwitchVideoIntent.perform()` binds once, for the same
+    // reason its own comment gives: a second call was never wrong, only
+    // harder to read.
+    guard case .ready(let controller) = await QueueHost.shared.ready() else { return }
+
+    // Sequential, matching `WatchPoll.sweep`'s own reasoning
+    // (`docs/twitch-channel-api.md` §4): issuing a dozen submissions at once
+    // is the traffic shape that document warns about, and `QueueEngine`
+    // serialises the actual downloads anyway, so concurrency here would only
+    // buy a burst of requests with nothing to show for it.
+    for (watch, archives) in toSubmit {
+      for archive in archives {
+        await submit(archive, from: watch, into: controller)
+      }
+    }
+  }
+
+  /// Submits one archive through the one composition path, then marks it
+  /// seen — never the reverse, and never on a thrown failure.
+  ///
+  /// **Marked seen only after `submit` succeeds.** A throw means `submit`
+  /// refused before ever reaching the queue — an unrecognised link, a
+  /// composite Oxbow could not build — and marking it seen anyway would
+  /// bury a real archive with nobody having looked at it, breaking the one
+  /// promise this feature makes. A success, `.queued` or `.alreadyQueued`
+  /// alike, means the archive is accounted for either way, so both mark it.
+  private func submit(_ archive: ChannelArchive, from watch: Watch, into controller: QueueController) async {
+    do {
+      _ = try await IntentSubmission.submit(
+        link: archive.id,
+        quality: watch.settings.qualityCap,
+        output: watch.settings.output,
+        chatSize: watch.settings.chatSize,
+        destination: watch.settings.destination,
+        existingJobs: controller.jobs,
+        into: IntakeModel(controller: controller))
+      markSubmitted(archive.id, login: watch.login)
+    } catch {
+      // Left as a finding for a person to retry through the intake window,
+      // exactly as `docs/design/channel-watching.md` §6.3 already does for
+      // a failure discovered later, in the queue rather than at
+      // composition. Nothing here retries it: a durable refusal fails
+      // identically next sweep too.
+    }
+  }
+
+  /// Marks `archiveID` seen for `login`, so `Watch.findings(in:)` never
+  /// offers it again — and so a later failure (a future stage's concern,
+  /// once a submitted job can be watched to a terminal status) has an
+  /// entry in `seen` to remove via `Watch.forgetting(_:)`.
+  ///
+  /// **Re-reads the store immediately before writing, rather than reusing
+  /// `watches` from the top of `sweep()`.** This is the same hazard
+  /// `AddChannelModel.add()`'s own doc comment names: `IntentSubmission
+  /// .submit` awaits a metadata fetch before this ever runs, and across
+  /// that suspension the Watching pane's own writers — `WatchingModel
+  /// .markSeen`, `stopWatching` — can and do run. Writing back the copy
+  /// loaded before the sweep's network round trips would silently overwrite
+  /// whatever any of those wrote in the meantime; loading fresh here makes
+  /// this write land on top of whatever is actually on disk, the same
+  /// discipline `WatchingModel.markSeen` already keeps for its own writes.
+  ///
+  /// Best effort, like every other writer's use of this store: nothing here
+  /// has a surface to show a person a save failure mid-sweep, and a lost
+  /// mark costs one re-offer next sweep rather than a lost archive.
+  private func markSubmitted(_ archiveID: String, login: String) {
+    guard var current = try? store.load() else { return }
+    guard let index = current.firstIndex(where: { $0.login == login }) else { return }
+    current[index] = current[index].marking([archiveID])
+    try? store.save(current)
   }
 }

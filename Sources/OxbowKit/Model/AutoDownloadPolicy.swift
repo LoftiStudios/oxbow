@@ -18,7 +18,7 @@ public enum AutoDownloadPolicy {
   /// downloading ran and found nothing new," the second is "automatic
   /// downloading did not run." Collapsing them would make a checkbox that is
   /// off indistinguishable from a channel that is quiet.
-  public enum Decision: Equatable {
+  public enum Decision: Equatable, Sendable {
     case submit([ChannelArchive])
     case demoted(Reason)
     case notAutomatic
@@ -27,7 +27,7 @@ public enum AutoDownloadPolicy {
   /// Why a watch's automatic downloading was demoted to notify-only this
   /// sweep. Each case carries what a person needs to be told, not just that
   /// something went wrong.
-  public enum Reason: Equatable {
+  public enum Reason: Equatable, Sendable {
     case belowFloor(available: Int64, floor: Int64)
     case destinationUnreachable(String)
 
