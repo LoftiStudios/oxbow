@@ -190,7 +190,7 @@ final class QueueHost {
         // `ready()`, which waits for `start()` so no enqueuer ever sees a
         // pre-start engine. See `liveController`.
         liveController = controller
-        attachStatusObservers(to: controller)
+        attachStatusObservers(to: controller, supportDirectory: support)
         await controller.start()
         return .ready(controller)
       case .helperMissing(let message):
@@ -205,12 +205,34 @@ final class QueueHost {
   /// Wires the status surfaces to the queue. Moved here from `AppDelegate`
   /// because it must happen before `start()` regardless of which caller
   /// triggered resolution, and only this type knows when that is.
-  private func attachStatusObservers(to controller: QueueController) {
-    // Nil only under `xcodebuild test`, where both are deliberately absent.
+  ///
+  /// **This is the one subscription to `controller.onSnapshot`.**
+  /// `AutoDownloadObserver` — which returns a failed automatic download to
+  /// the inbox, `docs/design/channel-watching.md` §6.3 — is wired in here
+  /// alongside `dock` and `notifier` rather than opening a second
+  /// subscription of its own.
+  ///
+  /// **Gated behind the same `dock`/`notifier` guard, even though it needs
+  /// no OS permission of its own.** `OxbowTests` is hosted by this app, so
+  /// `xcodebuild test` builds a real `QueueController` against the
+  /// developer's own `queue.json` — but `WatchingModel` and `WatchPoller`
+  /// are deliberately never constructed in that case (`OxbowApp`'s own
+  /// `AppComposition.isUserSession`-guarded `.task`), specifically so a test
+  /// run never touches the developer's real `watches.json`. Wiring this
+  /// observer outside that guard would make it the first thing to break
+  /// that invariant: a `.failed` job already sitting in a developer's own
+  /// queue would have its archive silently un-marked on every test run.
+  /// `dock` and `notifier` are themselves nil only under `xcodebuild test`
+  /// (see their own declarations), so gating on them is gating on exactly
+  /// the condition this observer needs to avoid too.
+  private func attachStatusObservers(to controller: QueueController, supportDirectory: URL) {
     guard let dock, let notifier else { return }
+    let autoDownloadObserver = AutoDownloadObserver(
+      store: WatchStore(fileURL: AppComposition.watchStoreURL(supportDirectory: supportDirectory)))
     controller.onSnapshot = { jobs in
       dock.apply(jobs)
       notifier.apply(jobs)
+      autoDownloadObserver.apply(jobs)
     }
     controller.onEnqueue = { notifier.requestAuthorizationIfNeeded() }
   }
