@@ -159,3 +159,48 @@ struct ArchiveRowStateTests {
       for: archive("1"), jobs: [job("1", .done, files: [])], file: noFile) == .missing)
   }
 }
+
+/// `ArchiveRowState.FileAnswer.resolve` is the live probe's pure core: no
+/// disk, just the two facts a real filesystem check would supply.
+@Suite("Live file answer resolution")
+struct FileAnswerResolutionTests {
+
+  @Test("a present file answers present")
+  func filePresent() {
+    let url = URL(filePath: "/Volumes/Helios/a.mp4")
+    let answer = ArchiveRowState.FileAnswer.resolve(
+      url, fileExists: { _ in true }, folderExists: { _ in true })
+    #expect(answer == .present(url))
+  }
+
+  /// §4: the folder being there is what makes "gone" an honest answer
+  /// rather than a guess.
+  @Test("a gone file with its folder present is absent")
+  func fileGoneFolderPresent() {
+    let answer = ArchiveRowState.FileAnswer.resolve(
+      URL(filePath: "/Volumes/Helios/a.mp4"),
+      fileExists: { _ in false }, folderExists: { _ in true })
+    #expect(answer == .absent)
+  }
+
+  /// The case this rule exists for: an unplugged drive must read as
+  /// unreachable, never as a deleted file, and the volume's name has to
+  /// come from the path itself since the folder can't be asked.
+  @Test("a gone folder under /Volumes is unknown, named from the path")
+  func folderGoneUnderVolumes() {
+    let answer = ArchiveRowState.FileAnswer.resolve(
+      URL(filePath: "/Volumes/Helios/a.mp4"),
+      fileExists: { _ in false }, folderExists: { _ in false })
+    #expect(answer == .unknown(volumeName: "Helios"))
+  }
+
+  /// Outside `/Volumes` there is no disk name to read off the path, so the
+  /// missing folder's own name is the closest honest answer.
+  @Test("a gone folder outside /Volumes is unknown, named from the folder")
+  func folderGoneOutsideVolumes() {
+    let answer = ArchiveRowState.FileAnswer.resolve(
+      URL(filePath: "/Users/x/Downloads/a.mp4"),
+      fileExists: { _ in false }, folderExists: { _ in false })
+    #expect(answer == .unknown(volumeName: "Downloads"))
+  }
+}

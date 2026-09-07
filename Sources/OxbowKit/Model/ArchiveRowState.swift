@@ -105,3 +105,59 @@ public enum ArchiveRowState: Equatable, Sendable {
     return archive.status == .recording ? .live : .available
   }
 }
+
+extension ArchiveRowState.FileAnswer {
+
+  /// Answers whether a delivered file is present, without mistaking an
+  /// unreachable volume for a deleted one.
+  ///
+  /// **Why not `VolumeSpace.live.volumeName(_:)` / `.volumeRoot(_:)`.** Both
+  /// resolve through `VolumeSpace.nearestExisting`, which walks *up* the
+  /// path to the deepest ancestor that exists. That is exactly right for
+  /// asking about *capacity* — every ancestor sits on the same volume, so
+  /// any of them can answer how much free space it has. It is exactly wrong
+  /// for asking whether *this path's* volume is present: for an unmounted
+  /// `/Volumes/Helios/f.mp4`, walking up lands on `/Volumes` itself, which
+  /// always exists — it is a directory on the boot volume, not on Helios.
+  /// So both accessors answer non-nil for a path whose actual volume is
+  /// gone, and an unplugged drive would read as a deleted file: the one
+  /// case `FileAnswer` exists to keep separate from a real deletion.
+  ///
+  /// The honest proxy for "could this question even be asked" is the
+  /// file's own parent folder, not some ancestor further up. If the folder
+  /// is there and the file is not, the file is genuinely gone. If the
+  /// folder is not there either, something larger than one file is
+  /// missing — a whole volume, most likely — and this must not guess which
+  /// file that costs.
+  ///
+  /// - Parameters:
+  ///   - fileExists: probes the file itself.
+  ///   - folderExists: probes the file's parent folder. Kept separate from
+  ///     `fileExists` (rather than reusing it on the parent internally) so
+  ///     a test can answer each question independently without a disk.
+  public static func resolve(
+    _ url: URL, fileExists: (URL) -> Bool, folderExists: (URL) -> Bool
+  ) -> ArchiveRowState.FileAnswer {
+    if fileExists(url) { return .present(url) }
+    let folder = url.deletingLastPathComponent()
+    if folderExists(folder) { return .absent }
+    return .unknown(volumeName: volumeName(guessedFrom: url))
+  }
+
+  /// The volume name to report when the folder itself could not be found.
+  ///
+  /// Taken from the path, not from `VolumeSpace.volumeName` — see
+  /// `resolve` above for why that resolver has already lost the answer by
+  /// the time it would be asked. Under `/Volumes`, the component right
+  /// after it is the disk's own name, the same name Finder shows (mounting
+  /// `Helios` produces `/Volumes/Helios`). Outside `/Volumes` — an
+  /// unreachable path that was never an external volume in the first place
+  /// — the closest thing to a name is the missing folder itself.
+  private static func volumeName(guessedFrom url: URL) -> String {
+    let components = url.standardizedFileURL.pathComponents
+    if components.count > 2, components[1] == "Volumes" {
+      return components[2]
+    }
+    return url.deletingLastPathComponent().lastPathComponent
+  }
+}

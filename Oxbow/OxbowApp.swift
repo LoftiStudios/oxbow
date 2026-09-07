@@ -171,17 +171,19 @@ struct OxbowApp: App {
             let result = await ArchiveSubmission.submit([archive], for: watch, into: controller)
             return result.failures[archive.id]
           },
+          // Not `VolumeSpace.live` here — its accessors resolve through
+          // `nearestExisting`, which walks up to the deepest ancestor that
+          // exists. For an unmounted `/Volumes/Helios/f.mp4` that ancestor
+          // is `/Volumes` itself, which always exists on the boot volume,
+          // so both `VolumeSpace` accessors would answer non-nil and an
+          // unplugged drive would read as a deleted file. See
+          // `ArchiveRowState.FileAnswer.resolve`'s doc comment for the full
+          // reasoning; this just supplies its two disk probes.
           fileAnswer: { url in
-            // `volumeName` answers for a mounted volume and nil for one that
-            // is not there, which is exactly the reachable/unreachable split
-            // §4.1 needs — and it is a different question from "does the
-            // file exist", which is why both are asked.
-            guard let volume = VolumeSpace.live.volumeName(url) else {
-              return .unknown(volumeName: url.deletingLastPathComponent().lastPathComponent)
-            }
-            return FileManager.default.fileExists(atPath: url.path)
-              ? .present(url)
-              : (VolumeSpace.live.volumeRoot(url) == nil ? .unknown(volumeName: volume) : .absent)
+            ArchiveRowState.FileAnswer.resolve(
+              url,
+              fileExists: { FileManager.default.fileExists(atPath: $0.path) },
+              folderExists: { FileManager.default.fileExists(atPath: $0.path) })
           })
         watchStore = store
         imageStore = ImageStore.live(
