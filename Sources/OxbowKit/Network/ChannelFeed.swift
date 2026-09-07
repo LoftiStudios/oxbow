@@ -68,6 +68,17 @@ public struct ChannelFeed: Sendable {
   /// "argument 'first' value must be between 1 and 100."
   public static let maximumLimit = 100
 
+  /// The avatar size asked of `profileImageURL`.
+  ///
+  /// **A member of a fixed set, not a number derived from a layout.**
+  /// `docs/twitch-channel-api.md` §9.2 measures it: the field accepts any
+  /// width and builds a CDN filename by interpolation, so an unserved size
+  /// comes back as a perfectly ordinary URL that 404s at fetch time. The CDN
+  /// serves 28, 50, 70, 150, 300 and 600 — 100, 200, 400 and 1200 do not
+  /// exist. 300 covers a 150pt avatar at 2x at about 150 KB; 600 is the next
+  /// rung up and nearly 550 KB.
+  public static let avatarWidth = 300
+
   private let fetch: Fetch
   private let endpoint: URL
 
@@ -92,26 +103,26 @@ public struct ChannelFeed: Sendable {
     return try Self.decode(data)
   }
 
-  /// Twitch's own name for the channel, cased however its owner set it —
-  /// `"Ninja"` where `login` is `"ninja"`.
+  /// The channel's own metadata: the name cased however its owner set it —
+  /// `"Ninja"` where `login` is `"ninja"` — and its avatar.
   ///
   /// **Its own request, not a field folded into `archives(forLogin:
   /// limit:)`.** That query is also `WatchPoll.sweep`'s injected fetch
-  /// closure's signature, wired through `WatchPoller`; widening it to also
-  /// ask for `displayName` would ripple into both for no benefit — a poll
-  /// already has the display name from the stored `Watch` and never needs
-  /// to ask Twitch for it again. This round trip is paid only when a
-  /// channel is added, never on a poll.
+  /// closure's signature, wired through `WatchPoller`; widening it would
+  /// ripple into both and would put an avatar fetch on every poll of every
+  /// channel, forever, for two values that change about never. A poll
+  /// already has the display name from the stored `Watch`. This round trip
+  /// is paid only when a channel is added.
   ///
   /// `login` carries the same safety contract as `archives(forLogin:
   /// limit:)`: it is interpolated unescaped into the query body, so route it
   /// through `Watch.normalisedLogin(_:)` first.
-  public func displayName(forLogin login: String) async throws -> String {
-    let (data, response) = try await fetch(request(query: Self.displayNameQuery(login: login)))
+  public func profile(forLogin login: String) async throws -> ChannelProfile {
+    let (data, response) = try await fetch(request(query: Self.profileQuery(login: login)))
     guard response.statusCode == 200 else {
       throw ChannelFeedError.server(status: response.statusCode)
     }
-    return try Self.decodeDisplayName(data)
+    return try Self.decodeProfile(data)
   }
 
   private func request(query: String) -> URLRequest {
@@ -143,16 +154,17 @@ public struct ChannelFeed: Sendable {
 
   /// `login` must conform to Twitch's login alphabet; see
   /// `archives(forLogin:limit:)` for the full safety contract.
-  static func displayNameQuery(login: String) -> String {
+  static func profileQuery(login: String) -> String {
     """
-    query { user(login: "\(login)") { displayName } }
+    query { user(login: "\(login)") { displayName \
+    profileImageURL(width: \(avatarWidth)) } }
     """
   }
 
   /// The `data.user` object, having already ruled out the shared failure
   /// modes both queries in this file can hit: an unparseable body, an
   /// integrity challenge, and an explicit null user for an unknown login.
-  /// Shared so `decode(_:)` and `decodeDisplayName(_:)` cannot drift on how
+  /// Shared so `decode(_:)` and `decodeProfile(_:)` cannot drift on how
   /// either is recognised.
   private static func user(from data: Data) throws -> [String: Any] {
     guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
@@ -179,11 +191,15 @@ public struct ChannelFeed: Sendable {
     return user
   }
 
-  private static func decodeDisplayName(_ data: Data) throws -> String {
-    guard let displayName = try user(from: data)["displayName"] as? String else {
+  private static func decodeProfile(_ data: Data) throws -> ChannelProfile {
+    let user = try user(from: data)
+    guard let displayName = user["displayName"] as? String else {
       throw ChannelFeedError.malformedPayload(snippet: snippet(data))
     }
-    return displayName
+    // A missing avatar is a channel without one, not a broken payload, so it
+    // degrades to nil rather than failing the whole call.
+    let avatar = (user["profileImageURL"] as? String).flatMap(URL.init(string:))
+    return ChannelProfile(displayName: displayName, avatarURL: avatar)
   }
 
   private static func decode(_ data: Data) throws -> [ChannelArchive] {

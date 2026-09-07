@@ -146,4 +146,20 @@ struct WatchTests {
     #expect(Watch.normalisedLogin(String(repeating: "a", count: 25)) == String(repeating: "a", count: 25))
     #expect(Watch.normalisedLogin(String(repeating: "a", count: 26)) == nil) // 26: too long
   }
+
+  /// A file written before `avatarURL` existed must still load. The feature
+  /// has no installed base, but there is a live `watches.json` on the
+  /// author's machine and losing it to a decode failure would be a bad way
+  /// to find that out.
+  @Test("a watch without an avatarURL still decodes")
+  func decodesWithoutAvatar() throws {
+    let json = Data("""
+      {"login":"ninja","displayName":"Ninja","downloadsAutomatically":false,\
+      "seen":[],"settings":{"destinationPath":"/tmp","qualityCap":"best",\
+      "output":"videoWithChat","chatSize":"medium"}}
+      """.utf8)
+    let watch = try JSONDecoder().decode(Watch.self, from: json)
+    #expect(watch.avatarURL == nil)
+    #expect(watch.login == "ninja")
+  }
 }

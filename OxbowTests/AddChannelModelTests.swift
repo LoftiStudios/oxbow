@@ -474,7 +474,7 @@ struct AddChannelModelTests {
     let model = makeModel(
       store: store,
       fetch: { _ in .success([Self.archive("1")]) },
-      fetchDisplayName: { _ in .success("Ninja") })
+      fetchProfile: { _ in .success(ChannelProfile(displayName: "Ninja", avatarURL: nil)) })
     model.loginText = "ninja"
     model.scope = .allAvailable
 
@@ -496,7 +496,7 @@ struct AddChannelModelTests {
     let model = makeModel(
       store: store,
       fetch: { _ in .success([Self.archive("1")]) },
-      fetchDisplayName: { _ in .failure(.noSuchChannel) })
+      fetchProfile: { _ in .failure(.noSuchChannel) })
     model.loginText = "ninja"
     model.scope = .allAvailable
 
@@ -530,10 +530,10 @@ struct AddChannelModelTests {
     let model = makeModel(
       store: store,
       fetch: { _ in .success([Self.archive("1")]) },
-      fetchDisplayName: { _ in
+      fetchProfile: { _ in
         fetchStarted = true
         await gate.wait()
-        return .success("Ninja")
+        return .success(ChannelProfile(displayName: "Ninja", avatarURL: nil))
       })
     model.loginText = "ninja"
     model.scope = .allAvailable
@@ -812,14 +812,14 @@ struct AddChannelModelTests {
     store: WatchStore? = nil,
     preferences: Preferences = AddChannelModelTests.store(),
     fetch: @escaping (String) async -> Result<[ChannelArchive], ChannelFeedError> = { _ in .success([]) },
-    fetchDisplayName: @escaping (String) async -> Result<String, ChannelFeedError> = { login in .success(login) })
+    fetchProfile: @escaping (String) async -> Result<ChannelProfile, ChannelFeedError> = { login in .success(ChannelProfile(displayName: login, avatarURL: nil)) })
     -> AddChannelModel
   {
     AddChannelModel(
       store: store ?? WatchStore(fileURL: Self.temporaryFile()),
       preferences: preferences,
       fetch: fetch,
-      fetchDisplayName: fetchDisplayName)
+      fetchProfile: fetchProfile)
   }
 
   /// Lets a test hold a fetch open while it drives the model past it. The

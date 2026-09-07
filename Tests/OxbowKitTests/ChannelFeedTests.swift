@@ -192,20 +192,24 @@ struct ChannelFeedTests {
     #expect(archives.isEmpty)
   }
 
-  // MARK: - displayName(forLogin:)
+  // MARK: - profile(forLogin:)
 
-  /// Its own request, asking only for `displayName` — never folded into the
-  /// archives query, so a poll (which never calls this) pays nothing extra.
-  @Test("asks for displayName alone, not the archives query")
-  func displayNameQueryShape() async throws {
+  /// Its own request, asking only for the channel's own fields — never
+  /// folded into the archives query, so a poll (which never calls this) pays
+  /// nothing extra. That matters more now that it also fetches an avatar:
+  /// folded in, every poll of every channel would refetch an image URL that
+  /// changes about never.
+  @Test("asks for the channel's own fields alone, not the archives query")
+  func profileQueryShape() async throws {
     let sent = LockedBox<URLRequest?>(nil)
     let body = Data(#"{"data":{"user":{"displayName":"Ninja"}}}"#.utf8)
     let feed = feed(body: body, captured: { sent.value = $0 })
-    _ = try await feed.displayName(forLogin: "ninja")
+    _ = try await feed.profile(forLogin: "ninja")
 
     let request = try #require(sent.value)
     let requestBody = String(decoding: try #require(request.httpBody), as: UTF8.self)
     #expect(requestBody.contains("displayName"))
+    #expect(requestBody.contains("profileImageURL"))
     #expect(!requestBody.contains("videos"))
     #expect(!requestBody.contains("type: ARCHIVE"))
     #expect(request.value(forHTTPHeaderField: "Client-ID") == ChannelFeed.publicClientID)
@@ -214,15 +218,15 @@ struct ChannelFeedTests {
   @Test("decodes the channel's own capitalisation")
   func displayNameDecoding() async throws {
     let body = Data(#"{"data":{"user":{"displayName":"Ninja"}}}"#.utf8)
-    let name = try await feed(body: body).displayName(forLogin: "ninja")
-    #expect(name == "Ninja")
+    let profile = try await feed(body: body).profile(forLogin: "ninja")
+    #expect(profile.displayName == "Ninja")
   }
 
   @Test("a null user is no such channel, not a failure to parse")
   func displayNameNullUser() async throws {
     let body = Data(#"{"data":{"user":null}}"#.utf8)
     await #expect(throws: ChannelFeedError.noSuchChannel) {
-      try await feed(body: body).displayName(forLogin: "nobody")
+      try await feed(body: body).profile(forLogin: "nobody")
     }
   }
 
@@ -230,7 +234,7 @@ struct ChannelFeedTests {
   func displayNameMissingField() async throws {
     let body = Data(#"{"data":{"user":{}}}"#.utf8)
     do {
-      _ = try await feed(body: body).displayName(forLogin: "ninja")
+      _ = try await feed(body: body).profile(forLogin: "ninja")
       Issue.record("expected a throw")
     } catch let error as ChannelFeedError {
       guard case .malformedPayload = error else {
@@ -242,7 +246,7 @@ struct ChannelFeedTests {
   @Test("a non-200 carries its status")
   func displayNameServerStatus() async throws {
     await #expect(throws: ChannelFeedError.server(status: 503)) {
-      try await feed(body: Data(), status: 503).displayName(forLogin: "ninja")
+      try await feed(body: Data(), status: 503).profile(forLogin: "ninja")
     }
   }
 

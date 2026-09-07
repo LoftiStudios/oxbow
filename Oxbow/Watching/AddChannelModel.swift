@@ -188,7 +188,7 @@ final class AddChannelModel {
   /// Takes the normalised login for the same reason `fetch` does. A failure
   /// falls back to the login itself rather than blocking the add — see
   /// `resolvedDisplayName(for:)`.
-  private let fetchDisplayName: (String) async -> Result<String, ChannelFeedError>
+  private let fetchProfile: (String) async -> Result<ChannelProfile, ChannelFeedError>
 
   /// Distinguishes the fetch in flight from one the user has already
   /// superseded by editing the login. Without it, a slower fetch for an
@@ -219,12 +219,12 @@ final class AddChannelModel {
     store: WatchStore,
     preferences: Preferences,
     fetch: @escaping (String) async -> Result<[ChannelArchive], ChannelFeedError>,
-    fetchDisplayName: @escaping (String) async -> Result<String, ChannelFeedError>)
+    fetchProfile: @escaping (String) async -> Result<ChannelProfile, ChannelFeedError>)
   {
     self.store = store
     self.preferences = preferences
     self.fetch = fetch
-    self.fetchDisplayName = fetchDisplayName
+    self.fetchProfile = fetchProfile
     self.qualityCap = preferences.qualityCap
     self.output = preferences.output
     self.chatSize = preferences.chatSize
@@ -439,7 +439,7 @@ final class AddChannelModel {
     // `displayName` seeds with the normalised login as a placeholder, not
     // the real thing. `composeWatch()` is synchronous and runs on every
     // `canAdd` re-evaluation, so it cannot itself perform the network fetch
-    // `ChannelFeed.displayName(forLogin:)` needs — that only happens once,
+    // `ChannelFeed.profile(forLogin:)` needs — that only happens once,
     // in `add()`, right before this watch is persisted, and only `add()`'s
     // copy of `displayName` is the one that gets saved. See
     // `resolvedDisplayName(for:)`.
@@ -565,6 +565,11 @@ final class AddChannelModel {
   /// recomposing them from the form.
   private(set) var savedWatch: Watch?
 
+  /// The avatar URL from the same lookup that resolved the display name.
+  /// Held rather than returned so `add()` can put it on the watch without a
+  /// second call.
+  private var resolvedAvatarURL: URL?
+
   /// The archives Add should put straight into the queue.
   ///
   /// **Empty unless automatic downloading is on and the scope is the whole
@@ -615,6 +620,7 @@ final class AddChannelModel {
     // order matters.
     if !isEditing {
       watch.displayName = await resolvedDisplayName(for: watch.login)
+      watch.avatarURL = resolvedAvatarURL
     }
 
     let existing: [Watch]
@@ -666,10 +672,19 @@ final class AddChannelModel {
   /// cosmetic — the sidebar heading, nothing `WatchPoll` reads to decide
   /// what to download — so a network hiccup here is not a reason to refuse
   /// the whole add the way an unreadable watch list is.
+  ///
+  /// The avatar rides the same call and lands in `resolvedAvatarURL` rather
+  /// than being returned, so `add()` can put it on the watch without a
+  /// second round trip. A failure leaves it nil, which renders as the
+  /// placeholder — cosmetic in exactly the way the name is.
   private func resolvedDisplayName(for login: String) async -> String {
-    switch await fetchDisplayName(login) {
-    case .success(let name): return name
-    case .failure: return login
+    switch await fetchProfile(login) {
+    case .success(let profile):
+      resolvedAvatarURL = profile.avatarURL
+      return profile.displayName
+    case .failure:
+      resolvedAvatarURL = nil
+      return login
     }
   }
 }

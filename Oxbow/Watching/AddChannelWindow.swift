@@ -93,7 +93,7 @@ struct AddChannelWindow: View {
     _model = State(initialValue: AddChannelModel(
       store: store, preferences: preferences,
       fetch: { login in await Self.result { try await feed.archives(forLogin: login) } },
-      fetchDisplayName: { login in await Self.result { try await feed.displayName(forLogin: login) } }))
+      fetchProfile: { login in await Self.result { try await feed.profile(forLogin: login) } }))
     self.volumeSpace = volumeSpace
     _pendingEdit = pendingEdit
     self.onClose = onClose
@@ -769,7 +769,7 @@ private func previewModel(
       if let failure { return .failure(failure) }
       return .success(archives ?? [])
     },
-    fetchDisplayName: { _ in .success(login) })
+    fetchProfile: { _ in .success(ChannelProfile(displayName: login, avatarURL: nil)) })
   model.loginText = login
   return model
 }

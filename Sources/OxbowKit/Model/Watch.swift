@@ -47,6 +47,15 @@ public struct Watch: Equatable, Sendable, Codable {
 
   public var login: String
   public var displayName: String
+
+  /// Where this channel's avatar lives, captured when the channel was added.
+  ///
+  /// **Optional and defaulted, so a `watches.json` written before this field
+  /// existed still decodes** — a synthesized `Codable` reads a missing
+  /// optional as nil rather than throwing. A watch added earlier simply has
+  /// no avatar until it is edited; nothing re-fetches it on a poll, because
+  /// `ChannelFeed.profile(forLogin:)` is deliberately off the sweep's path.
+  public var avatarURL: URL?
   public var settings: Settings
   public var downloadsAutomatically: Bool
 
@@ -61,10 +70,11 @@ public struct Watch: Equatable, Sendable, Codable {
 
   public init(
     login: String, displayName: String, settings: Settings,
-    downloadsAutomatically: Bool, seen: Set<String>)
+    downloadsAutomatically: Bool, seen: Set<String>, avatarURL: URL? = nil)
   {
     self.login = login
     self.displayName = displayName
+    self.avatarURL = avatarURL
     self.settings = settings
     self.downloadsAutomatically = downloadsAutomatically
     self.seen = seen
