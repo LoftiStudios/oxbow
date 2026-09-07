@@ -196,24 +196,29 @@ public struct Preferences {
     }
   }
 
-  /// The factory free-space floor, derived from the one worked example this
-  /// project actually has for what a job can peak at.
+  /// The factory free-space floor: what Oxbow will not spend, on top of what
+  /// the download itself is priced at.
   ///
-  /// `docs/design/disk-preflight.md` §5 prices a six-hour 1080p60 job with
-  /// chat — source 23 GB, chat-render intermediate 10 GB, composite output
-  /// 15 GB — at **"about 49 GB"** needed on the volume holding the workspace
-  /// (`SpaceEstimate.total`, where all three coexist while the composite is
-  /// being written). That is not a worst case picked to be safe; it is the
-  /// document's own arithmetic for an ordinary long stream, and per §3.2 the
-  /// composite term alone can run another ~3x over that for a busy title.
+  /// **Lowered from 49 GB to 10 GB on 2026-09-07, because the old number was
+  /// counting the job twice.** 49 GB came from `docs/design/disk-preflight
+  /// .md` §5's worked example — a six-hour 1080p60 job with chat peaks at
+  /// about 49 GB across source, chat-render intermediate and composite — and
+  /// the reasoning was that a floor below a single job's peak never fires in
+  /// time to help. That was correct when the floor was the *only* protection.
   ///
-  /// A floor set below a single job's peak is a floor that never fires in
-  /// time to help — automatic downloading would start the job, discover the
-  /// shortfall the same way an unattended job discovers it today, and fail
-  /// partway through instead of before it began. So the factory floor is
-  /// that peak, not a round number chosen to look like enough: **49 GB**, in
-  /// bytes.
-  public static let factoryFreeSpaceFloor: Int64 = 49_000_000_000
+  /// It is not any more. `AutoDownloadPolicy` prices every batch with
+  /// `BackfillEstimate`, whose sum is peak-aware in exactly the same way
+  /// (`Σ delivered + max transient overhead`), and refuses any batch that
+  /// would take the volume below this. So the job's peak is already
+  /// subtracted before this number is consulted, and setting the floor to a
+  /// second copy of that peak reserved a worst-case 1080p-with-chat job's
+  /// worth of room in order to decline a 300 MB 360p one.
+  ///
+  /// What is left for the floor to do is keep the machine usable — leave
+  /// room for the system, not for the download. **10 GB**, which is also
+  /// already a rung on the settings picker. Anyone wanting the old behaviour
+  /// can pick 49 GB there, and someone on a very full disk can pick more.
+  public static let factoryFreeSpaceFloor: Int64 = 10_000_000_000
 
   /// Whether the intake's options panel opens expanded.
   ///

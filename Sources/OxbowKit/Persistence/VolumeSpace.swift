@@ -93,22 +93,53 @@ public struct VolumeSpace: Sendable {
       volumeName: volumeName(path) ?? path.lastPathComponent)
   }
 
-  /// The real probe.
+  /// Picks between the two capacity keys.
   ///
-  /// `volumeAvailableCapacityForImportantUsage`, never
-  /// `volumeAvailableCapacity`: the former counts space the system will purge
-  /// to satisfy an important write, which is what actually happens when a
-  /// download needs room. On a Mac carrying a large local snapshot store the
-  /// two differ by tens of gigabytes, and the raw figure would warn on machines
-  /// with plenty of usable space.
+  /// **`volumeAvailableCapacityForImportantUsage` is preferred but cannot be
+  /// trusted alone, because on a network volume it answers zero.** Measured
+  /// on an SMB share with 8 TB free: `importantUsage` returned 0 bytes while
+  /// `volumeAvailableCapacity` returned 8035.90 GB. Not nil — zero — so
+  /// every `??` fallback in the codebase sailed straight past it and a NAS
+  /// destination read as a completely full disk. `AutoDownloadPolicy` then
+  /// demoted that channel on every sweep, permanently, and said "Only Zero
+  /// KB free" while doing it.
+  ///
+  /// Taking the larger of the two gets both cases right without having to
+  /// ask what kind of volume this is. On a local disk `importantUsage` is
+  /// the larger — it counts space the system will purge to satisfy an
+  /// important write, which is what actually happens when a download needs
+  /// room, and on a Mac carrying a large snapshot store the two differ by
+  /// tens of gigabytes. On a network volume the plain figure is the larger
+  /// by everything the share has.
+  ///
+  /// Returns nil only when neither key answers, which stays distinct from
+  /// "answered, and the number is zero" — a distinction this function exists
+  /// because something else lost.
+  ///
+  /// **`importantUsage` is optimistic about a local disk, and this keeps
+  /// that.** It counts purgeable space, so it reads higher than Finder does
+  /// — 125.40 GB against 57.33 GB on the machine measured above. That was
+  /// already the documented choice for the intake's warning and is not being
+  /// changed here, but it does mean a reserve set against this number is
+  /// protecting less than its label suggests.
+  static func betterCapacity(important: Int64?, plain: Int64?) -> Int64? {
+    switch (important, plain) {
+    case (nil, nil): return nil
+    case (let a?, nil): return a
+    case (nil, let b?): return b
+    case (let a?, let b?): return max(a, b)
+    }
+  }
+
+  /// The real probe.
   public static let live = VolumeSpace(
     availableBytes: { url in
-      guard let existing = nearestExisting(url),
-            let capacity = try? existing.resourceValues(
-              forKeys: [.volumeAvailableCapacityForImportantUsageKey])
-              .volumeAvailableCapacityForImportantUsage
-      else { return nil }
-      return Int64(capacity)
+      guard let existing = nearestExisting(url) else { return nil }
+      let values = try? existing.resourceValues(forKeys: [
+        .volumeAvailableCapacityForImportantUsageKey, .volumeAvailableCapacityKey])
+      return betterCapacity(
+        important: values?.volumeAvailableCapacityForImportantUsage,
+        plain: values?.volumeAvailableCapacity.map(Int64.init))
     },
     volumeRoot: { url in
       guard let existing = nearestExisting(url) else { return nil }

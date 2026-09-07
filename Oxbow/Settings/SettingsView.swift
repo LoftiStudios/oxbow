@@ -243,15 +243,15 @@ struct SettingsView: View {
 /// labelled values, nothing more, so it stays here with the view that is its
 /// only reader.
 ///
-/// **49 GB is one of the rungs, not a value the ladder happens to miss.**
-/// It is `Preferences.factoryFreeSpaceFloor` — see that constant's own doc
-/// comment for where the number comes from — and Restore Defaults has to
-/// land on a rung this `Picker` actually offers, or the control would show no
-/// selection at all for the very value it just restored.
+/// **The factory floor has to be one of the rungs**, or Restore Defaults
+/// would land on a value this `Picker` does not offer and the control would
+/// show no selection at all for what it just restored. That is 10 GB — see
+/// `Preferences.factoryFreeSpaceFloor` for why it is no longer 49 GB. The
+/// 49 GB rung stays, so anyone who preferred the old reserve can pick it.
 private enum FreeSpaceFloorRung: Int64, CaseIterable {
-  case ten = 10_000_000_000
+  case factory = 10_000_000_000
   case twentyFive = 25_000_000_000
-  case factory = 49_000_000_000
+  case fortyNine = 49_000_000_000
   case oneHundred = 100_000_000_000
   case twoFifty = 250_000_000_000
   case fiveHundred = 500_000_000_000

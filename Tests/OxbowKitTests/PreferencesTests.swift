@@ -134,12 +134,20 @@ struct PreferencesTests {
     defaults.set(Int64(7_000_000_000), forKey: "freeSpaceFloor")
     #expect(store(defaults).freeSpaceFloor == 7_000_000_000)
 
-    // The factory value: the peak `docs/design/disk-preflight.md` §5 prices
-    // for a six-hour 1080p60 job with chat (23 + 10 + 15 GB, "about 49 GB"),
-    // in bytes. A change here means either the estimator's own worked
-    // example changed or someone rounded this to something tidier — the
-    // test exists to force that to be a deliberate edit.
-    #expect(Preferences.factoryFreeSpaceFloor == 49_000_000_000)
+    // The factory value, in bytes. This test exists to make a change to it a
+    // deliberate edit rather than a quiet one, and it has done that once:
+    // the value was 49 GB — the peak `docs/design/disk-preflight.md` §5
+    // prices for a six-hour 1080p60 job with chat (23 + 10 + 15 GB) — back
+    // when the floor was the only thing standing between an unattended job
+    // and a full disk.
+    //
+    // `AutoDownloadPolicy` now prices each batch with `BackfillEstimate`,
+    // which is peak-aware in the same way, and refuses anything that would
+    // cross the floor. Reserving a second copy of that peak meant declining
+    // a 300 MB download in order to protect against a 49 GB one. The floor's
+    // remaining job is leaving the machine usable, hence 10 GB — which is
+    // also a rung on the settings picker, as Restore Defaults requires.
+    #expect(Preferences.factoryFreeSpaceFloor == 10_000_000_000)
   }
 
   // MARK: - A destination that no longer resolves
