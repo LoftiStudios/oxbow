@@ -110,7 +110,16 @@ final class WatchingModel {
   private var jobs: [Job] = []
 
   /// How a delivered file's presence is answered. Injected so a test needs
-  /// no disk; the live wiring hands in a `VolumeSpace`-backed probe.
+  /// no disk; the live wiring hands in `ArchiveRowState.FileAnswer.resolve`
+  /// over plain `FileManager` probes — deliberately not `VolumeSpace`, whose
+  /// accessors resolve through `nearestExisting` and walk *up* to the
+  /// nearest existing ancestor. That is right for asking about a volume's
+  /// *capacity*, where any ancestor sits on the same disk, and wrong here:
+  /// for an unmounted volume it lands on `/Volumes` itself, which always
+  /// exists, so it would answer non-nil and read an unplugged drive as a
+  /// deleted file (`ArchiveRowState.FileAnswer.resolve`'s own doc comment
+  /// has the full reasoning, and §4.1 of `docs/design/channel-history.md`
+  /// has it measured against real hardware).
   private let fileAnswer: (URL) -> ArchiveRowState.FileAnswer
 
   /// Archive ids `markSeen` could not persist.

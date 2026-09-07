@@ -43,7 +43,15 @@ struct ChannelCard: View {
   /// the first and does not invent a summary across them — that would be a
   /// claim nothing here actually computed.
   private var disconnectedVolume: String? {
-    for row in section.rows {
+    Self.disconnectedVolume(in: section.rows)
+  }
+
+  /// Pulled out of the computed property above so `ChannelCardTests` can
+  /// exercise it without building a whole `ChannelCard` — the same reason
+  /// `NotificationDecision` and `ArchiveRowState` are pure static functions
+  /// rather than instance members.
+  static func disconnectedVolume(in rows: [WatchingModel.Row]) -> String? {
+    for row in rows {
       if case .unverifiable(let volumeName) = row.state { return volumeName }
     }
     return nil
