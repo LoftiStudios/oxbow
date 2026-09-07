@@ -1,7 +1,8 @@
+import AppKit
 import SwiftUI
 import OxbowKit
 
-/// The Watching list itself: one section per channel, `FindingRow`s under the
+/// The Watching list itself: one section per channel, `ArchiveRow`s under the
 /// quiet ones, and a failure message standing in for rows under the broken
 /// ones.
 ///
@@ -55,7 +56,7 @@ struct WatchingView: View {
 
   let onAdd: (ChannelArchive, WatchingModel.Section) -> Void
 
-  /// The row's secondary action — see `FindingRow.onAddWithOptions`.
+  /// The row's secondary action — see `ArchiveRow.onAddWithOptions`.
   var onAddWithOptions: (ChannelArchive, WatchingModel.Section) -> Void = { _, _ in }
   let onIgnore: (ChannelArchive, WatchingModel.Section) -> Void
   /// Opens the Add Channel window in editing mode, seeded from this
@@ -142,7 +143,7 @@ struct WatchingView: View {
             } else {
               // Demotion never withholds a finding — `AutoDownloadPolicy
               // .decide` only withholds automatic *submission* — so a
-              // demoted channel's rows below are the exact `FindingRow`s an
+              // demoted channel's rows below are the exact `ArchiveRow`s an
               // ordinary, non-automatic channel would show. This row only
               // explains why they were not queued unattended; it never
               // replaces them, which is what tells a demoted channel apart
@@ -152,12 +153,13 @@ struct WatchingView: View {
                 DemotionRow(reason: reason)
               }
               ForEach(section.rows) { row in
-                FindingRow(
-                  archive: row.archive,
-                  channelName: section.displayName,
+                ArchiveRow(
+                  row: row,
+                  store: imageStore,
                   onAdd: { onAdd(row.archive, section) },
                   onIgnore: { onIgnore(row.archive, section) },
-                  onAddWithOptions: { onAddWithOptions(row.archive, section) })
+                  onAddWithOptions: { onAddWithOptions(row.archive, section) },
+                  onReveal: { NSWorkspace.shared.activateFileViewerSelecting([$0]) })
               }
             }
           } header: {
@@ -503,8 +505,8 @@ private struct SectionHeader: View {
 
 /// Fixtures for the previews above.
 ///
-/// Not `FindingRowPreviewData`: those pin `publishedAt` against a fixed `now`
-/// that `FindingRow`'s own previews pass back in, so the age reads sensibly.
+/// Not `ArchiveRowPreviewData`: those pin `publishedAt` against a fixed `now`
+/// that `ArchiveRow`'s own previews pass back in, so the age reads sensibly.
 /// This view never threads a `now` down to the rows it builds — a real
 /// `WatchingView` shouldn't either, since the age is supposed to track
 /// whatever "today" actually is — so these fixtures anchor `publishedAt` to

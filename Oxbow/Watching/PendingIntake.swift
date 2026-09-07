@@ -1,7 +1,7 @@
 import OxbowKit
 
 /// A Watching finding's identity and its channel's frozen settings, carried
-/// from the Add button on a `FindingRow` to the intake window it opens.
+/// from the Add button on an `ArchiveRow` to the intake window it opens.
 ///
 /// **`settings` is a `Watch.Settings`, never a live read of `Preferences`.**
 /// `Watch`'s own settings are frozen at the moment a channel is added
