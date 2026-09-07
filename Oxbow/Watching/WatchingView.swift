@@ -47,6 +47,9 @@ struct WatchingView: View {
   /// only that a channel is set to want it.
   let demotions: [String: AutoDownloadPolicy.Reason]
   let onAdd: (ChannelArchive, WatchingModel.Section) -> Void
+
+  /// The row's secondary action — see `FindingRow.onAddWithOptions`.
+  var onAddWithOptions: (ChannelArchive, WatchingModel.Section) -> Void = { _, _ in }
   let onIgnore: (ChannelArchive, WatchingModel.Section) -> Void
   /// Opens the Add Channel window in editing mode, seeded from this
   /// section's own watch — `docs/design/channel-watching.md` §3.2's "offer
@@ -75,6 +78,13 @@ struct WatchingView: View {
   /// screen to say why.
   let markSeenFailure: String?
 
+  /// Why the last Add did not reach the queue — `WatchingModel
+  /// .submissionFailure`'s counterpart. Its own banner rather than folded
+  /// into `markSeenFailure`: that one means "the row is hidden but the file
+  /// did not record it", this one means the opposite — nothing was hidden
+  /// and nothing was queued.
+  var submissionFailure: String? = nil
+
   var body: some View {
     VStack(spacing: 0) {
       if let stopWatchingFailure {
@@ -83,6 +93,10 @@ struct WatchingView: View {
       }
       if let markSeenFailure {
         QueueBanner(title: "Couldn't save that", message: markSeenFailure)
+        Divider()
+      }
+      if let submissionFailure {
+        QueueBanner(title: "Couldn't queue that", message: submissionFailure)
         Divider()
       }
       content
@@ -135,7 +149,8 @@ struct WatchingView: View {
                   archive: archive,
                   channelName: section.displayName,
                   onAdd: { onAdd(archive, section) },
-                  onIgnore: { onIgnore(archive, section) })
+                  onIgnore: { onIgnore(archive, section) },
+                  onAddWithOptions: { onAddWithOptions(archive, section) })
               }
             }
           } header: {

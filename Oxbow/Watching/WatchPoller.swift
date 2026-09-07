@@ -57,6 +57,18 @@ final class WatchPoller {
   /// said, and its `decide` for why nothing persists this across launches.
   private var announced: Set<String> = []
 
+  /// Why an archive the automatic path tried to queue did not reach the
+  /// queue, keyed by archive id, for `WatchingView` to show on the row.
+  ///
+  /// **This used to be a `catch` with a comment in it.** `WatchPoller.submit`
+  /// discarded every `IntentSubmission.Failure` it caught, so a channel whose
+  /// archives were all being refused looked exactly like a channel with
+  /// nothing new — no badge, no row state, no log line. `docs/design/
+  /// channel-watching.md` §6.3 already says a failed automatic download has
+  /// to come back as something a person can act on; a refusal *before* the
+  /// job exists is the same promise, one step earlier.
+  private(set) var submissionFailures: [String: String] = [:]
+
   private let store: WatchStore
   private let feed: ChannelFeed
   private let now: () -> Date
@@ -193,6 +205,7 @@ final class WatchPoller {
       // now gone, and re-adding that login later must be able to announce
       // its findings afresh rather than find them already spoken for.
       announced = []
+      submissionFailures = [:]
       return
     }
 
@@ -343,13 +356,20 @@ final class WatchPoller {
     // is the traffic shape that document warns about, and `QueueEngine`
     // serialises the actual downloads anyway, so concurrency here would only
     // buy a burst of requests with nothing to show for it.
+    var newFailures: [String: String] = [:]
     for (watch, archives) in toSubmit {
-      for archive in archives {
-        if await submit(archive, from: watch, into: controller) {
-          submitted.insert(archive.id)
-        }
+      let result = await ArchiveSubmission.submit(archives, for: watch, into: controller)
+      for archive in result.queued {
+        submitted.insert(archive.id)
+        markSubmitted(archive.id, login: watch.login)
       }
+      newFailures.merge(result.failures) { current, _ in current }
     }
+
+    // Replaced wholesale, like `demotions` and for the same reason: a
+    // refusal is re-decided from scratch every sweep, so one that has
+    // stopped happening must stop being shown.
+    submissionFailures = newFailures
     return submitted
   }
 
@@ -401,63 +421,6 @@ final class WatchPoller {
     let failedMediaIdentifiers = Set(
       jobs.compactMap { $0.status == .failed ? $0.mediaIdentifier : nil })
     return findings.filter { !failedMediaIdentifiers.contains($0.id) }
-  }
-
-  /// Submits one archive through the one composition path, then marks it
-  /// seen — never the reverse, and never on a thrown failure.
-  ///
-  /// **Marked seen only after `submit` succeeds.** A throw means `submit`
-  /// refused before ever reaching the queue — an unrecognised link, a
-  /// composite Oxbow could not build — and marking it seen anyway would
-  /// bury a real archive with nobody having looked at it, breaking the one
-  /// promise this feature makes. A success, `.queued` or `.alreadyQueued`
-  /// alike, means the archive is accounted for either way, so both mark it.
-  ///
-  /// Returns whether the archive reached the queue. A `false` leaves it a
-  /// finding in every sense — unmarked in `seen`, and announced as waiting by
-  /// `sweep()` — which is the same answer this function was already giving
-  /// the store, now given to the banner too.
-  @discardableResult
-  private func submit(_ archive: ChannelArchive, from watch: Watch, into controller: QueueController) async -> Bool {
-    do {
-      _ = try await IntentSubmission.submit(
-        link: archive.id,
-        quality: watch.settings.qualityCap,
-        output: watch.settings.output,
-        chatSize: watch.settings.chatSize,
-        destination: watch.settings.destination,
-        existingJobs: controller.jobs,
-        into: IntakeModel(controller: controller))
-      markSubmitted(archive.id, login: watch.login)
-      return true
-    } catch {
-      // Left as a finding for a person to retry through the intake window,
-      // exactly as `docs/design/channel-watching.md` §6.3 already does for
-      // a failure discovered later, in the queue rather than at
-      // composition. Nothing here retries it: a durable refusal fails
-      // identically next sweep too.
-      //
-      // **Known limitation, not fixed here:** a throw here means no `Job`
-      // was ever created — `IntentSubmission.submit` can refuse before that
-      // point, for an unrecognised link or a composite whose parent
-      // broadcast has expired so there is no chat to download. Such an
-      // archive is never marked seen, so the automatic path retries it
-      // every sweep, forever, each retry costing a metadata fetch. Task 4's
-      // failed-download rule cannot see it either, since that watches
-      // `Job.status` and no job exists to watch. Nothing is silently lost —
-      // the row stays visible as an ordinary finding, so a person can still
-      // Add it and read the refusal in the intake window — but the retry
-      // cost is real and unbounded. The obvious fix is a per-archive
-      // refusal counter, and that is deliberately not being added now: it
-      // is more of exactly the persistent per-archive state this feature
-      // has been bitten by repeatedly (see `seen` itself, and `demotions`
-      // above).
-      //
-      // Reported as not submitted, so `sweep()` announces it as waiting —
-      // which is exactly what it is. This is the one branch where the
-      // banner and the queue disagree, and the banner is right.
-      return false
-    }
   }
 
   /// Marks `archiveID` seen for `login`, so `Watch.findings(in:)` never

@@ -152,6 +152,18 @@ struct OxbowApp: App {
           // it runs inside a plain `.task`, not a view's own body.
           openIntake: { archive, watch in
             pendingIntake = PendingIntake(archiveID: archive.id, settings: watch.settings)
+          },
+          // A finding's primary Add queues it here, with the channel's own
+          // frozen settings, rather than opening a form to ask again for
+          // settings that were chosen when the channel was added. The
+          // answer is nil on success and a sentence on refusal — see
+          // `ArchiveSubmission`, and `WatchingModel.add(_:from:)`.
+          queue: { archive, watch in
+            guard case .ready(let controller) = await QueueHost.shared.ready() else {
+              return "Oxbow's download engine is not available."
+            }
+            let result = await ArchiveSubmission.submit([archive], for: watch, into: controller)
+            return result.failures[archive.id]
           })
         watchStore = store
         poller = WatchPoller.live(supportDirectory: support)

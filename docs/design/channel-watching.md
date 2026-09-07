@@ -1,6 +1,7 @@
 # Watching a channel, and why it is a notifier first
 
-**Status:** design, written 2026-09-04. Not implemented.
+**Status:** implemented. Written 2026-09-04; §2.2 and §6.1 revised 2026-09-07
+after the first build was used in anger — see the revision notes in each.
 
 Every claim this document makes about Twitch's API is measured, and lives in
 `docs/twitch-channel-api.md` rather than here. Where this document says the
@@ -72,8 +73,19 @@ So the notification is a pointer, not the product. What a find actually lands
 in is a **durable list**: channel, title, duration, when it was published, and
 Add / Ignore. The notification says how many are waiting and opens it.
 
-Each row is one click from the intake window that already exists, prefilled —
-so the notify-only path needs no headless composition at all. Only §6 does.
+**Revised 2026-09-07.** This section used to route a finding's Add through the
+intake window, prefilled, on the reasoning that the notify-only path then
+needed no headless composition of its own. That reasoning was about saving
+work inside the app, and it cost the person using it: quality, output and
+destination are frozen onto the watch at §3.2 *precisely* so they are not
+chosen twice, and then the primary action on every finding opened a form
+asking for them again. A button labelled Add that opens a second Add is not
+a shortcut to anything.
+
+So a finding's Add queues it, with that channel's frozen settings, and intake
+stays reachable as a secondary action — trimming one VOD is real, and there is
+no other way to reach it. The composition path is the same one §6.1 names; it
+simply is not reserved for the unattended half any more.
 
 ---
 
@@ -235,6 +247,25 @@ A watch does the same thing with its own frozen settings in place of the
 intent's parameters. That reuse is the point — a second path that composed jobs
 its own way would be a second path that drifts from the window's rules, which
 is what §4 of that document rejected.
+
+**Revised 2026-09-07: the sweep is no longer the only caller.** This section
+was written as though submission belonged to the unattended path, and the
+first build made that literally true — a watch was saved, and then nothing
+could act on it until a poll came round, up to an hour later. Adding a channel
+with the whole backfill and automatic downloading on therefore appeared to do
+nothing at all, while the window that had just been used said "Every archive
+shown above is queued and downloaded now".
+
+The three things that mean "queue this with the settings this channel already
+has" — adding a channel with backfill, clicking a finding, and a sweep finding
+something new — now share one function, `ArchiveSubmission.submit`. The first
+two run while a window is open, which is the second half of the fix: a refusal
+has somewhere to appear. The poller's version of this used to catch
+`IntentSubmission.Failure` and discard it, so a channel whose archives were
+all being refused was indistinguishable from a channel with nothing new. Every
+caller now surfaces what came back — §6.3 already required this of a download
+that fails, and a refusal before the job exists is the same promise one step
+earlier.
 
 ### 6.2 Demotion, not a budget, and never deletion
 

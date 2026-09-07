@@ -155,19 +155,63 @@ struct WatchingModelTests {
     #expect(model.watches.first(where: { $0.login == "ninja" })?.seen == ["1"])
   }
 
-  @Test func addingPersistsAndOpensIntake() throws {
+  @Test func addingQueuesItWithTheChannelsSettingsAndOpensNothing() async throws {
+    let store = temporaryStore()
+    let capped = watch("ninja")
+    try store.save([capped])
+    let opened = OpenedBox()
+    let queued = QueuedBox()
+    let model = WatchingModel(
+      store: store,
+      openIntake: { archive, _ in opened.id = archive.id },
+      queue: { archive, watch in
+        queued.id = archive.id
+        queued.settings = watch.settings
+        return nil
+      })
+    model.apply([.init(login: "ninja", displayName: "Ninja", outcome: .found([archive("1")]))])
+
+    await model.add(archive("1"), from: "ninja")
+
+    // The whole point of the change: it queues, using settings frozen onto
+    // the watch, and no form opens to ask for them a second time.
+    #expect(queued.id == "1")
+    #expect(queued.settings == capped.settings)
+    #expect(opened.id == nil, "the primary action must not open intake")
+    #expect(try store.load()[0].seen == ["1"])
+    #expect(model.sections[0].archives.isEmpty)
+  }
+
+  /// A refusal leaves the row exactly where it was. Marking it seen would
+  /// bury an archive nothing is downloading, which is the failure §6.3 calls
+  /// out — reached here before a job ever exists rather than after one fails.
+  @Test func aRefusedAddSaysWhyAndLeavesTheRowAlone() async throws {
+    let store = temporaryStore()
+    try store.save([watch("ninja")])
+    let model = WatchingModel(
+      store: store, openIntake: { _, _ in },
+      queue: { _, _ in "Oxbow could not build that download." })
+    model.apply([.init(login: "ninja", displayName: "Ninja", outcome: .found([archive("1")]))])
+
+    await model.add(archive("1"), from: "ninja")
+
+    #expect(model.submissionFailure == "Oxbow could not build that download.")
+    #expect(try store.load()[0].seen.isEmpty, "a refusal must not mark it handled")
+    #expect(model.sections[0].archives.count == 1, "the row has to stay actionable")
+  }
+
+  @Test func openingInIntakeHandsItOffAndMarksItSeen() throws {
     let store = temporaryStore()
     try store.save([watch("ninja")])
     let opened = OpenedBox()
     let model = WatchingModel(store: store, openIntake: { archive, _ in opened.id = archive.id })
     model.apply([.init(login: "ninja", displayName: "Ninja", outcome: .found([archive("1")]))])
 
-    model.add(archive("1"), from: "ninja")
+    model.openInIntake(archive("1"), from: "ninja")
 
     #expect(opened.id == "1")
-    // Marked seen on Add, not on the eventual download: the watch's job is to
-    // stop offering it, and a person who adds it and then cancels at intake
-    // has still answered the question the row was asking.
+    // Seen on open, not on the eventual download: someone who opens the form
+    // and cancels has still answered the question the row was asking.
     #expect(try store.load()[0].seen == ["1"])
     #expect(model.sections[0].archives.isEmpty)
   }
@@ -194,7 +238,7 @@ struct WatchingModelTests {
     })
     model.apply([.init(login: "ninja", displayName: "Ninja", outcome: .found([archive("1")]))])
 
-    model.add(archive("1"), from: "ninja")
+    model.openInIntake(archive("1"), from: "ninja")
 
     let handedOff = try #require(pending)
     #expect(handedOff.archiveID == "1")
@@ -234,15 +278,19 @@ struct WatchingModelTests {
     #expect(model.markSeenFailure != nil, "the refusal must say why, not just vanish")
   }
 
-  @Test func addingOnAnUnreadableStoreSurfacesTheFailureAndOpensNoIntakeWindow() throws {
+  @Test func addingOnAnUnreadableStoreSurfacesTheFailureAndQueuesNothing() async throws {
     let store = try unreadableStore()
     defer { try? FileManager.default.removeItem(at: store.fileURL.deletingLastPathComponent()) }
     let opened = OpenedBox()
-    let model = WatchingModel(store: store, openIntake: { archive, _ in opened.id = archive.id })
+    let queued = QueuedBox()
+    let model = WatchingModel(
+      store: store, openIntake: { archive, _ in opened.id = archive.id },
+      queue: { archive, _ in queued.id = archive.id; return nil })
 
-    model.add(archive("1"), from: "ninja")
+    await model.add(archive("1"), from: "ninja")
 
     #expect(opened.id == nil, "no watch to hand to intake means no window should open")
+    #expect(queued.id == nil, "a watch that cannot be read cannot compose a job")
     #expect(model.markSeenFailure != nil, "the refusal must say why, not just vanish")
   }
 
@@ -369,13 +417,13 @@ struct WatchingModelTests {
   /// relaunch threw `dismissed` away, which is exactly what Task 4's own
   /// test could not catch, since it exercises the observer in isolation
   /// rather than through this model's overlay.
-  @Test func aFailedDownloadsArchiveReappearsInTheSameSessionOnceTheWatchForgetsIt() throws {
+  @Test func aFailedDownloadsArchiveReappearsInTheSameSessionOnceTheWatchForgetsIt() async throws {
     let store = temporaryStore()
     try store.save([watch("ninja")])
     let model = model(store: store)
     model.apply([.init(login: "ninja", displayName: "Ninja", outcome: .found([archive("1")]))])
 
-    model.add(archive("1"), from: "ninja")
+    await model.add(archive("1"), from: "ninja")
     #expect(model.sections[0].archives.isEmpty, "precondition: Add hid the row and marked it seen")
 
     // Stands in for `AutoDownloadObserver.forget`: the job for "1" failed,
@@ -615,7 +663,7 @@ struct WatchingModelTests {
   /// interleaving — that path (`dismissed`'s one remaining job) already has
   /// its own dedicated tests above. Every write here succeeds, so invariant 2
   /// never has to account for "pending a failed write" to hold.
-  @Test func watchesIsAlwaysTheSpineUnderRandomInterleaving() throws {
+  @Test func watchesIsAlwaysTheSpineUnderRandomInterleaving() async throws {
     let seed: UInt64 = 0x5EED_C0FFEE
     var rng = SeededGenerator(seed: seed)
 
@@ -691,14 +739,14 @@ struct WatchingModelTests {
       model.apply(results)
     }
 
-    func performIgnoreOrAdd() throws {
+    func performIgnoreOrAdd() async throws {
       guard let login = try currentLogins().randomElement(using: &rng),
             let id = ids(for: login).randomElement(using: &rng)
       else { return }
       if Bool.random(using: &rng) {
         model.ignore(archive(id), from: login)
       } else {
-        model.add(archive(id), from: login)
+        await model.add(archive(id), from: login)
       }
     }
 
@@ -751,7 +799,7 @@ struct WatchingModelTests {
     for step in 1...300 {
       switch Int.random(in: 0..<6, using: &rng) {
       case 0, 1: try performSweep()
-      case 2, 3: try performIgnoreOrAdd()
+      case 2, 3: try await performIgnoreOrAdd()
       case 4: try performStop()
       default: try performForeignWrite()
       }
@@ -818,4 +866,10 @@ private struct SeededGenerator: RandomNumberGenerator {
 /// A reference box so an escaping closure's effect is observable from a test.
 @MainActor private final class OpenedBox {
   var id: String?
+}
+
+/// What the injected `queue` closure was asked to submit.
+@MainActor private final class QueuedBox {
+  var id: String?
+  var settings: Watch.Settings?
 }

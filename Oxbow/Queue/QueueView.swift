@@ -150,7 +150,12 @@ struct QueueView: View {
             sections: watching?.sections ?? [],
             isSweeping: poller?.isSweeping ?? false,
             demotions: poller?.demotions ?? [:],
-            onAdd: { archive, section in watching?.add(archive, from: section.login) },
+            onAdd: { archive, section in
+              Task { await watching?.add(archive, from: section.login) }
+            },
+            onAddWithOptions: { archive, section in
+              watching?.openInIntake(archive, from: section.login)
+            },
             onIgnore: { archive, section in watching?.ignore(archive, from: section.login) },
             // `watching?.watches`, not `section` itself: `Section` carries
             // only what `WatchingView` needs to render a row (login, name,
@@ -172,7 +177,8 @@ struct QueueView: View {
             },
             onStopWatching: { section in watching?.stopWatching(section.login) },
             stopWatchingFailure: watching?.stopWatchingFailure,
-            markSeenFailure: watching?.markSeenFailure)
+            markSeenFailure: watching?.markSeenFailure,
+            submissionFailure: watching?.submissionFailure)
           // Re-reads `watches.json` the moment this pane becomes visible, so
           // a channel added from the Add Channel window while Queue was
           // showing is there the instant someone switches over, rather than

@@ -560,6 +560,43 @@ final class AddChannelModel {
   /// `existing` — loaded fresh immediately below, not from the snapshot
   /// `beginEditing(_:)` captured — the moment that load lands, before this
   /// ever writes anything back.
+  /// The watch `add()` last wrote, so its caller can queue that channel's
+  /// backfill with the settings that were actually saved rather than
+  /// recomposing them from the form.
+  private(set) var savedWatch: Watch?
+
+  /// The archives Add should put straight into the queue.
+  ///
+  /// **Empty unless automatic downloading is on and the scope is the whole
+  /// backfill**, which is exactly the combination whose caption promises
+  /// "Every archive shown above is queued and downloaded now". With
+  /// automatic off, the same archives become findings and wait for a person
+  /// — that is the notify-only half of the design and it is unchanged.
+  ///
+  /// Filtered to what is downloadable, so a broadcast still in progress is
+  /// not queued half-written (`docs/design/channel-watching.md` §5.2).
+  var backfillToQueue: [ChannelArchive] {
+    guard downloadsAutomatically, scope == .allAvailable,
+          case .loaded(let archives) = lookup
+    else { return [] }
+    return archives.filter { $0.isDownloadable }
+  }
+
+  /// Records `ids` as seen for the watch just saved, so the sweep that
+  /// follows does not offer them a second time.
+  ///
+  /// Re-reads the store immediately before writing, the same discipline
+  /// `WatchPoller.markSubmitted` keeps and for the same reason: queueing a
+  /// backfill awaits a metadata fetch per archive, and the Watching pane's
+  /// own writers run across those suspensions.
+  func markQueued(_ ids: [String]) {
+    guard let savedWatch, !ids.isEmpty else { return }
+    guard var watches = try? store.load() else { return }
+    guard let index = watches.firstIndex(where: { $0.login == savedWatch.login }) else { return }
+    watches[index] = watches[index].marking(ids)
+    try? store.save(watches)
+  }
+
   @discardableResult
   func add() async -> Bool {
     guard var watch = isEditing ? composeEditedWatch() : composeWatch() else {
@@ -614,6 +651,7 @@ final class AddChannelModel {
     do {
       try store.save(watches)
       addFailure = nil
+      savedWatch = watch
       return true
     } catch {
       addFailure = "Oxbow could not save the watch list: \(error.localizedDescription)"

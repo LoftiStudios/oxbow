@@ -26,6 +26,10 @@ struct AddChannelWindow: View {
   @State private var model: AddChannelModel
   @State private var hostWindow: NSWindow?
   @State private var isAdding = false
+
+  /// Why some of the backfill did not reach the queue, if any of it did not.
+  /// Shown beside `model.addFailure`, which covers the watch itself.
+  @State private var backfillFailure: String?
   @FocusState private var isLoginFocused: Bool
 
   /// Reads free space directly against `model.folder`, the same way
@@ -560,6 +564,11 @@ struct AddChannelWindow: View {
   /// should not be able to scroll out of view under a growing form.
   private var footer: some View {
     HStack(spacing: 12) {
+      if let backfillFailure {
+        Label(backfillFailure, systemImage: "exclamationmark.triangle")
+          .foregroundStyle(.orange)
+          .fixedSize(horizontal: false, vertical: true)
+      }
       if let addFailure = model.addFailure {
         Label(addFailure, systemImage: "exclamationmark.triangle")
           .font(.callout)
@@ -589,14 +598,71 @@ struct AddChannelWindow: View {
     isAdding = true
     Task {
       let didAdd = await model.add()
-      isAdding = false
-      // Before `dismiss()`, so the sweep starts against a store that already
-      // has this watch in it — `model.add()` has awaited its save all the
-      // way to disk by the time it answers true.
-      if didAdd {
-        onSaved()
-        dismiss()
+      guard didAdd else {
+        isAdding = false
+        return
       }
+
+      // The backfill goes into the queue here, in this window, while it is
+      // still open — not by writing the watch and leaving a sweep to notice
+      // it later. That indirection is what made "All available" plus
+      // "Download automatically" look like it did nothing at all: the watch
+      // was saved correctly, and then up to an hour passed before anything
+      // could act on it, with every caption on this window claiming
+      // otherwise.
+      //
+      // Doing it here also means a refusal has somewhere to appear. The
+      // sweep's version of this used to discard the reason entirely.
+      await queueBackfill()
+      isAdding = false
+
+      // Only when nothing was refused. A refusal has to stay on screen to be
+      // read, and dismissing would take it with it — the same contract
+      // `model.add()` already keeps for its own failure.
+      guard backfillFailure == nil else { return }
+      onSaved()
+      dismiss()
+    }
+  }
+
+  /// Puts this channel's backfill into the queue, and reports what would not
+  /// go.
+  ///
+  /// **Partial success is the normal case and is reported as one.** Six of
+  /// seven archives queueing is six archives downloading; refusing the batch
+  /// because one was unbuildable would be worse for the person and would
+  /// throw away work already done. So everything that queued is marked seen,
+  /// and the rest are named.
+  private func queueBackfill() async {
+    backfillFailure = nil
+    let archives = model.backfillToQueue
+    guard !archives.isEmpty, let watch = model.savedWatch else { return }
+
+    guard case .ready(let controller) = await QueueHost.shared.ready() else {
+      backfillFailure = """
+        \(watch.displayName) is being watched, but Oxbow's download engine is \
+        not available, so nothing was queued. The archives are waiting in \
+        Watching.
+        """
+      return
+    }
+
+    let result = await ArchiveSubmission.submit(archives, for: watch, into: controller)
+    model.markQueued(result.queued.map(\.id))
+
+    guard !result.failures.isEmpty else { return }
+    // One sentence naming the count, then one reason. The reasons repeat far
+    // more often than they differ — a channel whose composites cannot be
+    // built fails the same way every time — so listing all of them would be
+    // the same line seven times over.
+    let reason = result.failures.values.sorted().first ?? ""
+    if result.queued.isEmpty {
+      backfillFailure = "None of the \(archives.count) archives could be queued. \(reason)"
+    } else {
+      backfillFailure = """
+        \(result.queued.count) of \(archives.count) archives were queued. The \
+        rest were refused: \(reason)
+        """
     }
   }
 

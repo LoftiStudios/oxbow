@@ -72,6 +72,11 @@ final class WatchingModel {
   private let store: WatchStore
   private let openIntake: (ChannelArchive, Watch) -> Void
 
+  /// Queues one archive with its channel's frozen settings, answering with a
+  /// sentence when it could not. Injected so this model stays testable
+  /// without a `QueueController`, the same reason `openIntake` is a closure.
+  private let queue: (ChannelArchive, Watch) async -> String?
+
   /// Archive ids `markSeen` could not persist.
   ///
   /// **Vestigial by design, kept for one narrow case.** This used to be the
@@ -133,9 +138,19 @@ final class WatchingModel {
   /// than being the one silent exception.
   private(set) var markSeenFailure: String?
 
-  init(store: WatchStore, openIntake: @escaping (ChannelArchive, Watch) -> Void) {
+  /// Why the last Add did not reach the queue, or nil. Cleared by the next
+  /// Add and by `rebuild()`, the same lifetime the two failure banners
+  /// beside it already have.
+  private(set) var submissionFailure: String?
+
+  init(
+    store: WatchStore,
+    openIntake: @escaping (ChannelArchive, Watch) -> Void,
+    queue: @escaping (ChannelArchive, Watch) async -> String? = { _, _ in nil }
+  ) {
     self.store = store
     self.openIntake = openIntake
+    self.queue = queue
     // Populates `sections` from whatever is already watched before the first
     // sweep ever lands — requirement 1's "never polled" case starts the
     // instant a channel is added, not once `WatchPoller` gets around to it.
@@ -164,14 +179,62 @@ final class WatchingModel {
     markSeen(archive.id, in: login)
   }
 
-  /// Marks the archive seen and hands it to intake, prefilled.
+  /// Queues the archive with its channel's frozen settings.
   ///
-  /// **Seen on Add, not on the eventual download.** The watch's job is to stop
-  /// offering something once it has been answered, and someone who adds a VOD
-  /// and then abandons the intake form has still answered it. Re-offering it
-  /// on the next sweep would be the app asking a question it was already told
-  /// the answer to.
-  func add(_ archive: ChannelArchive, from login: String) {
+  /// **This used to open the intake window instead.** A row's Add offered a
+  /// prefilled form built from settings the person had already chosen once,
+  /// when they added the channel — quality, output and destination are
+  /// frozen onto the watch precisely so they do not have to be chosen again.
+  /// Asking a second time made the primary action on every finding a
+  /// two-step, and made the button's label a lie. Intake is still reachable
+  /// for the case that actually needs it — see `openInIntake(_:from:)`.
+  ///
+  /// **Seen only once it is queued**, which is the opposite of what this did
+  /// before and is now the honest answer: there is no form left to abandon,
+  /// so "answered" and "queued" are the same event. A refusal leaves the row
+  /// where it is, with `submissionFailure` saying why, rather than marking
+  /// an archive handled that nothing is handling.
+  func add(_ archive: ChannelArchive, from login: String) async {
+    submissionFailure = nil
+
+    // Read from disk rather than from `watches`, and read it *here* rather
+    // than letting `markSeen` do it later. The settings this composes the
+    // job from have to be the ones actually saved — `AddChannelModel` in
+    // edit mode rewrites them live through its own `WatchStore` — and an
+    // unreadable file has to refuse out loud, exactly as `markSeen` already
+    // does for the same condition. Guarding on the in-memory `watches`
+    // instead made both cases silent: a stale snapshot composed the job from
+    // superseded settings, and an unreadable store looked like a button that
+    // did nothing.
+    let current: [Watch]
+    do {
+      current = try store.load()
+    } catch {
+      rebuild()
+      markSeenFailure = "Oxbow could not read the watch list: \(error.localizedDescription)"
+      return
+    }
+
+    // Silent, unlike the read failure above: the channel being gone is a
+    // normal race against a list already on screen, not an error.
+    guard let watch = current.first(where: { $0.login == login }) else { return }
+
+    if let failure = await queue(archive, watch) {
+      submissionFailure = failure
+      return
+    }
+    markSeen(archive.id, in: login)
+  }
+
+  /// Opens intake for this archive, prefilled — the secondary action, for
+  /// the one thing queueing directly cannot do: trim it, or override a
+  /// setting for this VOD alone.
+  ///
+  /// **Seen on open, not on the eventual download**, which is the rule the
+  /// primary action used to follow and which still holds here: someone who
+  /// opens the form and abandons it has still answered the question, and
+  /// re-offering the row next sweep would be asking it again.
+  func openInIntake(_ archive: ChannelArchive, from login: String) {
     guard let watch = markSeen(archive.id, in: login) else { return }
     openIntake(archive, watch)
   }
@@ -394,6 +457,7 @@ final class WatchingModel {
   private func rebuild() {
     stopWatchingFailure = nil
     markSeenFailure = nil
+    submissionFailure = nil
 
     refreshWatches()
 

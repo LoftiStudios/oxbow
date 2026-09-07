@@ -28,18 +28,27 @@ struct FindingRow: View {
   let onAdd: () -> Void
   let onIgnore: () -> Void
 
+  /// Opens intake prefilled — the secondary action, offered in the row's
+  /// context menu rather than as a second button. Trimming one VOD is a real
+  /// need and there is no other way to reach it, but it is not what most
+  /// clicks on a finding mean, and a row carrying two competing Add buttons
+  /// would make the common case pick between them every time.
+  let onAddWithOptions: () -> Void
+
   init(
     archive: ChannelArchive,
     channelName: String,
     now: Date = .now,
     onAdd: @escaping () -> Void,
-    onIgnore: @escaping () -> Void)
+    onIgnore: @escaping () -> Void,
+    onAddWithOptions: @escaping () -> Void = {})
   {
     self.archive = archive
     self.channelName = channelName
     self.now = now
     self.onAdd = onAdd
     self.onIgnore = onIgnore
+    self.onAddWithOptions = onAddWithOptions
   }
 
   var body: some View {
@@ -80,10 +89,16 @@ struct FindingRow: View {
         Button("Add", action: onAdd)
           .buttonStyle(.borderedProminent)
           .controlSize(.small)
-          .help("Open Add Download with this video filled in.")
+          .help("Download this now, using this channel's settings.")
       }
     }
     .padding(.vertical, 4)
+    .contextMenu {
+      Button("Add…", action: onAddWithOptions)
+        .help("Open Add Download with this video filled in, to trim it or "
+              + "change its settings just this once.")
+      Button("Ignore", action: onIgnore)
+    }
     .accessibilityElement(children: .combine)
   }
 }
@@ -94,7 +109,7 @@ struct FindingRow: View {
       archive: FindingRowPreviewData.normal,
       channelName: "LeighXP",
       now: FindingRowPreviewData.now,
-      onAdd: {}, onIgnore: {})
+      onAdd: {}, onIgnore: {}, onAddWithOptions: {})
   }
   .frame(width: 480, height: 100)
 }
@@ -105,7 +120,7 @@ struct FindingRow: View {
       archive: FindingRowPreviewData.longTitle,
       channelName: "A Channel With A Genuinely Long Display Name",
       now: FindingRowPreviewData.now,
-      onAdd: {}, onIgnore: {})
+      onAdd: {}, onIgnore: {}, onAddWithOptions: {})
   }
   .frame(width: 480, height: 100)
 }
