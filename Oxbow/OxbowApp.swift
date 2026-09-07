@@ -191,6 +191,9 @@ struct OxbowApp: App {
       // Everything here is also reachable by right-clicking a row; the menu is
       // what makes it discoverable, and what gives it key equivalents.
       DownloadsCommands()
+      // Refresh, in View. See `WatchingCommands` for why it is not in
+      // Downloads alongside the row actions.
+      WatchingCommands()
     }
 
     // Intake as its own window, not a sheet on the queue.
@@ -242,7 +245,12 @@ struct OxbowApp: App {
           // `WatchingModel.refresh()`'s. A channel added here writes through
           // a `WatchStore` distinct from the one `watching` reads, so nothing
           // tells that model to look again unless this does.
-          onClose: { watching?.refresh() })
+          onClose: { watching?.refresh() },
+          // A watch that was just written has no sweep behind it, so its
+          // findings do not exist yet and its automatic path has had nothing
+          // to act on. See `AddChannelWindow.onSaved` for what this was
+          // like without it.
+          onSaved: { Task { await poller?.refreshNow() } })
       }
     }
     .defaultSize(width: 480, height: 640)

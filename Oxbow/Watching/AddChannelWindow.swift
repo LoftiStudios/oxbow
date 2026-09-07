@@ -48,6 +48,24 @@ struct AddChannelWindow: View {
   /// test below from having to supply one.
   private let onClose: () -> Void
 
+  /// Runs when a watch has actually been written, before the window
+  /// dismisses — never on Cancel, and never on a refusal.
+  ///
+  /// **Separate from `onClose` because a sweep is not free.** `onClose` fires
+  /// on every close including Cancel, and it can afford to: re-reading
+  /// `watches.json` costs nothing. A sweep costs one Twitch request per
+  /// watched channel, so hanging it off the same hook would spend a dozen
+  /// requests on a dialog somebody backed out of.
+  ///
+  /// **Why a sweep is needed at all.** Adding a channel with automatic
+  /// downloading on writes the watch and nothing else: findings are derived
+  /// from `WatchPoller.results`, and submission happens only inside a sweep.
+  /// Without this the channel appeared in the Watching pane with no rows
+  /// under it and queued nothing, for up to the full hour until the next
+  /// scheduled sweep — with every caption on this window promising the
+  /// opposite ("queued and downloaded now").
+  private let onSaved: () -> Void
+
   /// A watch waiting to be edited, from `OxbowApp`'s own `@State`.
   ///
   /// **A binding, not a plain value, so this window can clear it — the
@@ -64,7 +82,8 @@ struct AddChannelWindow: View {
   init(
     store: WatchStore, preferences: Preferences, volumeSpace: VolumeSpace = .live,
     pendingEdit: Binding<Watch?> = .constant(nil),
-    onClose: @escaping () -> Void = {}
+    onClose: @escaping () -> Void = {},
+    onSaved: @escaping () -> Void = {}
   ) {
     let feed = Self.liveChannelFeed
     _model = State(initialValue: AddChannelModel(
@@ -74,6 +93,7 @@ struct AddChannelWindow: View {
     self.volumeSpace = volumeSpace
     _pendingEdit = pendingEdit
     self.onClose = onClose
+    self.onSaved = onSaved
   }
 
   /// For previews, and for anything else that wants to drive the window
@@ -89,12 +109,14 @@ struct AddChannelWindow: View {
   init(
     model: AddChannelModel, volumeSpace: VolumeSpace = .live,
     pendingEdit: Binding<Watch?> = .constant(nil),
-    onClose: @escaping () -> Void = {}
+    onClose: @escaping () -> Void = {},
+    onSaved: @escaping () -> Void = {}
   ) {
     _model = State(initialValue: model)
     self.volumeSpace = volumeSpace
     _pendingEdit = pendingEdit
     self.onClose = onClose
+    self.onSaved = onSaved
   }
 
   var body: some View {
@@ -568,7 +590,13 @@ struct AddChannelWindow: View {
     Task {
       let didAdd = await model.add()
       isAdding = false
-      if didAdd { dismiss() }
+      // Before `dismiss()`, so the sweep starts against a store that already
+      // has this watch in it — `model.add()` has awaited its save all the
+      // way to disk by the time it answers true.
+      if didAdd {
+        onSaved()
+        dismiss()
+      }
     }
   }
 

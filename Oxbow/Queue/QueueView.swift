@@ -181,6 +181,12 @@ struct QueueView: View {
           // window's own close is the other half of this fix; see
           // `OxbowApp`'s wiring of it.
           .onAppear { watching?.refresh() }
+          // Published from inside this branch, so ⌘R greys out on the Queue
+          // pane — the same "the menu follows the visible pane" rule the
+          // `queueActions` publication below keeps, and for the same reason.
+          .focusedSceneValue(\.watchingActions, WatchingActions(
+            canRefresh: poller != nil && poller?.isSweeping != true,
+            refresh: { [poller] in await poller?.refreshNow() }))
         case .queue, .none:
           queue
         }
@@ -208,6 +214,28 @@ struct QueueView: View {
       // keeps the button reachable whether the list is empty or full,
       // matching where `Add Download` already sits for the Queue pane.
       if sidebarSelection == .watching {
+        // Before Add Channel, so the pair reads left to right as "look
+        // again" then "watch something new" — the order they are reached in.
+        ToolbarItem(placement: .primaryAction) {
+          Button {
+            Task { await poller?.refreshNow() }
+          } label: {
+            Label("Refresh", systemImage: "arrow.clockwise")
+          }
+          // **Disabled during a sweep rather than queued behind one.**
+          // `refreshNow()` does not bypass `sweep()`'s `isSweeping` guard —
+          // it returns immediately, leaving the previous sweep's answer on
+          // screen — so a button live during a sweep would be one that
+          // silently did nothing. Disabling it says the same thing
+          // honestly, and the sweeping state is already visible beside it
+          // in `WatchingView`.
+          //
+          // `poller == nil` covers the launch window before `OxbowApp`'s
+          // `.task` has built one, and the whole of `xcodebuild test`,
+          // where it is never built at all.
+          .disabled(poller == nil || poller?.isSweeping == true)
+          .help("Check the watched channels for new archives now")
+        }
         ToolbarItem(placement: .primaryAction) {
           Button {
             openWindow(id: OxbowApp.addChannelWindowID)
@@ -231,6 +259,19 @@ struct QueueView: View {
           .disabled(controller == nil)
         }
       }
+    }
+    // Clicking a "new archives are waiting" notification lands here — see
+    // `WatchingReveal` for why that click cannot simply set state on
+    // `OxbowApp` the way every other hand-off in this view does.
+    //
+    // **Only selects the pane; it does not open the window.** If the queue
+    // window is closed there is no `QueueView` to observe this, so the click
+    // activates Oxbow and nothing more — the same as the existing
+    // "Download finished" banner for a job whose files have moved. Fixing
+    // that means an always-present scene to hold the `openWindow` call, and
+    // is not worth one on its own.
+    .onChange(of: WatchingReveal.shared.requests) {
+      sidebarSelection = .watching
     }
     // Keyed on `isSweeping` falling to `false`, not on `results` changing.
     //
