@@ -76,8 +76,13 @@ public enum ArchiveRowState: Equatable, Sendable {
       return unfinished.status == .running ? .running : .queued
     }
 
-    if mine.contains(where: { $0.status == .failed }) { return .failed }
-
+    // Done before failed, and deliberately not source order. §6.3 of
+    // channel-watching.md leaves a failed automatic download's job sitting in
+    // the queue on purpose, and a retry submits a *new* job with the same
+    // `mediaIdentifier` rather than replacing it — so a success can coexist
+    // with a stale failure for the same archive. channel-history.md §4 makes
+    // the filesystem authoritative: if the file is there, the archive is
+    // downloaded, full stop, regardless of what else is in the queue for it.
     if let done = mine.first(where: { $0.status == .done }) {
       // An interrupted run can leave a finished job with nothing delivered.
       // It cannot claim a file it does not name.
@@ -88,6 +93,11 @@ public enum ArchiveRowState: Equatable, Sendable {
       case .unknown(let volume): return .unverifiable(volumeName: volume)
       }
     }
+
+    // A failed job with no coexisting success. Checked after `.done` so a
+    // stale failure left in the queue by §6.3 never outranks a file that is
+    // actually on disk.
+    if mine.contains(where: { $0.status == .failed }) { return .failed }
 
     // No job, or only cancelled ones — a cancellation is a person saying no,
     // not the app having tried and lost, so it leaves the archive offerable

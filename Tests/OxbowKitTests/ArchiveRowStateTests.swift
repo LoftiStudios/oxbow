@@ -135,6 +135,21 @@ struct ArchiveRowStateTests {
       for: archive("1"), jobs: jobs.reversed(), file: { _ in .present(path) }) == .running)
   }
 
+  /// §6.3: a retried automatic download leaves the failed job in the queue
+  /// and submits a new one rather than replacing it, so a done job and a
+  /// failed job can legitimately coexist for the same archive. §4 of
+  /// channel-history.md says the filesystem is authoritative, so the file
+  /// being there wins regardless of which job comes first in the array.
+  @Test("a done job with its file present outranks a coexisting failed job")
+  func doneOutranksFailed() {
+    let path = URL(filePath: "/Users/x/Downloads/a.mp4")
+    let jobs = [job("1", .failed), job("1", .done, files: [path])]
+    #expect(ArchiveRowState.state(
+      for: archive("1"), jobs: jobs, file: { _ in .present(path) }) == .downloaded(path))
+    #expect(ArchiveRowState.state(
+      for: archive("1"), jobs: jobs.reversed(), file: { _ in .present(path) }) == .downloaded(path))
+  }
+
   /// A finished job that delivered nothing cannot claim a file. Pinned
   /// because `deliveredFiles` is derived from a step's output and an
   /// interrupted run can leave it empty.
