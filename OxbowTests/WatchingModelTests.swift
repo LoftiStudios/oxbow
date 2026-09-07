@@ -845,6 +845,29 @@ struct WatchingModelTests {
         == ["1", "2"],
       "the re-added channel's own last sweep must still be there once it is watched again")
   }
+
+  /// The avatar has to reach the view through `Section`, since
+  /// `WatchingView` never sees a `Watch`.
+  @Test func aSectionCarriesItsChannelsAvatarURL() throws {
+    let store = temporaryStore()
+    var withAvatar = watch("ninja")
+    withAvatar.avatarURL = URL(string: "https://example.com/a-300x300.png")
+    try store.save([withAvatar])
+    let model = model(store: store)
+
+    #expect(model.sections.first?.avatarURL?.absoluteString.hasSuffix("300x300.png") == true)
+  }
+
+  /// A channel added before `avatarURL` existed still gets a section; the
+  /// view shows a placeholder, and nothing backfills the URL.
+  @Test func aSectionWithoutAnAvatarIsNotAnError() throws {
+    let store = temporaryStore()
+    try store.save([watch("ninja")])
+    let model = model(store: store)
+
+    #expect(model.sections.count == 1)
+    #expect(model.sections.first?.avatarURL == nil)
+  }
 }
 
 /// A tiny deterministic PRNG so a failure found by chance is reproducible —

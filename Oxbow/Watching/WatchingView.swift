@@ -46,6 +46,13 @@ struct WatchingView: View {
   /// findings) has nothing to say about *why* automatic downloading paused,
   /// only that a channel is set to want it.
   let demotions: [String: AutoDownloadPolicy.Reason]
+
+  /// Where `ChannelAvatar` reads cached bytes from. Optional for the same
+  /// reason `watching` and `poller` are on `QueueView`: `OxbowApp` builds it
+  /// only once a support directory resolves, and never under
+  /// `xcodebuild test`. Nil renders the placeholder.
+  var imageStore: ImageStore? = nil
+
   let onAdd: (ChannelArchive, WatchingModel.Section) -> Void
 
   /// The row's secondary action — see `FindingRow.onAddWithOptions`.
@@ -156,6 +163,7 @@ struct WatchingView: View {
           } header: {
             SectionHeader(
               section: section,
+              imageStore: imageStore,
               demotionReason: demotions[section.login],
               onEdit: { onEdit(section) },
               onStopWatching: { onStopWatching(section) })
@@ -238,6 +246,7 @@ private struct DemotionRow: View {
 /// tooltip say plainly that downloaded files stay put.
 private struct SectionHeader: View {
   let section: WatchingModel.Section
+  let imageStore: ImageStore?
   /// Why this channel's automatic downloading is paused this sweep, or nil
   /// when it is not — `demotions[section.login]` from the call site.
   let demotionReason: AutoDownloadPolicy.Reason?
@@ -246,6 +255,10 @@ private struct SectionHeader: View {
 
   var body: some View {
     HStack(alignment: .firstTextBaseline, spacing: 6) {
+      // `.firstTextBaseline` would hang a square image off the text
+      // baseline, so the avatar aligns to the centre of the name instead.
+      ChannelAvatar(url: section.avatarURL, store: imageStore)
+        .alignmentGuide(.firstTextBaseline) { $0[VerticalAlignment.center] + 5 }
       Text(section.displayName)
       // Only shown when it is actually on: off is the default and the
       // ordinary case, and marking every quiet channel "Manual" would be

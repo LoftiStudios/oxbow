@@ -98,6 +98,18 @@ nonisolated enum AppComposition {
     supportDirectory.appending(path: "watches.json")
   }
 
+  /// Stored channel and archive images.
+  ///
+  /// A directory rather than a file, and **disposable in a way
+  /// `watches.json` is not**: everything in it is re-derivable from the
+  /// network while its source still exists, so deleting it costs refetches
+  /// and nothing else. It sits beside the watch list rather than inside
+  /// `workspace.root` for the reason above — `QueueEngine.start()` sweeps
+  /// that directory on every launch, and images have to survive a launch.
+  static func imageStoreURL(supportDirectory: URL) -> URL {
+    supportDirectory.appending(path: "images")
+  }
+
   /// `~/Library/Application Support/studio.lofti.Oxbow`, created if absent.
   ///
   /// In a DEBUG build `OXBOW_FIXTURE_DIR` overrides it, which is what lets

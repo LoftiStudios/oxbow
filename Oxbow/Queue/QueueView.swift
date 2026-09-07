@@ -26,6 +26,9 @@ struct QueueView: View {
   /// view should be built to notice if it ever stopped holding.
   let canAddChannel: Bool
 
+  /// Handed straight through to `WatchingView` — this view never reads it.
+  var imageStore: ImageStore? = nil
+
   /// A Watching finding waiting to be applied, from `OxbowApp`'s own `@State`.
   ///
   /// **This is where `WatchingModel.openIntake` actually opens anything.**
@@ -100,6 +103,49 @@ struct QueueView: View {
     }
   }
 
+  /// Extracted from `body`'s `switch` because the type checker gave up on
+  /// it there: sixteen arguments, eight of them closures, inside a
+  /// `NavigationSplitView` detail builder inside a `VStack` exceeded what it
+  /// would solve in reasonable time. Splitting it out changes nothing about
+  /// what is built.
+  @ViewBuilder
+  private var watchingPane: some View {
+WatchingView(
+  sections: watching?.sections ?? [],
+  isSweeping: poller?.isSweeping ?? false,
+  demotions: poller?.demotions ?? [:],
+  imageStore: imageStore,
+  onAdd: { archive, section in
+    Task { await watching?.add(archive, from: section.login) }
+  },
+  onAddWithOptions: { archive, section in
+    watching?.openInIntake(archive, from: section.login)
+  },
+  onIgnore: { archive, section in watching?.ignore(archive, from: section.login) },
+  // `watching?.watches`, not `section` itself: `Section` carries
+  // only what `WatchingView` needs to render a row (login, name,
+  // findings, the settings summary text), never the full `Watch`
+  // — including its `seen` set — that `AddChannelModel
+  // .beginEditing(_:)` needs to seed an edit from.
+  //
+  // `refresh()` here is belt-and-braces, not load-bearing:
+  // `WatchingModel.markSeen(_:in:)` already rebuilds `watches`
+  // after it persists, so this call is a no-op re-read on the
+  // normal path. Left in as cheap insurance against `watches`
+  // ever going stale again.
+  onEdit: { section in
+    watching?.refresh()
+    guard let watch = watching?.watches.first(where: { $0.login == section.login })
+    else { return }
+    pendingChannelEdit = watch
+    openWindow(id: OxbowApp.addChannelWindowID)
+  },
+  onStopWatching: { section in watching?.stopWatching(section.login) },
+  stopWatchingFailure: watching?.stopWatchingFailure,
+  markSeenFailure: watching?.markSeenFailure,
+  submissionFailure: watching?.submissionFailure)
+  }
+
   var body: some View {
     VStack(spacing: 0) {
       if let banner {
@@ -146,39 +192,7 @@ struct QueueView: View {
       } detail: {
         switch sidebarSelection {
         case .watching:
-          WatchingView(
-            sections: watching?.sections ?? [],
-            isSweeping: poller?.isSweeping ?? false,
-            demotions: poller?.demotions ?? [:],
-            onAdd: { archive, section in
-              Task { await watching?.add(archive, from: section.login) }
-            },
-            onAddWithOptions: { archive, section in
-              watching?.openInIntake(archive, from: section.login)
-            },
-            onIgnore: { archive, section in watching?.ignore(archive, from: section.login) },
-            // `watching?.watches`, not `section` itself: `Section` carries
-            // only what `WatchingView` needs to render a row (login, name,
-            // findings, the settings summary text), never the full `Watch`
-            // — including its `seen` set — that `AddChannelModel
-            // .beginEditing(_:)` needs to seed an edit from.
-            //
-            // `refresh()` here is belt-and-braces, not load-bearing:
-            // `WatchingModel.markSeen(_:in:)` already rebuilds `watches`
-            // after it persists, so this call is a no-op re-read on the
-            // normal path. Left in as cheap insurance against `watches`
-            // ever going stale again.
-            onEdit: { section in
-              watching?.refresh()
-              guard let watch = watching?.watches.first(where: { $0.login == section.login })
-              else { return }
-              pendingChannelEdit = watch
-              openWindow(id: OxbowApp.addChannelWindowID)
-            },
-            onStopWatching: { section in watching?.stopWatching(section.login) },
-            stopWatchingFailure: watching?.stopWatchingFailure,
-            markSeenFailure: watching?.markSeenFailure,
-            submissionFailure: watching?.submissionFailure)
+          watchingPane
           // Re-reads `watches.json` the moment this pane becomes visible, so
           // a channel added from the Add Channel window while Queue was
           // showing is there the instant someone switches over, rather than

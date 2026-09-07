@@ -23,6 +23,11 @@ final class WatchingModel {
   struct Section: Identifiable, Equatable {
     var login: String
     var displayName: String
+
+    /// The channel's avatar, from `Watch.avatarURL`. Nil for a channel added
+    /// before that field existed; nothing backfills it, because the profile
+    /// request is deliberately off the sweep's path.
+    var avatarURL: URL?
     var archives: [ChannelArchive]
     /// Why this channel produced nothing, when that is the reason.
     ///
@@ -494,12 +499,14 @@ final class WatchingModel {
         // the moment a future edit ever made the lookup optional again.
         return Section(
           login: watch.login, displayName: watch.displayName,
+          avatarURL: watch.avatarURL,
           archives: watch.findings(in: archives).filter { !dismissed.contains($0.id) },
           failure: nil, settingsSummary: settingsSummary(for: watch.settings),
           downloadsAutomatically: watch.downloadsAutomatically)
       case .failed(let error):
         return Section(
           login: watch.login, displayName: watch.displayName,
+          avatarURL: watch.avatarURL,
           archives: [], failure: error.localizedDescription,
           settingsSummary: settingsSummary(for: watch.settings),
           downloadsAutomatically: watch.downloadsAutomatically)
@@ -509,6 +516,7 @@ final class WatchingModel {
         // until a sweep finally reaches it.
         return Section(
           login: watch.login, displayName: watch.displayName,
+          avatarURL: watch.avatarURL,
           archives: [], failure: nil, settingsSummary: settingsSummary(for: watch.settings),
           downloadsAutomatically: watch.downloadsAutomatically)
       }

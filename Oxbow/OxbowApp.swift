@@ -29,6 +29,11 @@ struct OxbowApp: App {
   /// same `AppComposition.isUserSession` guard, in the `.task` below.
   @State private var watchStore: WatchStore?
 
+  /// Cached channel and archive images, built alongside `watching` and
+  /// `poller` and behind the same guard: it does network and file I/O, which
+  /// `xcodebuild test` must not do for a window it launched incidentally.
+  @State private var imageStore: ImageStore?
+
   /// A Watching finding waiting to be applied the next time intake opens.
   ///
   /// Set by `WatchingModel.openIntake` (below) and consumed by
@@ -98,7 +103,8 @@ struct OxbowApp: App {
         if let content {
           QueueView(
             content: content, updates: updates, watching: watching, poller: poller,
-            canAddChannel: watchStore != nil, pendingIntake: $pendingIntake,
+            canAddChannel: watchStore != nil, imageStore: imageStore,
+            pendingIntake: $pendingIntake,
             pendingChannelEdit: $pendingChannelEdit)
         } else {
           // This spinner covers `QueueEngine.start()` too, deliberately.
@@ -166,6 +172,8 @@ struct OxbowApp: App {
             return result.failures[archive.id]
           })
         watchStore = store
+        imageStore = ImageStore.live(
+          directory: AppComposition.imageStoreURL(supportDirectory: support))
         poller = WatchPoller.live(supportDirectory: support)
         poller?.start()
       }
