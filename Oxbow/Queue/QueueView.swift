@@ -320,6 +320,14 @@ WatchingView(
       guard isSweeping == false, let results = poller?.results else { return }
       watching?.apply(results)
     }
+    // Republishes the rows every time the queue's jobs change, so a job
+    // starting or finishing reaches the pane immediately rather than
+    // waiting for the next hourly sweep — see `WatchingModel.updateJobs`'s
+    // own doc comment.
+    .onChange(of: controller?.jobs) {
+      watching?.updateJobs(controller?.jobs ?? [])
+    }
+    .task { watching?.updateJobs(controller?.jobs ?? []) }
     // See `pendingIntake`'s own doc comment above: this is the one place that
     // turns a finding's Add into the intake window actually opening. If the
     // window is already open, `openWindow` just re-focuses it — `Window`'s

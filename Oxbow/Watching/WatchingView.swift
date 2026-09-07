@@ -151,13 +151,13 @@ struct WatchingView: View {
               if let reason = demotions[section.login] {
                 DemotionRow(reason: reason)
               }
-              ForEach(section.archives, id: \.id) { archive in
+              ForEach(section.rows) { row in
                 FindingRow(
-                  archive: archive,
+                  archive: row.archive,
                   channelName: section.displayName,
-                  onAdd: { onAdd(archive, section) },
-                  onIgnore: { onIgnore(archive, section) },
-                  onAddWithOptions: { onAddWithOptions(archive, section) })
+                  onAdd: { onAdd(row.archive, section) },
+                  onIgnore: { onIgnore(row.archive, section) },
+                  onAddWithOptions: { onAddWithOptions(row.archive, section) })
               }
             }
           } header: {
@@ -327,12 +327,12 @@ private struct SectionHeader: View {
     sections: [
       WatchingModel.Section(
         login: "leighxp", displayName: "LeighXP",
-        archives: [WatchingViewPreviewData.normal, WatchingViewPreviewData.longTitle],
+        rows: [WatchingViewPreviewData.normal, WatchingViewPreviewData.longTitle].map { WatchingModel.Row(archive: $0, state: .available) },
         failure: nil, settingsSummary: "Video + chat · Best available · Medium chat · Downloads",
         downloadsAutomatically: false),
       WatchingModel.Section(
         login: "quietchannel", displayName: "A Quiet Channel",
-        archives: [], failure: nil,
+        rows: [], failure: nil,
         settingsSummary: "Video · Up to 720p · Archive", downloadsAutomatically: false),
     ],
     isSweeping: false, demotions: [:],
@@ -349,7 +349,7 @@ private struct SectionHeader: View {
     sections: [
       WatchingModel.Section(
         login: "leighxp", displayName: "LeighXP",
-        archives: [WatchingViewPreviewData.normal], failure: nil,
+        rows: [WatchingViewPreviewData.normal].map { WatchingModel.Row(archive: $0, state: .available) }, failure: nil,
         settingsSummary: "Video + chat · Best available · Medium chat · Downloads",
         downloadsAutomatically: false),
     ],
@@ -369,7 +369,7 @@ private struct SectionHeader: View {
     sections: [
       WatchingModel.Section(
         login: "leighxp", displayName: "LeighXP",
-        archives: [WatchingViewPreviewData.normal], failure: nil,
+        rows: [WatchingViewPreviewData.normal].map { WatchingModel.Row(archive: $0, state: .available) }, failure: nil,
         settingsSummary: "Video + chat · Best available · Medium chat · Downloads",
         downloadsAutomatically: false),
     ],
@@ -385,12 +385,12 @@ private struct SectionHeader: View {
     sections: [
       WatchingModel.Section(
         login: "leighxp", displayName: "LeighXP",
-        archives: [WatchingViewPreviewData.normal], failure: nil,
+        rows: [WatchingViewPreviewData.normal].map { WatchingModel.Row(archive: $0, state: .available) }, failure: nil,
         settingsSummary: "Video + chat · Best available · Medium chat · Downloads",
         downloadsAutomatically: false),
       WatchingModel.Section(
         login: "brokenchannel", displayName: "A Broken Channel",
-        archives: [],
+        rows: [],
         failure: "The response did not include the expected video list.",
         settingsSummary: "Video · Up to 1080p · Downloads", downloadsAutomatically: false),
     ],
@@ -409,7 +409,7 @@ private struct SectionHeader: View {
     sections: [
       WatchingModel.Section(
         login: "quietchannel", displayName: "A Quiet Channel",
-        archives: [], failure: nil,
+        rows: [], failure: nil,
         settingsSummary: "Video + chat · Best available · Small chat · Downloads",
         downloadsAutomatically: false),
     ],
@@ -426,12 +426,12 @@ private struct SectionHeader: View {
     sections: [
       WatchingModel.Section(
         login: "leighxp", displayName: "LeighXP",
-        archives: [WatchingViewPreviewData.normal], failure: nil,
+        rows: [WatchingViewPreviewData.normal].map { WatchingModel.Row(archive: $0, state: .available) }, failure: nil,
         settingsSummary: "Video + chat · Best available · Medium chat · Downloads",
         downloadsAutomatically: true),
       WatchingModel.Section(
         login: "quietchannel", displayName: "A Quiet Channel",
-        archives: [], failure: nil,
+        rows: [], failure: nil,
         settingsSummary: "Video · Up to 720p · Archive", downloadsAutomatically: false),
     ],
     isSweeping: false, demotions: [:],
@@ -448,12 +448,12 @@ private struct SectionHeader: View {
     sections: [
       WatchingModel.Section(
         login: "leighxp", displayName: "LeighXP",
-        archives: [WatchingViewPreviewData.normal, WatchingViewPreviewData.longTitle],
+        rows: [WatchingViewPreviewData.normal, WatchingViewPreviewData.longTitle].map { WatchingModel.Row(archive: $0, state: .available) },
         failure: nil, settingsSummary: "Video + chat · Best available · Medium chat · Archive",
         downloadsAutomatically: true),
       WatchingModel.Section(
         login: "quietchannel", displayName: "A Quiet Channel",
-        archives: [], failure: nil,
+        rows: [], failure: nil,
         settingsSummary: "Video · Up to 720p · Downloads", downloadsAutomatically: false),
     ],
     isSweeping: false,
@@ -471,7 +471,7 @@ private struct SectionHeader: View {
     sections: [
       WatchingModel.Section(
         login: "leighxp", displayName: "LeighXP",
-        archives: [WatchingViewPreviewData.normal], failure: nil,
+        rows: [WatchingViewPreviewData.normal].map { WatchingModel.Row(archive: $0, state: .available) }, failure: nil,
         settingsSummary: "Video + chat · Best available · Medium chat · Archive",
         downloadsAutomatically: true),
     ],

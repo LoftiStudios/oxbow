@@ -170,6 +170,18 @@ struct OxbowApp: App {
             }
             let result = await ArchiveSubmission.submit([archive], for: watch, into: controller)
             return result.failures[archive.id]
+          },
+          fileAnswer: { url in
+            // `volumeName` answers for a mounted volume and nil for one that
+            // is not there, which is exactly the reachable/unreachable split
+            // §4.1 needs — and it is a different question from "does the
+            // file exist", which is why both are asked.
+            guard let volume = VolumeSpace.live.volumeName(url) else {
+              return .unknown(volumeName: url.deletingLastPathComponent().lastPathComponent)
+            }
+            return FileManager.default.fileExists(atPath: url.path)
+              ? .present(url)
+              : (VolumeSpace.live.volumeRoot(url) == nil ? .unknown(volumeName: volume) : .absent)
           })
         watchStore = store
         imageStore = ImageStore.live(

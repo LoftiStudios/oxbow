@@ -47,6 +47,34 @@ struct WatchingModelTests {
     WatchingModel(store: store, openIntake: { _, _ in })
   }
 
+  /// A job whose one download step carries `status` and is keyed to `id` via
+  /// `mediaIdentifier`, so `ArchiveRowState.state(for:jobs:file:)` sees it as
+  /// belonging to the archive with that id. Copies the pattern at
+  /// `WatchPollerFailedJobFilterTests.job(_:)`/`step(_:videoID:)` rather than
+  /// reaching into `OxbowKitTests`' own helper, which this target cannot see.
+  ///
+  /// `.done` sets an artifact so a caller can exercise the delivered-file
+  /// path too, even though today's two new tests only need `.queued` and
+  /// `.running`.
+  private func job(_ id: String, _ status: JobStatus) -> Job {
+    let stepStatus: StepStatus
+    switch status {
+    case .queued: stepStatus = .queued
+    case .running: stepStatus = .running
+    case .done: stepStatus = .done
+    case .failed: stepStatus = .failed(StepFailure(kind: .noArtifact, summary: "no artifact"))
+    case .cancelled: stepStatus = .cancelled
+    }
+    let step = Step(
+      id: StepID(rawValue: UUID()),
+      kind: .downloadVideo(VideoRequest(
+        videoID: id, quality: "", destination: URL(filePath: "/out/\(id).mp4"))),
+      status: stepStatus,
+      artifact: status == .done ? URL(filePath: "/out/\(id).mp4") : nil)
+    return Job(id: JobID(rawValue: UUID()), created: Date(timeIntervalSince1970: 0),
+               title: "Stream", steps: [step])
+  }
+
   // MARK: - Derivation
 
   @Test func sectionsMirrorTheSweep() throws {
@@ -58,8 +86,38 @@ struct WatchingModelTests {
       .init(login: "day9tv", displayName: "Day9tv", outcome: .found([archive("3")]))])
 
     #expect(model.sections.map(\.login) == ["ninja", "day9tv"])
-    #expect(model.sections[0].archives.map(\.id) == ["1", "2"])
+    #expect(model.sections[0].rows.map(\.archive.id) == ["1", "2"])
     #expect(model.unreadCount == 3)
+  }
+
+  @Test func rowsCarryTheirStateFromTheQueue() throws {
+    let store = temporaryStore()
+    try store.save([watch("ninja")])
+    let model = model(store: store)
+    model.apply([.init(login: "ninja", displayName: "Ninja",
+                       outcome: .found([archive("1"), archive("2")]))])
+
+    model.updateJobs([job("1", .running)])
+
+    let rows = try #require(model.sections.first?.rows)
+    #expect(rows.count == 2)
+    #expect(rows.first(where: { $0.id == "1" })?.state == .running)
+    #expect(rows.first(where: { $0.id == "2" })?.state == .available)
+  }
+
+  /// The rows must not go stale when the queue moves. A job finishing has to
+  /// reach the pane without waiting for the next hourly sweep.
+  @Test func rowsRefreshWhenTheQueueChanges() throws {
+    let store = temporaryStore()
+    try store.save([watch("ninja")])
+    let model = model(store: store)
+    model.apply([.init(login: "ninja", displayName: "Ninja", outcome: .found([archive("1")]))])
+
+    model.updateJobs([job("1", .queued)])
+    #expect(model.sections.first?.rows.first?.state == .queued)
+
+    model.updateJobs([job("1", .running)])
+    #expect(model.sections.first?.rows.first?.state == .running)
   }
 
   @Test func aFailedChannelKeepsItsReasonAndIsNotCountedAsUnread() throws {
@@ -70,7 +128,7 @@ struct WatchingModelTests {
     model.apply([.init(login: "gone", displayName: "Gone", outcome: .failed(.noSuchChannel))])
 
     #expect(model.sections[0].failure != nil)
-    #expect(model.sections[0].archives.isEmpty)
+    #expect(model.sections[0].rows.map(\.archive).isEmpty)
     #expect(model.unreadCount == 0)
   }
 
@@ -81,7 +139,7 @@ struct WatchingModelTests {
     model.apply([.init(login: "quiet", displayName: "Quiet", outcome: .found([]))])
 
     #expect(model.sections[0].failure == nil)
-    #expect(model.sections[0].archives.isEmpty)
+    #expect(model.sections[0].rows.map(\.archive).isEmpty)
   }
 
   // MARK: - The dismissal overlay
@@ -99,7 +157,7 @@ struct WatchingModelTests {
 
     model.ignore(archive("1"), from: "ninja")
 
-    #expect(model.sections[0].archives.map(\.id) == ["2"])
+    #expect(model.sections[0].rows.map(\.archive).map(\.id) == ["2"])
     #expect(model.unreadCount == 1)
   }
 
@@ -132,7 +190,7 @@ struct WatchingModelTests {
                        outcome: .found([archive("1"), archive("2")]))])
 
     #expect(
-      model.sections[0].archives.map(\.id) == ["2"],
+      model.sections[0].rows.map(\.archive).map(\.id) == ["2"],
       "id 1 is already in the watch's own seen set, not just the in-memory overlay")
   }
 
@@ -179,7 +237,7 @@ struct WatchingModelTests {
     #expect(queued.settings == capped.settings)
     #expect(opened.id == nil, "the primary action must not open intake")
     #expect(try store.load()[0].seen == ["1"])
-    #expect(model.sections[0].archives.isEmpty)
+    #expect(model.sections[0].rows.map(\.archive).isEmpty)
   }
 
   /// A refusal leaves the row exactly where it was. Marking it seen would
@@ -197,7 +255,7 @@ struct WatchingModelTests {
 
     #expect(model.submissionFailure == "Oxbow could not build that download.")
     #expect(try store.load()[0].seen.isEmpty, "a refusal must not mark it handled")
-    #expect(model.sections[0].archives.count == 1, "the row has to stay actionable")
+    #expect(model.sections[0].rows.map(\.archive).count == 1, "the row has to stay actionable")
   }
 
   @Test func openingInIntakeHandsItOffAndMarksItSeen() throws {
@@ -213,7 +271,7 @@ struct WatchingModelTests {
     // Seen on open, not on the eventual download: someone who opens the form
     // and cancels has still answered the question the row was asking.
     #expect(try store.load()[0].seen == ["1"])
-    #expect(model.sections[0].archives.isEmpty)
+    #expect(model.sections[0].rows.map(\.archive).isEmpty)
   }
 
   /// The exact shape `OxbowApp` wires in production — its `openIntake`
@@ -376,7 +434,7 @@ struct WatchingModelTests {
 
     model.apply([.init(login: "ninja", displayName: "Ninja", outcome: .found([archive("1")]))])
 
-    #expect(model.sections[0].archives.isEmpty)
+    #expect(model.sections[0].rows.map(\.archive).isEmpty)
   }
 
   @Test func aDismissalDropsOutOfTheOverlayButTheArchiveStaysHiddenViaTheWatchsOwnSeenSet() throws {
@@ -403,7 +461,7 @@ struct WatchingModelTests {
     model.apply([.init(login: "ninja", displayName: "Ninja", outcome: .found([archive("1")]))])
 
     #expect(
-      model.sections[0].archives.isEmpty,
+      model.sections[0].rows.map(\.archive).isEmpty,
       "the watch's own seen set still hides it, even once dismissed has forgotten it")
   }
 
@@ -424,7 +482,7 @@ struct WatchingModelTests {
     model.apply([.init(login: "ninja", displayName: "Ninja", outcome: .found([archive("1")]))])
 
     await model.add(archive("1"), from: "ninja")
-    #expect(model.sections[0].archives.isEmpty, "precondition: Add hid the row and marked it seen")
+    #expect(model.sections[0].rows.map(\.archive).isEmpty, "precondition: Add hid the row and marked it seen")
 
     // Stands in for `AutoDownloadObserver.forget`: the job for "1" failed,
     // so it is un-marked on disk through a second `WatchStore` instance over
@@ -438,7 +496,7 @@ struct WatchingModelTests {
     model.apply([.init(login: "ninja", displayName: "Ninja", outcome: .found([archive("1")]))])
 
     #expect(
-      model.sections[0].archives.map(\.id) == ["1"],
+      model.sections[0].rows.map(\.archive).map(\.id) == ["1"],
       "a failed download's archive must return to the inbox in this session, not only after relaunch")
   }
 
@@ -457,7 +515,7 @@ struct WatchingModelTests {
     let model = model(store: store)
 
     #expect(model.sections.map(\.login) == ["ninja"])
-    #expect(model.sections[0].archives.isEmpty)
+    #expect(model.sections[0].rows.map(\.archive).isEmpty)
     #expect(model.sections[0].failure == nil)
     #expect(model.sections[0].settingsSummary
       == "Video + chat · Best available · Medium chat · Downloads")
@@ -567,7 +625,7 @@ struct WatchingModelTests {
     try store.save([watch("ninja")])
     model.refresh()
 
-    #expect(model.sections.first(where: { $0.login == "ninja" })?.archives.map(\.id) == ["1"])
+    #expect(model.sections.first(where: { $0.login == "ninja" })?.rows.map(\.archive).map(\.id) == ["1"])
   }
 
   // MARK: - Re-reading the watch list on demand
@@ -789,7 +847,7 @@ struct WatchingModelTests {
           expectedIDs = []
         }
         let actualIDs = Set(
-          model.sections.first(where: { $0.login == watchEntry.login })?.archives.map(\.id) ?? [])
+          model.sections.first(where: { $0.login == watchEntry.login })?.rows.map(\.archive).map(\.id) ?? [])
         #expect(actualIDs == expectedIDs,
           "seed \(seed) step \(step) login \(watchEntry.login): archives must be exactly the newest sweep's findings minus seen")
       }
@@ -841,7 +899,7 @@ struct WatchingModelTests {
     model.refresh()
 
     #expect(
-      model.sections.first(where: { $0.login == "ninja" })?.archives.map(\.id).sorted()
+      model.sections.first(where: { $0.login == "ninja" })?.rows.map(\.archive).map(\.id).sorted()
         == ["1", "2"],
       "the re-added channel's own last sweep must still be there once it is watched again")
   }

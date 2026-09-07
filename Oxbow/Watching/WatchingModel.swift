@@ -28,10 +28,18 @@ final class WatchingModel {
     /// before that field existed; nothing backfills it, because the profile
     /// request is deliberately off the sweep's path.
     var avatarURL: URL?
-    var archives: [ChannelArchive]
+    /// One row per archive this channel is offering or has acted on, each
+    /// carrying what it currently is.
+    ///
+    /// **Replaces the bare `[ChannelArchive]` this used to hold.** A row is
+    /// no longer only a finding — it may be queued, downloaded, or a
+    /// download whose file has since gone — so the view needs the state
+    /// alongside the archive rather than inferring it from which list the
+    /// archive was in.
+    var rows: [Row]
     /// Why this channel produced nothing, when that is the reason.
     ///
-    /// Distinct from `archives.isEmpty`, and that distinction is the point:
+    /// Distinct from `rows.isEmpty`, and that distinction is the point:
     /// §7 requires a parse failure to read as a visible error rather than as
     /// "no new videos". A quiet channel has a nil failure and an empty list;
     /// a broken one has a message.
@@ -59,6 +67,13 @@ final class WatchingModel {
     var id: String { login }
   }
 
+  /// One archive, and what it currently is.
+  struct Row: Identifiable, Equatable {
+    var archive: ChannelArchive
+    var state: ArchiveRowState
+    var id: String { archive.id }
+  }
+
   private(set) var sections: [Section] = []
 
   /// The current watch list, kept in step with `watches.json` so a section
@@ -69,10 +84,12 @@ final class WatchingModel {
   /// `stopWatching`) between sweeps.
   private(set) var watches: [Watch] = []
 
-  /// Findings not yet acted on. Failures deliberately do not count — a badge
-  /// that includes them would tell someone there is something to download
-  /// when there is something to fix.
-  var unreadCount: Int { sections.reduce(0) { $0 + $1.archives.count } }
+  /// **Counts only rows a person still has to act on.** A queued or
+  /// downloaded row is in the list but is not waiting for anybody, and a
+  /// badge that counted them would never reach zero.
+  var unreadCount: Int {
+    sections.reduce(0) { $0 + $1.rows.filter { $0.state == .available }.count }
+  }
 
   private let store: WatchStore
   private let openIntake: (ChannelArchive, Watch) -> Void
@@ -81,6 +98,20 @@ final class WatchingModel {
   /// sentence when it could not. Injected so this model stays testable
   /// without a `QueueController`, the same reason `openIntake` is a closure.
   private let queue: (ChannelArchive, Watch) async -> String?
+
+  /// The queue's jobs as of the last publication, for `rebuild()` to derive
+  /// row state from.
+  ///
+  /// **Display only.** `docs/design/channel-watching.md` §4 forbids deriving
+  /// the *seen-set* from the queue — a removed job would silently license a
+  /// re-download — and nothing here does: this decides a badge. Losing a job
+  /// costs a row its history, which stage 3's store fixes by not depending
+  /// on the queue at all.
+  private var jobs: [Job] = []
+
+  /// How a delivered file's presence is answered. Injected so a test needs
+  /// no disk; the live wiring hands in a `VolumeSpace`-backed probe.
+  private let fileAnswer: (URL) -> ArchiveRowState.FileAnswer
 
   /// Archive ids `markSeen` could not persist.
   ///
@@ -151,14 +182,25 @@ final class WatchingModel {
   init(
     store: WatchStore,
     openIntake: @escaping (ChannelArchive, Watch) -> Void,
-    queue: @escaping (ChannelArchive, Watch) async -> String? = { _, _ in nil }
+    queue: @escaping (ChannelArchive, Watch) async -> String? = { _, _ in nil },
+    fileAnswer: @escaping (URL) -> ArchiveRowState.FileAnswer = { .present($0) }
   ) {
     self.store = store
     self.openIntake = openIntake
     self.queue = queue
+    self.fileAnswer = fileAnswer
     // Populates `sections` from whatever is already watched before the first
     // sweep ever lands — requirement 1's "never polled" case starts the
     // instant a channel is added, not once `WatchPoller` gets around to it.
+    rebuild()
+  }
+
+  /// Republishes the rows against a new view of the queue.
+  ///
+  /// Called whenever `controller.jobs` changes, so a job finishing reaches
+  /// the pane immediately rather than waiting for the next hourly sweep.
+  func updateJobs(_ jobs: [Job]) {
+    self.jobs = jobs
     rebuild()
   }
 
@@ -497,17 +539,21 @@ final class WatchingModel {
         // what this map is iterating — so there is nothing for a fallback
         // to cover, and one that read "leave it unfiltered" would fail open
         // the moment a future edit ever made the lookup optional again.
+        let visible = watch.findings(in: archives).filter { !dismissed.contains($0.id) }
         return Section(
           login: watch.login, displayName: watch.displayName,
           avatarURL: watch.avatarURL,
-          archives: watch.findings(in: archives).filter { !dismissed.contains($0.id) },
+          rows: visible.map { archive in
+            Row(archive: archive,
+                state: ArchiveRowState.state(for: archive, jobs: jobs, file: fileAnswer))
+          },
           failure: nil, settingsSummary: settingsSummary(for: watch.settings),
           downloadsAutomatically: watch.downloadsAutomatically)
       case .failed(let error):
         return Section(
           login: watch.login, displayName: watch.displayName,
           avatarURL: watch.avatarURL,
-          archives: [], failure: error.localizedDescription,
+          rows: [], failure: error.localizedDescription,
           settingsSummary: settingsSummary(for: watch.settings),
           downloadsAutomatically: watch.downloadsAutomatically)
       case nil:
@@ -517,7 +563,7 @@ final class WatchingModel {
         return Section(
           login: watch.login, displayName: watch.displayName,
           avatarURL: watch.avatarURL,
-          archives: [], failure: nil, settingsSummary: settingsSummary(for: watch.settings),
+          rows: [], failure: nil, settingsSummary: settingsSummary(for: watch.settings),
           downloadsAutomatically: watch.downloadsAutomatically)
       }
     }
