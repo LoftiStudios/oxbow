@@ -17,6 +17,12 @@ final class JobNotifier: NSObject, UNUserNotificationCenterDelegate {
   nonisolated private static let finishedCategory = "studio.lofti.Oxbow.finished"
   nonisolated private static let filesKey = "files"
 
+  /// Marks a notification as one whose click should open the Watching pane
+  /// rather than reveal a file. Carried in `userInfo` rather than as a
+  /// `categoryIdentifier`, because the category exists to declare *actions*
+  /// and this notification has none beyond its default click.
+  nonisolated private static let revealWatchingKey = "revealWatching"
+
   /// The completion chime, in `Contents/Resources`.
   ///
   /// **Not the `.mp3` it arrived as.** `UNNotificationSound` reads `aiff`,
@@ -121,6 +127,40 @@ final class JobNotifier: NSObject, UNUserNotificationCenterDelegate {
       trigger: nil))
   }
 
+  /// Says that a sweep found archives waiting, and opens the Watching pane
+  /// when clicked. `docs/design/channel-watching.md` §2.2.
+  ///
+  /// **What to say is not decided here.** `FindingAnnouncement` decides both
+  /// strings and, crucially, *whether there is anything to say at all* — this
+  /// posts whatever it is handed. Putting the "is this new" question here
+  /// would bury the one rule in this feature that keeps a durable inbox from
+  /// becoming an hourly banner.
+  ///
+  /// **One identifier for every finding banner, so a later one replaces the
+  /// one before it.** The same reasoning as `announceIntentSubmission`'s
+  /// body-keyed identifier, applied to a notification that is a running
+  /// count rather than an event: two sweeps four hours apart should leave
+  /// one banner saying five are waiting, not one saying two and another
+  /// saying three.
+  ///
+  /// No chime, for the reason `announceIntentSubmission` gives: the chime
+  /// marks a download finishing, and this is the opposite end of the job.
+  func announceFindings(title: String, body: String) {
+    guard let center else { return }
+    // A watch can be added, and start finding things, without a download
+    // ever having been enqueued — so the first-enqueue prompt may never have
+    // run on an install that only ever watches.
+    requestAuthorizationIfNeeded()
+
+    let content = UNMutableNotificationContent()
+    content.title = title
+    content.body = body
+    content.userInfo = [Self.revealWatchingKey: true]
+
+    center.add(UNNotificationRequest(
+      identifier: "watching-findings", content: content, trigger: nil))
+  }
+
   func apply(_ jobs: [Job]) {
     guard let center else { return }
 
@@ -210,10 +250,20 @@ final class JobNotifier: NSObject, UNUserNotificationCenterDelegate {
     _ center: UNUserNotificationCenter,
     didReceive response: UNNotificationResponse) async
   {
-    let paths = response.notification.request.content
-      .userInfo[JobNotifier.filesKey] as? [String] ?? []
+    let userInfo = response.notification.request.content.userInfo
+    let paths = userInfo[JobNotifier.filesKey] as? [String] ?? []
+    let revealsWatching = userInfo[JobNotifier.revealWatchingKey] as? Bool ?? false
 
     await MainActor.run {
+      // Ahead of the file reveal, not beside it: the two are mutually
+      // exclusive by construction (a findings banner carries no files and a
+      // finished-job banner carries no reveal flag), and ordering them
+      // rather than nesting keeps that fact readable.
+      if revealsWatching {
+        NSApp.activate(ignoringOtherApps: true)
+        WatchingReveal.shared.request()
+        return
+      }
       guard !paths.isEmpty else {
         NSApp.activate(ignoringOtherApps: true)
         return

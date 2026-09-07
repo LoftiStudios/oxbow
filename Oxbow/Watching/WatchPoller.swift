@@ -49,17 +49,38 @@ final class WatchPoller {
   /// `docs/design/channel-watching.md` §6.2 rules out.
   private(set) var demotions: [String: AutoDownloadPolicy.Reason] = [:]
 
+  /// Archive ids a person has already been told are waiting, carried between
+  /// sweeps so the same rows are not re-announced every hour.
+  ///
+  /// Replaced wholesale by each `FindingAnnouncement.decide` — see that
+  /// type's `Decision.announced` for why it is returned even when nothing is
+  /// said, and its `decide` for why nothing persists this across launches.
+  private var announced: Set<String> = []
+
   private let store: WatchStore
   private let feed: ChannelFeed
   private let now: () -> Date
   private var loop: Task<Void, Never>?
 
+  /// Where a sweep's announcement goes. Injected so a test can read what
+  /// would have been posted instead of posting it — the notification centre
+  /// itself is unavailable under `xcodebuild test` anyway (see `JobNotifier
+  /// .center`), which would make an un-injected default silently untestable
+  /// rather than merely inconvenient.
+  private let announce: (FindingAnnouncement.Message) -> Void
+
   /// Both collaborators are injected rather than built here so a preview can
   /// supply a fixed answer without a network or a support directory.
-  init(store: WatchStore, feed: ChannelFeed, now: @escaping () -> Date = Date.init) {
+  init(
+    store: WatchStore, feed: ChannelFeed, now: @escaping () -> Date = Date.init,
+    announce: @escaping (FindingAnnouncement.Message) -> Void = { message in
+      QueueHost.shared.notifyFindings(title: message.title, body: message.body)
+    }
+  ) {
     self.store = store
     self.feed = feed
     self.now = now
+    self.announce = announce
   }
 
   /// The live one, reading the watch file `AppComposition` sites and talking to
@@ -167,6 +188,11 @@ final class WatchPoller {
       // the reset path instead of the decision path.
       results = []
       demotions = [:]
+      // Cleared alongside them, for the reason the comment above gives about
+      // `demotions`: every id this was holding belonged to a watch that is
+      // now gone, and re-adding that login later must be able to announce
+      // its findings afresh rather than find them already spoken for.
+      announced = []
       return
     }
 
@@ -187,7 +213,17 @@ final class WatchPoller {
     }
     results = swept
     lastPolled = now()
-    await actOnFindings(watches: watches, results: swept)
+    let submitted = await actOnFindings(watches: watches, results: swept)
+
+    // After `actOnFindings`, never before it: what that call submitted is
+    // precisely what must *not* be announced as waiting, and it is only
+    // known once it has run. `§2.2`'s banner is a pointer to the inbox, so
+    // an archive already queued has nothing for it to point at.
+    let decision = FindingAnnouncement.decide(
+      results: swept, submitted: submitted, alreadyAnnounced: announced)
+    announced = decision.announced
+    if let message = decision.message { announce(message) }
+
     isSweeping = false
   }
 
@@ -214,11 +250,20 @@ final class WatchPoller {
   /// correcting next sweep, and not worth locking or coordinating around —
   /// see `markSubmitted(_:login:)` for the write-back hazard this same gap
   /// causes on the other side of the store.
-  private func actOnFindings(watches: [Watch], results: [WatchPollResult]) async {
+  /// Returns the archive ids this sweep actually queued, for
+  /// `FindingAnnouncement` to exclude — an archive that is downloading is not
+  /// one waiting for a person, and `JobNotifier` reports it when it settles.
+  /// Ids only, not the archives: the caller needs set membership, and
+  /// returning the richer thing would invite a second use this cannot
+  /// promise (a submission that succeeded may already have been superseded
+  /// by an edit — see this function's note on frozen settings).
+  @discardableResult
+  private func actOnFindings(watches: [Watch], results: [WatchPollResult]) async -> Set<String> {
     // No empty-list guard here: `sweep()`'s own early return is the only
     // caller that could reach this with an empty `watches`, and that return
     // happens before this is ever called — clearing `demotions` there
     // instead (see `sweep()`) is what actually reaches the empty-list case.
+    var submitted: Set<String> = []
     let floor = Preferences().freeSpaceFloor
     let resultsByLogin = Dictionary(uniqueKeysWithValues: results.map { ($0.login, $0) })
 
@@ -284,14 +329,14 @@ final class WatchPoller {
     // that looks like the sweep already finished.
     demotions = newDemotions
 
-    guard !toSubmit.isEmpty else { return }
+    guard !toSubmit.isEmpty else { return submitted }
 
     // Resolved once, above — the same engine `DownloadTwitchVideoIntent
     // .perform()` binds once, for the same reason its own comment gives: a
     // second call was never wrong, only harder to read. `controller` is nil
     // exactly when the engine was not `.ready` up there, in which case there
     // is nothing to submit into regardless of what this sweep decided.
-    guard let controller else { return }
+    guard let controller else { return submitted }
 
     // Sequential, matching `WatchPoll.sweep`'s own reasoning
     // (`docs/twitch-channel-api.md` §4): issuing a dozen submissions at once
@@ -300,9 +345,12 @@ final class WatchPoller {
     // buy a burst of requests with nothing to show for it.
     for (watch, archives) in toSubmit {
       for archive in archives {
-        await submit(archive, from: watch, into: controller)
+        if await submit(archive, from: watch, into: controller) {
+          submitted.insert(archive.id)
+        }
       }
     }
+    return submitted
   }
 
   /// `findings` with any archive removed whose `mediaIdentifier` already has
@@ -364,7 +412,13 @@ final class WatchPoller {
   /// bury a real archive with nobody having looked at it, breaking the one
   /// promise this feature makes. A success, `.queued` or `.alreadyQueued`
   /// alike, means the archive is accounted for either way, so both mark it.
-  private func submit(_ archive: ChannelArchive, from watch: Watch, into controller: QueueController) async {
+  ///
+  /// Returns whether the archive reached the queue. A `false` leaves it a
+  /// finding in every sense — unmarked in `seen`, and announced as waiting by
+  /// `sweep()` — which is the same answer this function was already giving
+  /// the store, now given to the banner too.
+  @discardableResult
+  private func submit(_ archive: ChannelArchive, from watch: Watch, into controller: QueueController) async -> Bool {
     do {
       _ = try await IntentSubmission.submit(
         link: archive.id,
@@ -375,6 +429,7 @@ final class WatchPoller {
         existingJobs: controller.jobs,
         into: IntakeModel(controller: controller))
       markSubmitted(archive.id, login: watch.login)
+      return true
     } catch {
       // Left as a finding for a person to retry through the intake window,
       // exactly as `docs/design/channel-watching.md` §6.3 already does for
@@ -397,6 +452,11 @@ final class WatchPoller {
       // is more of exactly the persistent per-archive state this feature
       // has been bitten by repeatedly (see `seen` itself, and `demotions`
       // above).
+      //
+      // Reported as not submitted, so `sweep()` announces it as waiting —
+      // which is exactly what it is. This is the one branch where the
+      // banner and the queue disagree, and the banner is right.
+      return false
     }
   }
 

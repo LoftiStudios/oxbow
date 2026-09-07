@@ -113,6 +113,18 @@ final class QueueHost {
       body: outcome.notificationBody)
   }
 
+  /// Tells the user a sweep turned up archives waiting in the Watching pane.
+  ///
+  /// Narrow for the same reason `notifyIntentOutcome` above is, and routed
+  /// through here rather than by handing `WatchPoller` a notifier of its own:
+  /// `notifier` is `lazy` precisely so that whichever caller reaches it first
+  /// builds the one instance, and a second would register a second delegate
+  /// on the notification centre — silently unregistering the first, taking
+  /// "Show in Finder" with it.
+  func notifyFindings(title: String, body: String) {
+    notifier?.announceFindings(title: title, body: body)
+  }
+
   /// Resolves the engine, or returns why it could not. Safe to call from
   /// anywhere, any number of times, concurrently.
   func ready() async -> QueueContent {
