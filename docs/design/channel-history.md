@@ -1,6 +1,6 @@
 # A watched channel with contents
 
-**Status:** design, written 2026-09-07. **Stage 1 (§7.1) implemented**; stages 2 and 3 not started.
+**Status:** design, written 2026-09-07. **Stages 1 (§7.1) and 2 (§7.2) implemented**; stage 3 not started.
 
 `docs/design/channel-watching.md` built the watcher. This describes what a
 watched channel should *look* like once it has been watching for a while, and
@@ -260,26 +260,79 @@ any width and returns a URL built by interpolation, but the CDN serves only
 28, 50, 70, 150, 300 and 600 (`docs/twitch-channel-api.md` §9.2). The request
 uses 300 and must never be computed from a layout constant.
 
-### 7.2 The pane
+### 7.2 The pane — done
 
 The view from the mockup, fed rows and cached images.
 
-**Its rows come from the sweep joined against the queue, not from a store.**
-This is the stage's one piece of scaffolding and it is deliberate: `seen`
-alone cannot feed this view — a bare id has no title, date or path — so a pane
-built on it could render only the `new` half and every green check would be
-mock. Finished jobs carry both a title and their delivered files, so joining
-the sweep against `controller.jobs` produces *real* `queued` and `downloaded`
-rows. They are simply not durable: remove the job and the row's history is
-gone.
+**Its rows carry state derived from the sweep joined against the queue's
+`Job`s, not from a store.** This is the stage's one piece of scaffolding and
+it is deliberate: `seen` alone cannot feed this view — a bare id has no
+title, date or path — so a pane built on it could render only the `new` half
+and every green check would be mock. Finished jobs carry both a title and
+their delivered files, so joining the sweep against the queue's jobs produces
+*real* `queued` and `downloaded` rows. The cost of the shortcut is that this
+state is **not durable**: it exists only for as long as the job it was joined
+against does. Remove a finished job — an entirely ordinary thing to do to a
+queue — and the row it backed loses its history along with it, reverting to
+whatever the sweep and the filesystem can still say about it on their own.
+Stage 3 replaces this join with the history store precisely so that a row's
+past stops being a lease on somebody else's cleanup.
 
-This is display only. It does not derive `seen`, which §4 of the watching
-design forbids for a reason that still holds — a removed job would license a
-re-download. A row's badge disappearing is harmless by comparison.
+This is display only, and stays that way. Nothing here derives the seen-set
+from the queue — §4 of `docs/design/channel-watching.md` still forbids that,
+for the reason that still holds: a removed job would silently license a
+re-download. What the join *does* decide is a badge. `unreadCount` counts
+only rows still waiting on a person to act — state `.available` — and nothing
+else. Counting `queued` and `downloaded` rows into it would produce a badge
+that never reaches zero, which is worse than no badge at all: the one thing a
+count like this has to do is go away when there is nothing left to do.
+
+**The filter (§5.2) and the coverage counter (§5.3) are not built.** Both are
+deliberately deferred to stage 3, and for the same reason: both need history
+that does not exist yet. The filter's job is to reveal `ignored`, `skipped`
+and missed entries that this stage never records — a row demoted out of the
+queue leaves no trace for it to reveal. The counter's denominator is
+"entries recorded since you started watching", and there is nothing recorded
+here to count; a fraction built on the queue's transient jobs would shrink
+and grow with cleanup rather than with what the channel has actually
+produced, which is exactly the kind of lying number §5.3 already warns
+against for the disconnected-volume case. Neither is worth building against
+scaffolding that stage 3 replaces out from under it.
+
+**§4.2's channel-level notice was pulled forward into this stage, ahead of
+its own plan.** The per-row `unverifiable` badge (§4.1) already carries the
+volume's name, but only in a tooltip — something a person has to think to
+hover, on a row they may not even be looking at. "Your library might be
+gone" is not a fact that belongs behind a hover. So `ChannelCard` derives it
+itself, at the channel level, from the same rows the badge already has, and
+states it as a sentence rather than leaving it to be found. It needed nothing
+from the store §4.2 originally implied it was waiting on — only the rows this
+stage already produces — so there was no reason to make a person wait for
+stage 3 to see it.
 
 Building the view before the store is the right order because **the store
 exists to feed the view**. Its schema should be discovered from what the pane
 turns out to need, not guessed and then found wanting.
+
+#### 7.2.1 §4.1 was measured on real hardware
+
+Stage 3 leans on §4.1's three-way rule harder than on anything else in this
+document — the store's entire claim about what a person has rests on the
+join never mistaking "the drive is gone" for "the file is gone" — so it was
+worth checking against an actual unplugged disk rather than trusting the
+theory of `nearestExisting` a second time.
+
+A USB SSD mounted at `/Volumes/Storage` was force-unmounted while a file
+remained recorded at `/Volumes/Storage/oxbow-check/a.mp4`. After unmount,
+`/Volumes/Storage` does not exist, while `/Volumes` does.
+`ArchiveRowState.FileAnswer.resolve` returned `.unknown(volumeName:
+"Storage")` — correct.
+
+The same measurement shows why the first implementation was wrong: it
+resolved through `VolumeSpace.nearestExisting`, which walks *up* to the
+deepest existing ancestor — `/Volumes`, on the boot volume — so it never
+returned nil and would have answered `.absent`, offering to re-download a
+drive's entire contents while the drive sat in a drawer.
 
 ### 7.3 The store
 
