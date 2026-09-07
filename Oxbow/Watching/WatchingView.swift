@@ -25,8 +25,8 @@ import OxbowKit
 /// requirement applied to `AutoDownloadPolicy`'s decision instead of a fetch
 /// failure.** A watch that hit the free-space floor or lost its destination
 /// keeps polling and keeps listing what it finds; only its automatic half
-/// paused. `DemotionRow` says so beside those findings, and `SectionHeader`
-/// swaps its bolt for a paused one, so both the list and the header answer
+/// paused. `DemotionRow` says so beside those findings, and `ChannelCard`
+/// swaps its bolt for a paused one, so both the list and the card answer
 /// "why didn't this just download?" without anyone having to guess that
 /// nothing being queued and nothing being found are different problems.
 struct WatchingView: View {
@@ -66,7 +66,7 @@ struct WatchingView: View {
   /// nothing else on screen does.
   let onEdit: (WatchingModel.Section) -> Void
   /// Stops watching the channel a section's header menu named. No
-  /// confirmation on this side either — see `SectionHeader`'s own doc
+  /// confirmation on this side either — see `ChannelCard`'s own doc
   /// comment for why none is offered.
   let onStopWatching: (WatchingModel.Section) -> Void
   /// Set when a Stop Watching refused rather than removing anything —
@@ -163,7 +163,7 @@ struct WatchingView: View {
               }
             }
           } header: {
-            SectionHeader(
+            ChannelCard(
               section: section,
               imageStore: imageStore,
               demotionReason: demotions[section.login],
@@ -216,9 +216,9 @@ private struct FailureRow: View {
 /// exactly the shape a "no new videos" row must never be confused with. A
 /// demotion is a different situation again: the sweep succeeded, its
 /// findings are listed right below, and only the unattended half paused. The
-/// paused icon reused here for that reason also appears on the section
-/// header itself (`SectionHeader.demotionReason`) — one glance at either
-/// place answers the same question the same way.
+/// paused icon reused here for that reason also appears on the card's own
+/// header (`ChannelCard.demotionReason`) — one glance at either place
+/// answers the same question the same way.
 private struct DemotionRow: View {
   let reason: AutoDownloadPolicy.Reason
 
@@ -233,94 +233,6 @@ private struct DemotionRow: View {
     }
     .padding(.vertical, 4)
     .accessibilityElement(children: .combine)
-  }
-}
-
-/// A section's header: the channel name, what it is frozen to download at
-/// (§3.2), a mark for automatic downloading when it is on, and — the only
-/// place either is offered — Edit and Stop Watching.
-///
-/// **No confirmation dialog on Stop Watching.** Unlike removing a queued
-/// download, this destroys nothing: it edits `watches.json` alone, and
-/// every file a past download produced is untouched. A confirmation here
-/// would be warning about a loss that does not happen, so the wording
-/// carries that instead of a dialog — both the button's own label and its
-/// tooltip say plainly that downloaded files stay put.
-private struct SectionHeader: View {
-  let section: WatchingModel.Section
-  let imageStore: ImageStore?
-  /// Why this channel's automatic downloading is paused this sweep, or nil
-  /// when it is not — `demotions[section.login]` from the call site.
-  let demotionReason: AutoDownloadPolicy.Reason?
-  let onEdit: () -> Void
-  let onStopWatching: () -> Void
-
-  var body: some View {
-    HStack(alignment: .firstTextBaseline, spacing: 6) {
-      // `.firstTextBaseline` would hang a square image off the text
-      // baseline, so the avatar aligns to the centre of the name instead.
-      ChannelAvatar(url: section.avatarURL, store: imageStore)
-        .alignmentGuide(.firstTextBaseline) { $0[VerticalAlignment.center] + 5 }
-      Text(section.displayName)
-      // Only shown when it is actually on: off is the default and the
-      // ordinary case, and marking every quiet channel "Manual" would be
-      // the loud thing `WatchingView`'s own doc comment already argues
-      // against for a "no new videos" row under every quiet section.
-      if section.downloadsAutomatically {
-        if let demotionReason {
-          // A different glyph and colour from the steady "on" state below,
-          // not just a different tooltip — this has to read at a glance,
-          // without hovering, as something other than the ordinary
-          // automatic-downloading mark (requirement: a demoted watch must be
-          // visibly distinguishable from one quietly working as intended,
-          // never only from a channel with nothing new).
-          Label("Downloads paused", systemImage: "bolt.slash.fill")
-            .labelStyle(.iconOnly)
-            .foregroundStyle(.orange)
-            .help(demotionReason.sentence)
-        } else {
-          Label("Downloads automatically", systemImage: "bolt.fill")
-            .labelStyle(.iconOnly)
-            .foregroundStyle(.blue)
-            // Present tense and true: automatic downloading is real now —
-            // findings this channel turns up queue on their own, without
-            // Add, as long as the destination stays reachable and the disk
-            // stays above the floor set in Settings. The demoted branch
-            // above is what covers the moment either of those stops holding.
-            .help("""
-              Set to download automatically. New archives from this channel \
-              are queued and downloaded on their own, without waiting for Add.
-              """)
-        }
-      }
-      Spacer(minLength: 0)
-      if !section.settingsSummary.isEmpty {
-        Text(section.settingsSummary)
-          .foregroundStyle(.secondary)
-      }
-    }
-    .textCase(nil)
-    .contextMenu {
-      // Above Stop Watching, matching how a Mac menu orders a reversible
-      // action before a destructive-adjacent one — this changes settings,
-      // that removes the channel entirely.
-      Button {
-        onEdit()
-      } label: {
-        Label("Edit…", systemImage: "pencil")
-      }
-      .help("Change \(section.displayName)'s frozen settings.")
-
-      Button {
-        onStopWatching()
-      } label: {
-        Label("Stop Watching", systemImage: "eye.slash")
-      }
-      .help("""
-        Stops watching \(section.displayName). Files already downloaded are \
-        not deleted.
-        """)
-    }
   }
 }
 
