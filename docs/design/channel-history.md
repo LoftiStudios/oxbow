@@ -1,0 +1,310 @@
+# A watched channel with contents
+
+**Status:** design, written 2026-09-07. Not implemented.
+
+`docs/design/channel-watching.md` built the watcher. This describes what a
+watched channel should *look* like once it has been watching for a while, and
+the record that has to exist behind it. Where that document and this one
+disagree, this one is later and wins; §3.1 and §4 of it are the parts most
+directly amended.
+
+Every claim about Twitch's API is measured in `docs/twitch-channel-api.md`
+rather than argued here.
+
+---
+
+## 1. The problem, stated as a person meets it
+
+You paste a channel, press Add, and get **one row that does nothing**. If you
+do not think to click over to Queue, nothing in the app ever tells you a
+download happened. The channel is a line item in a list, not a thing with
+contents — and the contents are the entire reason you added it.
+
+Underneath that, the record is nearly empty. A watch stores its login, its
+frozen settings, and a set of bare archive ids:
+
+```json
+"seen": ["2816117318", "2849239087", "2851023468", "2817008237"]
+```
+
+No title, no date, no path, no thumbnail. `ChannelArchive` is deliberately not
+`Codable` (§4 of the watching design), so every sweep fetches metadata,
+renders it, and throws it away. The moment an archive is queued, the only
+trace it leaves is an opaque number. Once it expires off Twitch and its job is
+removed from the queue, **nothing anywhere records that it existed**.
+
+So "what have I got from this channel" is not a question the app can answer,
+and that is the question a person actually has.
+
+---
+
+## 2. What this delivers
+
+**A channel is a card with contents.** Avatar, name, the settings it is frozen
+to, a coverage counter, and beneath it one list.
+
+**One list, not two.** Findings and history are the same rows in different
+states. An archive you could get, one being fetched, and one you already have
+are three states of one thing, and splitting them into an "inbox" and a
+"library" would make you learn which pane a video is in before you can act on
+it.
+
+**The filesystem decides what you have.** A row claiming you have a file is
+shown only when the file backs the claim. Delete the download and the row
+stops claiming it.
+
+---
+
+## 3. The record
+
+A store of its own, keyed by channel login, separate from `watches.json`.
+
+**Separate because `watches.json` is small, hot and contended.** Three writers
+rewrite it wholesale — the sweep, the Watching pane, the Add Channel window —
+and the ordering discipline between them has already produced eight bugs of
+one shape. Growing it into an append-mostly log of every archive a channel has
+ever produced, rewritten on every mark-seen, would invite the ninth.
+
+One entry per archive:
+
+| Field | Why |
+|-------|-----|
+| `id` | Twitch's archive id. The join key to everything. |
+| `title`, `duration`, `publishedAt` | So an expired archive still renders. |
+| `state` | §3.1. |
+| `deliveredPath` | Where the download landed. §4 checks it. |
+| `lastSeenOnTwitch` | The sweep stamps this. Absent from the newest sweep means expired. |
+| `thumbnail` | A cache key, §6. |
+
+### 3.1 Six states, and the end of `seen`
+
+- **`new`** — on Twitch, not acted on. Today's finding.
+- **`skipped`** — existed before you started watching. What "Only new" seeding
+  produces.
+- **`queued`** — submitted to the queue.
+- **`downloaded`** — its job finished, and `deliveredPath` is set.
+- **`ignored`** — you dismissed it.
+- **`failed`** — its job failed. Actionable again, per the watching design
+  §6.3.
+
+**`seen` stops being stored and becomes derived**: *state is not `new` and not
+`failed`*. That is exactly what `seen` means today.
+
+Two parallel records of "have I acted on this archive" is the drift that
+produced every ordering bug in this feature. The watching design's §4 rule —
+that the seen-set must be the watcher's own state and never derived from the
+queue — is untouched by this: history *is* the watcher's own state. §4's
+actual target was deriving it from `Job`s, which can be removed by a person
+and would silently license a re-download.
+
+### 3.2 Migration is a one-way trip and does not have to be pretty
+
+The feature has not shipped. There is no installed base, and the only data in
+existence is the author's, which is disposable.
+
+So: on first launch, each id in `seen` becomes a `skipped` entry with **no
+metadata**, because none was ever stored and none can be recovered. Ids still
+on Twitch pick up their title and date on the next sweep. Ids already expired
+stay as bare numbers forever, and render as an unknown archive if the filter
+ever surfaces them.
+
+`seen` is then no longer written. Nothing migrates back, and nothing tries to.
+
+---
+
+## 4. The filesystem is the authority
+
+A `downloaded` entry is a claim that a file is at `deliveredPath`. The claim is
+checked, not trusted.
+
+**The record is advisory and the disk is authoritative.** Point a channel at a
+different folder and its history reads as gone, because by this rule it is
+gone — those files are not where the record says they are. That is the
+accepted consequence of the same "break honestly" choice made for renames: a
+moved or renamed file reads as missing rather than being hunted for by name,
+because a wrong guess claims you have something you do not.
+
+### 4.1 Three answers, never two
+
+`present`, `absent`, and **`unknown`**.
+
+The third is not decoration. `AutoDownloadPolicy` was recently demoting every
+channel pointed at a NAS forever, because
+`volumeAvailableCapacityForImportantUsage` answers *zero* on a network volume
+rather than nil, and every `??` fallback sailed past it. A share with 8 TB free
+read as a full disk. Collapsing "could not ask" into "the answer is no" is the
+same mistake, and here it would be worse: it would make your entire library
+disappear from the view.
+
+So the join asks whether the *volume* is reachable before it asks whether the
+file is there.
+
+| Volume | File | Row |
+|--------|------|-----|
+| reachable | present | You have it. Shown, openable. |
+| reachable | absent, still on Twitch | You do not have it, and you can get it again. Returns to actionable. |
+| reachable | absent, expired | Dead. Hidden by default (§5.2). |
+| unreachable | — | **Never hidden.** Shown unavailable, under §4.2's banner. |
+
+Deleting a download therefore un-does it: the row goes back to being something
+you could fetch, as long as Twitch still has it.
+
+### 4.2 A disconnected volume is one condition with two expressions
+
+If the destination is not mounted, the channel already demotes to notify-only —
+`AutoDownloadPolicy.Reason.destinationUnreachable` exists and fires today. New
+archives cannot be fetched *and* old ones cannot be verified, and both follow
+from the same fact.
+
+So it reads as one condition: a banner on the channel naming the volume —
+**"Helios is disconnected"** — with its rows beneath it shown unavailable
+rather than absent. The volume's name, not the full path: `VolumeSpace
+.volumeName` already provides it, and a path is not what a person calls a
+disk.
+
+---
+
+## 5. What you see
+
+### 5.1 By default: have it, getting it, could get it
+
+Three states, which is the whole of what a person does here. Everything else
+is behind the filter.
+
+### 5.2 The filter reveals the rest
+
+`ignored`, `skipped`, missed (expired, never downloaded), and
+deleted-and-expired. These are kept forever and hidden by default: keeping
+them is what lets the app answer "what did I miss", and hiding them is what
+stops a channel watched for a year from becoming mostly headstones.
+
+### 5.3 The counter
+
+`4/20` is **files you have now** over **entries ever recorded**.
+
+The numerator is a filesystem fact, so deleting a download moves it to `3/20`.
+The denominator only grows, so it reads as coverage over the channel's whole
+recorded life rather than over whatever Twitch happens to be listing today.
+
+A disconnected volume shows the disconnected state rather than `0/20`, which
+would be a lie of the same kind as the NAS reading as a full disk.
+
+---
+
+## 6. Images
+
+Thumbnails already arrive on the sweep — `previewThumbnailURL(width: 320,
+height: 180)` — and are currently used and discarded. Avatars do not; they
+need `profileImageURL` added to the query.
+
+Both are cached to disk, because an expired archive's thumbnail is gone from
+the CDN and an unmounted-NAS launch should still look like the design.
+
+**The avatar width must come from a fixed list.** `docs/twitch-channel-api.md`
+§9.2 measures it: the field accepts *any* width and returns a URL built by
+interpolation, but the CDN serves only 28, 50, 70, 150, 300, 600 — 100, 200,
+400 and 1200 are 404s. The request must therefore never be computed from a
+layout constant, or growing an avatar from 150pt to 160pt would silently start
+404ing. 300 unless the view genuinely renders above 150pt at 2x.
+
+---
+
+## 7. Staging
+
+Three pieces, in this order, each landing working.
+
+### 7.1 Image cache
+
+Independent of everything else. Adds `profileImageURL` to the query, and a
+disk cache keyed by archive id and channel login.
+
+Eviction is naive at this stage — a size or age cap — because knowing which
+images belong to dead entries requires the store, which does not exist yet.
+Revisited in §7.3.
+
+### 7.2 The pane
+
+The view from the mockup, fed rows and cached images.
+
+**Its rows come from the sweep joined against the queue, not from a store.**
+This is the stage's one piece of scaffolding and it is deliberate: `seen`
+alone cannot feed this view — a bare id has no title, date or path — so a pane
+built on it could render only the `new` half and every green check would be
+mock. Finished jobs carry both a title and their delivered files, so joining
+the sweep against `controller.jobs` produces *real* `queued` and `downloaded`
+rows. They are simply not durable: remove the job and the row's history is
+gone.
+
+This is display only. It does not derive `seen`, which §4 of the watching
+design forbids for a reason that still holds — a removed job would license a
+re-download. A row's badge disappearing is harmless by comparison.
+
+Building the view before the store is the right order because **the store
+exists to feed the view**. Its schema should be discovered from what the pane
+turns out to need, not guessed and then found wanting.
+
+### 7.3 The store
+
+Replaces §7.2's derivation. Rows stop being tied to the queue's lifetime,
+history survives job removal, the counter's denominator becomes real, and the
+filter gets something to reveal. Carries §3.2's migration, and gives the image
+cache a real eviction rule.
+
+---
+
+## 8. Shape
+
+- `ChannelHistory` (`OxbowKit`) — the entry, the state machine, and the
+  transitions. Pure.
+- `HistoryStore` (`OxbowKit/Persistence`) — its own file, mirroring
+  `WatchStore`.
+- The join (`OxbowKit`) — a pure function of an entry and what the filesystem
+  answered, returning a row state. Takes the answer, never asks for it, so it
+  is tested without a disk.
+- `ImageCache` (app target) — fetching and eviction.
+- The pane (app target).
+
+`AutoDownloadObserver` grows a second job. It already watches submitted jobs to
+a terminal status so a failure can be filed back as a finding; it now also
+records the delivered path on success. That is the only place a `downloaded`
+entry can be created honestly, because it is the only place that knows where
+the file landed.
+
+---
+
+## 9. Not in scope
+
+- **Playing video in Oxbow.** Reveal in Finder and open with the default
+  player. A media player is a different application.
+- **Managing the library** — renaming, moving or deleting files from inside
+  Oxbow. The filesystem is the authority here precisely so that Finder stays
+  the tool for that.
+- **History for anything not from a watched channel.** A one-off download from
+  intake has no channel to belong to.
+
+---
+
+## 10. Rejected
+
+### 10.1 Following files by bookmark
+
+macOS bookmark data would track a file across renames and moves, and Oxbow is
+not sandboxed so nothing prevents it. Rejected because it makes the app's
+claim about your disk into a guess that is usually right: the row would keep
+its green check while pointing somewhere you did not put it. "Break honestly"
+is the same choice made throughout this feature — a wrong claim about a file
+you have is worse than an honest report that it is not where it was left.
+
+### 10.2 Pruning dead entries
+
+Dropping entries that are expired and absent keeps the file small, at the cost
+of silently rewriting history — and the counter's denominator would shrink
+under you, so coverage would change without anything having happened. They are
+a few dozen bytes each. Keep them and hide them.
+
+### 10.3 Deriving history from the queue permanently
+
+§7.2 does this as scaffolding and §7.3 removes it. Kept out of the final design
+because a queue is a work list, not a record: removing a finished job is a
+normal thing to do, and it must not erase the fact that you downloaded
+something.

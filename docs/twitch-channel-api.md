@@ -333,6 +333,48 @@ nothing should queue it on their behalf.
 
 ---
 
+## 9.2 `profileImageURL` accepts any width and lies about most of them
+
+Measured 2026-09-07 against `hall_of_tech`.
+
+`user { profileImageURL(width: N) }` never rejects an `N`. It builds the CDN
+filename by interpolation and hands it back, so every width looks like it
+worked:
+
+```
+profileImageURL(width: 1200)
+  -> https://static-cdn.jtvnw.net/jtv_user_pictures/<uuid>-profile_image-1200x1200.png
+```
+
+That URL is a 404. The CDN stores a fixed set of renditions and the GraphQL
+field knows nothing about it. Probed one by one:
+
+| Width | Serves |
+|-------|--------|
+| 28    | yes    |
+| 50    | yes    |
+| 70    | yes    |
+| 100   | **404** |
+| 150   | yes    |
+| 200   | **404** |
+| 300   | yes    |
+| 400   | **404** |
+| 600   | yes    |
+| 1200  | **404** |
+
+So the usable set is **28, 50, 70, 150, 300, 600** and nothing between them.
+This is §8's trap wearing different clothes: a field that answers
+successfully with something unusable, where the failure only appears at the
+image fetch. Ask for a width from that list, never a size derived from a
+layout constant — a view that grows from 150pt to 160pt would silently start
+404ing if the request were computed from it.
+
+Sizes for reference: 300x300 is about 150 KB, 600x600 about 547 KB. A cache
+holding one avatar per watched channel should prefer 300 unless the view is
+genuinely rendering above 150pt at 2x.
+
+---
+
 ## 10. What this means for dropping the CLI
 
 `docs/design/cli-dependency.md` prices each verb's replacement. This spike
