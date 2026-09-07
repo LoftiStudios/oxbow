@@ -1,6 +1,6 @@
 # A watched channel with contents
 
-**Status:** design, written 2026-09-07. Not implemented.
+**Status:** design, written 2026-09-07. **Stage 1 (§7.1) implemented**; stages 2 and 3 not started.
 
 `docs/design/channel-watching.md` built the watcher. This describes what a
 watched channel should *look* like once it has been watching for a while, and
@@ -225,14 +225,40 @@ layout constant, or growing an avatar from 150pt to 160pt would silently start
 
 Three pieces, in this order, each landing working.
 
-### 7.1 Image cache
+### 7.1 Image store — done
 
-Independent of everything else. Adds `profileImageURL` to the query, and a
-disk cache keyed by archive id and channel login.
+Adds `profileImageURL` to the query, and a disk store keyed by a SHA-256 of
+the image URL.
 
-Eviction is naive at this stage — a size or age cap — because knowing which
-images belong to dead entries requires the store, which does not exist yet.
-Revisited in §7.3.
+**Three departures from what this section originally said**, all of them
+things the writing found out:
+
+**There is no eviction, and this is a store rather than a cache.** The
+section asked for "a size or age cap". Measurement retired it: a thumbnail is
+about 15 KB, an avatar about 150 KB, and Twitch serves at most 100 archives
+per channel, so a channel streaming three times a week for five years reaches
+roughly 12 MB. Any cap worth setting would never fire — a mechanism guarding
+an event that does not happen and is therefore never exercised. Images are
+**owned** instead: §7.3 deletes a channel's images when it deletes that
+channel's history. `URLCache` was considered for the same job and rejected —
+it honours `Cache-Control` and the system may purge it, so bytes whose whole
+requirement is outliving their source cannot be built on it.
+
+**`ImageStore` lives in `OxbowKit`, not the app target §8 named.** `swift
+test` carries the coverage gate, and an actor with an injected fetch over a
+temporary directory is fully testable there. Only `ChannelAvatar` is in the
+app target.
+
+**The avatar rides `profile(forLogin:)`**, which replaced
+`displayName(forLogin:)` — the one request already paid when a channel is
+added. Per-sweep traffic is unchanged. The consequence is that **a watch
+added before this stage has no avatar and nothing backfills it**: re-adding
+the channel is the only way to pick one up.
+
+One measured constraint is now pinned by a test: `profileImageURL` accepts
+any width and returns a URL built by interpolation, but the CDN serves only
+28, 50, 70, 150, 300 and 600 (`docs/twitch-channel-api.md` §9.2). The request
+uses 300 and must never be computed from a layout constant.
 
 ### 7.2 The pane
 
@@ -257,7 +283,9 @@ turns out to need, not guessed and then found wanting.
 
 ### 7.3 The store
 
-Replaces §7.2's derivation. Rows stop being tied to the queue's lifetime,
+Replaces §7.2's derivation. Also owns image deletion: when a channel's
+history goes away, its images go with it — see §7.1 for why that is the
+cleanup rule rather than eviction. Rows stop being tied to the queue's lifetime,
 history survives job removal, the counter's denominator becomes real, and the
 filter gets something to reveal. Carries §3.2's migration, and gives the image
 cache a real eviction rule.
