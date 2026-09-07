@@ -178,16 +178,28 @@ deleted-and-expired. These are kept forever and hidden by default: keeping
 them is what lets the app answer "what did I miss", and hiding them is what
 stops a channel watched for a year from becoming mostly headstones.
 
-### 5.3 The counter
+### 5.3 The counter, which may not survive
 
-`4/20` is **files you have now** over **entries ever recorded**.
+`4/20` is **files you have now** over **entries recorded since you started
+watching**.
 
 The numerator is a filesystem fact, so deleting a download moves it to `3/20`.
-The denominator only grows, so it reads as coverage over the channel's whole
-recorded life rather than over whatever Twitch happens to be listing today.
+
+**`skipped` entries are excluded from the denominator.** They are the backlog
+that already existed when the channel was added, and counting them would open
+a channel added with "Only new" at `0/100` — a permanent failing grade for
+work nobody asked to be done. Excluded, the fraction reads as the sentence a
+person would actually say: twenty have come along since you started watching,
+you have four of them.
 
 A disconnected volume shows the disconnected state rather than `0/20`, which
 would be a lie of the same kind as the NAS reading as a full disk.
+
+**This element is provisional and should be built to be deleted.** Its value
+is unproven and it is roughly as likely to be cut as kept. So it stays a pure
+function over the entries plus one view element, and nothing else is allowed
+to key off it — no filter, no sort, no state derived from the fraction.
+Removing it should be removing one function and one label.
 
 ---
 
