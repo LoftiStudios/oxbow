@@ -28,19 +28,30 @@ public enum AutoDownloadPolicy {
   /// sweep. Each case carries what a person needs to be told, not just that
   /// something went wrong.
   public enum Reason: Equatable, Sendable {
-    case belowFloor(available: Int64, floor: Int64)
+    /// - `needed`: what the next archive would cost, so the sentence can say
+    ///   what was actually being asked for. Without it the reserve is the
+    ///   only number on screen, and a 250 GB reserve beside four short 360p
+    ///   videos reads as a claim that those videos need 250 GB.
+    case belowFloor(needed: Int64, available: Int64, floor: Int64)
     case destinationUnreachable(String)
 
     /// The sentence a finding or a settings row shows for this reason.
     public var sentence: String {
       switch self {
-      case .belowFloor(let available, let floor):
+      case .belowFloor(let needed, let available, let floor):
         let formatter = ByteCountFormatter()
         formatter.countStyle = .file
+        let neededText = formatter.string(fromByteCount: needed)
         let availableText = formatter.string(fromByteCount: available)
         let floorText = formatter.string(fromByteCount: floor)
-        return "Only \(availableText) free, below the \(floorText) floor — "
-          + "downloads paused for this channel until there is more room."
+        // All three numbers, in the order a person needs them: what it
+        // wanted, what there is, and what Oxbow will not spend. The reserve
+        // alone was actively misleading — it is not a cost, and printed
+        // beside a short video it looked like one.
+        return "The next archive needs about \(neededText). Only "
+          + "\(availableText) is free and Oxbow keeps \(floorText) in "
+          + "reserve — downloads paused for this channel until there is "
+          + "more room."
       case .destinationUnreachable(let path):
         return "\(path) is not available — downloads paused for this channel "
           + "until the destination is reachable again."
@@ -109,10 +120,6 @@ public enum AutoDownloadPolicy {
     guard destinationExists else {
       return .demoted(.destinationUnreachable(watch.settings.destinationPath))
     }
-    guard availableBytes >= floor else {
-      return .demoted(.belowFloor(available: availableBytes, floor: floor))
-    }
-
     // §5.2: a RECORDING broadcast is the newest item and exactly what a poll
     // finds first; it is skipped here and picked up once it has ended.
     let downloadable = findings.filter(\.isDownloadable)
@@ -133,6 +140,33 @@ public enum AutoDownloadPolicy {
       guard availableBytes - cost >= floor else { break }
       accepted = candidate
     }
+
+    // **One rule, not two.** There used to be an absolute gate above this
+    // loop — refuse outright whenever free space was under the floor —
+    // which made a 300 MB download refusable on exactly the same terms as a
+    // 500 GB one. The loop below it already expressed the rule properly:
+    // a download may not take the volume below the reserve. The gate was
+    // the same idea stated worse, and it fired first, so the better rule
+    // never got a chance to allow anything.
+    //
+    // Nothing fitting is still a demotion, not a quiet `.submit([])`: those
+    // two mean different things (see `Decision`), and a channel that cannot
+    // spend a byte has to say so rather than look like a channel with
+    // nothing new. Priced from the first finding alone, because that is the
+    // one that did not fit — `accepted` is a prefix, so the loop stopped at
+    // it.
+    if accepted.isEmpty, let next = downloadable.first {
+      let needed = BackfillEstimate(
+        archives: [next], cap: watch.settings.qualityCap, output: watch.settings.output
+      ).bytes
+      return .demoted(.belowFloor(needed: needed, available: availableBytes, floor: floor))
+    }
+
+    // A partial fit still submits what fits and says nothing about the rest.
+    // They stay ordinary findings and a later sweep picks them up, which is
+    // this function's documented behaviour above — but nothing yet tells a
+    // person *why* six of ten went. Worth fixing; it needs `Decision` to
+    // carry the deferred ones, which is a wider change than this.
     return .submit(accepted)
   }
 }

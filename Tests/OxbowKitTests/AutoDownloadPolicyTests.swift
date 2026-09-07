@@ -50,13 +50,41 @@ struct AutoDownloadPolicyTests {
     #expect(decision == .submit([archive("2")]))
   }
 
-  // 3. Below the floor demotes, carrying both numbers.
-  @Test("available space under the floor demotes with both numbers")
+  // 3. Below the floor demotes, carrying all three numbers.
+  @Test("available space under the floor demotes with what it wanted and what there is")
   func belowFloorDemotes() {
     let decision = AutoDownloadPolicy.decide(
       watch: watch(), findings: [archive("1")],
       availableBytes: floor - 1, destinationExists: true, floor: floor)
-    #expect(decision == .demoted(.belowFloor(available: floor - 1, floor: floor)))
+    #expect(decision == .demoted(.belowFloor(
+      needed: cost([archive("1")]), available: floor - 1, floor: floor)))
+  }
+
+  /// The rule is "this download must not take the volume below the reserve",
+  /// and nothing else. There used to be an absolute gate in front of it that
+  /// refused whenever free space was under the floor, whatever the download
+  /// cost — so a few hundred megabytes was refused on the same terms as half
+  /// a terabyte. The gate is gone; this pins that only the real rule remains.
+  @Test("a download that fits above the floor is submitted even on a nearly full volume")
+  func aSmallDownloadFitsOnATightVolume() {
+    let one = archive("1")
+    let decision = AutoDownloadPolicy.decide(
+      watch: watch(), findings: [one],
+      availableBytes: floor + cost([one]), destinationExists: true, floor: floor)
+    #expect(decision == .submit([one]))
+  }
+
+  /// And one byte short of fitting still demotes rather than quietly
+  /// submitting nothing — `.submit([])` means "ran, found nothing", which is
+  /// not what happened.
+  @Test("one byte short of fitting demotes rather than submitting an empty batch")
+  func oneByteShortDemotes() {
+    let one = archive("1")
+    let decision = AutoDownloadPolicy.decide(
+      watch: watch(), findings: [one],
+      availableBytes: floor + cost([one]) - 1, destinationExists: true, floor: floor)
+    #expect(decision == .demoted(.belowFloor(
+      needed: cost([one]), available: floor + cost([one]) - 1, floor: floor)))
   }
 
   // 4. An unreachable destination demotes, carrying the path.
@@ -92,7 +120,8 @@ struct AutoDownloadPolicyTests {
     let firstSweep = AutoDownloadPolicy.decide(
       watch: watch(), findings: [archive("1")],
       availableBytes: floor - 1, destinationExists: true, floor: floor)
-    #expect(firstSweep == .demoted(.belowFloor(available: floor - 1, floor: floor)))
+    #expect(firstSweep == .demoted(.belowFloor(
+      needed: cost([archive("1")]), available: floor - 1, floor: floor)))
 
     let secondSweep = AutoDownloadPolicy.decide(
       watch: watch(), findings: [archive("1")],
@@ -149,10 +178,17 @@ struct AutoDownloadPolicyTests {
   }
 
   // Reason sentences are user-facing and worth pinning.
-  @Test("belowFloor states both numbers in its sentence")
+  /// The cost has to be in there. Printed without it, the reserve was the
+  /// only figure on screen and read as the download's size — "below the
+  /// 250 GB floor" beside four short 360p videos looks like a claim that
+  /// those videos need 250 GB.
+  @Test("belowFloor states the cost, the free space and the reserve")
   func belowFloorSentence() {
-    let reason = AutoDownloadPolicy.Reason.belowFloor(available: 1_000_000_000, floor: 49_000_000_000)
-    #expect(reason.sentence.contains("1"))
+    let reason = AutoDownloadPolicy.Reason.belowFloor(
+      needed: 2_600_000_000, available: 124_000_000_000, floor: 250_000_000_000)
+    #expect(reason.sentence.contains("2.6 GB"))
+    #expect(reason.sentence.contains("124 GB"))
+    #expect(reason.sentence.contains("250 GB"))
   }
 
   @Test("destinationUnreachable states the path in its sentence")

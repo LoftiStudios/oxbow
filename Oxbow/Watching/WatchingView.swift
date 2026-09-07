@@ -444,7 +444,7 @@ private struct SectionHeader: View {
         settingsSummary: "Video · Up to 720p · Downloads", downloadsAutomatically: false),
     ],
     isSweeping: false,
-    demotions: ["leighxp": .belowFloor(available: 12_000_000_000, floor: 49_000_000_000)],
+    demotions: ["leighxp": .belowFloor(needed: 2_600_000_000, available: 12_000_000_000, floor: 49_000_000_000)],
     onAdd: { _, _ in }, onIgnore: { _, _ in }, onEdit: { _ in }, onStopWatching: { _ in },
     stopWatchingFailure: nil, markSeenFailure: nil)
   .frame(width: 480, height: 420)
