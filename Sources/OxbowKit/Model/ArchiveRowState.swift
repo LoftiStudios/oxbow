@@ -27,9 +27,18 @@ public enum ArchiveRowState: Equatable, Sendable {
 
   /// On Twitch, nothing has happened to it. The actionable row.
   case available
-  /// Still being broadcast. Not offered — `docs/design/channel-watching.md`
-  /// §5.2 skips these until the broadcast ends, because what exists now is
-  /// half a video.
+  /// Not something the unattended path may take: still being broadcast, or
+  /// carrying a status Twitch has introduced that this app has never seen.
+  /// `ChannelArchive.isDownloadable` is what decides, so the pane and
+  /// `AutoDownloadPolicy` cannot disagree about the same archive.
+  ///
+  /// Not urged, because what exists now may be half a video
+  /// (`docs/design/channel-watching.md` §5.2) — but still offered under
+  /// right-click, because that same section says a live broadcast is shown
+  /// "for a human to choose". The badge calls this Live, which is what it
+  /// nearly always is; an unrecognised status borrowing that word is the
+  /// accepted cost of never having a second definition of "may this be
+  /// taken" to keep in step with the first.
   case live
   case queued
   case running
@@ -115,7 +124,16 @@ public enum ArchiveRowState: Equatable, Sendable {
     // No job, or only cancelled ones — a cancellation is a person saying no,
     // not the app having tried and lost, so it leaves the archive offerable
     // exactly as `AutoDownloadObserver` already treats it.
-    return archive.status == .recording ? .live : .available
+    //
+    // Through `isDownloadable` rather than `status == .recording`, which is
+    // the same predicate spelled out a second time and would drift the first
+    // time Twitch introduces a status: an unrecognised one decodes to
+    // `.other`, which `isDownloadable` refuses to call safe, and spelling it
+    // out here would have read it as `.available` and offered a prominent Add
+    // for an archive `AutoDownloadPolicy` declines to touch. Two surfaces
+    // disagreeing about one archive is what §6.4 of
+    // `docs/design/channel-watching.md` argues against.
+    return archive.isDownloadable ? .available : .live
   }
 }
 

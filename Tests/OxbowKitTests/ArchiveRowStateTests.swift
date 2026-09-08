@@ -61,6 +61,18 @@ struct ArchiveRowStateTests {
     #expect(state == .live)
   }
 
+  /// A status this app has never seen decodes to `.other` and
+  /// `ChannelArchive.isDownloadable` refuses to call it safe, so
+  /// `AutoDownloadPolicy` will not queue it. Reading it as `.available` would
+  /// put a prominent Add on an archive the app's own policy layer declines —
+  /// two surfaces disagreeing about one video.
+  @Test("an unrecognised status is not offered as available")
+  func unknownStatusIsNotAvailable() {
+    let state = ArchiveRowState.state(
+      for: archive("1", status: .other("PENDING_TRANSCODE")), jobs: [], file: noFile)
+    #expect(state == .live)
+  }
+
   @Test("a queued job reads as queued and a running one as running")
   func unfinishedJobsShowTheirProgress() {
     #expect(ArchiveRowState.state(
