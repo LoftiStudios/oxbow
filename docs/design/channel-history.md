@@ -269,15 +269,43 @@ The view from the mockup, fed rows and cached images.
 it is deliberate: `seen` alone cannot feed this view — a bare id has no
 title, date or path — so a pane built on it could render only the `new` half
 and every green check would be mock. Finished jobs carry both a title and
-their delivered files, so joining the sweep against the queue's jobs produces
-*real* `queued` and `downloaded` rows. The cost of the shortcut is that this
-state is **not durable**: it exists only for as long as the job it was joined
-against does. Remove a finished job — an entirely ordinary thing to do to a
-queue — and the row it backed loses its history along with it, reverting to
-whatever the sweep and the filesystem can still say about it on their own,
-and leaving the list altogether if the archive is already marked seen.
-Stage 3 replaces this join with the history store precisely so that a row's
-past stops being a lease on somebody else's cleanup.
+their delivered files, so joining the sweep against the queue's jobs is
+meant to produce *real* `queued` and `downloaded` rows. The cost of the
+shortcut is that this state is **not durable**: it exists only for as long
+as the job it was joined against does. Remove a finished job — an entirely
+ordinary thing to do to a queue — and the row it backed loses its history
+along with it, reverting to whatever the sweep and the filesystem can still
+say about it on their own, and leaving the list altogether if the archive is
+already marked seen. Stage 3 replaces this join with the history store
+precisely so that a row's past stops being a lease on somebody else's
+cleanup.
+
+**That claim was false in the shipped build.** `WatchPoll.sweep` returned
+`watch.findings(in: archives)` — every archive already in the watch's `seen`
+set filtered out before the join above, or anything else, ever saw it. Every
+path that downloads an archive writes `seen`, so a completed download was
+deleted from the data on its way to this pane, and no rule downstream could
+recover an archive that was never handed over. Measured against the author's
+own data before the fix: a channel with four archives and two downloaded
+swept as two; a channel with two archives, both downloaded, swept as none,
+and rendered as an empty channel, permanently. The filter now lives with the
+two consumers that actually want it — `WatchPoller.actOnFindings`, deciding
+what the unattended path may still submit, and `FindingAnnouncement.decide`,
+deciding what to announce — and the sweep hands over everything it fetched.
+`WatchPollResult.findings` is renamed `archives`, because the old name was
+the lie that let a producer-side filter and this pane's own display filter
+pass for the same thing.
+
+Worth stating plainly: stage 2's own review could not have caught this.
+Every task implemented its brief faithfully — the join above, the row-shown
+rule below, the finished-job exception below that — and none of it was
+wrong on its own terms. The defect sat one layer above all of it, in a
+producer neither this pane's tests nor its review had reason to open. It is
+also why the regression test that pins this has to actually run
+`WatchPoll.sweep`: a test that hand-builds a `WatchPollResult` and feeds it
+straight to the pane exercises the join correctly and passes against the
+broken producer exactly as well as the fixed one — checked by reverting the
+filter and watching exactly one of the two tests fail.
 
 **A row is shown when the queue holds an unfinished or `.done` job for the
 archive, or when the archive is neither seen nor dismissed.** The pane first
