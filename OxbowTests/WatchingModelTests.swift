@@ -924,23 +924,24 @@ struct WatchingModelTests {
       // have nothing to do with a real sweep.
       //
       // Mirrors `WatchPoll.sweep` in the other respect too: a raw fetch per
-      // login, immediately narrowed through that login's *own*
-      // `findings(in:)` — against whatever `seen` was at this exact moment
-      // — before the result ever reaches `apply(_:)`. `lastFound` records
-      // that *carried*, already-narrowed list, not the raw fetch: "the
+      // login, carried into `apply(_:)` whole — `WatchPoll.sweep` no longer
+      // narrows it through that login's own `findings(in:)` before handing
+      // it over (see `WatchPoll.swift`'s own comment on `.found`), so
+      // `lastFound` records the *raw* fetch, not a pre-filtered one: "the
       // newest sweep carries it" is about what the sweep actually reported,
-      // and a later re-add with a fresh, emptied `seen` cannot retroactively
-      // widen what an earlier, now-stale sweep once said. That is exactly
-      // the asymmetry the sixth bug turned on, so the ground truth here has
-      // to preserve it.
+      // which today is everything, seen or not. `checkInvariants` below
+      // still subtracts `watchEntry.seen` at the moment it checks, which is
+      // what preserves the asymmetry the sixth bug turned on — a later
+      // re-add with a fresh, emptied `seen` cannot retroactively widen what
+      // an earlier, now-stale sweep once said, because that subtraction
+      // reads `seen` fresh every time, not the `seen` this sweep captured.
       var results: [WatchPollResult] = []
       for watchEntry in try store.load() {
         if Bool.random(using: &rng) {
           let raw = ids(for: watchEntry.login).filter { _ in Bool.random(using: &rng) }.map(archive)
-          let carried = watchEntry.findings(in: raw)
           results.append(.init(login: watchEntry.login, displayName: watchEntry.displayName,
-                               outcome: .found(carried)))
-          lastFound[watchEntry.login] = carried
+                               outcome: .found(raw)))
+          lastFound[watchEntry.login] = raw
           lastFailed.remove(watchEntry.login)
         } else {
           results.append(.init(login: watchEntry.login, displayName: watchEntry.displayName,

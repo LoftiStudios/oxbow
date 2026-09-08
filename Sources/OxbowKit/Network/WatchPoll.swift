@@ -35,10 +35,20 @@ public enum WatchPoll {
       let outcome: WatchPollResult.Outcome
       switch await fetch(watch.login) {
       case .success(let archives):
-        // `findings(in:)` deliberately does not filter on `isDownloadable`:
-        // §5.2 forbids anything unattended queueing a live broadcast, not
-        // showing one to a person. Stage 3 filters at submission.
-        outcome = .found(watch.findings(in: archives))
+        // **Everything, not just what is unseen.** This used to return
+        // `watch.findings(in: archives)`, which deleted every archive the
+        // watch had acted on before any consumer saw it — and everything
+        // that downloads an archive writes `seen`, so a completed download
+        // was erased from the data and the Watching pane could never render
+        // it as downloaded. The two callers that want findings-only apply
+        // `Watch.findings(in:)` themselves; see `WatchPoller.actOnFindings`
+        // and `FindingAnnouncement.decide` — and it is `findings(in:)`'s own
+        // doc comment, not this one, that is the right place for why that
+        // filter still does not consider `isDownloadable`: §5.2 forbids
+        // unattended queueing of a live broadcast, not showing one to a
+        // person, and both of those consumers are the unattended and
+        // notification paths that reasoning is about.
+        outcome = .found(archives)
       case .failure(let error):
         outcome = .failed(error)
       }

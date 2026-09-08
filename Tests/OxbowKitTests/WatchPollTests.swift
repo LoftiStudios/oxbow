@@ -18,22 +18,26 @@ struct WatchPollTests {
                    publishedAt: Date(timeIntervalSince1970: 0), status: status, thumbnailURL: nil)
   }
 
-  @Test("a sweep reports only archives the watch has not seen")
-  func reportsUnseenOnly() async {
+  /// **The sweep no longer filters by `seen`, deliberately.** It used to,
+  /// and that deleted every downloaded archive on its way to the Watching
+  /// pane: everything that downloads an archive writes `seen`, so a
+  /// completed download vanished from the data and no rule downstream could
+  /// bring it back. The pane needs the whole list; the two consumers that
+  /// want findings-only filter for themselves.
+  @Test("returns every archive the channel has, including seen ones")
+  func returnsEverythingIncludingSeen() async {
     let results = await WatchPoll.sweep([watch("ninja", seen: ["1"])]) { _ in
       .success([self.archive("1"), self.archive("2")])
     }
     #expect(results.map(\.login) == ["ninja"])
-    #expect(results[0].findings.map(\.id) == ["2"])
+    #expect(results[0].archives.map(\.id) == ["1", "2"])
   }
 
-  @Test("a channel with nothing new reports an empty finding list, not a failure")
+  @Test("a channel with nothing new reports an empty archive list, not a failure")
   func nothingNewIsSuccess() async {
-    let results = await WatchPoll.sweep([watch("ninja", seen: ["1"])]) { _ in
-      .success([self.archive("1")])
-    }
+    let results = await WatchPoll.sweep([watch("ninja")]) { _ in .success([]) }
     #expect(results[0].outcome == .found([]))
-    #expect(results[0].findings.isEmpty)
+    #expect(results[0].archives.isEmpty)
   }
 
   @Test("a failure is carried, not flattened into an empty list")
@@ -44,7 +48,7 @@ struct WatchPollTests {
       .failure(.malformedPayload(snippet: "…"))
     }
     #expect(results[0].outcome == .failed(.malformedPayload(snippet: "…")))
-    #expect(results[0].findings.isEmpty)
+    #expect(results[0].archives.isEmpty)
   }
 
   @Test("one channel failing does not stop the others")
@@ -53,9 +57,9 @@ struct WatchPollTests {
       login == "b" ? .failure(.noSuchChannel) : .success([self.archive("1")])
     }
     #expect(results.map(\.login) == ["a", "b", "c"])
-    #expect(results[0].findings.map(\.id) == ["1"])
+    #expect(results[0].archives.map(\.id) == ["1"])
     #expect(results[1].outcome == .failed(.noSuchChannel))
-    #expect(results[2].findings.map(\.id) == ["1"])
+    #expect(results[2].archives.map(\.id) == ["1"])
   }
 
   @Test("results keep the order of the watches given")
@@ -74,7 +78,7 @@ struct WatchPollTests {
     let results = await WatchPoll.sweep([watch("ninja")]) { _ in
       .success([self.archive("1", status: .recording)])
     }
-    #expect(results[0].findings.map(\.id) == ["1"])
+    #expect(results[0].archives.map(\.id) == ["1"])
   }
 
   @Test("no watches is an empty sweep, not a fetch")

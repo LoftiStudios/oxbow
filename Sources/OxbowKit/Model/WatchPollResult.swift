@@ -9,8 +9,9 @@ import Foundation
 public struct WatchPollResult: Equatable, Sendable {
 
   public enum Outcome: Equatable, Sendable {
-    /// The sweep succeeded. The payload is what this watch has not seen,
-    /// which is legitimately empty most of the time.
+    /// The sweep succeeded. The payload is everything the channel has —
+    /// seen or not — because filtering it down to "new" is a decision for
+    /// whichever consumer needs that view, not for the sweep that fetched it.
     case found([ChannelArchive])
     case failed(ChannelFeedError)
   }
@@ -25,13 +26,13 @@ public struct WatchPollResult: Equatable, Sendable {
     self.outcome = outcome
   }
 
-  /// The findings, with a failure reading as none.
+  /// Everything the channel returned, with a failure reading as none.
   ///
   /// A convenience for counting and rendering. It deliberately does **not**
   /// replace `outcome` — anything deciding whether a channel is *healthy* must
   /// read `outcome`, because this getter is exactly the flattening §7 forbids
   /// as the only signal.
-  public var findings: [ChannelArchive] {
+  public var archives: [ChannelArchive] {
     switch outcome {
     case .found(let archives): archives
     case .failed: []

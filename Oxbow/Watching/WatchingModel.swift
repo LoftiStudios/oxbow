@@ -139,9 +139,12 @@ final class WatchingModel {
   ///
   /// Narrowed back down by `apply(_:)`, the same way it always was, so a
   /// failed id does not sit here forever once a sweep stops carrying it at
-  /// all (which, for a channel `seen` already excludes it from, means the
-  /// sweep excluded it too — `WatchPoll.sweep` applies the identical filter
-  /// before this model ever sees the result).
+  /// all — an archive that has actually expired off the channel. `WatchPoll
+  /// .sweep` no longer excludes an id merely for being seen, so becoming
+  /// seen on its own does not shrink this set the way it once did; that is
+  /// harmless here, because `rebuild()`'s own reconciliation against `seen`
+  /// already hides a seen row regardless of whether this overlay still names
+  /// it.
   ///
   /// **Also narrowed by `rebuild()`, against every watch's own `seen` — this
   /// is the second, newer way an id must stop being masked here.** A manual
@@ -615,15 +618,19 @@ final class WatchingModel {
         // Only new is the concrete case: its caption promises "everything
         // Twitch has right now is marked seen", but without this the inbox
         // kept showing them until the next sweep, up to an hour later.
-        // `Watch.findings(in:)` is the same filter `WatchPoll` itself
-        // applies, so this closes the whole class of "some other writer
-        // changed `seen`" rather than just this one instance — `dismissed`
-        // is left responsible only for the write-failed case its own doc
-        // comment already describes. No fallback to the unfiltered
-        // `archives` here, deliberately: `watch` is always in hand — it is
-        // what this map is iterating — so there is nothing for a fallback
-        // to cover, and one that read "leave it unfiltered" would fail open
-        // the moment a future edit ever made the lookup optional again.
+        // `WatchPoll.sweep` deliberately hands over everything the channel
+        // has, seen or not — see that type's own comment on `.found` — so
+        // `Watch.findings(in:)` here is this model's own filter, not a
+        // second application of one the sweep already ran. That makes this
+        // the only place the seen-filter is applied for display, which
+        // closes the whole class of "some other writer changed `seen`"
+        // rather than just this one instance — `dismissed` is left
+        // responsible only for the write-failed case its own doc comment
+        // already describes. No fallback to the unfiltered `archives` here,
+        // deliberately: `watch` is always in hand — it is what this map is
+        // iterating — so there is nothing for a fallback to cover, and one
+        // that read "leave it unfiltered" would fail open the moment a
+        // future edit ever made the lookup optional again.
         let unacted = Set(watch.findings(in: archives).map(\.id)).subtracting(dismissed)
 
         // **A row is shown when the queue holds an unfinished or `.done`

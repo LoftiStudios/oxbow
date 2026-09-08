@@ -36,18 +36,20 @@ public enum FindingAnnouncement {
   /// Decides what one sweep should announce.
   ///
   /// - Parameters:
-  ///   - results: the sweep, exactly as `WatchPoll.sweep` returned it. A
-  ///     failed fetch contributes nothing: `WatchPollResult.findings`
-  ///     flattens it to no archives, which is the right reading *here* even
-  ///     though §7 forbids that flattening as a health signal — a channel
-  ///     Twitch would not answer for has nothing to announce, and the error
-  ///     itself belongs on the row in `WatchingView`, not in a banner.
+  ///   - results: the sweep, exactly as `WatchPoll.sweep` returned it —
+  ///     everything the channel has, seen or not. A failed fetch contributes
+  ///     nothing: `WatchPollResult.archives` flattens it to no archives,
+  ///     which is the right reading *here* even though §7 forbids that
+  ///     flattening as a health signal — a channel Twitch would not answer
+  ///     for has nothing to announce, and the error itself belongs on the
+  ///     row in `WatchingView`, not in a banner.
   ///   - watches: filters each result against its own watch's `seen`, rather
   ///     than trusting `results` to already be unseen-only. `WatchPoll.sweep`
-  ///     happens to do that filtering today, but a consumer that depends on a
-  ///     producer several layers away continuing to filter breaks silently
-  ///     the day the producer changes — which is exactly what happened to the
-  ///     Watching pane.
+  ///     used to do that filtering; a consumer that depended on a producer
+  ///     several layers away continuing to filter broke silently the day the
+  ///     producer changed — which is exactly what happened to the Watching
+  ///     pane, and why the sweep no longer filters at all and every consumer
+  ///     that wants unseen-only does this for itself.
   ///   - submitted: ids this sweep queued through the automatic path. They
   ///     are not waiting for anybody, and `JobNotifier` will report each job
   ///     when it settles; announcing them here would be both a duplicate and
@@ -89,7 +91,7 @@ public enum FindingAnnouncement {
       // guess in the automatic path's favour.
       guard let watch = byLogin[result.login] else { return nil }
       return (result.displayName,
-              watch.findings(in: result.findings).filter { !submitted.contains($0.id) })
+              watch.findings(in: result.archives).filter { !submitted.contains($0.id) })
     }
 
     let waitingIDs = Set(waiting.flatMap { $0.archives.map(\.id) })

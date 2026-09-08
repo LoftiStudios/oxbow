@@ -302,23 +302,20 @@ final class WatchPoller {
 
     for watch in watches {
       // A failed fetch reads as no findings here, exactly the flattening
-      // `WatchPollResult.findings`'s own doc comment says a *health* check
+      // `WatchPollResult.archives`'s own doc comment says a *health* check
       // must not use — but this is not one. The floor and destination
       // checks below are unaffected by whether the feed answered, and a
       // watch with nothing found submits nothing regardless of why.
       //
-      // Filtered against this watch's own `seen` here rather than trusting
-      // the sweep to have done it. This is the guard that stops the
-      // unattended path re-downloading everything it has ever completed
-      // (`docs/design/channel-watching.md` §4), and it must not depend on a
-      // producer several layers away continuing to behave — the sweep is
-      // about to stop doing this filtering itself.
+      // Filtered against this watch's own `seen` here — see
+      // `Self.unseenFindings` for why this, and not `WatchPoll.sweep`, is
+      // where that guard has to live now.
       //
       // Filtered through `Self.excludingArchivesWithFailedJobs` before
       // `decide()` ever sees them — see that function's own doc comment for
       // why a `.failed` job has to remove its archive from the unattended
       // path entirely, not merely fail to duplicate it.
-      let unseen = watch.findings(in: resultsByLogin[watch.login]?.findings ?? [])
+      let unseen = Self.unseenFindings(for: watch, resultsByLogin: resultsByLogin)
       let findings = Self.excludingArchivesWithFailedJobs(
         unseen, jobs: controller?.jobs ?? [])
       let destination = watch.settings.destination
@@ -429,6 +426,31 @@ final class WatchPoller {
     let failedMediaIdentifiers = Set(
       jobs.compactMap { $0.status == .failed ? $0.mediaIdentifier : nil })
     return findings.filter { !failedMediaIdentifiers.contains($0.id) }
+  }
+
+  /// `watch`'s share of `resultsByLogin`, filtered down to what it has not
+  /// already seen.
+  ///
+  /// **This is the guard, not a convenience.** `WatchPoll.sweep` used to be
+  /// the one filtering `seen` out before anything downstream ever saw a
+  /// result; it no longer does (`WatchPoll.swift`'s own comment on `.found`
+  /// says why), which makes this the only thing standing between the
+  /// unattended path and re-downloading every archive a person has ever
+  /// completed (`docs/design/channel-watching.md` §4). A single inline
+  /// expression carrying that much weight, with nothing exercising it
+  /// directly, is exactly the shape `excludingArchivesWithFailedJobs` beside
+  /// it was already pulled out to avoid — so this gets the same treatment:
+  /// `nonisolated static`, testable against plain `Watch` and
+  /// `WatchPollResult` fixtures, no `store` or actor hop required.
+  ///
+  /// A login absent from `resultsByLogin` — a channel this sweep did not
+  /// cover — reads as no findings, not as "everything": there is nothing to
+  /// invent an answer from, so the empty case here matches the failed-fetch
+  /// case a few lines above it in `actOnFindings`.
+  nonisolated static func unseenFindings(
+    for watch: Watch, resultsByLogin: [String: WatchPollResult]
+  ) -> [ChannelArchive] {
+    watch.findings(in: resultsByLogin[watch.login]?.archives ?? [])
   }
 
   /// Marks `archiveID` seen for `login`, so `Watch.findings(in:)` never
