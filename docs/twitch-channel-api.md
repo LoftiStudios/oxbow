@@ -375,6 +375,69 @@ genuinely rendering above 150pt at 2x.
 
 ---
 
+## 9.3 A subscriber-only archive is indistinguishable from an ordinary one
+
+Measured 2026-09-07 against `middleditch`, whose archives require a
+membership, with `hall_of_tech` as an unrestricted control.
+
+**Every field this API exposes says the archive is fine.** The channel returns
+`totalCount: 908`, every node comes back `status: "RECORDED"`, and the two
+fields that exist precisely to report a restriction both deny one:
+
+```
+resourceRestriction -> null
+self { isRestricted } -> false
+```
+
+Probed for anything else that might carry the signal — `subOnly`,
+`isSubscriberOnly`, `restriction`, `access`, `viewableStatus`,
+`contentRestriction` — and none of them exist on `Video` at all (§7's method:
+the schema answers by rejecting the field name). `isDeleted` is false,
+`viewableAt` is null, `broadcastType` is `ARCHIVE`. There is nothing to read.
+
+**The refusal lives two steps further on, past the point of no return.**
+`videoPlaybackAccessToken` issues a token without complaint. Only the manifest
+declines:
+
+```
+GET https://usher.ttvnw.net/vod/2828120659.m3u8?token=…&sig=…
+  -> HTTP 403
+     {"error_code": "vod_manifest_restricted", "error": "Manifest is restricted"}
+```
+
+The control VOD, same request shape, returns 200 and a real playlist.
+
+**Why `self.isRestricted` cannot be trusted here even in principle.**
+`self` describes the *querying viewer's* relationship to the video, and §2 is
+explicit that Oxbow queries anonymously. There is no viewer, so `false` is
+better read as "not applicable" than as "unrestricted" — it would presumably
+answer differently for an authenticated subscriber, which is a state this
+project has deliberately chosen never to be in.
+
+### What that costs the watcher
+
+A channel like this is not an edge case to a feature that offers every archive
+it finds. `docs/design/channel-history.md`'s pane would list all 908 as
+ordinary rows, and a watch with automatic downloading and the whole backfill
+selected would attempt every one of them.
+
+The damage is contained rather than prevented: `docs/design/channel-watching
+.md` §6.3 files each failure back as an actionable row, and
+`WatchPoller.excludingArchivesWithFailedJobs` stops the retry loop, so it does
+not grind forever. But a person would get hundreds of failures, each holding a
+retained resume directory, described in whatever words the helper uses rather
+than "this channel is subscriber-only".
+
+**Detecting it up front is not available at any sane price.** The only
+reliable probe is a manifest request per archive — one round trip each, for a
+fact the metadata query is supposed to carry. The affordable approximation is
+the opposite direction: notice that a channel's *failures* share
+`vod_manifest_restricted` and treat that as a channel-level fact after two or
+three rather than after nine hundred. That is a design decision, recorded here
+rather than made here.
+
+---
+
 ## 10. What this means for dropping the CLI
 
 `docs/design/cli-dependency.md` prices each verb's replacement. This spike

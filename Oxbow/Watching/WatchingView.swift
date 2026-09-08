@@ -152,6 +152,26 @@ struct WatchingView: View {
               if let reason = demotions[section.login] {
                 DemotionRow(reason: reason)
               }
+              // **Only when the channel has nothing at all**, which is not
+              // the same as having nothing *new*. This view's own doc
+              // comment argues against a "no new videos" line under every
+              // quiet channel, and that still holds: a channel whose rows
+              // are downloads and queued items is not quiet, it is working.
+              // What changed is what an empty section means. It used to be
+              // the ordinary daily state; now that a download is a row, an
+              // empty one means there is nothing here to have and nothing
+              // to get — rare, and alarming enough that saying nothing
+              // reads as breakage rather than calm.
+              //
+              // Deliberately vague about *why*. Until a history store can
+              // tell an ignored archive from a channel that has genuinely
+              // never published one, claiming either would be a guess —
+              // `djjakerudh` is `totalCount: 0` because a DJ's licensing
+              // keeps him live-only, and that is not something this row
+              // could know.
+              if section.rows.isEmpty {
+                EmptyChannelRow()
+              }
               ForEach(section.rows) { row in
                 ArchiveRow(
                   row: row,
@@ -234,6 +254,40 @@ private struct DemotionRow: View {
     .padding(.vertical, 4)
     .accessibilityElement(children: .combine)
   }
+}
+
+/// Stands where a channel's rows would be when it has none.
+///
+/// Quiet on purpose — the same secondary weight as `DemotionRow`, which is
+/// also a line explaining an absence rather than offering an action. It says
+/// what is true and stops: that there is nothing to show, not why.
+private struct EmptyChannelRow: View {
+  var body: some View {
+    Label {
+      Text("Nothing to show for this channel.")
+        .foregroundStyle(.secondary)
+        .fixedSize(horizontal: false, vertical: true)
+    } icon: {
+      Image(systemName: "tray")
+        .foregroundStyle(.tertiary)
+    }
+    .padding(.vertical, 4)
+    .accessibilityElement(children: .combine)
+  }
+}
+
+#Preview("A channel with nothing in it") {
+  WatchingView(
+    sections: [
+      WatchingModel.Section(
+        login: "djjakerudh", displayName: "djjakerudh", avatarURL: nil,
+        rows: [], failure: nil,
+        settingsSummary: "Video · Up to 720p · Downloads",
+        downloadsAutomatically: false)
+    ],
+    isSweeping: false, demotions: [:],
+    onAdd: { _, _ in }, onIgnore: { _, _ in }, onEdit: { _ in }, onStopWatching: { _ in },
+    stopWatchingFailure: nil, markSeenFailure: nil)
 }
 
 #Preview("Two channels, findings") {
