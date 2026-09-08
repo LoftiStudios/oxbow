@@ -88,12 +88,18 @@ struct ChannelCard: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: 8) {
-      HStack(alignment: .top, spacing: 12) {
-        ChannelAvatar(url: section.avatarURL, store: imageStore, size: 64)
+      // Centred against the avatar rather than top-aligned, and the avatar
+      // sized so the two read as one block — the shape Music gives an album:
+      // art on the left, a strong title and a quiet metadata line beside it,
+      // vertically balanced. 88pt is the height of that text block plus a
+      // little, which is what the mockup drew.
+      HStack(alignment: .center, spacing: 14) {
+        ChannelAvatar(url: section.avatarURL, store: imageStore, size: 88)
         VStack(alignment: .leading, spacing: 2) {
           HStack(spacing: 6) {
             Text(section.displayName)
-              .font(.title2)
+              .font(.title)
+              .fontWeight(.semibold)
             // Only shown when it is actually on: off is the default and the
             // ordinary case, and marking every quiet channel "Manual" would
             // be the loud thing `WatchingView`'s own doc comment already
@@ -132,7 +138,11 @@ struct ChannelCard: View {
             Spacer(minLength: 0)
           }
           if !section.settingsSummary.isEmpty {
+            // One quiet line under a strong one, the way "Alternative · 2026
+            // · Lossless" sits under an album's title: this is reference
+            // material, not something to read every time.
             Text(section.settingsSummary)
+              .font(.subheadline)
               .foregroundStyle(.secondary)
           }
         }

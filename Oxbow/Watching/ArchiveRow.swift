@@ -48,7 +48,13 @@ struct ArchiveRow: View {
 
   private var content: some View {
     HStack(alignment: .center, spacing: 10) {
-      ArchiveThumbnail(url: row.archive.thumbnailURL, store: store)
+      // The category's box art rather than the video's own frame. Twitch's
+      // own VOD list does the same, so repeated art down a channel reads as
+      // familiar rather than broken — and `row.archive.thumbnailURL` is
+      // still fetched and still here, so this is a one-line change back.
+      ArchiveThumbnail(
+        url: row.archive.categoryArtURL, store: store,
+        label: row.archive.categoryName)
 
       VStack(alignment: .leading, spacing: 2) {
         Text(row.archive.title)

@@ -2,7 +2,7 @@ import AppKit
 import OxbowKit
 import SwiftUI
 
-/// An archive's preview image, from the image store.
+/// An archive's image, from the image store.
 ///
 /// **16:9 by aspect ratio against a given width, never a fixed height.** The
 /// same reasoning `VideoCard`'s own thumbnail keeps: reserving the shape
@@ -11,7 +11,13 @@ import SwiftUI
 struct ArchiveThumbnail: View {
   let url: URL?
   let store: ImageStore?
-  var width: CGFloat = 64
+  var width: CGFloat = 48
+
+  /// What the image is of, for VoiceOver. Category box art has a name worth
+  /// reading — "ELDEN RING" — where a bare video frame had nothing, so this
+  /// is a label rather than the `.accessibilityHidden` a decorative image
+  /// would take.
+  var label: String?
 
   @State private var image: NSImage?
 
@@ -22,15 +28,16 @@ struct ArchiveThumbnail: View {
       } else {
         Rectangle().fill(.quaternary)
           .overlay {
-            Image(systemName: "film")
+            Image(systemName: "gamecontroller")
               .font(.system(size: width * 0.3))
               .foregroundStyle(.tertiary)
           }
       }
     }
-    .frame(width: width, height: width * 9 / 16)
+    .frame(width: width, height: width * 4 / 3)
     .clipShape(RoundedRectangle(cornerRadius: 4))
-    .accessibilityHidden(true)
+    .accessibilityLabel(label ?? "")
+    .accessibilityHidden(label == nil)
     .task(id: url) {
       // Cleared first, matching `ChannelAvatar`: `.task(id:)` re-runs when
       // the archive changes, and without this the previous row's frame

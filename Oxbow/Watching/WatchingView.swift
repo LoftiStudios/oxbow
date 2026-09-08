@@ -195,7 +195,11 @@ struct WatchingView: View {
       // Matches `QueueView`'s list: rows here vary in height too — a failed
       // section's message wraps to however many lines it needs — and banding
       // is what keeps one channel's section visually separate from the next.
-      .alternatingRowBackgrounds()
+      // Rules and space rather than stripes, the way iTunes separates
+      // tracks. Zebra striping earns its keep on a dense grid where the eye
+      // has to track across columns; these rows are tall, have one column of
+      // text, and a stripe under every other one only adds noise.
+      .listRowSeparator(.visible)
     }
   }
 }

@@ -79,6 +79,22 @@ public struct ChannelFeed: Sendable {
   /// rung up and nearly 550 KB.
   public static let avatarWidth = 300
 
+  /// The category box art's size, in the 3:4 shape Twitch's own art uses.
+  ///
+  /// **Unlike `avatarWidth`, this one is not a member of a fixed set.** The
+  /// box-art CDN resizes on demand — 52x72, 144x192, 188x250, 285x380 and
+  /// 300x400 all served when probed, including sizes Twitch's own site never
+  /// asks for. So this is chosen for the view (a 48pt-wide row thumbnail at
+  /// 2x, with room to spare) rather than picked off a list, and changing it
+  /// does not risk the silent 404 `docs/twitch-channel-api.md` §9.2
+  /// describes for avatars.
+  ///
+  /// Asked for *with* arguments, for the reason §8 gives about
+  /// `previewThumbnailURL`: bare, it answers with a literal
+  /// `{width}x{height}` in the URL.
+  public static let categoryArtWidth = 144
+  public static let categoryArtHeight = 192
+
   private let fetch: Fetch
   private let endpoint: URL
 
@@ -148,7 +164,9 @@ public struct ChannelFeed: Sendable {
     return """
       query { user(login: "\(login)") { id login videos(first: \(bounded), type: ARCHIVE) { \
       edges { node { id title lengthSeconds publishedAt status \
-      previewThumbnailURL(width: 320, height: 180) } } } } }
+      previewThumbnailURL(width: 320, height: 180) \
+      game { name boxArtURL(width: \(categoryArtWidth), height: \(categoryArtHeight)) } \
+      } } } } }
       """
   }
 
@@ -225,7 +243,10 @@ public struct ChannelFeed: Sendable {
         duration: .seconds(seconds),
         publishedAt: date,
         status: .init(rawValue: node["status"] as? String ?? ""),
-        thumbnailURL: (node["previewThumbnailURL"] as? String).flatMap(URL.init(string:)))
+        thumbnailURL: (node["previewThumbnailURL"] as? String).flatMap(URL.init(string:)),
+        categoryName: (node["game"] as? [String: Any])?["name"] as? String,
+        categoryArtURL: ((node["game"] as? [String: Any])?["boxArtURL"] as? String)
+          .flatMap(URL.init(string:)))
     }
 
     // `docs/design/channel-watching.md` §7: "a parse that fails degrades the

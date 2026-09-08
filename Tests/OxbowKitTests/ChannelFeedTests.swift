@@ -261,4 +261,46 @@ struct ChannelFeedTests {
     // "argument 'first' value must be between 1 and 100."
     #expect(body.contains("first: 100"))
   }
+
+  // MARK: - The stream's category
+
+  @Test("decodes the category's name and box art")
+  func decodesCategory() async throws {
+    let body = Data("""
+      {"data":{"user":{"id":"1","login":"wheelyf","videos":{"edges":[
+        {"node":{"id":"1","title":"t","lengthSeconds":60,\
+        "publishedAt":"2026-01-01T00:00:00Z","status":"RECORDED",\
+        "game":{"name":"ELDEN RING",\
+        "boxArtURL":"https://static-cdn.jtvnw.net/ttv-boxart/512953_IGDB-144x192.jpg"}}}
+      ]}}}}
+      """.utf8)
+    let archives = try await feed(body: body).archives(forLogin: "wheelyf")
+    #expect(archives[0].categoryName == "ELDEN RING")
+    #expect(archives[0].categoryArtURL?.absoluteString.hasSuffix("144x192.jpg") == true)
+  }
+
+  /// A node with no category is ordinary, not a broken payload — the archive
+  /// still decodes and the row falls back to a placeholder.
+  @Test("a missing category leaves the archive intact")
+  func missingCategoryIsNotAFailure() async throws {
+    let body = Data("""
+      {"data":{"user":{"id":"1","login":"wheelyf","videos":{"edges":[
+        {"node":{"id":"1","title":"t","lengthSeconds":60,\
+        "publishedAt":"2026-01-01T00:00:00Z","status":"RECORDED"}}
+      ]}}}}
+      """.utf8)
+    let archives = try await feed(body: body).archives(forLogin: "wheelyf")
+    #expect(archives.count == 1)
+    #expect(archives[0].categoryName == nil)
+    #expect(archives[0].categoryArtURL == nil)
+  }
+
+  /// §8's trap, for the second field to hit it: asked bare, `boxArtURL`
+  /// answers with a literal `{width}x{height}` that 404s at fetch time.
+  @Test("the query asks for box art at a size, never bare")
+  func boxArtCarriesItsSize() {
+    let query = ChannelFeed.query(login: "wheelyf", limit: 10)
+    #expect(query.contains(
+      "boxArtURL(width: \(ChannelFeed.categoryArtWidth), height: \(ChannelFeed.categoryArtHeight))"))
+  }
 }
