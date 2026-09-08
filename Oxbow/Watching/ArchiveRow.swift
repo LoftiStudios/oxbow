@@ -81,7 +81,7 @@ struct ArchiveRow: View {
         .labelStyle(.titleAndIcon)
         .font(.caption)
         .foregroundStyle(.secondary)
-        .help("Still broadcasting. Oxbow waits until it ends — what exists now is half a video.")
+        .help("Not downloadable right now, and Oxbow will not fetch it on its own.")
     case .queued:
       Text("In queue").font(.caption).foregroundStyle(.secondary)
     case .running:

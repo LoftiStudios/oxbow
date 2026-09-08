@@ -573,18 +573,33 @@ final class WatchingModel {
     let stillSeen = watches.reduce(into: Set<String>()) { $0.formUnion($1.seen) }
     dismissed.formIntersection(stillSeen)
 
-    // Which archives the queue currently holds a job for, computed once for
-    // every section rather than per row: the queue is one array and a channel
-    // can list a hundred archives.
+    // Which archives the queue currently holds an unfinished or `.done` job
+    // for, computed once for every section rather than per row: the queue is
+    // one array and a channel can list a hundred archives.
+    //
+    // **Not "any job" — `.failed` and `.cancelled` do not count.** The
+    // Add → "In queue" transition below only ever needs *unfinished*, and
+    // `.done` is what keeps `.downloaded`, `.missing` and `.unverifiable`
+    // reachable once the job that produced them stops running. `.failed` and
+    // `.cancelled` are finished, and a finished job must not hold a row open
+    // against a person's Ignore: a cancellation is a person saying no, the
+    // same rule `AutoDownloadObserver` and `ArchiveRowState.state` already
+    // keep for their own decisions. Ignoring a `.failed` row now works
+    // because of this narrowing — the row simply stops rendering, which is
+    // Ignore doing what it says. A `.failed` archive that has *not* been
+    // ignored still renders as `.failed`, unaffected: it is neither seen nor
+    // dismissed, so `unacted` below still carries it.
     //
     // **This decides visibility, never `seen`.**
     // `docs/design/channel-watching.md` §4 forbids deriving the seen-set from
     // the queue, because a job a person removed would silently license a
-    // re-download — and nothing here writes `seen`. What a removed job costs
-    // is a row its place in the list, which is precisely the lease §7.2 of
-    // `channel-history.md` already names as this stage's scaffolding; it never
-    // costs an archive its record of having been acted on.
-    let jobbed = Set(jobs.compactMap(\.mediaIdentifier))
+    // re-download — and nothing here writes `seen`. What a removed or
+    // finished-and-excluded job costs is a row its place in the list, which
+    // is precisely the lease §7.2 of `channel-history.md` already names as
+    // this stage's scaffolding; it never costs an archive its record of
+    // having been acted on.
+    let jobbed = Set(
+      jobs.filter { $0.status.isUnfinished || $0.status == .done }.compactMap(\.mediaIdentifier))
 
     sections = watches.map { watch in
       let outcome = latest.first(where: { $0.login == watch.login })?.outcome
@@ -611,9 +626,10 @@ final class WatchingModel {
         // the moment a future edit ever made the lookup optional again.
         let unacted = Set(watch.findings(in: archives).map(\.id)).subtracting(dismissed)
 
-        // **A row is shown when the queue holds a job for it, or when it is
-        // neither seen nor dismissed.** Being un-acted-on used to be the
-        // whole rule, and it hid every state this pane was built to show:
+        // **A row is shown when the queue holds an unfinished or `.done`
+        // job for it, or when it is neither seen nor dismissed.** Being
+        // un-acted-on used to be the whole rule, and it hid every state this
+        // pane was built to show:
         // `markSeen` and `WatchPoller.markSubmitted` both write `seen` at
         // the instant something queues a download, so a row disappeared at
         // exactly the moment it became "In queue", and `queued`, `running`,

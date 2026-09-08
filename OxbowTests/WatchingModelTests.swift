@@ -365,6 +365,45 @@ struct WatchingModelTests {
     #expect(try store.load()[0].seen == ["1"], "the seen-set never follows the queue")
   }
 
+  /// The defect this stage fixes: a `.failed` job used to outrank Ignore,
+  /// because `jobbed` used to count *any* job for the archive. `.failed` is
+  /// finished — nothing is still going to produce anything for this row — so
+  /// it must not hold the row open against a person saying no. `markSeen`'s
+  /// write still has to land regardless of whether the row stays visible.
+  @Test func ignoringARowWithAFailedJobRemovesItAndStillPersistsSeen() throws {
+    let store = temporaryStore()
+    try store.save([watch("ninja")])
+    let model = model(store: store)
+    model.apply([.init(login: "ninja", displayName: "Ninja", outcome: .found([archive("1")]))])
+    model.updateJobs([job("1", .failed)])
+    #expect(model.sections[0].rows.first?.state == .failed, "precondition: the row shows failed")
+
+    model.ignore(archive("1"), from: "ninja")
+
+    #expect(model.sections[0].rows.map(\.archive).isEmpty, "Ignore must actually remove the row")
+    #expect(try store.load()[0].seen == ["1"], "the seen write still has to land")
+  }
+
+  /// The other defect: a cancelled job used to resurrect a dismissed archive
+  /// as a fresh Add, because `jobbed` used to count it too. A cancellation is
+  /// a person saying no — the same rule `AutoDownloadObserver` and
+  /// `ArchiveRowState.state` already keep — so it must not undo an Ignore, and
+  /// `unreadCount` (which only counts `.available` rows) must not come back
+  /// with it.
+  @Test func cancellingAJobForADismissedArchiveDoesNotBringItsRowBack() throws {
+    let store = temporaryStore()
+    try store.save([watch("ninja")])
+    let model = model(store: store)
+    model.apply([.init(login: "ninja", displayName: "Ninja", outcome: .found([archive("1")]))])
+    model.ignore(archive("1"), from: "ninja")
+    #expect(model.sections[0].rows.isEmpty, "precondition: Ignore hid the row")
+
+    model.updateJobs([job("1", .cancelled)])
+
+    #expect(model.sections[0].rows.map(\.archive).isEmpty, "a cancelled job must not resurrect it")
+    #expect(model.unreadCount == 0)
+  }
+
   /// A refusal leaves the row exactly where it was. Marking it seen would
   /// bury an archive nothing is downloading, which is the failure §6.3 calls
   /// out — reached here before a job ever exists rather than after one fails.

@@ -279,21 +279,37 @@ and leaving the list altogether if the archive is already marked seen.
 Stage 3 replaces this join with the history store precisely so that a row's
 past stops being a lease on somebody else's cleanup.
 
-**A row is shown when the queue holds a job for the archive, or when the
-archive is neither seen nor dismissed.** The pane first shipped showing only
-the second half — `Watch.findings(in:)`, "not in `seen`" — which made every
-state above unreachable, because every path that creates a job also writes
-`seen`: `WatchingModel.markSeen` for a manual Add or Ignore,
-`WatchPoller.markSubmitted` for an automatic one. A row disappeared at the
-exact moment it became `queued`. `add` queues first and marks seen second, so
-an archive is momentarily both dismissed and queued; the job has to outrank
-the dismissal as well as `seen`, or the one transition this pane exists to
-show is the one it blinks through.
+**A row is shown when the queue holds an unfinished or `.done` job for the
+archive, or when the archive is neither seen nor dismissed.** The pane first
+shipped showing only the second half — `Watch.findings(in:)`, "not in
+`seen`" — which made every state above unreachable, because every path that
+creates a job also writes `seen`: `WatchingModel.markSeen` for a manual Add
+or Ignore, `WatchPoller.markSubmitted` for an automatic one. A row
+disappeared at the exact moment it became `queued`. `add` queues first and
+marks seen second, so an archive is momentarily both dismissed and queued;
+the job has to outrank the dismissal as well as `seen`, or the one transition
+this pane exists to show is the one it blinks through.
 
-An archive that is seen with no job stays hidden — ignored, seeded past
-(§3.2), or a download whose job has been cleared out of the queue. That is
-right for this stage: §5.2's filter is what surfaces those, once §7.3's store
-can say which of the three any given one was.
+**Not any job — a finished one that is `.failed` or `.cancelled` does not
+hold a row open.** An earlier version of this rule counted any job at all,
+which meant a `.failed` or cancelled job — both finished, neither still
+producing anything — outranked a person's own Ignore: `markSeen` persisted
+the write, but the row stayed on screen with nothing telling anyone why, and
+a cancelled job on an already-dismissed archive resurrected it as a fresh
+Add. `.done` still counts, because that is what keeps `.downloaded`,
+`.missing` and `.unverifiable` reachable once the job that produced them
+stops running; `.failed` and `.cancelled` do not, the same rule
+`AutoDownloadObserver` and `ArchiveRowState.state` already keep — a
+cancellation is a person saying no. The accepted cost: a `.failed` archive
+that has been ignored no longer renders at all, because Ignore now actually
+works on it. A `.failed` archive that has *not* been ignored still renders as
+`.failed`, because it is neither seen nor dismissed.
+
+An archive that is seen with no qualifying job stays hidden — ignored, seeded
+past (§3.2), or a download whose job has been cleared out of the queue (or
+failed, or was cancelled). That is right for this stage: §5.2's filter is
+what surfaces those, once §7.3's store can say which of the three any given
+one was.
 
 This is display only, and stays that way. Nothing here derives the seen-set
 from the queue — §4 of `docs/design/channel-watching.md` still forbids that,
