@@ -40,14 +40,18 @@ public enum WatchPoll {
         // watch had acted on before any consumer saw it — and everything
         // that downloads an archive writes `seen`, so a completed download
         // was erased from the data and the Watching pane could never render
-        // it as downloaded. The two callers that want findings-only apply
-        // `Watch.findings(in:)` themselves; see `WatchPoller.actOnFindings`
-        // and `FindingAnnouncement.decide` — and it is `findings(in:)`'s own
-        // doc comment, not this one, that is the right place for why that
-        // filter still does not consider `isDownloadable`: §5.2 forbids
-        // unattended queueing of a live broadcast, not showing one to a
-        // person, and both of those consumers are the unattended and
-        // notification paths that reasoning is about.
+        // it as downloaded. The three callers that want findings-only apply
+        // `Watch.findings(in:)` themselves: `WatchPoller.unseenFindings` for
+        // the unattended-download path and `FindingAnnouncement.decide` for
+        // the notification, plus `WatchingModel.rebuild` for what a person
+        // sees — the last of those is also the only one of the three still
+        // filtering for display, which is what lets `WatchingModel` call
+        // itself the only place that filter is applied. It is
+        // `findings(in:)`'s own doc comment, not this one, that is the right
+        // place for why the filter still does not consider `isDownloadable`:
+        // §5.2 forbids unattended queueing of a live broadcast, not showing
+        // one to a person, and that reasoning belongs to the unattended and
+        // notification paths, not to `WatchingModel`.
         outcome = .found(archives)
       case .failure(let error):
         outcome = .failed(error)

@@ -533,9 +533,9 @@ final class WatchingModel {
   /// failure still on screen.
   ///
   /// **`watches` is the spine; `latest` is a lookup.** This used to iterate
-  /// `latest` — a poll snapshot owned by `WatchPoller`, computed against
-  /// whatever the seen-set was minutes ago at sweep time — and append
-  /// `watches` afterwards for whatever that snapshot missed. Every derived
+  /// `latest` — a poll snapshot owned by `WatchPoller`, current only as of
+  /// whichever sweep produced it — and append `watches` afterwards for
+  /// whatever that snapshot missed. Every derived
   /// section was keyed on the stale collection, with the authoritative one
   /// reduced to an afterthought, and every one of this type's races traced
   /// back to that: a section for a channel `stopWatching` had already
