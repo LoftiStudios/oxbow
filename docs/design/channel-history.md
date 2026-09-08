@@ -274,18 +274,58 @@ their delivered files, so joining the sweep against the queue's jobs produces
 state is **not durable**: it exists only for as long as the job it was joined
 against does. Remove a finished job — an entirely ordinary thing to do to a
 queue — and the row it backed loses its history along with it, reverting to
-whatever the sweep and the filesystem can still say about it on their own.
+whatever the sweep and the filesystem can still say about it on their own,
+and leaving the list altogether if the archive is already marked seen.
 Stage 3 replaces this join with the history store precisely so that a row's
 past stops being a lease on somebody else's cleanup.
+
+**A row is shown when the queue holds a job for the archive, or when the
+archive is neither seen nor dismissed.** The pane first shipped showing only
+the second half — `Watch.findings(in:)`, "not in `seen`" — which made every
+state above unreachable, because every path that creates a job also writes
+`seen`: `WatchingModel.markSeen` for a manual Add or Ignore,
+`WatchPoller.markSubmitted` for an automatic one. A row disappeared at the
+exact moment it became `queued`. `add` queues first and marks seen second, so
+an archive is momentarily both dismissed and queued; the job has to outrank
+the dismissal as well as `seen`, or the one transition this pane exists to
+show is the one it blinks through.
+
+An archive that is seen with no job stays hidden — ignored, seeded past
+(§3.2), or a download whose job has been cleared out of the queue. That is
+right for this stage: §5.2's filter is what surfaces those, once §7.3's store
+can say which of the three any given one was.
 
 This is display only, and stays that way. Nothing here derives the seen-set
 from the queue — §4 of `docs/design/channel-watching.md` still forbids that,
 for the reason that still holds: a removed job would silently license a
-re-download. What the join *does* decide is a badge. `unreadCount` counts
+re-download. Visibility is not the seen-set: losing a job costs a row its
+place in the list, and never costs an archive its record of having been
+acted on. What the join *does* decide is a row and a badge. `unreadCount` counts
 only rows still waiting on a person to act — state `.available` — and nothing
 else. Counting `queued` and `downloaded` rows into it would produce a badge
 that never reaches zero, which is worse than no badge at all: the one thing a
 count like this has to do is go away when there is nothing left to do.
+
+**Reading the queue is not free, and the pane rebuilds only on the facts it
+uses.** `QueueEngine.publish()` is un-debounced and fires on every helper
+status line, so a running download changes `QueueController.jobs` hundreds of
+times a second. Rebuilding on each of those meant a synchronous read of
+`watches.json` on the main actor at that rate, a filesystem probe per
+delivered file, and — since a rebuild also clears the pane's failure banners
+— a refused Add explaining itself for less than a frame. `WatchingModel
+.updateJobs` compares which archive each job is for, its status, and where a
+finished one delivered, and does nothing when those are unchanged. A
+percentage is not news to this pane.
+
+**A live row is offered to a person, not withheld from them.** §5.2 of
+`channel-watching.md` says a live broadcast may be shown, clearly marked, for
+a human to choose, and only the unattended path refuses one — so the row's
+badge stays a label rather than a button, and Add… and Ignore stay reachable
+under right-click. What "may this be taken unattended" means is asked of
+`ChannelArchive.isDownloadable` rather than re-derived here, so a status
+Twitch introduces later cannot read as offerable in this pane while
+`AutoDownloadPolicy` declines it; the cost is that such a status borrows the
+word Live.
 
 **The filter (§5.2) and the coverage counter (§5.3) are not built.** Both are
 deliberately deferred to stage 3, and for the same reason: both need history
