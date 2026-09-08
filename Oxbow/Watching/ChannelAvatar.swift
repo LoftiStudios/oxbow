@@ -45,6 +45,12 @@ struct ChannelAvatar: View {
       image = nil
       guard let url, let store else { return }
       guard let data = await store.data(for: url) else { return }
+      // The fetch this resumes from may belong to the channel this header
+      // used to show. `.task(id:)` cancels the old one, but cancellation is
+      // cooperative and `ImageStore.data(for:)` does not check it either, so
+      // a stale fetch would land after the new task cleared `image` and put
+      // the previous channel's face above this channel's name.
+      guard !Task.isCancelled else { return }
       image = NSImage(data: data)
     }
   }

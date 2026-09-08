@@ -38,6 +38,14 @@ struct ArchiveThumbnail: View {
       image = nil
       guard let url, let store else { return }
       guard let data = await store.data(for: url) else { return }
+      // The fetch this resumes from may be for the archive this row used to
+      // show: `.task(id:)` cancels the old one, but cancellation is
+      // cooperative and `ImageStore.data(for:)` does not check it either, so
+      // without this the stale fetch lands *after* the new task has cleared
+      // `image` and puts another video's picture on this one. A row in a
+      // scrolling list is recycled often enough for that to be ordinary, and
+      // a wrong thumbnail is a wrong claim about what a video is.
+      guard !Task.isCancelled else { return }
       image = NSImage(data: data)
     }
   }
