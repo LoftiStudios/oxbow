@@ -57,6 +57,35 @@ struct ChannelCard: View {
     return nil
   }
 
+  /// Edit and Stop Watching, defined once.
+  ///
+  /// **Rendered by both the ‹…› button and the right-click.** Two copies of
+  /// the same pair is two things to keep in step, and the first divergence
+  /// would be a menu that offers something the right-click does not — or,
+  /// worse, a Stop Watching that exists in one and not the other.
+  @ViewBuilder
+  private var actions: some View {
+    // Above Stop Watching, matching how a Mac menu orders a reversible
+    // action before a destructive-adjacent one — this changes settings,
+    // that removes the channel entirely.
+    Button {
+      onEdit()
+    } label: {
+      Label("Edit…", systemImage: "pencil")
+    }
+    .help("Change \(section.displayName)'s frozen settings.")
+
+    Button {
+      onStopWatching()
+    } label: {
+      Label("Stop Watching", systemImage: "eye.slash")
+    }
+    .help("""
+      Stops watching \(section.displayName). Files already downloaded are \
+      not deleted.
+      """)
+  }
+
   var body: some View {
     VStack(alignment: .leading, spacing: 8) {
       HStack(alignment: .top, spacing: 12) {
@@ -107,6 +136,22 @@ struct ChannelCard: View {
               .foregroundStyle(.secondary)
           }
         }
+        // **The visible route to Edit and Stop Watching.** Both lived only
+        // in the right-click until now, which the app's own author could not
+        // find — a per-item menu button is what a Mac uses for actions that
+        // matter but are not the primary one, and it costs a control's
+        // width. The right-click is kept: this adds a way in, it does not
+        // move one.
+        Menu {
+          actions
+        } label: {
+          Label("Channel actions", systemImage: "ellipsis")
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .labelStyle(.iconOnly)
+        .fixedSize()
+        .accessibilityLabel("Actions for \(section.displayName)")
       }
       if let disconnectedVolume {
         disconnectedVolumeNotice(disconnectedVolume)
@@ -114,27 +159,7 @@ struct ChannelCard: View {
     }
     .padding(.vertical, 8)
     .textCase(nil)
-    .contextMenu {
-      // Above Stop Watching, matching how a Mac menu orders a reversible
-      // action before a destructive-adjacent one — this changes settings,
-      // that removes the channel entirely.
-      Button {
-        onEdit()
-      } label: {
-        Label("Edit…", systemImage: "pencil")
-      }
-      .help("Change \(section.displayName)'s frozen settings.")
-
-      Button {
-        onStopWatching()
-      } label: {
-        Label("Stop Watching", systemImage: "eye.slash")
-      }
-      .help("""
-        Stops watching \(section.displayName). Files already downloaded are \
-        not deleted.
-        """)
-    }
+    .contextMenu { actions }
   }
 
   /// Visually distinct from the demotion mark above (and from

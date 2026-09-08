@@ -17,8 +17,14 @@ public enum RelativeDay {
   /// person wants is the one their calendar gives. `.current` by default for
   /// that reason; tests pass a fixed one so they do not depend on where they
   /// run.
+  /// - Parameter includingVerb: whether to lead with "Published".
+  ///   Defaulted on, because every caller but one is writing a standalone
+  ///   sentence. The Watching row is the exception: it sets this line beside
+  ///   a duration — "19 days ago · 1:31" — where a verb reads as a sentence
+  ///   fragment against a bare number.
   public static func phrase(
-    for date: Date, now: Date, calendar: Calendar = .current) -> String
+    for date: Date, now: Date, calendar: Calendar = .current,
+    includingVerb: Bool = true) -> String
   {
     let days = calendar.dateComponents(
       [.day],
@@ -28,10 +34,15 @@ public enum RelativeDay {
     // A negative age means Twitch gave us a publish date in the future, which
     // is nonsense rather than something to render. Degrading to "today" keeps
     // the promise that nothing here ever counts down.
+    // Capitalised when the verb is gone, because this then starts its own
+    // line rather than continuing "Published …". "days ago" needs no such
+    // treatment: it leads with a number either way.
     switch days {
-    case ..<1: return "Published today"
-    case 1: return "Published yesterday"
-    default: return "Published \(days) days ago"
+    case ..<1: return includingVerb ? "Published today" : "Today"
+    case 1: return includingVerb ? "Published yesterday" : "Yesterday"
+    default:
+      let age = "\(days) days ago"
+      return includingVerb ? "Published \(age)" : age
     }
   }
 }

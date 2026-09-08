@@ -53,7 +53,11 @@ struct ArchiveRow: View {
       VStack(alignment: .leading, spacing: 2) {
         Text(row.archive.title)
           .lineLimit(2)
-        Text(RelativeDay.phrase(for: row.archive.publishedAt, now: now))
+        // Age first, then length. Both matter and they answer different
+        // questions — how long you have left to grab it, and what it will
+        // cost you to. The verb is dropped because "Published 19 days ago ·
+        // 1:31" reads as a sentence that then trails into a number.
+        Text("\(RelativeDay.phrase(for: row.archive.publishedAt, now: now, includingVerb: false)) · \(VideoLength.timecode(row.archive.duration))")
           .font(.caption)
           .foregroundStyle(.secondary)
           // Higher than the title's default: when the row is squeezed the
@@ -94,6 +98,10 @@ struct ArchiveRow: View {
       }
       .buttonStyle(.plain)
       .help("Downloaded. Click to show it in Finder.")
+      // An icon-only button is an unlabelled button to VoiceOver, and a
+      // `.help` is a tooltip rather than a label — it is never read. Every
+      // icon-only control in this row carries a real label for that reason.
+      .accessibilityLabel("Downloaded. Show in Finder")
     case .missing:
       Button("Add", action: onAdd)
         .buttonStyle(.bordered)
@@ -107,6 +115,10 @@ struct ArchiveRow: View {
         .labelStyle(.iconOnly)
         .foregroundStyle(.secondary)
         .help("\(volume) is disconnected, so Oxbow cannot tell whether this is still downloaded.")
+        // The volume's name reaches a sighted person through the tooltip and
+        // the card's own notice; without this it reaches a VoiceOver user
+        // through neither.
+        .accessibilityLabel("\(volume) is disconnected. Oxbow cannot tell whether this is still downloaded")
     case .failed:
       Button("Retry", action: onAdd)
         .buttonStyle(.bordered)

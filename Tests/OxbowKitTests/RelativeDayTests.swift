@@ -68,4 +68,35 @@ struct RelativeDayTests {
       }
     }
   }
+
+  // MARK: - Without the verb
+
+  /// The Watching row puts the age beside a duration — "19 days ago · 1:31" —
+  /// where "Published" reads as a sentence fragment next to a bare number.
+  /// Every other caller wants the verb, so it stays the default and this is
+  /// the exception that asks.
+  @Test func dropsTheVerbWhenAsked() {
+    let calendar = Calendar(identifier: .gregorian)
+    let now = Date(timeIntervalSince1970: 1_000_000)
+    let threeDays = now.addingTimeInterval(-3 * 24 * 60 * 60)
+
+    #expect(RelativeDay.phrase(
+      for: threeDays, now: now, calendar: calendar, includingVerb: false) == "3 days ago")
+    #expect(RelativeDay.phrase(
+      for: threeDays, now: now, calendar: calendar) == "Published 3 days ago")
+  }
+
+  /// Today and yesterday are whole phrases rather than "<n> days ago", so
+  /// dropping the verb has to leave something that still reads — not a bare
+  /// "today" mid-sentence, and not an empty string.
+  @Test func todayAndYesterdaySurviveLosingTheVerb() {
+    let calendar = Calendar(identifier: .gregorian)
+    let now = Date(timeIntervalSince1970: 1_000_000)
+
+    #expect(RelativeDay.phrase(
+      for: now, now: now, calendar: calendar, includingVerb: false) == "Today")
+    #expect(RelativeDay.phrase(
+      for: now.addingTimeInterval(-24 * 60 * 60), now: now,
+      calendar: calendar, includingVerb: false) == "Yesterday")
+  }
 }
