@@ -593,6 +593,20 @@ struct WatchingModelTests {
     #expect(
       try store.load()[0].seen.isEmpty,
       "the save must have actually failed — \"1\" never reached seen on disk")
+  
+    // **The row is still there, and the banner has to say so.** `markSeen`
+    // hides it via `dismissed` before attempting the write, but `rebuild()`
+    // in the failure path prunes that overlay against what is on disk — and
+    // the failed write is exactly why disk lacks the id — so the row comes
+    // straight back. This went unpinned once already: the banner promised
+    // the row would return "the next time Oxbow launches" while it had in
+    // fact never left, and no test contradicted either half.
+    #expect(
+      model.sections.first?.rows.map(\.id) == ["1"],
+      "a failed save must leave the row where it was, not hide it")
+    #expect(
+      model.markSeenFailure?.contains("still here") == true,
+      "the banner must describe what actually happened to the row")
   }
 
   @Test func aSweepThatStraddlesADismissalDoesNotBringTheRowBack() throws {

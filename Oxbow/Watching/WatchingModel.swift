@@ -132,10 +132,14 @@ final class WatchingModel {
   /// against the watch's own persisted `seen` set (`Watch.findings(in:)`),
   /// and `markSeen` persists that write *before* it ever calls `rebuild()`,
   /// so a row is hidden by `seen` before this overlay is even consulted. The
-  /// one thing that reconciliation cannot cover is `markSeen`'s write
-  /// failing outright (it is `try?`, deliberately best-effort — see that
-  /// method's own comment): `seen` on disk never gains the id then, so this
-  /// is what keeps the row hidden for the rest of the session regardless.
+  /// one case left is `markSeen`'s write failing outright (deliberately best
+  /// effort — see that method's own comment), and this overlay **does not**
+  /// rescue it: `seen` on disk never gains the id, so `rebuild()`'s pruning
+  /// below drops it from here in the same pass and the row comes straight
+  /// back. That is deliberate. Oxbow holds no record that the archive was
+  /// ignored, and a row hidden on the strength of a write that failed would
+  /// be the app showing a state it did not manage to store. The banner
+  /// `markSeen` sets says so in as many words.
   ///
   /// Narrowed back down by `apply(_:)`, the same way it always was, so a
   /// failed id does not sit here forever once a sweep stops carrying it at
@@ -399,32 +403,40 @@ final class WatchingModel {
     }
 
     current[index] = current[index].marking([id])
-    // Best effort — this does not throw, and does not undo `dismissed.insert`
-    // above, so the row stays hidden and (for `add(_:from:)`) intake still
-    // opens even when the write below fails. `dismissed` was already updated
-    // before this write was attempted, and nothing rolls it back if it fails
-    // — so a failed save does not cost "one re-offer on the next sweep": the
-    // row stays hidden by the in-memory overlay for the rest of this session
-    // (its id keeps coming back from every sweep, and `apply`'s
-    // `formIntersection` keeps retaining it), and the re-offer only arrives
-    // on the next launch, once `dismissed` itself is gone.
+    // Best effort — this does not throw, and (for `add(_:from:)`) intake
+    // still opens even when the write below fails.
     //
-    // That silent fallback used to be the whole story, which made a failed
-    // save indistinguishable from a completed one — no hide-then-reappear, no
-    // banner, nothing. An unresponsive button would have been more honest
-    // than an action that looks done and was not, so this now sets
-    // `markSeenFailure`, the same as the read failure above, and `rebuild()`
-    // first for the identical reason: it clears `markSeenFailure` as one of
-    // its own first steps, so setting the message before it would just have
-    // it wiped out again.
+    // **A failed save leaves the row exactly where it was, in the same
+    // frame.** `dismissed.insert` above hid it, but `rebuild()` in the catch
+    // prunes `dismissed` against what is actually on disk — and the write
+    // that just failed is why disk does not have this id — so the overlay
+    // gives the row straight back. That is the honest outcome: Oxbow has no
+    // record that this archive was ignored, so continuing to offer it is
+    // what the stored state actually says.
+    //
+    // It has not always been. Before `rebuild()` reconciled the overlay
+    // against disk, a failed save left the row hidden for the rest of the
+    // session and the re-offer arrived only on the next launch — which is
+    // what the banner below used to promise. Both the pruning and the
+    // banner's wording have been corrected since; if either changes again
+    // they have to change together, or the app goes back to describing an
+    // outcome it does not produce.
+    //
+    // Before any of it, the failure was silent, which made a failed save
+    // indistinguishable from a completed one. An unresponsive button would
+    // have been more honest than an action that looks done and was not, so
+    // this sets `markSeenFailure`, the same as the read failure above, and
+    // calls `rebuild()` first for the identical reason: it clears
+    // `markSeenFailure` as one of its own first steps, so setting the
+    // message before it would just have it wiped out again.
     do {
       try store.save(current)
     } catch {
       let result = current[index]
       rebuild()
       markSeenFailure = """
-        Oxbow could not save the watch list, so this will show up again the \
-        next time Oxbow launches. \(error.localizedDescription)
+        Oxbow could not save the watch list, so this is still here. \
+        \(error.localizedDescription)
         """
       return result
     }
