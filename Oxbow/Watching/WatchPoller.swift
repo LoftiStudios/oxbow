@@ -328,9 +328,20 @@ final class WatchPoller {
       // recoverable by doing nothing.
       let availableBytes = VolumeSpace.live.availableBytes(destination) ?? 0
 
+      // Asked per watch, against only that channel's own jobs: a members-only
+      // channel is a fact about one channel, and counting every failure in the
+      // queue would let three restricted archives on one channel demote a
+      // different one that is working fine.
+      let mine = (controller?.jobs ?? []).filter { job in
+        guard let media = job.mediaIdentifier else { return false }
+        return resultsByLogin[watch.login]?.archives.contains { $0.id == media } ?? false
+      }
+
       switch AutoDownloadPolicy.decide(
         watch: watch, findings: findings, availableBytes: availableBytes,
-        destinationExists: destinationExists, floor: floor)
+        destinationExists: destinationExists,
+        contentRestricted: AutoDownloadPolicy.isContentRestricted(jobs: mine),
+        floor: floor)
       {
       case .notAutomatic:
         continue

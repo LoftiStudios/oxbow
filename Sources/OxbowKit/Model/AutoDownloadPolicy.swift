@@ -35,6 +35,13 @@ public enum AutoDownloadPolicy {
     case belowFloor(needed: Int64, available: Int64, floor: Int64)
     case destinationUnreachable(String)
 
+    /// This channel's archives require a Twitch membership Oxbow does not
+    /// have and deliberately will not get.
+    ///
+    /// Carries nothing: unlike the other two there is no number or path that
+    /// would help, and nothing a person can change on this machine.
+    case contentRestricted
+
     /// The sentence a finding or a settings row shows for this reason.
     public var sentence: String {
       switch self {
@@ -52,6 +59,15 @@ public enum AutoDownloadPolicy {
           + "\(availableText) is free and Oxbow keeps \(floorText) in "
           + "reserve — downloads paused for this channel until there is "
           + "more room."
+      case .contentRestricted:
+        // States the cause and stops. Oxbow queries Twitch anonymously by
+        // design (`docs/twitch-channel-api.md` §2), so "sign in" is not a
+        // remedy this app offers, and dangling one would be worse than
+        // saying plainly that these are not gettable.
+        return """
+          This channel's archives are subscriber-only, so Oxbow cannot \
+          download them — automatic downloading is paused for it.
+          """
       case .destinationUnreachable(let path):
         return "\(path) is not available — downloads paused for this channel "
           + "until the destination is reachable again."
@@ -107,11 +123,55 @@ public enum AutoDownloadPolicy {
   /// the inbox, and once space frees up on this volume — a person deleting
   /// something, most likely — a later sweep picks up wherever this one
   /// stopped.
+  /// How many subscriber-only failures make it the channel's problem rather
+  /// than one archive's.
+  ///
+  /// **Three, because two is a coincidence.** A channel can carry a couple
+  /// of members-only VODs among ordinary ones, and demoting the whole watch
+  /// off those would stop it fetching everything it legitimately can. Three
+  /// in a row is a policy.
+  static let restrictedFailureThreshold = 3
+
+  /// Whether this channel's archives are members-only.
+  ///
+  /// **Derived from the queue's own failures, and stored nowhere.** Twitch's
+  /// metadata cannot be asked: `docs/twitch-channel-api.md` §9.3 measured a
+  /// members-only channel reporting 908 archives with `resourceRestriction`
+  /// null and `self.isRestricted` false, and the refusal arriving only at the
+  /// manifest — by which point a download has already begun. So the only
+  /// signal available is what happened when Oxbow tried, and the only honest
+  /// place to read it is the jobs it left behind.
+  ///
+  /// Recomputed every sweep like every other demotion, which is what makes
+  /// it self-correcting: subscribe, clear the failed jobs, and the channel
+  /// starts downloading again with no reset step.
+  ///
+  /// Matches on `FailureInterpreter.subscriberOnlySummary` rather than on a
+  /// literal — see that constant for why.
+  public static func isContentRestricted(jobs: [Job]) -> Bool {
+    let restricted = jobs.filter { job in
+      job.steps.contains { step in
+        if case .failed(let failure) = step.status {
+          return failure.summary == FailureInterpreter.subscriberOnlySummary
+        }
+        return false
+      }
+    }
+    return restricted.count >= restrictedFailureThreshold
+  }
+
   public static func decide(
     watch: Watch, findings: [ChannelArchive], availableBytes: Int64,
-    destinationExists: Bool, floor: Int64
+    destinationExists: Bool, contentRestricted: Bool = false, floor: Int64
   ) -> Decision {
     guard watch.downloadsAutomatically else { return .notAutomatic }
+
+    // Ahead of the other two, and it is the only one of the three that will
+    // not fix itself: a drive comes back and disk frees up, but a membership
+    // does not appear because Oxbow waited. It is also the one that explains
+    // the failures already sitting in the queue, which the others would
+    // leave unaccounted for.
+    guard !contentRestricted else { return .demoted(.contentRestricted) }
 
     // Destination first: it is the more specific, more actionable fact when
     // both apply (§6.2's account of the two causes converging on one

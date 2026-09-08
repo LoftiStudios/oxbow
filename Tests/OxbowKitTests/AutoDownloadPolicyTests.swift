@@ -196,4 +196,82 @@ struct AutoDownloadPolicyTests {
     let reason = AutoDownloadPolicy.Reason.destinationUnreachable("/Volumes/Archive")
     #expect(reason.sentence.contains("/Volumes/Archive"))
   }
+
+  // MARK: - A channel whose archives are subscriber-only
+
+  private func restrictedJob(_ id: String) -> Job {
+    Job(
+      id: JobID(rawValue: UUID()), created: Date(timeIntervalSince1970: 0),
+      title: "t",
+      steps: [Step(
+        id: StepID(rawValue: UUID()),
+        kind: .downloadVideo(VideoRequest(
+          videoID: id, quality: "", destination: URL(filePath: "/out/\(id).mp4"))),
+        status: .failed(StepFailure(
+          kind: .exited(code: 134),
+          summary: FailureInterpreter.subscriberOnlySummary)))])
+  }
+
+  private func otherFailedJob(_ id: String) -> Job {
+    Job(
+      id: JobID(rawValue: UUID()), created: Date(timeIntervalSince1970: 0),
+      title: "t",
+      steps: [Step(
+        id: StepID(rawValue: UUID()),
+        kind: .downloadVideo(VideoRequest(
+          videoID: id, quality: "", destination: URL(filePath: "/out/\(id).mp4"))),
+        status: .failed(StepFailure(kind: .noArtifact, summary: "Something else went wrong.")))])
+  }
+
+  /// Two is a coincidence — a channel can have a couple of subscriber-only
+  /// VODs among ordinary ones, and demoting the whole channel off those
+  /// would stop it fetching everything else it legitimately can.
+  @Test("two subscriber-only failures are not enough to call the channel restricted")
+  func twoIsNotEnough() {
+    #expect(!AutoDownloadPolicy.isContentRestricted(
+      jobs: [restrictedJob("1"), restrictedJob("2")]))
+  }
+
+  @Test("three subscriber-only failures make it a channel-level fact")
+  func threeIsEnough() {
+    #expect(AutoDownloadPolicy.isContentRestricted(
+      jobs: [restrictedJob("1"), restrictedJob("2"), restrictedJob("3")]))
+  }
+
+  /// Failures that are not this one must not count toward the threshold, or
+  /// three unrelated network hiccups would silently stop a channel.
+  @Test("other failures do not count toward the threshold")
+  func otherFailuresDoNotCount() {
+    #expect(!AutoDownloadPolicy.isContentRestricted(
+      jobs: [restrictedJob("1"), otherFailedJob("2"), otherFailedJob("3")]))
+  }
+
+  /// The demotion is the whole point: automatic downloading stops, and the
+  /// notify-only half carries on, which is what every other demotion does.
+  @Test("a restricted channel demotes rather than submitting")
+  func restrictedChannelDemotes() {
+    let decision = AutoDownloadPolicy.decide(
+      watch: watch(), findings: [archive("1")],
+      availableBytes: floor + cost([archive("1")]),
+      destinationExists: true, contentRestricted: true, floor: floor)
+    #expect(decision == .demoted(.contentRestricted))
+  }
+
+  /// Restriction outranks the other two. It is the only one of the three that
+  /// will not fix itself, and it is the one that explains the failures already
+  /// on screen — a drive comes back, disk frees up, a membership does not
+  /// appear because Oxbow waited.
+  @Test("restriction is reported ahead of a missing destination or a low disk")
+  func restrictionOutranksTheOthers() {
+    let bothWrong = AutoDownloadPolicy.decide(
+      watch: watch(), findings: [archive("1")], availableBytes: 0,
+      destinationExists: false, contentRestricted: true, floor: floor)
+    #expect(bothWrong == .demoted(.contentRestricted))
+  }
+
+  @Test("contentRestricted names the cause and does not promise a remedy")
+  func restrictedSentence() {
+    let sentence = AutoDownloadPolicy.Reason.contentRestricted.sentence
+    #expect(sentence.contains("subscriber"))
+  }
 }
