@@ -54,9 +54,16 @@ struct WatchingModelTests {
   /// reaching into `OxbowKitTests`' own helper, which this target cannot see.
   ///
   /// `.done` sets an artifact so a caller can exercise the delivered-file
-  /// path too, even though today's two new tests only need `.queued` and
-  /// `.running`.
-  private func job(_ id: String, _ status: JobStatus) -> Job {
+  /// path too.
+  ///
+  /// `files` names what the job actually delivered — `Job.deliveredFiles`
+  /// reads it back through `Step.deliveredArtifact`, which requires both a
+  /// delivering kind (`.downloadVideo` here always qualifies) and a non-nil
+  /// `artifact`. Defaulted to a generic `/out/<id>.mp4` so every existing
+  /// call site, which only cares about `status`, is unaffected; a caller
+  /// that needs a specific delivered path — to match a `fileAnswer` stub
+  /// keyed on that exact URL — passes it explicitly.
+  private func job(_ id: String, _ status: JobStatus, files: [URL] = []) -> Job {
     let stepStatus: StepStatus
     switch status {
     case .queued: stepStatus = .queued
@@ -65,12 +72,13 @@ struct WatchingModelTests {
     case .failed: stepStatus = .failed(StepFailure(kind: .noArtifact, summary: "no artifact"))
     case .cancelled: stepStatus = .cancelled
     }
+    let artifact: URL? = status == .done ? (files.first ?? URL(filePath: "/out/\(id).mp4")) : nil
     let step = Step(
       id: StepID(rawValue: UUID()),
       kind: .downloadVideo(VideoRequest(
         videoID: id, quality: "", destination: URL(filePath: "/out/\(id).mp4"))),
       status: stepStatus,
-      artifact: status == .done ? URL(filePath: "/out/\(id).mp4") : nil)
+      artifact: artifact)
     return Job(id: JobID(rawValue: UUID()), created: Date(timeIntervalSince1970: 0),
                title: "Stream", steps: [step])
   }
@@ -1090,6 +1098,73 @@ struct WatchingModelTests {
 
     #expect(model.sections.count == 1)
     #expect(model.sections.first?.avatarURL == nil)
+  }
+
+  // MARK: - Regression: a downloaded archive must render, not disappear
+
+  /// The defect this whole plan exists for: an archive that has been
+  /// downloaded is in `seen`, and the sweep used to filter `seen` out before
+  /// the model ever saw it — so a completed download rendered as nothing at
+  /// all. This pins the fix at the level a person experiences it.
+  ///
+  /// **Not sufficient on its own.** This hand-builds a `WatchPollResult` and
+  /// feeds it straight to `apply(_:)` — it never calls `WatchPoll.sweep`,
+  /// which is where the defect actually lived. A test shaped this way would
+  /// have passed for the bug's entire lifetime, because nothing here
+  /// exercises the code that did the filtering. It still earns its place as
+  /// a guard on the *rebuild* rule — that a seen archive with a `.done` job
+  /// must render as `.downloaded` — but
+  /// `aSeenAndDownloadedArchiveSurvivesARealSweep` below is the one that
+  /// actually pins the regression.
+  @Test func aDownloadedArchiveRendersAsDownloaded() throws {
+    let store = temporaryStore()
+    try store.save([watch("ninja", seen: ["1"])])
+    let file = URL(filePath: "/tmp/ninja-1.mp4")
+    let model = WatchingModel(
+      store: store, openIntake: { _, _ in },
+      fileAnswer: { _ in .present(file) })
+
+    // The sweep now carries the seen archive through, which is the change.
+    model.apply([.init(login: "ninja", displayName: "Ninja",
+                       outcome: .found([archive("1")]))])
+    model.updateJobs([job("1", .done, files: [file])])
+
+    let rows = try #require(model.sections.first?.rows)
+    #expect(rows.count == 1)
+    #expect(rows.first?.state == .downloaded(file))
+    #expect(model.unreadCount == 0, "a downloaded row is not waiting on anybody")
+  }
+
+  /// The regression test the test above cannot be: this one actually calls
+  /// `WatchPoll.sweep`, with a watch whose `seen` already names the archive,
+  /// and feeds the sweep's real output into `WatchingModel`.
+  ///
+  /// A channel whose backlog was queued the moment it was added has every
+  /// one of those archives in `seen` from the start. `WatchPoll.sweep` used
+  /// to run `watch.findings(in: archives)` on a successful fetch, which
+  /// deleted every one of them from the result before `apply(_:)` — or
+  /// anything else — ever saw it: the channel's section rendered with zero
+  /// rows, permanently, no matter how many videos it actually had. Passing
+  /// a hand-built `.found([archive])` (as the test above does) cannot catch
+  /// that, because it skips the exact function the bug was in.
+  @Test func aSeenAndDownloadedArchiveSurvivesARealSweep() async throws {
+    let store = temporaryStore()
+    try store.save([watch("ninja", seen: ["1"])])
+    let file = URL(filePath: "/tmp/ninja-1.mp4")
+    let model = WatchingModel(
+      store: store, openIntake: { _, _ in },
+      fileAnswer: { _ in .present(file) })
+
+    let seenArchive = archive("1")
+    let results = await WatchPoll.sweep([watch("ninja", seen: ["1"])]) { _ in
+      .success([seenArchive])
+    }
+    model.apply(results)
+    model.updateJobs([job("1", .done, files: [file])])
+
+    let rows = try #require(model.sections.first?.rows)
+    #expect(rows.count == 1)
+    #expect(rows.first?.state == .downloaded(file))
   }
 }
 
