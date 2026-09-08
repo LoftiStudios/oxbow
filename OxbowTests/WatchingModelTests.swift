@@ -237,7 +237,78 @@ struct WatchingModelTests {
     #expect(queued.settings == capped.settings)
     #expect(opened.id == nil, "the primary action must not open intake")
     #expect(try store.load()[0].seen == ["1"])
+    // This injected queue only records — it publishes no job — so the
+    // archive ends up seen with nothing in the queue for it, and a row like
+    // that is hidden. The real path always leaves a job behind; that is
+    // `addingLeavesTheRowInPlaceAsQueuedOnceItsJobExists` below.
     #expect(model.sections[0].rows.map(\.archive).isEmpty)
+  }
+
+  /// **The transition this stage exists to deliver.** `add` queues first and
+  /// marks seen second, so for one instant the archive is both dismissed and
+  /// queued — and it has to stay on screen, reading "In queue", rather than
+  /// leaving the list at the moment a person asked for it. The job is what
+  /// keeps it there, exactly as the real engine's publication does: this
+  /// closure publishes from inside the submission, which is where
+  /// `QueueEngine` publishes too.
+  @Test func addingLeavesTheRowInPlaceAsQueuedOnceItsJobExists() async throws {
+    let store = temporaryStore()
+    try store.save([watch("ninja")])
+    let held = ModelBox()
+    let queued = job("1", .queued)
+    let model = WatchingModel(
+      store: store, openIntake: { _, _ in },
+      queue: { _, _ in
+        held.model?.updateJobs([queued])
+        return nil
+      })
+    held.model = model
+    model.apply([.init(login: "ninja", displayName: "Ninja", outcome: .found([archive("1")]))])
+
+    await model.add(archive("1"), from: "ninja")
+
+    #expect(try store.load()[0].seen == ["1"], "queueing still marks it seen")
+    let rows = try #require(model.sections.first?.rows)
+    #expect(rows.map(\.archive.id) == ["1"], "a queued archive stays listed once it is seen")
+    #expect(rows.first?.state == .queued)
+  }
+
+  /// A job outranks the watch's own persisted `seen`, not only the in-memory
+  /// `dismissed` overlay — `WatchPoller.markSubmitted` writes `seen` through
+  /// a different `WatchStore` the moment it queues an automatic download, so
+  /// an archive can be seen on disk with a job this model never watched
+  /// being made.
+  @Test func anArchiveSeenOnDiskIsStillShownWhileTheQueueHoldsAJobForIt() throws {
+    let store = temporaryStore()
+    try store.save([watch("ninja", seen: ["1", "2"])])
+    let model = model(store: store)
+    model.apply([.init(login: "ninja", displayName: "Ninja",
+                       outcome: .found([archive("1"), archive("2")]))])
+
+    model.updateJobs([job("1", .done)])
+
+    let rows = try #require(model.sections.first?.rows)
+    #expect(rows.map(\.archive.id) == ["1"], "id 2 is seen with no job, so it stays hidden")
+    #expect(rows.first?.state == .downloaded(URL(filePath: "/out/1.mp4")))
+  }
+
+  /// Losing a job costs the row its place — the lease §7.2 of
+  /// `channel-history.md` calls this stage's scaffolding — and costs the
+  /// archive nothing else. `seen` is untouched, because deriving it from the
+  /// queue is exactly what `channel-watching.md` §4 forbids: a job someone
+  /// cleared out would otherwise license a second download.
+  @Test func removingAJobHidesTheRowWithoutUnmarkingTheArchive() throws {
+    let store = temporaryStore()
+    try store.save([watch("ninja", seen: ["1"])])
+    let model = model(store: store)
+    model.apply([.init(login: "ninja", displayName: "Ninja", outcome: .found([archive("1")]))])
+    model.updateJobs([job("1", .done)])
+    #expect(model.sections[0].rows.count == 1)
+
+    model.updateJobs([])
+
+    #expect(model.sections[0].rows.isEmpty)
+    #expect(try store.load()[0].seen == ["1"], "the seen-set never follows the queue")
   }
 
   /// A refusal leaves the row exactly where it was. Marking it seen would
@@ -953,4 +1024,10 @@ private struct SeededGenerator: RandomNumberGenerator {
 @MainActor private final class QueuedBox {
   var id: String?
   var settings: Watch.Settings?
+}
+
+/// Lets an injected closure reach the model that owns it, so a test can
+/// publish a job from inside a submission the way the real engine does.
+@MainActor private final class ModelBox {
+  var model: WatchingModel?
 }

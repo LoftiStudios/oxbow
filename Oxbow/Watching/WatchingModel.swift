@@ -104,9 +104,10 @@ final class WatchingModel {
   ///
   /// **Display only.** `docs/design/channel-watching.md` §4 forbids deriving
   /// the *seen-set* from the queue — a removed job would silently license a
-  /// re-download — and nothing here does: this decides a badge. Losing a job
-  /// costs a row its history, which stage 3's store fixes by not depending
-  /// on the queue at all.
+  /// re-download — and nothing here does: this decides a badge, and whether
+  /// a row is listed at all (see `rebuild()`). Losing a job costs a row its
+  /// place and its history; it never un-marks anything. Stage 3's store
+  /// fixes that by not depending on the queue at all.
   private var jobs: [Job] = []
 
   /// How a delivered file's presence is answered. Injected so a test needs
@@ -250,6 +251,11 @@ final class WatchingModel {
   /// so "answered" and "queued" are the same event. A refusal leaves the row
   /// where it is, with `submissionFailure` saying why, rather than marking
   /// an archive handled that nothing is handling.
+  ///
+  /// **The row does not vanish when it is marked seen**, which is the whole
+  /// point of queueing first: `rebuild()` keeps any archive the queue holds
+  /// a job for, so this reads as the row turning into "In queue" rather than
+  /// as the video the person just asked for leaving the screen.
   func add(_ archive: ChannelArchive, from login: String) async {
     submissionFailure = nil
 
@@ -526,29 +532,62 @@ final class WatchingModel {
     let stillSeen = watches.reduce(into: Set<String>()) { $0.formUnion($1.seen) }
     dismissed.formIntersection(stillSeen)
 
+    // Which archives the queue currently holds a job for, computed once for
+    // every section rather than per row: the queue is one array and a channel
+    // can list a hundred archives.
+    //
+    // **This decides visibility, never `seen`.**
+    // `docs/design/channel-watching.md` §4 forbids deriving the seen-set from
+    // the queue, because a job a person removed would silently license a
+    // re-download — and nothing here writes `seen`. What a removed job costs
+    // is a row its place in the list, which is precisely the lease §7.2 of
+    // `channel-history.md` already names as this stage's scaffolding; it never
+    // costs an archive its record of having been acted on.
+    let jobbed = Set(jobs.compactMap(\.mediaIdentifier))
+
     sections = watches.map { watch in
       let outcome = latest.first(where: { $0.login == watch.login })?.outcome
       switch outcome {
       case .found(let archives):
-        // Reconciled against the watch's own `seen` set, not only the
-        // in-memory `dismissed` overlay. `dismissed` only ever catches what
-        // *this* model wrote through *this* `store` — a seen-set written
-        // through a different `WatchStore`, which is exactly what
-        // `AddChannelModel` does, would otherwise leave rows on screen the
-        // watch itself already says are seen. Re-adding an already-watched
-        // channel with Only new is the concrete case: its caption promises
-        // "everything Twitch has right now is marked seen", but without
-        // this the inbox kept showing them until the next sweep, up to an
-        // hour later. `Watch.findings(in:)` is the same filter `WatchPoll`
-        // itself applies, so this closes the whole class of "some other
-        // writer changed `seen`" rather than just this one instance —
-        // `dismissed` is left responsible only for the write-failed case its
-        // own doc comment already describes. No fallback to the unfiltered
+        // What "nobody has acted on this" means, and it is deliberately the
+        // watch's own persisted `seen` rather than only the in-memory
+        // `dismissed` overlay. `dismissed` only ever catches what *this*
+        // model wrote through *this* `store` — a seen-set written through a
+        // different `WatchStore`, which is exactly what `AddChannelModel`
+        // does, would otherwise leave rows on screen the watch itself
+        // already says are seen. Re-adding an already-watched channel with
+        // Only new is the concrete case: its caption promises "everything
+        // Twitch has right now is marked seen", but without this the inbox
+        // kept showing them until the next sweep, up to an hour later.
+        // `Watch.findings(in:)` is the same filter `WatchPoll` itself
+        // applies, so this closes the whole class of "some other writer
+        // changed `seen`" rather than just this one instance — `dismissed`
+        // is left responsible only for the write-failed case its own doc
+        // comment already describes. No fallback to the unfiltered
         // `archives` here, deliberately: `watch` is always in hand — it is
         // what this map is iterating — so there is nothing for a fallback
         // to cover, and one that read "leave it unfiltered" would fail open
         // the moment a future edit ever made the lookup optional again.
-        let visible = watch.findings(in: archives).filter { !dismissed.contains($0.id) }
+        let unacted = Set(watch.findings(in: archives).map(\.id)).subtracting(dismissed)
+
+        // **A row is shown when the queue holds a job for it, or when it is
+        // neither seen nor dismissed.** Being un-acted-on used to be the
+        // whole rule, and it hid every state this pane was built to show:
+        // `markSeen` and `WatchPoller.markSubmitted` both write `seen` at
+        // the instant something queues a download, so a row disappeared at
+        // exactly the moment it became "In queue", and `queued`, `running`,
+        // `downloaded`, `missing` and `unverifiable` could not render at
+        // all. `add(_:from:)` queues *then* marks seen, which leaves an
+        // archive momentarily both dismissed and queued — so the job has to
+        // outrank `dismissed` as well as `seen`, or the one transition this
+        // pane exists to show is the one it blinks through.
+        //
+        // An archive that is seen with no job stays hidden: ignored, seeded
+        // past, or a download whose job has since been cleared out of the
+        // queue. That is right for this stage — §5.2's filter is what
+        // surfaces those, once stage 3's store can say which of the three
+        // any given one was.
+        let visible = archives.filter { jobbed.contains($0.id) || unacted.contains($0.id) }
         return Section(
           login: watch.login, displayName: watch.displayName,
           avatarURL: watch.avatarURL,
