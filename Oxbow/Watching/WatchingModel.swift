@@ -205,12 +205,53 @@ final class WatchingModel {
     rebuild()
   }
 
-  /// Republishes the rows against a new view of the queue.
+  /// The `[Job]` facts a row can actually turn on, as of the last rebuild.
+  ///
+  /// Everything `ArchiveRowState.state` and `rebuild()`'s visibility rule
+  /// read: which archive a job is for, what status it is in, and where a
+  /// finished one delivered. Nothing else — see `updateJobs`.
+  private struct JobFacts: Equatable {
+    var mediaIdentifier: String?
+    var status: JobStatus
+    var deliveredFile: URL?
+
+    init(_ job: Job) {
+      mediaIdentifier = job.mediaIdentifier
+      status = job.status
+      deliveredFile = job.deliveredFiles.first
+    }
+  }
+
+  private var jobFacts: [JobFacts] = []
+
+  /// Republishes the rows against a new view of the queue — but only when
+  /// the queue has said something a row can hear.
   ///
   /// Called whenever `controller.jobs` changes, so a job finishing reaches
   /// the pane immediately rather than waiting for the next hourly sweep.
+  ///
+  /// **`QueueEngine.publish()` is not debounced, and it fires on every helper
+  /// status line — its own comment says they "arrive by the hundreds".** Each
+  /// one assigns `QueueController.jobs`, and `Step.progress` participates in
+  /// `Step`'s synthesized `Equatable`, so `[Job]` compares unequal on every
+  /// tick and `QueueView`'s `.onChange` calls this hundreds of times a second
+  /// for the whole length of a download. Rebuilding on each of those would
+  /// re-read and decode `watches.json` from disk on the main actor at that
+  /// rate, probe every delivered file with it, and — because `rebuild()`
+  /// clears the three failure banners — wipe a refused Add's explanation off
+  /// the screen before anyone could finish reading it.
+  ///
+  /// A percentage is not news to this pane, so comparing the facts above is
+  /// what decides whether anything happens. **Do not collapse this back to
+  /// comparing `jobs` themselves**: that comparison is true on every progress
+  /// tick, which is the thing this exists to stop.
   func updateJobs(_ jobs: [Job]) {
     self.jobs = jobs
+
+    let facts = jobs.map(JobFacts.init)
+    guard facts != jobFacts else { return }
+    jobFacts = facts
+
     rebuild()
   }
 

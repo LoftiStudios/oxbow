@@ -120,6 +120,60 @@ struct WatchingModelTests {
     #expect(model.sections.first?.rows.first?.state == .running)
   }
 
+  /// `QueueEngine.publish()` is un-debounced and fires on every helper status
+  /// line, so a running download reaches `updateJobs` hundreds of times a
+  /// second carrying nothing but a new percentage. `rebuild()` clears the
+  /// failure banners, so a refused Add would explain itself for less than a
+  /// frame if a progress tick reached it. `submissionFailure` is what pins
+  /// that here: surviving one is only possible if no rebuild happened.
+  @Test func aProgressTickAloneDoesNotRebuild() async throws {
+    let store = temporaryStore()
+    try store.save([watch("ninja")])
+    let model = WatchingModel(
+      store: store, openIntake: { _, _ in },
+      queue: { _, _ in "Oxbow could not build that download." })
+    model.apply([.init(login: "ninja", displayName: "Ninja", outcome: .found([archive("1")]))])
+
+    // One job, republished — same job id, same step id, same status, a
+    // further-along percentage. Exactly what one status line produces.
+    let jobID = JobID(rawValue: UUID())
+    let stepID = StepID(rawValue: UUID())
+    func published(at fraction: Double) -> Job {
+      Job(id: jobID, created: Date(timeIntervalSince1970: 0), title: "Stream",
+          steps: [Step(
+            id: stepID,
+            kind: .downloadVideo(VideoRequest(
+              videoID: "1", quality: "", destination: URL(filePath: "/out/1.mp4"))),
+            status: .running,
+            progress: StepProgress(fraction: fraction))])
+    }
+
+    model.updateJobs([published(at: 0.1)])
+    await model.add(archive("1"), from: "ninja")
+    #expect(model.submissionFailure != nil)
+
+    model.updateJobs([published(at: 0.2)])
+
+    #expect(model.submissionFailure != nil, "a percentage is not news to this pane")
+    #expect(model.sections[0].rows.first?.state == .running, "and the rows still stand")
+  }
+
+  /// The other half of the same guard: a status transition *is* news, and has
+  /// to land without waiting for the next sweep.
+  @Test func aStatusChangeStillRebuilds() throws {
+    let store = temporaryStore()
+    try store.save([watch("ninja")])
+    let model = model(store: store)
+    model.apply([.init(login: "ninja", displayName: "Ninja", outcome: .found([archive("1")]))])
+
+    model.updateJobs([job("1", .queued)])
+    #expect(model.sections[0].rows.first?.state == .queued)
+
+    model.updateJobs([job("1", .done)])
+
+    #expect(model.sections[0].rows.first?.state == .downloaded(URL(filePath: "/out/1.mp4")))
+  }
+
   @Test func aFailedChannelKeepsItsReasonAndIsNotCountedAsUnread() throws {
     // Section 7: a failure must read as a failure, never as an empty list.
     let store = temporaryStore()

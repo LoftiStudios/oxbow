@@ -324,6 +324,14 @@ WatchingView(
     // starting or finishing reaches the pane immediately rather than
     // waiting for the next hourly sweep — see `WatchingModel.updateJobs`'s
     // own doc comment.
+    //
+    // This fires far more often than that reads: `QueueEngine.publish()` is
+    // un-debounced and `Step.progress` is part of `Step`'s `Equatable`, so a
+    // running download trips this on every helper status line. `updateJobs`
+    // is where that flood is absorbed — it compares the handful of facts a
+    // row can turn on and returns without rebuilding when they are the same.
+    // Keep the cheap side of that pairing here: this closure must stay a
+    // hand-off, never grow work of its own.
     .onChange(of: controller?.jobs) {
       watching?.updateJobs(controller?.jobs ?? [])
     }
