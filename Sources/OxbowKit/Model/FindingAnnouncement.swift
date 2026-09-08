@@ -42,6 +42,12 @@ public enum FindingAnnouncement {
   ///     though §7 forbids that flattening as a health signal — a channel
   ///     Twitch would not answer for has nothing to announce, and the error
   ///     itself belongs on the row in `WatchingView`, not in a banner.
+  ///   - watches: filters each result against its own watch's `seen`, rather
+  ///     than trusting `results` to already be unseen-only. `WatchPoll.sweep`
+  ///     happens to do that filtering today, but a consumer that depends on a
+  ///     producer several layers away continuing to filter breaks silently
+  ///     the day the producer changes — which is exactly what happened to the
+  ///     Watching pane.
   ///   - submitted: ids this sweep queued through the automatic path. They
   ///     are not waiting for anybody, and `JobNotifier` will report each job
   ///     when it settles; announcing them here would be both a duplicate and
@@ -66,15 +72,24 @@ public enum FindingAnnouncement {
   /// suppressing one banner per launch.
   public static func decide(
     results: [WatchPollResult],
+    watches: [Watch],
     submitted: Set<String>,
     alreadyAnnounced: Set<String>
   ) -> Decision {
+    let byLogin = Dictionary(watches.map { ($0.login, $0) }, uniquingKeysWith: { first, _ in first })
+
     // Grouped by channel rather than flattened, because the title needs to
     // know whether everything new came from one channel (name it) or several
     // (count them) — a flat list of ids cannot answer that.
-    let waiting = results.map { result in
-      (displayName: result.displayName,
-       archives: result.findings.filter { !submitted.contains($0.id) })
+    let waiting = results.compactMap { result -> (displayName: String, archives: [ChannelArchive])? in
+      // No matching watch means the channel was stopped while this sweep was
+      // in flight. Skipped rather than passed through: failing open here
+      // would announce a whole backlog for a channel nobody is watching any
+      // more, for exactly the same reason `AutoDownloadPolicy` refuses to
+      // guess in the automatic path's favour.
+      guard let watch = byLogin[result.login] else { return nil }
+      return (result.displayName,
+              watch.findings(in: result.findings).filter { !submitted.contains($0.id) })
     }
 
     let waitingIDs = Set(waiting.flatMap { $0.archives.map(\.id) })

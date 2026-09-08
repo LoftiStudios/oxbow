@@ -15,12 +15,24 @@ struct FindingAnnouncementTests {
     WatchPollResult(login: login, displayName: name, outcome: .found(ids.map(archive)))
   }
 
+  /// A watch with an empty `seen`, so it filters out nothing — the shape
+  /// every test in this file wants except the one that exercises the filter
+  /// itself.
+  private func watch(_ login: String, seen: Set<String> = []) -> Watch {
+    Watch(login: login, displayName: login.capitalized,
+          settings: Watch.Settings(
+            destinationPath: "/tmp", qualityCap: .best,
+            output: .videoWithChat, chatSize: .medium),
+          downloadsAutomatically: false, seen: seen)
+  }
+
   // MARK: - Saying nothing
 
   @Test("A sweep that found nothing says nothing")
   func quietSweep() {
     let decision = FindingAnnouncement.decide(
-      results: [found("ninja", "Ninja", [])], submitted: [], alreadyAnnounced: [])
+      results: [found("ninja", "Ninja", [])], watches: [watch("ninja")], submitted: [],
+      alreadyAnnounced: [])
 
     #expect(decision.message == nil)
     #expect(decision.announced.isEmpty)
@@ -31,7 +43,7 @@ struct FindingAnnouncementTests {
     let decision = FindingAnnouncement.decide(
       results: [WatchPollResult(login: "ninja", displayName: "Ninja",
                                 outcome: .failed(.noSuchChannel))],
-      submitted: [], alreadyAnnounced: [])
+      watches: [watch("ninja")], submitted: [], alreadyAnnounced: [])
 
     #expect(decision.message == nil)
   }
@@ -42,7 +54,8 @@ struct FindingAnnouncementTests {
   @Test("A finding already announced is not announced again")
   func alreadyAnnouncedStaysQuiet() {
     let decision = FindingAnnouncement.decide(
-      results: [found("ninja", "Ninja", ["1"])], submitted: [], alreadyAnnounced: ["1"])
+      results: [found("ninja", "Ninja", ["1"])], watches: [watch("ninja")], submitted: [],
+      alreadyAnnounced: ["1"])
 
     #expect(decision.message == nil)
     #expect(decision.announced == ["1"])
@@ -53,8 +66,8 @@ struct FindingAnnouncementTests {
   @Test("An archive this sweep auto-submitted is never announced as waiting")
   func submittedIsNotWaiting() {
     let decision = FindingAnnouncement.decide(
-      results: [found("ninja", "Ninja", ["1", "2"])], submitted: ["1", "2"],
-      alreadyAnnounced: [])
+      results: [found("ninja", "Ninja", ["1", "2"])], watches: [watch("ninja")],
+      submitted: ["1", "2"], alreadyAnnounced: [])
 
     #expect(decision.message == nil)
     #expect(decision.announced.isEmpty)
@@ -65,7 +78,8 @@ struct FindingAnnouncementTests {
   @Test("One new archive from one channel names the channel")
   func singleFinding() {
     let decision = FindingAnnouncement.decide(
-      results: [found("ninja", "Ninja", ["1"])], submitted: [], alreadyAnnounced: [])
+      results: [found("ninja", "Ninja", ["1"])], watches: [watch("ninja")], submitted: [],
+      alreadyAnnounced: [])
 
     #expect(decision.message?.title == "New archive from Ninja")
     #expect(decision.message?.body == "1 archive is waiting in Watching.")
@@ -75,8 +89,8 @@ struct FindingAnnouncementTests {
   @Test("Several from one channel still names the channel")
   func severalFromOneChannel() {
     let decision = FindingAnnouncement.decide(
-      results: [found("ninja", "Ninja", ["1", "2", "3"])], submitted: [],
-      alreadyAnnounced: [])
+      results: [found("ninja", "Ninja", ["1", "2", "3"])], watches: [watch("ninja")],
+      submitted: [], alreadyAnnounced: [])
 
     #expect(decision.message?.title == "3 new archives from Ninja")
     #expect(decision.message?.body == "3 archives are waiting in Watching.")
@@ -86,7 +100,7 @@ struct FindingAnnouncementTests {
   func acrossChannels() {
     let decision = FindingAnnouncement.decide(
       results: [found("ninja", "Ninja", ["1"]), found("leighxp", "LeighXP", ["2"])],
-      submitted: [], alreadyAnnounced: [])
+      watches: [watch("ninja"), watch("leighxp")], submitted: [], alreadyAnnounced: [])
 
     #expect(decision.message?.title == "2 new archives from 2 channels")
     #expect(decision.announced == ["1", "2"])
@@ -98,7 +112,7 @@ struct FindingAnnouncementTests {
   func quietChannelsDoNotCount() {
     let decision = FindingAnnouncement.decide(
       results: [found("ninja", "Ninja", ["1"]), found("leighxp", "LeighXP", [])],
-      submitted: [], alreadyAnnounced: [])
+      watches: [watch("ninja"), watch("leighxp")], submitted: [], alreadyAnnounced: [])
 
     #expect(decision.message?.title == "New archive from Ninja")
   }
@@ -109,8 +123,8 @@ struct FindingAnnouncementTests {
   @Test("The body counts everything waiting, the title only what is new")
   func bodyCountsAllWaiting() {
     let decision = FindingAnnouncement.decide(
-      results: [found("ninja", "Ninja", ["1", "2", "3"])], submitted: [],
-      alreadyAnnounced: ["1", "2"])
+      results: [found("ninja", "Ninja", ["1", "2", "3"])], watches: [watch("ninja")],
+      submitted: [], alreadyAnnounced: ["1", "2"])
 
     #expect(decision.message?.title == "New archive from Ninja")
     #expect(decision.message?.body == "3 archives are waiting in Watching.")
@@ -119,8 +133,8 @@ struct FindingAnnouncementTests {
   @Test("What was submitted is excluded from the waiting count too")
   func submittedIsNotCountedAsWaiting() {
     let decision = FindingAnnouncement.decide(
-      results: [found("ninja", "Ninja", ["1", "2"])], submitted: ["2"],
-      alreadyAnnounced: [])
+      results: [found("ninja", "Ninja", ["1", "2"])], watches: [watch("ninja")],
+      submitted: ["2"], alreadyAnnounced: [])
 
     #expect(decision.message?.title == "New archive from Ninja")
     #expect(decision.message?.body == "1 archive is waiting in Watching.")
@@ -134,7 +148,7 @@ struct FindingAnnouncementTests {
   @Test("An id that stopped appearing is dropped from what is remembered")
   func vanishedIdsArePruned() {
     let decision = FindingAnnouncement.decide(
-      results: [found("ninja", "Ninja", ["2"])], submitted: [],
+      results: [found("ninja", "Ninja", ["2"])], watches: [watch("ninja")], submitted: [],
       alreadyAnnounced: ["1", "2"])
 
     #expect(decision.announced == ["2"])
@@ -147,13 +161,52 @@ struct FindingAnnouncementTests {
   @Test("An archive that returns to the inbox after a failure is announced then")
   func returnsAfterFailure() {
     let queued = FindingAnnouncement.decide(
-      results: [found("ninja", "Ninja", ["1"])], submitted: ["1"], alreadyAnnounced: [])
+      results: [found("ninja", "Ninja", ["1"])], watches: [watch("ninja")],
+      submitted: ["1"], alreadyAnnounced: [])
     #expect(queued.message == nil)
 
     let returned = FindingAnnouncement.decide(
-      results: [found("ninja", "Ninja", ["1"])], submitted: [],
+      results: [found("ninja", "Ninja", ["1"])], watches: [watch("ninja")], submitted: [],
       alreadyAnnounced: queued.announced)
 
     #expect(returned.message?.title == "New archive from Ninja")
+  }
+
+  // MARK: - Filtering by seen
+
+  /// The announcement must not name an archive the watch has already acted
+  /// on. It filters by `seen` itself rather than trusting its input to have
+  /// been filtered — `WatchPoll.sweep` used to do that upstream, and a
+  /// consumer that depends on a producer's filtering breaks silently the day
+  /// the producer stops.
+  @Test("an archive already in seen is never announced, whatever the sweep hands over")
+  func seenArchivesAreNeverAnnounced() {
+    let watch = Watch(
+      login: "ninja", displayName: "Ninja",
+      settings: Watch.Settings(
+        destinationPath: "/tmp", qualityCap: .best,
+        output: .videoWithChat, chatSize: .medium),
+      downloadsAutomatically: false, seen: ["1"])
+
+    let decision = FindingAnnouncement.decide(
+      results: [found("ninja", "Ninja", ["1", "2"])], watches: [watch],
+      submitted: [], alreadyAnnounced: [])
+
+    #expect(decision.message?.title == "New archive from Ninja")
+    #expect(decision.message?.body == "1 archive is waiting in Watching.")
+    #expect(decision.announced == ["2"], "the seen archive must not be remembered either")
+  }
+
+  /// A result with no matching watch announces nothing rather than
+  /// everything — the channel was stopped mid-sweep, and a fail-open here
+  /// would announce a whole backlog for a channel nobody watches.
+  @Test("a result with no matching watch is skipped, not passed through")
+  func resultWithoutAWatchIsSkipped() {
+    let decision = FindingAnnouncement.decide(
+      results: [found("ninja", "Ninja", ["1"])], watches: [],
+      submitted: [], alreadyAnnounced: [])
+
+    #expect(decision.message == nil)
+    #expect(decision.announced.isEmpty)
   }
 }

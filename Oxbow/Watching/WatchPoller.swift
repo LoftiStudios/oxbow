@@ -233,7 +233,7 @@ final class WatchPoller {
     // known once it has run. `§2.2`'s banner is a pointer to the inbox, so
     // an archive already queued has nothing for it to point at.
     let decision = FindingAnnouncement.decide(
-      results: swept, submitted: submitted, alreadyAnnounced: announced)
+      results: swept, watches: watches, submitted: submitted, alreadyAnnounced: announced)
     announced = decision.announced
     if let message = decision.message { announce(message) }
 
@@ -307,12 +307,20 @@ final class WatchPoller {
       // checks below are unaffected by whether the feed answered, and a
       // watch with nothing found submits nothing regardless of why.
       //
+      // Filtered against this watch's own `seen` here rather than trusting
+      // the sweep to have done it. This is the guard that stops the
+      // unattended path re-downloading everything it has ever completed
+      // (`docs/design/channel-watching.md` §4), and it must not depend on a
+      // producer several layers away continuing to behave — the sweep is
+      // about to stop doing this filtering itself.
+      //
       // Filtered through `Self.excludingArchivesWithFailedJobs` before
       // `decide()` ever sees them — see that function's own doc comment for
       // why a `.failed` job has to remove its archive from the unattended
       // path entirely, not merely fail to duplicate it.
+      let unseen = watch.findings(in: resultsByLogin[watch.login]?.findings ?? [])
       let findings = Self.excludingArchivesWithFailedJobs(
-        resultsByLogin[watch.login]?.findings ?? [], jobs: controller?.jobs ?? [])
+        unseen, jobs: controller?.jobs ?? [])
       let destination = watch.settings.destination
       let destinationExists = FileManager.default.fileExists(atPath: destination.path)
       // An unreadable volume is treated as below the floor, not as
