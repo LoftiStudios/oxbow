@@ -43,14 +43,27 @@ public enum ArchiveRowState: Equatable, Sendable {
   case unverifiable(volumeName: String)
   case failed
 
-  /// Whether this row offers to fetch the archive.
+  /// Whether a person may still choose to fetch this archive.
   ///
   /// `missing` is included deliberately: the file is gone and Twitch still
   /// has it, which is exactly the case §4 says should return to actionable.
+  ///
+  /// `live` is included for the reason `Watch.findings(in:)` gives for not
+  /// filtering on `isDownloadable` — only the *unattended* path refuses a
+  /// live broadcast (`docs/design/channel-watching.md` §5.2); a person who
+  /// knowingly wants the partial may have it, and a person who does not want
+  /// it at all must still be able to say so. This is the question asked on
+  /// behalf of a human, and `ChannelArchive.isDownloadable` is the one asked
+  /// on behalf of the machine — different audiences, deliberately different
+  /// answers, and nothing derives either from the other.
+  ///
+  /// The states left out are the ones where fetching is not a choice anyone
+  /// has: it is already happening, already done, or unanswerable until a
+  /// volume comes back.
   public var isFetchable: Bool {
     switch self {
-    case .available, .missing, .failed: true
-    case .live, .queued, .running, .downloaded, .unverifiable: false
+    case .available, .live, .missing, .failed: true
+    case .queued, .running, .downloaded, .unverifiable: false
     }
   }
 

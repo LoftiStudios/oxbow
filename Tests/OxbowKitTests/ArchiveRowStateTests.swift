@@ -158,6 +158,26 @@ struct ArchiveRowStateTests {
     #expect(ArchiveRowState.state(
       for: archive("1"), jobs: [job("1", .done, files: [])], file: noFile) == .missing)
   }
+
+  /// `isFetchable` governs more than a button: `ArchiveRow` asks it whether
+  /// to offer Add… *and Ignore*, so a state left out of it is a row a person
+  /// cannot dismiss either. Every case is pinned, including the two whose
+  /// membership is a judgement rather than an obvious reading — `missing`
+  /// (§4: deleting a download returns the archive to actionable) and `live`
+  /// (§5.2: only the unattended path refuses a broadcast; a person may
+  /// choose).
+  @Test("every state says whether a person may still choose to fetch it")
+  func fetchableStates() {
+    #expect(ArchiveRowState.available.isFetchable)
+    #expect(ArchiveRowState.live.isFetchable)
+    #expect(ArchiveRowState.missing.isFetchable)
+    #expect(ArchiveRowState.failed.isFetchable)
+
+    #expect(!ArchiveRowState.queued.isFetchable)
+    #expect(!ArchiveRowState.running.isFetchable)
+    #expect(!ArchiveRowState.downloaded(URL(filePath: "/a.mp4")).isFetchable)
+    #expect(!ArchiveRowState.unverifiable(volumeName: "Helios").isFetchable)
+  }
 }
 
 /// `ArchiveRowState.FileAnswer.resolve` is the live probe's pure core: no

@@ -22,6 +22,25 @@ struct ArchiveRow: View {
   let onReveal: (URL) -> Void
 
   var body: some View {
+    // The menu is attached only when it has something in it. A `.contextMenu`
+    // whose builder produces no items still opens — an empty sliver under the
+    // pointer — which is a worse answer to a right-click than no menu, and
+    // was what `.queued`, `.running` and `.unverifiable` gave.
+    if row.state.isFetchable {
+      content.contextMenu {
+        Button("Add…", action: onAddWithOptions)
+        Button("Ignore", action: onIgnore)
+      }
+    } else if case .downloaded(let url) = row.state {
+      content.contextMenu {
+        Button("Show in Finder") { onReveal(url) }
+      }
+    } else {
+      content
+    }
+  }
+
+  private var content: some View {
     HStack(alignment: .center, spacing: 10) {
       ArchiveThumbnail(url: row.archive.thumbnailURL, store: store)
 
@@ -41,15 +60,6 @@ struct ArchiveRow: View {
       badge
     }
     .padding(.vertical, 4)
-    .contextMenu {
-      if row.state.isFetchable {
-        Button("Add…", action: onAddWithOptions)
-        Button("Ignore", action: onIgnore)
-      }
-      if case .downloaded(let url) = row.state {
-        Button("Show in Finder") { onReveal(url) }
-      }
-    }
   }
 
   @ViewBuilder
