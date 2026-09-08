@@ -26,6 +26,12 @@ struct ArchiveRow: View {
     // whose builder produces no items still opens — an empty sliver under the
     // pointer — which is a worse answer to a right-click than no menu, and
     // was what `.queued`, `.running` and `.unverifiable` gave.
+    //
+    // The cost of branching here rather than inside one `.contextMenu` is
+    // that a row crossing between these arms — Add, most visibly — is a new
+    // view to SwiftUI, so `ArchiveThumbnail`'s image reloads from the store
+    // for a frame. Paid knowingly: it is one frame of a placeholder on a
+    // warm disk read, against a menu that opens onto nothing every time.
     if row.state.isFetchable {
       content.contextMenu {
         Button("Add…", action: onAddWithOptions)
