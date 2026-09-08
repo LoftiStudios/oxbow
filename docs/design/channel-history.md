@@ -288,13 +288,22 @@ deleted from the data on its way to this pane, and no rule downstream could
 recover an archive that was never handed over. Measured against the author's
 own data before the fix: a channel with four archives and two downloaded
 swept as two; a channel with two archives, both downloaded, swept as none,
-and rendered as an empty channel, permanently. The filter now lives with the
-two consumers that actually want it — `WatchPoller.actOnFindings`, deciding
-what the unattended path may still submit, and `FindingAnnouncement.decide`,
-deciding what to announce — and the sweep hands over everything it fetched.
-`WatchPollResult.findings` is renamed `archives`, because the old name was
-the lie that let a producer-side filter and this pane's own display filter
-pass for the same thing.
+and rendered as an empty channel, permanently. The filter does not vanish,
+but it splits three ways, and the three are not interchangeable.
+`WatchPoller.unseenFindings` and `FindingAnnouncement.decide` both still call
+`Watch.findings(in:)`, but each does it to make a decision — the former,
+what the unattended path may still submit, the latter, what to announce.
+`WatchingModel.rebuild`, the join above, calls the same function for a
+different job entirely: not to decide anything, but to decide what a person
+currently sees. That distinction is worth drawing, not glossing over: a
+comment that called the producer's filter and this pane's filter "the same"
+is exactly what let the producer-side one go unexamined for as long as it
+did, because a decision filter and a display filter look identical from
+outside unless something says which is which. The sweep now hands over
+everything it fetched, and each of the three applies its own filter for its
+own reason. `WatchPollResult.findings` is renamed `archives`, because the
+old name was the lie that let the producer's filter and this pane's pass for
+the same thing.
 
 Worth stating plainly: stage 2's own review could not have caught this.
 Every task implemented its brief faithfully — the join above, the row-shown

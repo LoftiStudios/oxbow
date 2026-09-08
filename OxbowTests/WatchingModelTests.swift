@@ -207,10 +207,13 @@ struct WatchingModelTests {
   // MARK: - The dismissal overlay
 
   @Test func ignoringRemovesTheRowImmediately() throws {
-    // `WatchPoller.results` is a snapshot taken against the seen-set as it
-    // stood at sweep time, so persisting alone would leave the row on screen
-    // until the next sweep — up to an hour of a button appearing to do
-    // nothing. The overlay is what makes Ignore feel like it worked.
+    // `WatchPoll.sweep` hands over every archive regardless of `seen` — see
+    // that type's own comment — so hiding this row depends on `rebuild()`
+    // re-filtering through the watch's own persisted `seen`, which only
+    // happens once `markSeen`'s write actually lands. The overlay is what
+    // makes Ignore work immediately regardless: `dismissed.insert(id)` hides
+    // the row before that write is even attempted, and stays authoritative
+    // if it fails.
     let store = temporaryStore()
     try store.save([watch("ninja")])
     let model = model(store: store)
@@ -593,11 +596,12 @@ struct WatchingModelTests {
   }
 
   @Test func aSweepThatStraddlesADismissalDoesNotBringTheRowBack() throws {
-    // `sweep` reads the seen-set once up front, then makes slow sequential
-    // per-channel calls. A sweep that was already in flight when the ignore
-    // landed finishes with results computed before that write — still
-    // containing the just-dismissed archive. An identical payload reapplied
-    // is exactly that case, and the row must stay gone rather than reappear.
+    // `WatchPoll.sweep` never consults `seen` — it hands over everything a
+    // channel has, before or after any write to that watch's own file — so a
+    // sweep already in flight when the ignore landed finishes with the same
+    // results it would have produced anyway, still carrying the
+    // just-dismissed archive. An identical payload reapplied is exactly that
+    // case, and the row must stay gone rather than reappear.
     let store = temporaryStore()
     try store.save([watch("ninja")])
     let model = model(store: store)
