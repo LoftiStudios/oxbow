@@ -59,6 +59,19 @@ struct AppCompositionTests {
     #expect(watchStoreURL.path == "\(support.path)/watches.json")
   }
 
+  /// One site decides where every piece of Oxbow's state on disk lives, for
+  /// the reason `watchStoreURL`'s doc comment gives.
+  @Test func videoRecordSitsBesideTheWatchList() {
+    let support = URL(filePath: "/tmp/support")
+
+    #expect(
+      AppComposition.videoRecordURL(supportDirectory: support).path
+        == "/tmp/support/videos.json")
+    #expect(
+      AppComposition.payloadDirectory(supportDirectory: support).path
+        == "/tmp/support/payloads")
+  }
+
   // MARK: - User session
 
   /// The test bundle is hosted by the app, so running this suite launches

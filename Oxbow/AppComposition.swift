@@ -98,6 +98,25 @@ nonisolated enum AppComposition {
     supportDirectory.appending(path: "watches.json")
   }
 
+  /// Where the video record lives.
+  ///
+  /// Beside `watches.json` and `queue.json` for the reason `watchStoreURL`
+  /// gives at length: one site decides where every piece of Oxbow's state on
+  /// disk lives, rather than one per consumer.
+  static func videoRecordURL(supportDirectory: URL) -> URL {
+    supportDirectory.appending(path: "videos.json")
+  }
+
+  /// Where the helpers' raw `info` payloads live.
+  ///
+  /// A directory rather than a key inside `videos.json`: a payload is about
+  /// 3.4 KB, and folding them in would make the file the app re-reads and
+  /// rewrites grow linearly with every video ever downloaded
+  /// (`docs/design/video-record.md` §3.3).
+  static func payloadDirectory(supportDirectory: URL) -> URL {
+    supportDirectory.appending(path: "payloads")
+  }
+
   /// Stored channel and archive images.
   ///
   /// A directory rather than a file, and **disposable in a way
