@@ -82,4 +82,71 @@ struct WatchPollerRecordingTests {
 
     #expect(!FileManager.default.fileExists(atPath: file.path))
   }
+
+  private func temporaryWatchStore(_ watches: [Watch]) throws -> WatchStore {
+    let store = WatchStore(fileURL: URL.temporaryDirectory
+      .appending(path: "poller-record-watches-\(UUID().uuidString)")
+      .appending(path: "watches.json"))
+    try store.save(watches)
+    return store
+  }
+
+  private func watch(_ login: String) -> Watch {
+    Watch(login: login, displayName: login.capitalized,
+          settings: Watch.Settings(
+            destinationPath: "/Users/x/Downloads", qualityCap: .p360,
+            output: .video, chatSize: .medium),
+          downloadsAutomatically: false, seen: [])
+  }
+
+  /// A feed that fails every login with a server error — enough to reach
+  /// `sweep()`'s `.failed(...)` branch without needing a specific error case.
+  private func failingFeed() -> ChannelFeed {
+    ChannelFeed(fetch: { request in
+      (Data(), HTTPURLResponse(
+        url: request.url!, statusCode: 500, httpVersion: nil, headerFields: nil)!)
+    })
+  }
+
+  /// The gap the reviewer found by inspection only: nothing pinned that a
+  /// **failed** sweep records nothing. This drives a real `WatchPoller
+  /// .refreshNow()` rather than calling `record(archives:forLogin:seenAt:
+  /// into:)` directly, because the guard being pinned lives one level up —
+  /// `sweep()`'s explicit `case .found(let archives) = result.outcome`
+  /// match. `WatchPollResult.archives` flattens a `.failed` outcome to `[]`,
+  /// so a version of `sweep()` that read `result.archives` instead of
+  /// matching on `result.outcome` would call `record(archives: [], ...)` for
+  /// a failure exactly as it does for a genuinely empty success — passing
+  /// `emptySweepIsNoOp()` above for the wrong reason. Seeding an existing
+  /// record and asserting it is byte-for-byte unchanged (not merely that no
+  /// *new* row appeared) is what catches that: `record` is a no-op on an
+  /// empty archive list either way, but only the `.found` match guarantees
+  /// `seenAt` is never considered at all when the sweep failed.
+  @Test("a failed sweep records nothing and stamps no last-seen time")
+  func failedSweepLeavesRecordUntouched() async throws {
+    let file = temporaryFile()
+    defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
+    let store = VideoRecordStore(fileURL: file)
+
+    let seenBefore = Date(timeIntervalSince1970: 1_700_000_000)
+    var seeded = VideoLibrary()
+    seeded.record(VideoRecord(id: "1", login: "wheelyf", lastSeenOnTwitch: seenBefore))
+    try store.save(seeded)
+
+    let poller = WatchPoller(
+      store: try temporaryWatchStore([watch("wheelyf")]),
+      feed: failingFeed(),
+      videoRecordStore: store)
+
+    await poller.refreshNow()
+
+    guard case .failed = poller.results.first?.outcome else {
+      Issue.record("expected a failed outcome, got \(String(describing: poller.results.first?.outcome))")
+      return
+    }
+
+    let library = try store.load()
+    #expect(library.videos.count == 1)
+    #expect(library.videos["1"]?.lastSeenOnTwitch == seenBefore)
+  }
 }

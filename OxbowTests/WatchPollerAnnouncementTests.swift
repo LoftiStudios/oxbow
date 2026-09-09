@@ -19,6 +19,15 @@ struct WatchPollerAnnouncementTests {
     return store
   }
 
+  /// `WatchPoller.init` requires a `videoRecordStore` — this suite is not
+  /// testing what a sweep records, so each test gets its own disposable file
+  /// rather than mentioning what goes through it.
+  private func temporaryVideoRecordFile() -> URL {
+    URL.temporaryDirectory
+      .appending(path: "poller-announcement-video-record-\(UUID().uuidString)")
+      .appending(path: "videos.json")
+  }
+
   private func watch(_ login: String, seen: Set<String> = []) -> Watch {
     Watch(login: login, displayName: login.capitalized,
           settings: Watch.Settings(
@@ -52,8 +61,11 @@ struct WatchPollerAnnouncementTests {
   @Test("a sweep that finds something unseen announces it once")
   func announcesFindings() async throws {
     let spy = Spy()
+    let videoRecordFile = temporaryVideoRecordFile()
+    defer { try? FileManager.default.removeItem(at: videoRecordFile.deletingLastPathComponent()) }
     let poller = WatchPoller(
       store: try temporaryStore([watch("ninja")]), feed: feed(ids: ["1", "2"]),
+      videoRecordStore: VideoRecordStore(fileURL: videoRecordFile),
       announce: { spy.messages.append($0) })
 
     await poller.refreshNow()
@@ -69,8 +81,11 @@ struct WatchPollerAnnouncementTests {
   @Test("a second sweep over the same findings says nothing")
   func doesNotRepeatItself() async throws {
     let spy = Spy()
+    let videoRecordFile = temporaryVideoRecordFile()
+    defer { try? FileManager.default.removeItem(at: videoRecordFile.deletingLastPathComponent()) }
     let poller = WatchPoller(
       store: try temporaryStore([watch("ninja")]), feed: feed(ids: ["1"]),
+      videoRecordStore: VideoRecordStore(fileURL: videoRecordFile),
       announce: { spy.messages.append($0) })
 
     await poller.refreshNow()
@@ -82,8 +97,11 @@ struct WatchPollerAnnouncementTests {
   @Test("an archive already in seen is not announced")
   func seenArchivesAreNotFindings() async throws {
     let spy = Spy()
+    let videoRecordFile = temporaryVideoRecordFile()
+    defer { try? FileManager.default.removeItem(at: videoRecordFile.deletingLastPathComponent()) }
     let poller = WatchPoller(
       store: try temporaryStore([watch("ninja", seen: ["1"])]), feed: feed(ids: ["1"]),
+      videoRecordStore: VideoRecordStore(fileURL: videoRecordFile),
       announce: { spy.messages.append($0) })
 
     await poller.refreshNow()
@@ -94,8 +112,11 @@ struct WatchPollerAnnouncementTests {
   @Test("no watches means no sweep and nothing said")
   func emptyWatchListSaysNothing() async throws {
     let spy = Spy()
+    let videoRecordFile = temporaryVideoRecordFile()
+    defer { try? FileManager.default.removeItem(at: videoRecordFile.deletingLastPathComponent()) }
     let poller = WatchPoller(
       store: try temporaryStore([]), feed: feed(ids: ["1"]),
+      videoRecordStore: VideoRecordStore(fileURL: videoRecordFile),
       announce: { spy.messages.append($0) })
 
     await poller.refreshNow()
@@ -113,8 +134,11 @@ struct WatchPollerAnnouncementTests {
   func manualRefreshIgnoresTheThrottle() async throws {
     let spy = Spy()
     let fixed = Date(timeIntervalSince1970: 0)
+    let videoRecordFile = temporaryVideoRecordFile()
+    defer { try? FileManager.default.removeItem(at: videoRecordFile.deletingLastPathComponent()) }
     let poller = WatchPoller(
       store: try temporaryStore([watch("ninja")]), feed: feed(ids: ["1"]),
+      videoRecordStore: VideoRecordStore(fileURL: videoRecordFile),
       now: { fixed }, announce: { spy.messages.append($0) })
 
     await poller.refreshNow()

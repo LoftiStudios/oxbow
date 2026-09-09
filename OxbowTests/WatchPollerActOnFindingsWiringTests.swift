@@ -70,6 +70,15 @@ struct WatchPollerActOnFindingsWiringTests {
     return url
   }
 
+  /// `WatchPoller.init` requires a `videoRecordStore` — this suite is not
+  /// testing what a sweep records, so each test gets its own disposable file
+  /// rather than mentioning what goes through it.
+  private func temporaryVideoRecordFile() -> URL {
+    URL.temporaryDirectory
+      .appending(path: "poller-wiring-video-record-\(UUID().uuidString)")
+      .appending(path: "videos.json")
+  }
+
   private func watch(_ login: String, destination: URL, seen: Set<String>) -> Watch {
     Watch(
       login: login, displayName: login.capitalized,
@@ -101,9 +110,12 @@ struct WatchPollerActOnFindingsWiringTests {
     let login = "wiring-seen-\(UUID().uuidString)"
     let archiveID = UUID().uuidString
     let destination = try existingDestination()
+    let videoRecordFile = temporaryVideoRecordFile()
+    defer { try? FileManager.default.removeItem(at: videoRecordFile.deletingLastPathComponent()) }
     let poller = WatchPoller(
       store: try temporaryStore([watch(login, destination: destination, seen: [archiveID])]),
-      feed: feed(archiveID: archiveID))
+      feed: feed(archiveID: archiveID),
+      videoRecordStore: VideoRecordStore(fileURL: videoRecordFile))
 
     await poller.refreshNow()
 
@@ -118,9 +130,12 @@ struct WatchPollerActOnFindingsWiringTests {
     let login = "wiring-unseen-\(UUID().uuidString)"
     let archiveID = UUID().uuidString
     let destination = try existingDestination()
+    let videoRecordFile = temporaryVideoRecordFile()
+    defer { try? FileManager.default.removeItem(at: videoRecordFile.deletingLastPathComponent()) }
     let poller = WatchPoller(
       store: try temporaryStore([watch(login, destination: destination, seen: [])]),
-      feed: feed(archiveID: archiveID))
+      feed: feed(archiveID: archiveID),
+      videoRecordStore: VideoRecordStore(fileURL: videoRecordFile))
 
     await poller.refreshNow()
 

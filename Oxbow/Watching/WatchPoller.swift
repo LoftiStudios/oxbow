@@ -79,8 +79,15 @@ final class WatchPoller {
   /// testable without a poller; this is only where a live poller's copy of
   /// the store lives, mirroring `store` above.
   ///
-  /// Task 13 also needs this property, so it is built once here rather than
-  /// standing up a second `VideoRecordStore` pointed at the same file later.
+  /// **The one `VideoRecordStore` this type uses.** `live(supportDirectory:)`
+  /// builds it once, from `AppComposition.videoRecordURL(supportDirectory:)`
+  /// — the single site that decides where Oxbow's on-disk video record
+  /// lives — and every code path on this type reads it from here rather than
+  /// standing up a second `VideoRecordStore` over the same file. That
+  /// discipline is what keeps "where does the video record live" answerable
+  /// in one place: a second call site that built its own store, even one
+  /// pointed at the identical path, would mean that answer could drift out
+  /// from under this one without either call site knowing.
   let videoRecordStore: VideoRecordStore
 
   /// Where a sweep's announcement goes. Injected so a test can read what
@@ -90,29 +97,29 @@ final class WatchPoller {
   /// rather than merely inconvenient.
   private let announce: (FindingAnnouncement.Message) -> Void
 
-  /// Both collaborators are injected rather than built here so a preview can
+  /// Every collaborator is injected rather than built here so a preview can
   /// supply a fixed answer without a network or a support directory.
   ///
-  /// `videoRecordStore` defaults to a fresh throwaway file, evaluated anew
-  /// for every call that omits it, rather than one fixed shared path: the
-  /// existing `WatchPoller` tests that never mention this property still
-  /// exercise `sweep()`, which now writes through it, and a single shared
-  /// path would make those tests race each other's files under parallel
-  /// execution. Each gets its own instead.
+  /// `videoRecordStore` has no default, for the same reason `store` and
+  /// `feed` do not: there is no value that is correct to fall back to. A
+  /// call site that omitted it would still sweep and still download —
+  /// nothing about the app would look broken — but every fact `record(
+  /// archives:forLogin:seenAt:into:)` writes would vanish into whatever the
+  /// default pointed at, silently, with no error and no failing test, until
+  /// someone eventually noticed that expired videos had stopped rendering.
+  /// That is precisely the failure this whole feature exists to prevent, so
+  /// the parameter is required rather than defaulted.
   init(
-    store: WatchStore, feed: ChannelFeed, now: @escaping () -> Date = Date.init,
-    videoRecordStore: VideoRecordStore = VideoRecordStore(
-      fileURL: URL.temporaryDirectory
-        .appending(path: "oxbow-unused-video-record-\(UUID().uuidString)")
-        .appending(path: "videos.json")),
+    store: WatchStore, feed: ChannelFeed, videoRecordStore: VideoRecordStore,
+    now: @escaping () -> Date = Date.init,
     announce: @escaping (FindingAnnouncement.Message) -> Void = { message in
       QueueHost.shared.notifyFindings(title: message.title, body: message.body)
     }
   ) {
     self.store = store
     self.feed = feed
-    self.now = now
     self.videoRecordStore = videoRecordStore
+    self.now = now
     self.announce = announce
   }
 
