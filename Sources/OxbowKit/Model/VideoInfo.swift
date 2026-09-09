@@ -130,6 +130,19 @@ public struct StreamQuality: Sendable, Equatable, Codable {
 /// the user pasted.
 public struct VideoInfo: Sendable, Equatable {
   public var streamer: String
+  /// The channel's login, as distinct from `streamer` (its display name).
+  ///
+  /// **The two are not interchangeable and one cannot be derived from the
+  /// other.** They are usually one word in two cases and sometimes unrelated —
+  /// a display name can be Japanese while the login is ASCII. `ChannelFeed`
+  /// keys everything on login, so this is the join key between a hand-pasted
+  /// video and a watched channel; lowercasing a display name to get it is the
+  /// "field that merely correlates" trap `docs/twitch-metadata.md` §6 is about.
+  ///
+  /// Optional because an older payload may not carry it, and because nil is
+  /// the honest answer when it is absent. Nothing blocks on it: a record with
+  /// no login simply is not claimed by any channel yet.
+  public var login: String?
   public var title: String
   public var createdAt: Date
   public var duration: Duration
@@ -196,6 +209,7 @@ public struct VideoInfo: Sendable, Equatable {
   /// any frames.
   public init(
     streamer: String,
+    login: String? = nil,
     title: String,
     createdAt: Date,
     duration: Duration,
@@ -204,6 +218,7 @@ public struct VideoInfo: Sendable, Equatable {
     hasDownloadableChat: Bool = true)
   {
     self.streamer = streamer
+    self.login = login
     self.title = title
     self.createdAt = createdAt
     self.duration = duration
@@ -230,6 +245,7 @@ public struct VideoInfo: Sendable, Equatable {
       let video = envelope.data.video
       return VideoInfo(
         streamer: video.owner.displayName,
+        login: video.owner.login,
         title: video.title,
         createdAt: video.createdAt,
         duration: .seconds(video.lengthSeconds),
@@ -246,6 +262,7 @@ public struct VideoInfo: Sendable, Equatable {
       let clip = envelope.data.clip
       return VideoInfo(
         streamer: clip.broadcaster.displayName,
+        login: clip.broadcaster.login,
         title: clip.title,
         createdAt: clip.createdAt,
         duration: .seconds(clip.durationSeconds),
@@ -478,6 +495,9 @@ private struct VideoInfoEnvelope: Decodable {
 
   struct OwnerEnvelope: Decodable {
     var displayName: String
+    /// Optional for the reason `thumbnailURLs` is: a payload without it must
+    /// cost one field, not the video's title and duration too.
+    var login: String?
   }
 }
 
@@ -524,6 +544,9 @@ private struct ClipInfoEnvelope: Decodable {
 
   struct BroadcasterEnvelope: Decodable {
     var displayName: String
+    /// Optional for the reason `thumbnailURLs` is: a payload without it must
+    /// cost one field, not the video's title and duration too.
+    var login: String?
   }
 
   struct AssetEnvelope: Decodable {
