@@ -266,6 +266,13 @@ final class QueueHost {
   private func attachStatusObservers(to controller: QueueController, supportDirectory: URL) {
     guard AppComposition.isUserSession else { return }
     guard let dock, let notifier else { return }
+    // The support directory is already resolved here, and `notifier` is
+    // already unwrapped — the same two facts that let `videoRecording` above
+    // be assigned rather than self-derived. `JobNotifier.init()` cannot do
+    // this itself: it can be built by `registerNotificationDelegate()` before
+    // this directory exists at all.
+    notifier.videoRecordStore = VideoRecordStore(
+      fileURL: AppComposition.videoRecordURL(supportDirectory: supportDirectory))
     let autoDownloadObserver = AutoDownloadObserver(
       store: WatchStore(fileURL: AppComposition.watchStoreURL(supportDirectory: supportDirectory)))
     controller.onSnapshot = { jobs in

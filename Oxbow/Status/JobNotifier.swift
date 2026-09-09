@@ -67,18 +67,25 @@ final class JobNotifier: NSObject, UNUserNotificationCenterDelegate {
 
   /// Where a settled job's outcome is written — see `apply(_:)`.
   ///
-  /// `nil` under `xcodebuild test`, for the same reason `center` is: a test
-  /// run hosts this app for real, and would otherwise write the developer's
-  /// own `videos.json` on every settled job in the suite.
-  private let videoRecordStore: VideoRecordStore?
+  /// Starts `nil` and is assigned by `QueueHost.attachStatusObservers`, the
+  /// same way `QueueHost.videoRecording` itself is populated: this type is
+  /// built before the support directory necessarily exists —
+  /// `registerNotificationDelegate()` can reach it well ahead of engine
+  /// resolution, precisely so a cold launch that later responds to a
+  /// notification is not dropped — so `init` has nothing to derive a store
+  /// from. By the time `attachStatusObservers` runs, the directory is already
+  /// resolved and handed straight in, which is also what makes the
+  /// self-constructed `AppComposition.defaultSupportDirectory()` call this
+  /// replaced redundant: that directory-creating I/O had already happened
+  /// once for this same launch.
+  ///
+  /// `nil` under `xcodebuild test`, for the same reason `center` is:
+  /// `attachStatusObservers` never runs in that case, so a test run never
+  /// writes the developer's own `videos.json` on a settled job in the suite.
+  var videoRecordStore: VideoRecordStore?
 
   override init() {
     center = AppComposition.isUserSession ? .current() : nil
-    videoRecordStore = AppComposition.isUserSession
-      ? (try? AppComposition.defaultSupportDirectory()).map {
-          VideoRecordStore(fileURL: AppComposition.videoRecordURL(supportDirectory: $0))
-        }
-      : nil
     super.init()
 
     guard let center else { return }
