@@ -74,6 +74,15 @@ final class WatchPoller {
   private let now: () -> Date
   private var loop: Task<Void, Never>?
 
+  /// Where a sweep writes down what it saw. See `record(archives:forLogin:
+  /// seenAt:into:)` — the write itself is a `static` function so it is
+  /// testable without a poller; this is only where a live poller's copy of
+  /// the store lives, mirroring `store` above.
+  ///
+  /// Task 13 also needs this property, so it is built once here rather than
+  /// standing up a second `VideoRecordStore` pointed at the same file later.
+  let videoRecordStore: VideoRecordStore
+
   /// Where a sweep's announcement goes. Injected so a test can read what
   /// would have been posted instead of posting it — the notification centre
   /// itself is unavailable under `xcodebuild test` anyway (see `JobNotifier
@@ -83,8 +92,19 @@ final class WatchPoller {
 
   /// Both collaborators are injected rather than built here so a preview can
   /// supply a fixed answer without a network or a support directory.
+  ///
+  /// `videoRecordStore` defaults to a fresh throwaway file, evaluated anew
+  /// for every call that omits it, rather than one fixed shared path: the
+  /// existing `WatchPoller` tests that never mention this property still
+  /// exercise `sweep()`, which now writes through it, and a single shared
+  /// path would make those tests race each other's files under parallel
+  /// execution. Each gets its own instead.
   init(
     store: WatchStore, feed: ChannelFeed, now: @escaping () -> Date = Date.init,
+    videoRecordStore: VideoRecordStore = VideoRecordStore(
+      fileURL: URL.temporaryDirectory
+        .appending(path: "oxbow-unused-video-record-\(UUID().uuidString)")
+        .appending(path: "videos.json")),
     announce: @escaping (FindingAnnouncement.Message) -> Void = { message in
       QueueHost.shared.notifyFindings(title: message.title, body: message.body)
     }
@@ -92,6 +112,7 @@ final class WatchPoller {
     self.store = store
     self.feed = feed
     self.now = now
+    self.videoRecordStore = videoRecordStore
     self.announce = announce
   }
 
@@ -120,7 +141,9 @@ final class WatchPoller {
           throw ChannelFeedError.malformedPayload(snippet: "")
         }
         return (data, http)
-      }))
+      }),
+      videoRecordStore: VideoRecordStore(
+        fileURL: AppComposition.videoRecordURL(supportDirectory: supportDirectory)))
   }
 
   /// Sweeps once now, then every `WatchPollPolicy.interval` for as long as the
@@ -225,6 +248,16 @@ final class WatchPoller {
       }
     }
     results = swept
+    // Explicitly `.found`, never the `archives` convenience getter: that
+    // getter flattens `.failed` to an empty array, and its own doc comment
+    // says it must never be the only signal a caller reads. Matching on
+    // `.found` here makes "a failed sweep records nothing" a deliberate
+    // statement rather than a coincidence of the flattening.
+    for result in swept {
+      guard case .found(let archives) = result.outcome else { continue }
+      Self.record(
+        archives: archives, forLogin: result.login, seenAt: now(), into: videoRecordStore)
+    }
     lastPolled = now()
     let submitted = await actOnFindings(watches: watches, results: swept)
 
@@ -497,5 +530,43 @@ final class WatchPoller {
     guard let index = current.firstIndex(where: { $0.login == login }) else { return }
     current[index] = current[index].marking([archiveID])
     try? store.save(current)
+  }
+
+  /// Records the facts a sweep learned about every archive it saw.
+  ///
+  /// **Every archive, not just the unseen ones.** The record is what makes an
+  /// expired video still render, and an archive already downloaded is exactly
+  /// the one worth keeping — filtering here would repeat the shape of the bug
+  /// that made `WatchPoll.sweep` return `findings(in:)` and erased completed
+  /// downloads before any consumer saw them.
+  ///
+  /// **Best effort, like every other writer's use of a store here.** Nothing
+  /// in a sweep has a surface to show a person a save failure, and a lost write
+  /// costs a row some fields until the next sweep — never a download.
+  ///
+  /// `static` and taking its store as a parameter so it is testable without
+  /// standing up a poller.
+  static func record(
+    archives: [ChannelArchive],
+    forLogin login: String,
+    seenAt: Date,
+    into store: VideoRecordStore)
+  {
+    guard !archives.isEmpty else { return }
+    guard var library = try? store.load() else { return }
+
+    for archive in archives {
+      library.record(VideoRecord(
+        id: archive.id,
+        login: login,
+        title: archive.title,
+        durationSeconds: Int(archive.duration.components.seconds),
+        publishedAt: archive.publishedAt,
+        categoryName: archive.categoryName,
+        thumbnailURLs: [archive.thumbnailURL].compactMap { $0 },
+        lastSeenOnTwitch: seenAt))
+    }
+
+    try? store.save(library)
   }
 }
