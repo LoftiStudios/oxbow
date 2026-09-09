@@ -208,10 +208,26 @@ Two things do remove:
 - **Clearing the queue** removes nothing. A cleared job is not a statement
   about the video.
 
-**Images are then expunged by an unreferenced scan** — one pass over the
-record, delete any stored image no row names. This is why removing a watch has
+**Images are then expunged by an unreferenced scan** — one pass over the image
+store, deleting anything outside the keep-set. This is why removing a watch has
 to remove rows at all: with nothing ever removed, nothing could ever become
 unreferenced and the store could only grow.
+
+**The keep-set is both halves of what the store holds**, and getting this
+wrong is the easy mistake: the surviving rows' thumbnails **union** the
+surviving watches' avatars. One directory backs two kinds of image (§6), and
+the record only knows about the first — a row names its thumbnails, and
+nothing anywhere names an avatar except the watch itself. So "delete any
+stored image no row names" is not the rule; read that way, un-watching one
+channel declares every *other* watched channel's avatar an orphan and deletes
+it. Nothing is lost forever — `avatarURL` is in `watches.json` and the next
+draw re-fetches — but re-fetching is the thing this store exists to avoid. A
+cold launch with the network down is supposed to still look like the design,
+and after an un-watch it would not.
+
+The union has to be assembled by a caller that holds both, because neither
+half can see the other: the record has never heard of a watch, and the watch
+list has never heard of a row.
 
 The scale makes this relaxed rather than urgent. A thumbnail is about 15 KB
 and an avatar about 150 KB against VODs measured in gigabytes; a few hundred

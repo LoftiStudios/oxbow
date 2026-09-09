@@ -216,7 +216,15 @@ public struct VideoLibrary: Equatable, Sendable, Codable {
     }
   }
 
-  /// Every image URL a surviving row still names — the keep-set for the purge.
+  /// Every image URL a surviving row still names — the record's half of the
+  /// purge keep-set, and only that half.
+  ///
+  /// The image store also holds watched channels' avatars, which no row ever
+  /// names and which this type has no way of knowing about: a record does not
+  /// know what is being watched. A caller that purges against this set alone
+  /// deletes every avatar in the store. The union with the surviving watches'
+  /// avatars belongs to whoever holds both — see
+  /// `docs/design/video-record.md` §3.6.
   public func referencedImageURLs() -> Set<URL> {
     Set(videos.values.flatMap(\.thumbnailURLs))
   }

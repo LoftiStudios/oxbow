@@ -505,8 +505,14 @@ final class WatchingModel {
       return
     }
 
+    // Held onto rather than written inline, because the purge further down
+    // needs the same list: these are the channels still being watched, and
+    // their avatars are half of what the image store is still legitimately
+    // holding.
+    let surviving = existing.filter { $0.login != login }
+
     do {
-      try store.save(existing.filter { $0.login != login })
+      try store.save(surviving)
     } catch {
       stopWatchingFailure = "Oxbow could not save the watch list: \(error.localizedDescription)"
       return
@@ -554,8 +560,23 @@ final class WatchingModel {
       // purge is cleanup, not part of the record write. Nothing else reads
       // the image directory for correctness, so it is free to be asynchronous
       // and to land whenever it lands.
+      //
+      // **The keep-set is both halves of what the store holds.** One
+      // `ImageStore` directory backs two kinds of image: a row's thumbnails,
+      // and a watched channel's avatar (`ChannelCard` draws it through the
+      // same store). The record knows only the first — `referencedImageURLs`
+      // is a method on the video record, and the record has never heard of a
+      // watch — so handing it over alone declares every other channel's
+      // avatar an orphan and deletes it. Not data loss: `avatarURL` survives
+      // in `watches.json` and the next draw re-fetches. But re-fetching is
+      // exactly what the store exists to avoid — a cold launch with the
+      // network down should still look like the design, and after an
+      // un-watch it would not. The union is assembled here because this is
+      // the only place that holds both halves at once
+      // (`docs/design/video-record.md` §3.6).
       if (try? videoRecordStore.save(library)) != nil {
-        purgeImages(library.referencedImageURLs())
+        purgeImages(library.referencedImageURLs()
+          .union(surviving.compactMap(\.avatarURL)))
       }
     }
 

@@ -18,10 +18,12 @@ struct WatchingModelTests {
     settings: Watch.Settings = .init(
       destinationPath: "/Users/x/Downloads", qualityCap: .best,
       output: .videoWithChat, chatSize: .medium),
-    downloadsAutomatically: Bool = false
+    downloadsAutomatically: Bool = false,
+    avatarURL: URL? = nil
   ) -> Watch {
     Watch(login: login, displayName: login.capitalized,
-          settings: settings, downloadsAutomatically: downloadsAutomatically, seen: seen)
+          settings: settings, downloadsAutomatically: downloadsAutomatically, seen: seen,
+          avatarURL: avatarURL)
   }
 
   /// A `WatchStore` whose file is actually a directory — `WatchStore.load()`
@@ -29,6 +31,14 @@ struct WatchingModelTests {
   /// recovered internally, so it never propagates), the same trick
   /// `AddChannelModelTests` uses to reach `AddChannelModel.add()`'s own
   /// read-failure branch.
+  private func unreadableStore() throws -> WatchStore {
+    let file = URL.temporaryDirectory
+      .appending(path: "watching-\(UUID().uuidString)")
+      .appending(path: "watches.json")
+    try FileManager.default.createDirectory(at: file, withIntermediateDirectories: true)
+    return WatchStore(fileURL: file)
+  }
+
   /// A `VideoRecordStore` over a file that does not exist yet — `load()`
   /// answers an empty library, and `save` creates the directory on the way
   /// out, so every test gets a private record with nothing in it.
@@ -38,12 +48,31 @@ struct WatchingModelTests {
       .appending(path: "videos.json"))
   }
 
-  private func unreadableStore() throws -> WatchStore {
-    let file = URL.temporaryDirectory
-      .appending(path: "watching-\(UUID().uuidString)")
-      .appending(path: "watches.json")
-    try FileManager.default.createDirectory(at: file, withIntermediateDirectories: true)
-    return WatchStore(fileURL: file)
+  /// A `VideoRecordStore` seeded with `library`, in a directory that is then
+  /// made read-only — `load()` keeps working and `save` throws.
+  ///
+  /// The record store's exact counterpart to `writeProtectedStore(seeding:)`
+  /// below, for the identical reason and against an identical `save`:
+  /// `VideoRecordStore.save` also writes a scratch file into the parent
+  /// directory before its atomic replace, and 0o500 (r-x) keeps read and
+  /// traversal while dropping the write bit that scratch file needs.
+  ///
+  /// Not `unreadableStore()`'s directory-as-file trick, which would be the
+  /// wrong branch twice over: `VideoRecordStore.load` recovers a file it
+  /// cannot read by setting it aside and answering an empty library, so that
+  /// shape makes the load *succeed* — and, having moved the directory out of
+  /// the way, leaves the following `save` free to succeed as well.
+  private func writeProtectedRecordStore(seeding library: VideoLibrary) throws
+    -> VideoRecordStore
+  {
+    let dir = URL.temporaryDirectory.appending(path: "watching-records-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    let store = VideoRecordStore(fileURL: dir.appending(path: "videos.json"))
+    // Seeded while the directory is still writable — `store.save` from
+    // `stopWatching` is the one write this fixture exists to break.
+    try store.save(library)
+    try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: dir.path)
+    return store
   }
 
   private func archive(_ id: String) -> ChannelArchive {
@@ -916,6 +945,97 @@ struct WatchingModelTests {
     // The keep-set, not the drop-set: the store is keyed by a one-way hash,
     // so what survives is named forward and everything else goes.
     #expect(purged == [kept])
+  }
+
+  /// **The bug this pins: un-watching one channel wiped every other
+  /// channel's avatar.** One `ImageStore` directory holds two kinds of image
+  /// — a row's thumbnails and a watched channel's avatar (`ChannelCard` draws
+  /// the avatar through that same store) — and only the first kind is named
+  /// by anything in the video record. So a keep-set built from
+  /// `referencedImageURLs()` alone declares every avatar in the store an
+  /// orphan, and the first stop of any channel deletes all of them.
+  ///
+  /// Recoverable but wrong: `avatarURL` stays in `watches.json`, so the next
+  /// draw re-fetches. Re-fetching is the thing the store exists to avoid —
+  /// a cold launch with the network down is meant to still look like the
+  /// design (`docs/design/video-record.md` §3.6, §6).
+  ///
+  /// The stopped channel's own avatar is *not* in the keep-set, and that is
+  /// the point of asserting the exact set rather than a `contains`: it is no
+  /// longer referenced by anything, which is precisely what makes it
+  /// collectable.
+  @Test func stoppingAChannelKeepsTheAvatarsOfChannelsStillBeingWatched() throws {
+    let ninjaAvatar = URL(string: "https://cdn/ninja-avatar.png")!
+    let day9Avatar = URL(string: "https://cdn/day9tv-avatar.png")!
+    let thumbnail = URL(string: "https://cdn/kept.jpg")!
+    let store = temporaryStore()
+    try store.save([
+      watch("ninja", avatarURL: ninjaAvatar),
+      watch("day9tv", avatarURL: day9Avatar),
+    ])
+    let records = temporaryRecordStore()
+    var library = VideoLibrary()
+    library.record(VideoRecord(
+      id: "3", login: "day9tv", thumbnailURLs: [thumbnail]))
+    library.record(VideoRecord(
+      id: "2", login: "ninja", thumbnailURLs: [URL(string: "https://cdn/dropped.jpg")!]))
+    try records.save(library)
+    var purged: Set<URL>?
+    let model = WatchingModel(
+      store: store, videoRecordStore: records, openIntake: { _, _ in },
+      purgeImages: { purged = $0 })
+
+    model.stopWatching("ninja")
+
+    #expect(purged == [thumbnail, day9Avatar],
+            "a still-watched channel's avatar is still referenced")
+  }
+
+  /// **The guard on the record save, which nothing else reaches.**
+  /// `aRefusedStopLeavesTheRecordAndTheImagesAlone` below breaks the *watch*
+  /// store, which returns long before the record block runs. This breaks the
+  /// record store's `save` instead, so the purge's own precondition is what
+  /// is under test.
+  ///
+  /// Why the guard matters: `removeWatch` drops rows in memory, and the
+  /// keep-set is computed from that mutated copy. If the save then fails, the
+  /// file on disk still names every row this call dropped only in memory —
+  /// so purging against the in-memory keep-set would delete images that live,
+  /// still-present rows point at. For a video that has expired off Twitch the
+  /// stored thumbnail is the only copy left.
+  ///
+  /// Asserts the load kept working, so this is unambiguously the save branch
+  /// and not a record that could not be read at all.
+  @Test func aFailedRecordSaveLeavesTheImagesAlone() throws {
+    let dropped = URL(string: "https://cdn/dropped.jpg")!
+    let store = temporaryStore()
+    try store.save([watch("ninja")])
+    var library = VideoLibrary()
+    library.record(VideoRecord(id: "2", login: "ninja", thumbnailURLs: [dropped]))
+    let records = try writeProtectedRecordStore(seeding: library)
+    let dir = records.fileURL.deletingLastPathComponent()
+    defer {
+      // Restore the write bit before cleanup — `removeItem` on a read-only
+      // directory would itself fail and leak the fixture.
+      try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: dir.path)
+      try? FileManager.default.removeItem(at: dir)
+    }
+    #expect(try records.load().videos["2"] != nil, "precondition: the load must still succeed")
+
+    var purged = false
+    let model = WatchingModel(
+      store: store, videoRecordStore: records, openIntake: { _, _ in },
+      purgeImages: { _ in purged = true })
+
+    model.stopWatching("ninja")
+
+    #expect(try records.load().videos["2"] != nil,
+            "the save must have actually failed — the row is still on disk")
+    #expect(!purged, "a row still on disk still names its thumbnail")
+    // The watch list itself was saved before any of this, and stays saved:
+    // the record is best effort, and a record that would not write is not a
+    // reason to put a channel back that the user asked to stop watching.
+    #expect(try store.load().isEmpty)
   }
 
   /// A stop that refused left the channel watched — so its rows are still a
