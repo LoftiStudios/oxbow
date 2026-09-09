@@ -2,6 +2,12 @@
 
 **Status:** design, written 2026-09-07. **Stages 1 (§7.1) and 2 (§7.2) implemented**; stage 3 not started.
 
+**Amended 2026-09-09 by `docs/design/video-record.md`**, which generalises the
+per-channel store proposed in §3 into one record of every video Oxbow has
+touched. §3, §4.2, §6, §7.3 and §8 below are superseded where the two
+disagree; §1, §2, §5 and §10 stand. Read that document for the record's shape,
+and this one for what a watched channel does with it.
+
 `docs/design/channel-watching.md` built the watcher. This describes what a
 watched channel should *look* like once it has been watching for a while, and
 the record that has to exist behind it. Where that document and this one
@@ -56,6 +62,12 @@ stops claiming it.
 ---
 
 ## 3. The record
+
+> **Superseded by `video-record.md` §3.** The store is no longer keyed by
+> channel login; it is one row per video, and the states below become the
+> *watch-state* half of that row (`video-record.md` §3.2). A video pasted by
+> hand has video facts and no watch state. What follows is kept because §3.1's
+> six states and §3.2's migration are carried forward verbatim.
 
 A store of its own, keyed by channel login, separate from `watches.json`.
 
@@ -151,6 +163,14 @@ you could fetch, as long as Twitch still has it.
 
 ### 4.2 A disconnected volume is one condition with two expressions
 
+> **Corrected by `video-record.md` §5.2.** This section makes the disconnected
+> volume a *channel-level* state. Once rows are general, one channel's rows can
+> sit on several volumes — a VOD pasted by hand into `~/Downloads` and a watch
+> pointed at a NAS — and a whole-channel banner is then wrong in both
+> directions: it hides a file you can open right now, and it implies a channel
+> has one home. Reachability is a property of a path. The banner keeps only
+> what it actually knows: new downloads have nowhere to go.
+
 If the destination is not mounted, the channel already demotes to notify-only —
 `AutoDownloadPolicy.Reason.destinationUnreachable` exists and fires today. New
 archives cannot be fetched *and* old ones cannot be verified, and both follow
@@ -204,6 +224,11 @@ Removing it should be removing one function and one label.
 ---
 
 ## 6. Images
+
+> **Extended by `video-record.md` §6.** The caching rule below is unchanged.
+> What it did not settle: a VOD's `info` payload carries four sampled frames
+> and the sweep carries one, and that difference is kept rather than levelled.
+> §3.6 there supplies the deletion rule this stage was written to wait for.
 
 Thumbnails already arrive on the sweep — `previewThumbnailURL(width: 320,
 height: 180)` — and are currently used and discarded. Avatars do not; they
@@ -428,6 +453,11 @@ returned nil and would have answered `.absent`, offering to re-download a
 drive's entire contents while the drive sat in a drawer.
 
 ### 7.3 The store
+
+> **Superseded by `video-record.md` §10**, which splits this stage into four:
+> the store, Get Info moving to the video, selection and ⌘I in the Watching
+> pane, and the per-path reachability correction. The paragraph below still
+> describes what the store is *for*.
 
 Replaces §7.2's derivation. Also owns image deletion: when a channel's
 history goes away, its images go with it — see §7.1 for why that is the
