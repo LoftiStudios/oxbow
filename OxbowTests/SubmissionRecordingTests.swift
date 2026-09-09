@@ -94,4 +94,153 @@ struct SubmissionRecordingTests {
     #expect(try records.load().videos["1"]?.qualities.count == 1)
     #expect(payloads.payload(for: "1") == nil)
   }
+
+  // MARK: - The two routes that actually record
+
+  /// Temp stores in their own directory, so a suite run touches nothing the
+  /// developer owns. `VideoRecording`'s memberwise init is internal and this
+  /// suite is `@testable`, which is the whole reason the wired paths can be
+  /// driven at all: `QueueHost.videoRecording` is deliberately nil under
+  /// `xcodebuild test`, so the only way to watch a submission reach the record
+  /// is to hand it a handle of one's own.
+  private func makeRecording(in directory: URL) -> VideoRecording {
+    VideoRecording(
+      records: VideoRecordStore(fileURL: directory.appending(path: "videos.json")),
+      payloads: PayloadStore(directory: directory.appending(path: "payloads")))
+  }
+
+  /// A model wired to `fetched`, enqueueing into nothing.
+  ///
+  /// Every collaborator that would otherwise read the machine is stubbed, for
+  /// the reasons `IntakeModelTests` gives at each: a pinned calendar so
+  /// `OutputNaming` does not date the job in the CI runner's zone, an
+  /// in-memory preference store with `directoryExists` stubbed true so the
+  /// destination does not fall back to a real `~/Downloads`, and a terabyte
+  /// free so no disk warning depends on the volume this runs on.
+  ///
+  /// `output` is pinned to `.video` so that neither `chatProblem` nor
+  /// `compositeProblem` can refuse the submission. What is under test here is
+  /// where the record gets written, not which outputs a video supports; those
+  /// rules have their own suites.
+  private func makeModel() -> IntakeModel {
+    var preferences = Preferences(
+      store: InMemoryPreferenceStore(),
+      homeDirectory: URL(filePath: "/Users/t"),
+      directoryExists: { _ in true })
+    preferences.output = .video
+
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = TimeZone(identifier: "America/Los_Angeles")!
+
+    let payload = fetched
+    return IntakeModel(
+      fetchInfo: { _ in payload },
+      enqueue: { _, _ in },
+      calendar: calendar,
+      fileExists: { _ in false },
+      volumeSpace: VolumeSpace(
+        availableBytes: { _ in 1_000_000_000_000 },
+        volumeRoot: { _ in URL(filePath: "/") },
+        volumeName: { _ in "Macintosh HD" }),
+      preferences: preferences)
+  }
+
+  /// The Shortcuts, Spotlight and watched-channel route. `VideoRecorder` is
+  /// covered above in isolation; this is the assertion that a real submission
+  /// reaches it, which nothing made before — `QueueHost.videoRecording` being
+  /// nil under test meant the wiring itself was only ever read, never run.
+  @Test("a submission through the intent path lands a record and its payload")
+  func theIntentPathRecords() async throws {
+    let directory = temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let recording = makeRecording(in: directory)
+
+    _ = try await IntentSubmission.submit(
+      link: "https://twitch.tv/videos/2844787557",
+      quality: nil, output: nil, chatSize: nil, destination: nil,
+      into: makeModel(), recording: recording, helperVersion: "1.56.5")
+
+    let library = try recording.records.load()
+    #expect(library.videos["2844787557"]?.login == "wheelyf")
+    #expect(library.videos["2844787557"]?.title == "day 46")
+    #expect(library.videos["2844787557"]?.payloadHelperVersion == "1.56.5")
+    #expect(recording.payloads.payload(for: "2844787557") == fetched.payload)
+  }
+
+  /// The hand-pasted route, which is the case the record exists for
+  /// (`docs/design/video-record.md` §3.5): grab a channel's video by hand
+  /// today, add that channel as a watch later, and the row should already know
+  /// you have it. Add Download used to call `IntakeModel.add()` directly and
+  /// so recorded nothing at all, and no test noticed because the only covered
+  /// route was the intent's.
+  ///
+  /// Drives `IntakeAdd.perform` — every line of the window's Add button that
+  /// is not `isAdding`, `dismiss()` or the defaults checkbox.
+  @Test("pressing Add on a pasted link lands a record and its payload")
+  func theAddDownloadPathRecords() async throws {
+    let directory = temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let recording = makeRecording(in: directory)
+
+    let model = makeModel()
+    model.linkText = "https://twitch.tv/videos/2844787557"
+    await model.load()
+
+    let didAdd = await IntakeAdd.perform(
+      model, recording: recording, helperVersion: "1.56.5")
+
+    #expect(didAdd)
+    let library = try recording.records.load()
+    #expect(library.videos["2844787557"]?.login == "wheelyf")
+    #expect(library.videos["2844787557"]?.qualities.first?.name == "1080p60")
+    #expect(recording.payloads.payload(for: "2844787557") == fetched.payload)
+  }
+
+  /// **The rule the whole arrangement exists to keep**: a link that was
+  /// looked at and abandoned leaves nothing behind (§3.5). `load()` runs on
+  /// every debounced keystroke, so recording there would file every link
+  /// anybody ever pasted into the window.
+  ///
+  /// This is the automated half of that guarantee. The other half is
+  /// structural and stronger: `IntakeModel` references no `VideoRecordStore`,
+  /// no `PayloadStore` and no `VideoRecording`, so `load()` has nothing it
+  /// could write with. Keep it that way — moving the store onto the model to
+  /// make some future call site tidier would delete the guarantee and leave
+  /// only this test standing between a paste and a permanent record.
+  @Test("a fetch with no Add behind it records nothing")
+  func lookingAtALinkRecordsNothing() async throws {
+    let directory = temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let recording = makeRecording(in: directory)
+
+    let model = makeModel()
+    model.linkText = "https://twitch.tv/videos/2844787557"
+    await model.load()
+
+    // The fetch landed — this is a real look at a real video, not a model
+    // that failed to do anything.
+    #expect(model.lastFetch != nil)
+    #expect(try recording.records.load().videos.isEmpty)
+    #expect(recording.payloads.payload(for: "2844787557") == nil)
+  }
+
+  /// A refused enqueue must leave no record either: §3.5 is about videos that
+  /// were downloaded, and a job that was never composed is not one. The link
+  /// here is never `load()`ed, so there is no resolved quality to compose
+  /// from and `add()` refuses.
+  @Test("an add that fails records nothing")
+  func aRefusedAddRecordsNothing() async throws {
+    let directory = temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let recording = makeRecording(in: directory)
+
+    let model = makeModel()
+    model.linkText = "https://twitch.tv/videos/2844787557"
+
+    let didAdd = await IntakeAdd.perform(
+      model, recording: recording, helperVersion: "1.56.5")
+
+    #expect(!didAdd)
+    #expect(try recording.records.load().videos.isEmpty)
+  }
 }

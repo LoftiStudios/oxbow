@@ -819,15 +819,27 @@ struct IntakeWindow: View {
 
   // MARK: - Actions
 
-  /// Dismisses only once the job is in the engine. `model.add()` awaits the
-  /// enqueue all the way in and reports whether it landed; a refusal leaves
-  /// the sheet open with its reason on screen. The checkbox's own save is
-  /// gated on that same success (§2.3), so it lands here rather than inside
-  /// `model.add()` itself.
+  /// Dismisses only once the job is in the engine. `IntakeAdd.perform` awaits
+  /// the enqueue all the way in and reports whether it landed; a refusal
+  /// leaves the sheet open with its reason on screen. The checkbox's own save
+  /// is gated on that same success (§2.3), so it lands here rather than
+  /// inside `model.add()` itself.
+  ///
+  /// **Through `IntakeAdd` rather than straight to `model.add()`, so that a
+  /// hand-pasted download is recorded like any other.** This is the case the
+  /// video record exists for (`docs/design/video-record.md` §3.5): you grab a
+  /// channel's video by hand today, add that channel as a watch later, and
+  /// the row should already know you have it. The recording handle comes from
+  /// `QueueHost` for the reason `ArchiveSubmission` gives — it is the one
+  /// place that resolves the support directory, and it is nil outside a user
+  /// session, so a test run or a preview writes nothing.
   private func add() {
     isAdding = true
     Task {
-      let didAdd = await model.add()
+      let didAdd = await IntakeAdd.perform(
+        model,
+        recording: QueueHost.shared.videoRecording,
+        helperVersion: AboutInfo.main.helperVersion)
       isAdding = false
       if didAdd {
         // After the enqueue succeeds and never before it (§2.3) —
