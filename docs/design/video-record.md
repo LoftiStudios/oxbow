@@ -89,7 +89,7 @@ today is what makes this whole design cheap.
 | `login` | §3.4 | Which channel produced it. Nil until resolved. |
 | `title`, `duration`, `publishedAt` | both | So an expired video still renders. |
 | `qualities` | `info` only | What it was available at, for a video that no longer is. |
-| `categoryName` | sweep | What was being played. Whether the `info` payload also carries it is unmeasured; §3.3 is why that costs nothing to find out later. |
+| `categoryName` | both | What was being played. |
 | `thumbnails` | both | Image-store keys, §6. |
 | `deliveredPath` | the job | Where the download landed. §5 checks it. |
 | `lastSeenOnTwitch` | sweep | Absent from the newest sweep means expired. |
@@ -120,13 +120,19 @@ split is worth drawing.
 --format Raw` writes three parts on stdout: a line of video-info JSON, a line
 of **moments** JSON, and an m3u8 master playlist. Of those:
 
-- the moments line is **not parsed at all** — those are the in-broadcast
-  chapter markers, the category changes and their offsets, and nothing in
-  Oxbow has ever read one;
+- the moments line is **not parsed at all**. Measured on VOD 2844787557: it is
+  `data.video.moments.edges`, each node carrying `type` (`GAME_CHANGE`),
+  `positionMilliseconds`, `durationMilliseconds`, `description`,
+  `subDescription` and its own `thumbnailURL`. That is a chapter list with
+  artwork. The VOD measured is a single-game stream and returned one moment,
+  so the multi-entry case is inferred from the `GAME_CHANGE` type rather than
+  observed;
 - the m3u8 is read for `RESOLUTION` and `BANDWIDTH` only, ignoring the codec
   and framerate attributes on the same lines;
 - the video-info JSON goes through `VideoInfoEnvelope`, which decodes five
-  fields and lets everything else past unread.
+  fields. Measured, the node also carries **`game`** (`{id, displayName,
+  boxArtURL}`, the box art a `{width}x{height}` template), **`viewCount`**,
+  **`description`** and **`status`** — all currently read by nothing.
 
 Parse-and-discard freezes today's field set into the archive. A later feature
 that wants chapter markers could have them for videos downloaded after it
@@ -135,7 +141,8 @@ record is for.
 
 So the payload is stored verbatim, in `payloads/<id>.txt` beside the JSON
 rather than inside it, with the helper version that produced it recorded on
-the row. A few KB against files measured in gigabytes.
+the row. **Measured at 3.4 KB** for the VOD above — against files measured in
+gigabytes.
 
 **The version stamp is load-bearing.** `VideoInfo`'s own doc comment is
 explicit that `--format Raw`'s shape is not a stable upstream contract. For a
@@ -159,11 +166,16 @@ Lowercasing a display name to get a login is exactly the "field that merely
 correlates with what you want to know" trap `docs/twitch-metadata.md` §6 is
 about. It must not be done.
 
-**To measure before implementing:** whether the CLI's video-info JSON already
-carries `owner.login` alongside `owner.displayName`. If it does, widen
-`VideoInfoEnvelope` by one field and the problem is over. If it does not, a
-video's login comes from one GraphQL `video(id:)` lookup, made once per row
-and cached with it.
+**Measured 2026-09-09, helper 1.56.5, VOD 2844787557: it does.** The payload's
+`data.video.owner` is `{id, displayName, login}` — the login is right there,
+one field away, unread only because `VideoInfoEnvelope` never asked for it. So
+`VideoInfo` gains a `login` and the GraphQL lookup this section was going to
+need does not exist.
+
+`owner.id` is there too, and is the more durable key — a login can be changed
+by its owner, a numeric id cannot. Not adopted here, because `Watch` is keyed
+on login throughout and re-keying the watcher is a separate change with its
+own reasons. Worth knowing the option is available and costs one more field.
 
 Until a login is resolved, `login` is nil and the row is simply not claimed by
 any channel. It still renders in Get Info. This is a **degraded state, not a
@@ -443,10 +455,7 @@ counter survives at all.
 
 ---
 
-## 11. Open questions
+## 11. Open question
 
-1. **Does the CLI's video-info JSON carry `owner.login`?** (§3.4) Decides
-   between widening one envelope and adding a GraphQL lookup. Measure before
-   implementing 3a.
-2. **Does the `4/20` counter survive?** `channel-history.md` §5.3 built it to
-   be deleted and put it at roughly even odds. Nothing here changes that.
+**Does the `4/20` counter survive?** `channel-history.md` §5.3 built it to be
+deleted and put it at roughly even odds. Nothing here changes that.
