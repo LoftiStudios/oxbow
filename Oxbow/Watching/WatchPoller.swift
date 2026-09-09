@@ -140,8 +140,17 @@ final class WatchPoller {
     configuration.timeoutIntervalForRequest = 15
     configuration.waitsForConnectivity = false
     let session = URLSession(configuration: configuration)
+    let watchStore = WatchStore(
+      fileURL: AppComposition.watchStoreURL(supportDirectory: supportDirectory))
+    let videoRecordStore = VideoRecordStore(
+      fileURL: AppComposition.videoRecordURL(supportDirectory: supportDirectory))
+    // Run once per launch, against the one `VideoRecordStore` this app ever
+    // builds for this file — see that property's own doc comment for why a
+    // second instance over the same path is never the fix here, even for a
+    // one-off migration read.
+    migrateSeenIfNeeded(watches: (try? watchStore.load()) ?? [], into: videoRecordStore)
     return WatchPoller(
-      store: WatchStore(fileURL: AppComposition.watchStoreURL(supportDirectory: supportDirectory)),
+      store: watchStore,
       feed: ChannelFeed(fetch: { request in
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse else {
@@ -149,8 +158,25 @@ final class WatchPoller {
         }
         return (data, http)
       }),
-      videoRecordStore: VideoRecordStore(
-        fileURL: AppComposition.videoRecordURL(supportDirectory: supportDirectory)))
+      videoRecordStore: videoRecordStore)
+  }
+
+  /// Folds each watch's stored `seen` set into the record.
+  ///
+  /// **Safe to run on every launch**, which is why it has no "have I run
+  /// already" flag to get wrong: `SeenMigration.migrate` never overwrites a
+  /// state already recorded, so a second run is a no-op over real progress
+  /// (`docs/design/channel-history.md` §3.2).
+  ///
+  /// `seen` is deliberately left on disk rather than cleared. It is small, it
+  /// costs nothing, and leaving it means a bad migration is recoverable by
+  /// deleting `videos.json` — a one-way trip that does not have to be pretty
+  /// still benefits from being reversible while the feature is unshipped.
+  static func migrateSeenIfNeeded(watches: [Watch], into store: VideoRecordStore) {
+    guard let library = try? store.load() else { return }
+    let migrated = SeenMigration.migrate(watches: watches, into: library)
+    guard migrated != library else { return }
+    try? store.save(migrated)
   }
 
   /// Sweeps once now, then every `WatchPollPolicy.interval` for as long as the

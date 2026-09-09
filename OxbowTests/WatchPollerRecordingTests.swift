@@ -149,4 +149,49 @@ struct WatchPollerRecordingTests {
     #expect(library.videos.count == 1)
     #expect(library.videos["1"]?.lastSeenOnTwitch == seenBefore)
   }
+
+  /// Nothing calls the migration until this does, and a watch whose archives
+  /// never migrate would be offered every one of them again.
+  @Test("migrating at launch turns a stored seen-set into skipped state")
+  func migrationRunsAtLaunch() throws {
+    let file = temporaryFile()
+    defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
+    let store = VideoRecordStore(fileURL: file)
+
+    let watch = Watch(
+      login: "wheelyf", displayName: "WheelyF",
+      settings: .init(destinationPath: "/tmp", qualityCap: .p720,
+                      output: .video, chatSize: .large),
+      downloadsAutomatically: false, seen: ["1", "2"])
+
+    WatchPoller.migrateSeenIfNeeded(watches: [watch], into: store)
+
+    let library = try store.load()
+    #expect(library.seenIDs(forLogin: "wheelyf") == ["1", "2"])
+    #expect(library.watchStates["1"] == .skipped)
+  }
+
+  /// Launching twice must not demote real progress back to skipped.
+  @Test("migrating twice leaves recorded progress alone")
+  func migrationIsSafeToRepeat() throws {
+    let file = temporaryFile()
+    defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
+    let store = VideoRecordStore(fileURL: file)
+
+    let watch = Watch(
+      login: "wheelyf", displayName: "WheelyF",
+      settings: .init(destinationPath: "/tmp", qualityCap: .p720,
+                      output: .video, chatSize: .large),
+      downloadsAutomatically: false, seen: ["1"])
+
+    WatchPoller.migrateSeenIfNeeded(watches: [watch], into: store)
+
+    var library = try store.load()
+    library.setState(.downloaded, for: "1")
+    try store.save(library)
+
+    WatchPoller.migrateSeenIfNeeded(watches: [watch], into: store)
+
+    #expect(try store.load().watchStates["1"] == .downloaded)
+  }
 }
