@@ -181,11 +181,25 @@ final class JobNotifier: NSObject, UNUserNotificationCenterDelegate {
   }
 
   func apply(_ jobs: [Job]) {
-    guard let center else { return }
-
     // A job absent from `baseline` never fires, which is what makes the first
     // snapshot seed silently — see `NotificationDecision.events(from:to:)`.
     for event in NotificationDecision.events(from: baseline, to: jobs) {
+      // Where a download landed is not a notification concern, so this does
+      // not wait on `center` below — recording it happens for every event,
+      // whether or not a banner can be posted about it. The record write
+      // rides this diff rather than computing its own: `events(from:to:)` is
+      // already the one answer to "what just changed", and a second observer
+      // would be a second answer.
+      if let videoRecordStore,
+        let identifier = jobs.first(where: { $0.id == event.job })?.mediaIdentifier
+      {
+        VideoRecorder.recordCompletion(
+          mediaIdentifier: identifier, outcome: event.outcome,
+          files: event.files, into: videoRecordStore)
+      }
+
+      guard let center else { continue }
+
       let content = UNMutableNotificationContent()
       switch event.outcome {
       case .finished:
@@ -204,17 +218,6 @@ final class JobNotifier: NSObject, UNUserNotificationCenterDelegate {
         identifier: event.job.rawValue.uuidString,
         content: content,
         trigger: nil))
-
-      // The record write rides this diff rather than computing its own.
-      // `events(from:to:)` is already the one answer to "what just changed",
-      // and a second observer would be a second answer.
-      if let videoRecordStore,
-        let identifier = jobs.first(where: { $0.id == event.job })?.mediaIdentifier
-      {
-        VideoRecorder.recordCompletion(
-          mediaIdentifier: identifier, outcome: event.outcome,
-          files: event.files, into: videoRecordStore)
-      }
     }
 
     baseline = NotificationDecision.statuses(of: jobs)
