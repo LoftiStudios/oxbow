@@ -65,8 +65,20 @@ final class JobNotifier: NSObject, UNUserNotificationCenterDelegate {
   /// method cannot forget the check.
   private let center: UNUserNotificationCenter?
 
+  /// Where a settled job's outcome is written — see `apply(_:)`.
+  ///
+  /// `nil` under `xcodebuild test`, for the same reason `center` is: a test
+  /// run hosts this app for real, and would otherwise write the developer's
+  /// own `videos.json` on every settled job in the suite.
+  private let videoRecordStore: VideoRecordStore?
+
   override init() {
     center = AppComposition.isUserSession ? .current() : nil
+    videoRecordStore = AppComposition.isUserSession
+      ? (try? AppComposition.defaultSupportDirectory()).map {
+          VideoRecordStore(fileURL: AppComposition.videoRecordURL(supportDirectory: $0))
+        }
+      : nil
     super.init()
 
     guard let center else { return }
@@ -185,6 +197,17 @@ final class JobNotifier: NSObject, UNUserNotificationCenterDelegate {
         identifier: event.job.rawValue.uuidString,
         content: content,
         trigger: nil))
+
+      // The record write rides this diff rather than computing its own.
+      // `events(from:to:)` is already the one answer to "what just changed",
+      // and a second observer would be a second answer.
+      if let videoRecordStore,
+        let identifier = jobs.first(where: { $0.id == event.job })?.mediaIdentifier
+      {
+        VideoRecorder.recordCompletion(
+          mediaIdentifier: identifier, outcome: event.outcome,
+          files: event.files, into: videoRecordStore)
+      }
     }
 
     baseline = NotificationDecision.statuses(of: jobs)

@@ -52,6 +52,39 @@ enum VideoRecorder {
       payloadHelperVersion: stamp))
     try? records.save(library)
   }
+
+  /// Records what happened to a job, keyed by the video it was downloading.
+  ///
+  /// `deliveredPath` takes the **first** delivered file. A composite job
+  /// delivers several — video, chat, rendered chat — and the row is about the
+  /// video; the rest stay reachable from the job itself. A finished job that
+  /// delivered nothing records no path rather than an empty one, because the
+  /// path is a claim stage 3b checks against the disk and a false claim is
+  /// worse than an absent one.
+  ///
+  /// `failed` is deliberately a state that does **not** count as seen
+  /// (`WatchState.countsAsSeen`), so a failed archive becomes actionable again.
+  static func recordCompletion(
+    mediaIdentifier: String,
+    outcome: NotificationDecision.Outcome,
+    files: [URL],
+    into store: VideoRecordStore)
+  {
+    guard var library = try? store.load() else { return }
+
+    switch outcome {
+    case .finished:
+      library.record(VideoRecord(
+        id: mediaIdentifier,
+        deliveredPath: files.first?.path(percentEncoded: false)))
+      library.setState(.downloaded, for: mediaIdentifier)
+    case .failed:
+      library.record(VideoRecord(id: mediaIdentifier))
+      library.setState(.failed, for: mediaIdentifier)
+    }
+
+    try? store.save(library)
+  }
 }
 
 /// The two stores a submission records into, kept together because neither is
