@@ -1,7 +1,7 @@
 import Foundation
 
 /// One downloadable rendition from the VOD's m3u8 master playlist.
-public struct StreamQuality: Sendable, Equatable {
+public struct StreamQuality: Sendable, Equatable, Codable {
   public var name: String
   public var resolution: String
   public var bitsPerSecond: Int
