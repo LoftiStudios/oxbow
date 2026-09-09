@@ -115,3 +115,109 @@ public struct VideoRecord: Equatable, Sendable, Codable {
     return merged
   }
 }
+
+/// Where one archive stands with the channel that produced it.
+///
+/// **These are not properties of a video.** `skipped` means "this existed
+/// before you started watching this channel" and `ignored` means "you
+/// dismissed it from that channel's list" — both are statements about a
+/// relationship, and a video pasted by hand has neither. That is why they live
+/// here rather than on `VideoRecord` (`docs/design/video-record.md` §3.2).
+///
+/// Defined in `docs/design/channel-history.md` §3.1 and carried forward
+/// unchanged.
+public enum WatchState: String, Equatable, Sendable, Codable, CaseIterable {
+  /// On Twitch, not acted on.
+  case new
+  /// Existed before you started watching. What "Only new" seeding produces.
+  case skipped
+  /// Submitted to the queue.
+  case queued
+  /// Its job finished, and `deliveredPath` is set.
+  case downloaded
+  /// You dismissed it.
+  case ignored
+  /// Its job failed. Actionable again.
+  case failed
+
+  /// Whether a watch should treat this archive as already handled.
+  ///
+  /// **This is what `seen` used to be**, and the definition is unchanged:
+  /// everything except `new` and `failed`. Storing both a state and a seen-set
+  /// is the drift that produced every ordering bug in this feature, so the set
+  /// is derived and never written.
+  public var countsAsSeen: Bool {
+    switch self {
+    case .new, .failed: false
+    case .skipped, .queued, .downloaded, .ignored: true
+    }
+  }
+}
+
+/// Every video Oxbow has touched, and where each stands with its channel.
+///
+/// Two dictionaries rather than one, because §3.2's two halves are genuinely
+/// different things: `videos` is what Get Info reads and is written for
+/// everything, `watchStates` is written only for videos belonging to a watched
+/// channel.
+public struct VideoLibrary: Equatable, Sendable, Codable {
+  public var videos: [String: VideoRecord]
+  public var watchStates: [String: WatchState]
+
+  public init(videos: [String: VideoRecord] = [:], watchStates: [String: WatchState] = [:]) {
+    self.videos = videos
+    self.watchStates = watchStates
+  }
+
+  /// Adds or merges one video's facts. Never destructive — see
+  /// `VideoRecord.merging(_:)`.
+  public mutating func record(_ incoming: VideoRecord) {
+    videos[incoming.id] = videos[incoming.id]?.merging(incoming) ?? incoming
+  }
+
+  public mutating func setState(_ state: WatchState, for id: String) {
+    watchStates[id] = state
+  }
+
+  /// The archive ids `login`'s watch should treat as already handled.
+  ///
+  /// Replaces `Watch.seen` as the answer to that question. Scoped by login so
+  /// two channels cannot mark each other's archives.
+  public func seenIDs(forLogin login: String) -> Set<String> {
+    Set(
+      watchStates
+        .filter { $0.value.countsAsSeen && videos[$0.key]?.login == login }
+        .keys)
+  }
+
+  /// Applies §3.6 when a watch is removed.
+  ///
+  /// Drops that channel's watch state entirely, and drops its video rows
+  /// **except** those you have something to show for — a delivered file, or a
+  /// job still in the queue. Those survive because they are exactly the rows
+  /// Get Info exists to render, and because a row that survives is what makes
+  /// re-adding the channel light up with what you already have.
+  ///
+  /// This is also the only thing that ever makes an image unreferenced. With
+  /// nothing removed, `referencedImageURLs()` could only ever grow and the
+  /// purge would have nothing to find.
+  public mutating func removeWatch(login: String, keepingVideosWithJobs jobbed: Set<String>) {
+    // Materialised rather than a lazy filter view: the loop below mutates
+    // `videos`, and a lazy view over it would be iterating the thing it is
+    // changing.
+    let mine = Array(videos.filter { $0.value.login == login }.keys)
+
+    for id in mine {
+      watchStates.removeValue(forKey: id)
+      let hasFile = videos[id]?.deliveredPath != nil
+      if !hasFile && !jobbed.contains(id) {
+        videos.removeValue(forKey: id)
+      }
+    }
+  }
+
+  /// Every image URL a surviving row still names — the keep-set for the purge.
+  public func referencedImageURLs() -> Set<URL> {
+    Set(videos.values.flatMap(\.thumbnailURLs))
+  }
+}
