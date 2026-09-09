@@ -152,6 +152,12 @@ struct OxbowApp: App {
         let store = WatchStore(fileURL: AppComposition.watchStoreURL(supportDirectory: support))
         watching = WatchingModel(
           store: store,
+          // Built here, from the one site that decides where Oxbow's video
+          // record lives, rather than inside the model — the same discipline
+          // `WatchPoller.live` and `VideoRecording.live` follow, so that
+          // "where does the record live" stays answerable in one place.
+          videoRecordStore: VideoRecordStore(
+            fileURL: AppComposition.videoRecordURL(supportDirectory: support)),
           // Only sets the state — opening the window itself is `QueueView`'s
           // job, via the `.onChange(of: pendingIntake)` beside its own
           // `openWindow`. This closure has no environment to call it from:
@@ -184,6 +190,14 @@ struct OxbowApp: App {
               url,
               fileExists: { FileManager.default.fileExists(atPath: $0.path) },
               folderExists: { FileManager.default.fileExists(atPath: $0.path) })
+          },
+          // Reads the image store at call time rather than capturing one,
+          // because there is no store to capture yet: it is stood up a few
+          // lines below this, after the model exists. Nil until then, which
+          // is correct — nothing can have been unwatched before the first
+          // sweep has even had a store to draw into.
+          purgeImages: { referenced in
+            Task { await imageStore?.purge(keeping: referenced) }
           })
         watchStore = store
         imageStore = ImageStore.live(

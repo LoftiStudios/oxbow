@@ -106,4 +106,47 @@ struct ImageStoreTests {
     #expect(names?.count == 3)
     #expect(names?.contains(ImageStore.filename(for: first)) == true)
   }
+
+  /// The store never evicts on its own; deletion belongs to whatever owns the
+  /// history. This is that hook.
+  @Test("purging keeps referenced images and drops the rest")
+  func purgeKeepsReferenced() async {
+    let directory = URL.temporaryDirectory.appending(path: "imagepurge-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: directory) }
+
+    let kept = URL(string: "https://cdn/keep.jpg")!
+    let dropped = URL(string: "https://cdn/drop.jpg")!
+    let store = ImageStore(directory: directory, fetch: { _ in Data("x".utf8) })
+
+    _ = await store.data(for: kept)
+    _ = await store.data(for: dropped)
+
+    await store.purge(keeping: [kept])
+
+    // A kept image is served from disk; a dropped one has to be re-fetched.
+    #expect(FileManager.default.fileExists(
+      atPath: directory.appending(path: ImageStore.filename(for: kept)).path))
+    #expect(!FileManager.default.fileExists(
+      atPath: directory.appending(path: ImageStore.filename(for: dropped)).path))
+  }
+
+  @Test("purging an empty keep-set empties the store")
+  func purgeEverything() async {
+    let directory = URL.temporaryDirectory.appending(path: "imagepurge-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let store = ImageStore(directory: directory, fetch: { _ in Data("x".utf8) })
+    _ = await store.data(for: URL(string: "https://cdn/a.jpg")!)
+
+    await store.purge(keeping: [])
+
+    let remaining = try? FileManager.default.contentsOfDirectory(atPath: directory.path)
+    #expect(remaining?.isEmpty == true)
+  }
+
+  @Test("purging a store that was never written does not throw")
+  func purgeEmptyStore() async {
+    let directory = URL.temporaryDirectory.appending(path: "imagepurge-\(UUID().uuidString)")
+    let store = ImageStore(directory: directory, fetch: { _ in Data() })
+    await store.purge(keeping: [])
+  }
 }

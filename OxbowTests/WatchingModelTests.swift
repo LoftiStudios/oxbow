@@ -29,6 +29,15 @@ struct WatchingModelTests {
   /// recovered internally, so it never propagates), the same trick
   /// `AddChannelModelTests` uses to reach `AddChannelModel.add()`'s own
   /// read-failure branch.
+  /// A `VideoRecordStore` over a file that does not exist yet — `load()`
+  /// answers an empty library, and `save` creates the directory on the way
+  /// out, so every test gets a private record with nothing in it.
+  private func temporaryRecordStore() -> VideoRecordStore {
+    VideoRecordStore(fileURL: URL.temporaryDirectory
+      .appending(path: "watching-records-\(UUID().uuidString)")
+      .appending(path: "videos.json"))
+  }
+
   private func unreadableStore() throws -> WatchStore {
     let file = URL.temporaryDirectory
       .appending(path: "watching-\(UUID().uuidString)")
@@ -44,7 +53,9 @@ struct WatchingModelTests {
   }
 
   private func model(store: WatchStore) -> WatchingModel {
-    WatchingModel(store: store, openIntake: { _, _ in })
+    WatchingModel(
+      store: store, videoRecordStore: temporaryRecordStore(),
+      openIntake: { _, _ in })
   }
 
   /// A job whose one download step carries `status` and is keyed to `id` via
@@ -138,7 +149,8 @@ struct WatchingModelTests {
     let store = temporaryStore()
     try store.save([watch("ninja")])
     let model = WatchingModel(
-      store: store, openIntake: { _, _ in },
+      store: store, videoRecordStore: temporaryRecordStore(),
+      openIntake: { _, _ in },
       queue: { _, _ in "Oxbow could not build that download." })
     model.apply([.init(login: "ninja", displayName: "Ninja", outcome: .found([archive("1")]))])
 
@@ -285,7 +297,7 @@ struct WatchingModelTests {
     let opened = OpenedBox()
     let queued = QueuedBox()
     let model = WatchingModel(
-      store: store,
+      store: store, videoRecordStore: temporaryRecordStore(),
       openIntake: { archive, _ in opened.id = archive.id },
       queue: { archive, watch in
         queued.id = archive.id
@@ -322,7 +334,8 @@ struct WatchingModelTests {
     let held = ModelBox()
     let queued = job("1", .queued)
     let model = WatchingModel(
-      store: store, openIntake: { _, _ in },
+      store: store, videoRecordStore: temporaryRecordStore(),
+      openIntake: { _, _ in },
       queue: { _, _ in
         held.model?.updateJobs([queued])
         return nil
@@ -422,7 +435,8 @@ struct WatchingModelTests {
     let store = temporaryStore()
     try store.save([watch("ninja")])
     let model = WatchingModel(
-      store: store, openIntake: { _, _ in },
+      store: store, videoRecordStore: temporaryRecordStore(),
+      openIntake: { _, _ in },
       queue: { _, _ in "Oxbow could not build that download." })
     model.apply([.init(login: "ninja", displayName: "Ninja", outcome: .found([archive("1")]))])
 
@@ -437,7 +451,9 @@ struct WatchingModelTests {
     let store = temporaryStore()
     try store.save([watch("ninja")])
     let opened = OpenedBox()
-    let model = WatchingModel(store: store, openIntake: { archive, _ in opened.id = archive.id })
+    let model = WatchingModel(
+      store: store, videoRecordStore: temporaryRecordStore(),
+      openIntake: { archive, _ in opened.id = archive.id })
     model.apply([.init(login: "ninja", displayName: "Ninja", outcome: .found([archive("1")]))])
 
     model.openInIntake(archive("1"), from: "ninja")
@@ -466,9 +482,11 @@ struct WatchingModelTests {
     try store.save([capped])
 
     var pending: PendingIntake?
-    let model = WatchingModel(store: store, openIntake: { archive, watch in
-      pending = PendingIntake(archiveID: archive.id, settings: watch.settings)
-    })
+    let model = WatchingModel(
+      store: store, videoRecordStore: temporaryRecordStore(),
+      openIntake: { archive, watch in
+        pending = PendingIntake(archiveID: archive.id, settings: watch.settings)
+      })
     model.apply([.init(login: "ninja", displayName: "Ninja", outcome: .found([archive("1")]))])
 
     model.openInIntake(archive("1"), from: "ninja")
@@ -517,7 +535,8 @@ struct WatchingModelTests {
     let opened = OpenedBox()
     let queued = QueuedBox()
     let model = WatchingModel(
-      store: store, openIntake: { archive, _ in opened.id = archive.id },
+      store: store, videoRecordStore: temporaryRecordStore(),
+      openIntake: { archive, _ in opened.id = archive.id },
       queue: { archive, _ in queued.id = archive.id; return nil })
 
     await model.add(archive("1"), from: "ninja")
@@ -816,6 +835,108 @@ struct WatchingModelTests {
     model.refresh()
 
     #expect(model.sections.first(where: { $0.login == "ninja" })?.rows.map(\.archive).map(\.id) == ["1"])
+  }
+
+  // MARK: - Stopping a watch lets go of its records
+
+  /// **This is the destructive half of Stop Watching, and the asymmetry is
+  /// the whole point.** A row with a delivered file is what Get Info renders
+  /// and what makes re-adding the channel light up with what you already
+  /// have; for a video that has since expired off Twitch it is the only
+  /// surviving trace that it ever existed, and nothing can fetch it back. A
+  /// row the channel merely offered and nobody acted on costs nothing to
+  /// re-derive from the next sweep.
+  @Test func stoppingAChannelDropsRowsItHasNothingToShowForAndKeepsTheRest() throws {
+    let store = temporaryStore()
+    try store.save([watch("ninja"), watch("day9tv")])
+    let records = temporaryRecordStore()
+    var library = VideoLibrary()
+    library.record(VideoRecord(id: "1", login: "ninja", deliveredPath: "/out/1.mp4"))
+    library.record(VideoRecord(id: "2", login: "ninja"))
+    library.record(VideoRecord(id: "3", login: "day9tv"))
+    library.setState(.downloaded, for: "1")
+    library.setState(.new, for: "2")
+    library.setState(.new, for: "3")
+    try records.save(library)
+    let model = WatchingModel(
+      store: store, videoRecordStore: records, openIntake: { _, _ in })
+
+    model.stopWatching("ninja")
+
+    let saved = try records.load()
+    #expect(saved.videos["1"]?.deliveredPath == "/out/1.mp4",
+            "a downloaded row is unrecoverable once dropped")
+    #expect(saved.videos["2"] == nil)
+    #expect(saved.videos["3"] != nil,
+            "another channel's rows are none of this call's business")
+    // The states go either way: `skipped`/`ignored` are statements about a
+    // relationship with a channel, and there is no relationship left.
+    #expect(saved.watchStates["1"] == nil)
+    #expect(saved.watchStates["2"] == nil)
+    #expect(saved.watchStates["3"] == .new)
+  }
+
+  /// A download still in the queue has no delivered file to protect it yet.
+  /// Dropping its row mid-flight would leave the finished job with nothing to
+  /// record itself into.
+  @Test func stoppingAChannelKeepsARowWhoseDownloadIsStillInTheQueue() throws {
+    let store = temporaryStore()
+    try store.save([watch("ninja")])
+    let records = temporaryRecordStore()
+    var library = VideoLibrary()
+    library.record(VideoRecord(id: "2", login: "ninja"))
+    try records.save(library)
+    let model = WatchingModel(
+      store: store, videoRecordStore: records, openIntake: { _, _ in })
+    model.updateJobs([job("2", .running)])
+
+    model.stopWatching("ninja")
+
+    #expect(try records.load().videos["2"] != nil)
+  }
+
+  @Test func stoppingAChannelLetsGoOfImagesNothingReferencesAnyMore() throws {
+    let kept = URL(string: "https://cdn/kept.jpg")!
+    let dropped = URL(string: "https://cdn/dropped.jpg")!
+    let store = temporaryStore()
+    try store.save([watch("ninja")])
+    let records = temporaryRecordStore()
+    var library = VideoLibrary()
+    library.record(VideoRecord(
+      id: "1", login: "ninja", thumbnailURLs: [kept], deliveredPath: "/out/1.mp4"))
+    library.record(VideoRecord(id: "2", login: "ninja", thumbnailURLs: [dropped]))
+    try records.save(library)
+    var purged: Set<URL>?
+    let model = WatchingModel(
+      store: store, videoRecordStore: records, openIntake: { _, _ in },
+      purgeImages: { purged = $0 })
+
+    model.stopWatching("ninja")
+
+    // The keep-set, not the drop-set: the store is keyed by a one-way hash,
+    // so what survives is named forward and everything else goes.
+    #expect(purged == [kept])
+  }
+
+  /// A stop that refused left the channel watched — so its rows are still a
+  /// watched channel's rows, and its images are still referenced.
+  @Test func aRefusedStopLeavesTheRecordAndTheImagesAlone() throws {
+    let store = try unreadableStore()
+    defer { try? FileManager.default.removeItem(at: store.fileURL.deletingLastPathComponent()) }
+    let records = temporaryRecordStore()
+    var library = VideoLibrary()
+    library.record(VideoRecord(id: "2", login: "ninja"))
+    try records.save(library)
+    var purged = false
+    let model = WatchingModel(
+      store: store, videoRecordStore: records, openIntake: { _, _ in },
+      purgeImages: { _ in purged = true })
+
+    model.stopWatching("ninja")
+
+    #expect(model.stopWatchingFailure != nil, "precondition: the stop refused")
+    #expect(try records.load().videos["2"] != nil)
+    #expect(!purged)
   }
 
   // MARK: - Re-reading the watch list on demand
@@ -1139,7 +1260,8 @@ struct WatchingModelTests {
     try store.save([watch("ninja", seen: ["1"])])
     let file = URL(filePath: "/tmp/ninja-1.mp4")
     let model = WatchingModel(
-      store: store, openIntake: { _, _ in },
+      store: store, videoRecordStore: temporaryRecordStore(),
+      openIntake: { _, _ in },
       fileAnswer: { _ in .present(file) })
 
     // The sweep now carries the seen archive through, which is the change.
@@ -1170,7 +1292,8 @@ struct WatchingModelTests {
     try store.save([watch("ninja", seen: ["1"])])
     let file = URL(filePath: "/tmp/ninja-1.mp4")
     let model = WatchingModel(
-      store: store, openIntake: { _, _ in },
+      store: store, videoRecordStore: temporaryRecordStore(),
+      openIntake: { _, _ in },
       fileAnswer: { _ in .present(file) })
 
     let seenArchive = archive("1")

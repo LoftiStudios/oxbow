@@ -92,6 +92,34 @@ final class WatchingModel {
   }
 
   private let store: WatchStore
+
+  /// Where this channel's video rows live, so that un-watching can let go of
+  /// them.
+  ///
+  /// **No default, deliberately.** There is no path that is correct to fall
+  /// back to. A call site that omitted this would still stop watching and
+  /// still look entirely healthy, while `stopWatching` read and rewrote
+  /// whatever the default happened to point at — which, for a store that is
+  /// asked to *delete* rows, means silently emptying a file nobody asked it
+  /// to touch. The same reasoning `WatchPoller.init` gives for its own copy,
+  /// with the stakes one step higher because this one removes.
+  private let videoRecordStore: VideoRecordStore
+
+  /// Lets go of every stored image outside the given keep-set.
+  ///
+  /// A closure rather than an `ImageStore`, because of when the two are
+  /// built: `OxbowApp` stands its image store up *after* it constructs this
+  /// model, so there is nothing to hand in at construction. Reading it at
+  /// call time — which is the only time the answer matters — side-steps that
+  /// ordering entirely, and keeps this model testable without an actor, the
+  /// same reason `openIntake` and `queue` are closures.
+  ///
+  /// Defaulted to a no-op, unlike `videoRecordStore` above, because the two
+  /// failures are not comparable: an un-supplied purge leaves a few kilobytes
+  /// of thumbnails on disk, an un-supplied record store rewrites the wrong
+  /// file.
+  private let purgeImages: (Set<URL>) -> Void
+
   private let openIntake: (ChannelArchive, Watch) -> Void
 
   /// Queues one archive with its channel's frozen settings, answering with a
@@ -198,14 +226,18 @@ final class WatchingModel {
 
   init(
     store: WatchStore,
+    videoRecordStore: VideoRecordStore,
     openIntake: @escaping (ChannelArchive, Watch) -> Void,
     queue: @escaping (ChannelArchive, Watch) async -> String? = { _, _ in nil },
-    fileAnswer: @escaping (URL) -> ArchiveRowState.FileAnswer = { .present($0) }
+    fileAnswer: @escaping (URL) -> ArchiveRowState.FileAnswer = { .present($0) },
+    purgeImages: @escaping (Set<URL>) -> Void = { _ in }
   ) {
     self.store = store
+    self.videoRecordStore = videoRecordStore
     self.openIntake = openIntake
     self.queue = queue
     self.fileAnswer = fileAnswer
+    self.purgeImages = purgeImages
     // Populates `sections` from whatever is already watched before the first
     // sweep ever lands — requirement 1's "never polled" case starts the
     // instant a channel is added, not once `WatchPoller` gets around to it.
@@ -445,13 +477,15 @@ final class WatchingModel {
     return result
   }
 
-  /// Removes `login`'s watch and persists what is left, touching nothing
-  /// else about the other channels' settings or seen-sets.
+  /// Removes `login`'s watch and lets go of what it leaves behind, touching
+  /// nothing about the other channels' settings or seen-sets.
   ///
-  /// **Does not delete anything already downloaded.** This edits
-  /// `watches.json` — the list of channels being watched — never a file a
-  /// past download produced. Stopping a watch and deleting its archive are
-  /// two different decisions, and this makes only the first one.
+  /// **Does not delete anything already downloaded.** It edits three things
+  /// and only three: `watches.json` — the list of channels being watched —
+  /// this channel's rows in the video record, and the stored images nothing
+  /// names any more. Never a file a past download produced, and never the row
+  /// describing one. Stopping a watch and deleting its archive are two
+  /// different decisions, and this makes only the first one.
   ///
   /// **Refuses rather than overwriting when the store cannot be read** — the
   /// same rule `AddChannelModel.add()` follows, guarding the identical bug:
@@ -476,6 +510,53 @@ final class WatchingModel {
     } catch {
       stopWatchingFailure = "Oxbow could not save the watch list: \(error.localizedDescription)"
       return
+    }
+
+    // Only once the watch list itself is safely saved, never before: both
+    // branches above returned on failure, leaving the channel still watched,
+    // and a channel that is still watched must keep every row it has.
+    //
+    // What goes: this channel's watch state, and the rows it has nothing to
+    // show for. What stays: a row with a delivered file, or one whose
+    // download is still in the queue. Those are what Get Info renders, what
+    // makes re-adding this channel light up with what you already have, and —
+    // for a video that has since expired off Twitch — the only surviving
+    // trace that it ever existed. A row dropped here cannot be fetched back.
+    //
+    // **Load, modify and save with no suspension point in between.**
+    // `videos.json` has four writers, and they are safe against each other
+    // for exactly one reason: each is `@MainActor` and does its whole
+    // load-modify-save without an `await`, so no other writer can interleave
+    // and have its half of the record overwritten. `VideoRecordStore.load`
+    // and `.save` are both synchronous precisely so this can be. An `await`
+    // here, or a `Task { }` around this, reintroduces the interleaving
+    // silently and with no failing test — `VideoRecorder`'s doc comment
+    // states the same rule for the same file.
+    //
+    // Best effort, like every other writer of this file: a record that cannot
+    // be read is a stale row, not a reason to refuse a removal the watch list
+    // has already committed to.
+    if var library = try? videoRecordStore.load() {
+      // Which videos still have a job, from the queue facts this model
+      // already keeps for its rows. A row whose download is mid-flight has
+      // no delivered file to protect it yet, and this is what protects it
+      // instead.
+      let jobbed = Set(jobFacts.compactMap(\.mediaIdentifier))
+      library.removeWatch(login: login, keepingVideosWithJobs: jobbed)
+
+      // Images are let go of only once the surviving rows are actually on
+      // disk. If that save failed, the file still names every row this call
+      // just dropped in memory, and purging against the in-memory keep-set
+      // would delete the images those rows still point at — for an expired
+      // video, the stored copy is the only one left.
+      //
+      // Deliberately outside the window above, and the reason it can be: the
+      // purge is cleanup, not part of the record write. Nothing else reads
+      // the image directory for correctness, so it is free to be asynchronous
+      // and to land whenever it lands.
+      if (try? videoRecordStore.save(library)) != nil {
+        purgeImages(library.referencedImageURLs())
+      }
     }
 
     // `rebuild()` below clears `stopWatchingFailure` on its own — see its own

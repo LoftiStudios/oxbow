@@ -16,8 +16,8 @@ import Foundation
 /// Any capacity cap worth setting would never fire — a mechanism guarding an
 /// event that does not happen, and therefore never exercised. Images are
 /// owned instead: when a channel's history goes away, its images go with it.
-/// That deletion belongs to whatever owns the history, which is stage 3's
-/// job, not this type's.
+/// That deletion is never this type's decision — it only offers `purge(
+/// keeping:)`, and whatever owns the history says which images survive.
 ///
 /// `URLCache` was the obvious alternative and is the wrong tool: it honours
 /// `Cache-Control` and may be purged by the system whenever it likes, so a
@@ -71,6 +71,30 @@ public actor ImageStore {
       at: directory, withIntermediateDirectories: true)
     try? fetched.write(to: file, options: .atomic)
     return fetched
+  }
+
+  /// Deletes every stored image whose URL is not in `keeping`.
+  ///
+  /// **The eviction rule this store was written to wait for.** It never evicts
+  /// on its own — a thumbnail is about 15 KB against VODs measured in
+  /// gigabytes, so any capacity cap worth setting would never fire. Images are
+  /// owned instead, and this is how the owner disowns them
+  /// (`docs/design/video-record.md` §3.6).
+  ///
+  /// Keyed by filename rather than by URL, because the filename is all the
+  /// directory knows: the SHA-256 is one-way, so the keep-set is hashed
+  /// forward and compared, never the stored names reversed.
+  ///
+  /// Silent on every failure, like the rest of this type. A file that will not
+  /// delete costs 15 KB.
+  public func purge(keeping: Set<URL>) {
+    let survivors = Set(keeping.map(Self.filename(for:)))
+    guard let stored = try? FileManager.default.contentsOfDirectory(
+      atPath: directory.path) else { return }
+
+    for name in stored where !survivors.contains(name) {
+      try? FileManager.default.removeItem(at: directory.appending(path: name))
+    }
   }
 
   /// A filesystem-safe, collision-resistant name for a URL.
