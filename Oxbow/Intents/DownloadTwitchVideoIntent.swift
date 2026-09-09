@@ -80,6 +80,21 @@ enum IntentSubmission {
   /// **Nothing here saves a preference.** `saveDefaultsIfRequested()` is
   /// driven by the intake's checkbox, which this never sets. An override is a
   /// decision about one run.
+  ///
+  /// **`recording` is where the video record gets written, and it is the only
+  /// place.** Every path into this function has already run the helper's
+  /// `info` verb — `model.load()` below — because that is how a quality cap
+  /// resolves against a particular video's renditions; until now the payload
+  /// that came back was discarded at the end of every one. Recording it at
+  /// the fetch instead would be far easier and would be wrong: `load()` fires
+  /// on every debounced keystroke in Add Download, so it would permanently
+  /// record every link a person pasted and thought better of
+  /// (`docs/design/video-record.md` §3.5). So the write happens here, after a
+  /// submission has actually succeeded, and nowhere else.
+  ///
+  /// It defaults to `nil` — record nothing — rather than to the live stores,
+  /// because `OxbowTests` is hosted by the app and a defaulted live store
+  /// would make every test run write the developer's own `videos.json`.
   @discardableResult
   static func submit(
     link: String,
@@ -88,7 +103,8 @@ enum IntentSubmission {
     chatSize: ChatSize?,
     destination: URL?,
     existingJobs: [Job] = [],
-    into model: IntakeModel) async throws -> Outcome
+    into model: IntakeModel,
+    recording: VideoRecording? = nil) async throws -> Outcome
   {
     model.linkText = link
     guard !model.isLinkUnrecognized, let target = model.target else {
@@ -140,6 +156,31 @@ enum IntentSubmission {
     guard await model.add() else {
       throw Failure.refused(model.addFailure ?? "Oxbow could not build that download.")
     }
+
+    // After `add()`, deliberately: a refusal above means no download, and a
+    // record for a video that was never queued is exactly what §3.5 rules
+    // out. `lastFetch` is nil when the fetch failed or was superseded, and
+    // then there is nothing honest to write — a job can still be composed
+    // from the id alone, so this is a real case rather than a defensive one.
+    //
+    // `AboutInfo.main.helperVersion` is legitimately nil in a build with no
+    // embedded helper (the UI-only fast path CONTRIBUTING.md promises), and
+    // `VideoRecorder` handles that by writing the facts without a payload.
+    // There is no fallback string to invent: a payload stamped with a guess
+    // is a payload a future parser would read in the wrong dialect.
+    //
+    // Synchronous, with no `await` between here and the return — see
+    // `VideoRecorder`'s note on why `videos.json`'s four writers depend on
+    // that.
+    if let recording, let fetched = model.lastFetch {
+      VideoRecorder.record(
+        fetched,
+        for: target.identifier,
+        helperVersion: AboutInfo.main.helperVersion,
+        records: recording.records,
+        payloads: recording.payloads)
+    }
+
     return .queued(model.outputBaseName)
   }
 
@@ -238,7 +279,8 @@ struct DownloadTwitchVideoIntent: AppIntent {
         chatSize: chatSize,
         destination: destination,
         existingJobs: controller.jobs,
-        into: IntakeModel(controller: controller))
+        into: IntakeModel(controller: controller),
+        recording: QueueHost.shared.videoRecording)
 
       // Notified from here rather than inside `submit`, which stays free of
       // app surfaces so it can be tested without one. Intent-only: the

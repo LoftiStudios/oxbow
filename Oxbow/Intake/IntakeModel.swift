@@ -171,6 +171,25 @@ final class IntakeModel {
   /// disagree, or a job gets composed for one video out of another's details.
   private(set) var metadataIdentifier: String?
 
+  /// Everything the last settled `info` run said, including the parts
+  /// `VideoInfo.parse` does not read.
+  ///
+  /// **Kept, not written.** Holding it here costs about 3.4 KB of memory and
+  /// nothing else; a submission is what turns it into a row on disk (see
+  /// `IntentSubmission.submit`). `load()` fires on every debounced keystroke
+  /// while somebody types a link into Add Download, so recording here would
+  /// permanently record every video a person merely looked at — which
+  /// `docs/design/video-record.md` §3.5 rules out.
+  ///
+  /// **Set inside `load()`'s generation guard, and that is load-bearing.** A
+  /// fetch superseded by a newer link can still land afterwards; if it set
+  /// this outside the guard, `lastFetch` would hold one video's payload while
+  /// the form — and the submission that follows — described another, and the
+  /// payload would be archived under the wrong video's id. Silent, permanent,
+  /// and very hard to trace back to here. Cleared everywhere the metadata it
+  /// belongs to is cleared, for the same reason.
+  private(set) var lastFetch: VideoInfoFetcher.Fetched?
+
   /// Set when Add refused. Only reachable if `canAdd` and
   /// `composedTemplate()` ever disagreed, which they cannot — but a sheet
   /// that closes on a job that was never composed is exactly the silent
@@ -180,7 +199,7 @@ final class IntakeModel {
 
   // MARK: - Collaborators
 
-  private let fetchInfo: (String) async throws -> VideoInfo
+  private let fetchInfo: (String) async throws -> VideoInfoFetcher.Fetched
   private let enqueue: (JobTemplate, String) async -> Void
   private let calendar: Calendar
   /// Injected so the collision rule is testable without touching a real
@@ -212,7 +231,7 @@ final class IntakeModel {
   private var generation = 0
 
   init(
-    fetchInfo: @escaping (String) async throws -> VideoInfo,
+    fetchInfo: @escaping (String) async throws -> VideoInfoFetcher.Fetched,
     enqueue: @escaping (JobTemplate, String) async -> Void,
     calendar: Calendar = .current,
     fileExists: @escaping (URL) -> Bool = {
@@ -254,7 +273,7 @@ final class IntakeModel {
     preferences: Preferences = Preferences())
   {
     self.init(
-      fetchInfo: { try await controller.fetchInfo(for: $0) },
+      fetchInfo: { try await controller.fetchInfoDetailed(for: $0) },
       enqueue: { await controller.enqueue($0, title: $1) },
       calendar: calendar,
       preferences: preferences)
@@ -294,6 +313,10 @@ final class IntakeModel {
     trimEndText = ""
     metadata = .idle
     metadataIdentifier = nil
+    // Goes with the metadata it belongs to. Add Download is one `Window` for
+    // the app's whole run, so a payload left here would outlive the video it
+    // describes and be waiting for the next link the next open pastes.
+    lastFetch = nil
     addFailure = nil
     // Invalidates a fetch still in flight the same way a new link does, so a
     // late arrival cannot settle metadata into the form it just emptied.
@@ -422,6 +445,7 @@ final class IntakeModel {
     guard let target else {
       metadata = .idle
       metadataIdentifier = nil
+      lastFetch = nil
       return
     }
 
@@ -430,8 +454,12 @@ final class IntakeModel {
     metadata = .loading
 
     do {
-      let info = try await fetchInfo(target.identifier)
+      let fetched = try await fetchInfo(target.identifier)
       guard issued == generation else { return }
+      let info = fetched.info
+      // Inside the guard, with `metadata` and `metadataIdentifier`, so all
+      // three always describe the same video. See `lastFetch`.
+      lastFetch = fetched
       metadata = .loaded(info)
       metadataIdentifier = target.identifier
       // Resolve the standing cap against what this video actually offers.
@@ -463,6 +491,10 @@ final class IntakeModel {
       guard issued == generation else { return }
       metadata = .failed(Self.message(for: error))
       metadataIdentifier = target.identifier
+      // This fetch has no payload, and the previous video's is not this
+      // video's. Left in place it would be recorded under this id by a
+      // submission that somehow got past a failed fetch.
+      lastFetch = nil
       quality = ""
       name = OutputNaming.sanitized(
         target.identifier, reservingSuffixBytes: OutputSuffix.longestBytes)

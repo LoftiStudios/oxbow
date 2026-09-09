@@ -891,7 +891,7 @@ struct IntakeModelTests {
     let model = IntakeModel(
       fetchInfo: { _ in
         await gate.arriveAndWait()
-        return IntakeModelTests.info()
+        return VideoInfoFetcher.Fetched(info: IntakeModelTests.info(), payload: "")
       },
       enqueue: { _, _ in },
       calendar: Self.pacific,
@@ -1145,7 +1145,7 @@ struct IntakeModelTests {
       fetchInfo: { _ in
         if let failure { throw failure }
         guard let info else { throw VideoInfoFetchError.unparseableOutput(snippet: "") }
-        return info
+        return VideoInfoFetcher.Fetched(info: info, payload: "")
       },
       enqueue: { recorder.templates.append((template: $0, title: $1)) },
       calendar: Self.pacific,
@@ -2035,7 +2035,9 @@ struct IntakeModelTests {
     let long = Self.info(duration: .seconds(2400))
     let short = Self.info(duration: .seconds(300))
     let model = IntakeModel(
-      fetchInfo: { id in id == "1111" ? long : short },
+      fetchInfo: { id in
+        VideoInfoFetcher.Fetched(info: id == "1111" ? long : short, payload: "")
+      },
       enqueue: { _, _ in },
       calendar: Self.pacific,
       preferences: Self.store())
@@ -2156,9 +2158,9 @@ struct IntakeModelTests {
       fetchInfo: { id in
         if id == "1111" {
           await gate.wait()
-          return stale
+          return VideoInfoFetcher.Fetched(info: stale, payload: "")
         }
-        return fresh
+        return VideoInfoFetcher.Fetched(info: fresh, payload: "")
       },
       enqueue: { _, _ in },
       calendar: Self.pacific,

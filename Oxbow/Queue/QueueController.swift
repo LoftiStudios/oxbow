@@ -79,13 +79,42 @@ final class QueueController {
   /// produces no artifact, is not a step, and must never appear in `jobs`
   /// (design doc §3). Intake calls it once per pasted link, before any job
   /// exists, to derive a filename and offer a quality picker.
+  ///
+  /// Everything this does is `fetchInfoDetailed`'s, minus the payload: one
+  /// path rather than two that can drift. The two used to be separate calls
+  /// into `VideoInfoFetcher` with their own copy of the screenshot
+  /// short-circuit, which is two places to remember when either changes.
   func fetchInfo(for id: String) async throws -> VideoInfo {
+    try await fetchInfoDetailed(for: id).info
+  }
+
+  /// The same `info` run, keeping everything the helper said rather than only
+  /// the fields `VideoInfo.parse` reads.
+  ///
+  /// **Nothing new is fetched here.** Every submission already runs this — it
+  /// is how a watch's frozen quality cap gets resolved against the renditions
+  /// a particular video actually offers — and until now the unparsed
+  /// remainder was thrown away at the end of every one of them. A backfill of
+  /// twenty ran twenty `info` subprocesses and discarded twenty payloads. So
+  /// this costs no subprocess, no request and no time; it only stops
+  /// discarding what one already paid for (`docs/design/video-record.md`
+  /// §3.3).
+  ///
+  /// **Reading this is not recording it.** Intake calls this on every
+  /// debounced keystroke, so the write that keeps a payload happens at
+  /// submission and nowhere else — see `IntentSubmission.submit`.
+  func fetchInfoDetailed(for id: String) async throws -> VideoInfoFetcher.Fetched {
     // A screenshot run has no real video behind its link, and the helper is
-    // not necessarily even embedded in the Debug build the harness uses.
+    // not necessarily even embedded in the Debug build the harness uses. The
+    // canned answer carries an empty payload rather than an invented one: a
+    // fixture payload would be a payload no helper produced, and a stamped
+    // record claiming otherwise is worse than no record.
     #if DEBUG
-    if let canned = ScreenshotFixture.videoInfo { return canned }
+    if let canned = ScreenshotFixture.videoInfo {
+      return VideoInfoFetcher.Fetched(info: canned, payload: "")
+    }
     #endif
-    return try await VideoInfoFetcher.fetch(
+    return try await VideoInfoFetcher.fetchDetailed(
       id: id, helper: helperExecutable, process: makeProcess())
   }
 

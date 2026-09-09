@@ -46,9 +46,28 @@ enum ArchiveSubmission {
   /// immediately before writing, because a submission's metadata fetch is a
   /// suspension point across which the Watching pane's own writers run. That
   /// belongs with the caller, not here.
+  ///
+  /// **Records what each submission fetched.** A backfill of twenty archives
+  /// runs twenty `info` subprocesses — one per `IntentSubmission.submit`
+  /// below, because that is how this channel's frozen quality cap gets
+  /// resolved against the renditions each video actually offers — and until
+  /// now all twenty payloads were discarded. Nothing new is fetched here; the
+  /// stores are the only new thing.
+  ///
+  /// The stores come from `QueueHost` rather than from this function's
+  /// callers. All three of them — the queue window's finding action, the
+  /// sweep, and Add Channel's backfill — reach `QueueController` through
+  /// `QueueHost.shared.ready()` on the line above their call to this, so the
+  /// answer is already resolved there; the alternative is the same value
+  /// spelled three times, one of which would come from a SwiftUI view that
+  /// records in its own doc comment that it has no `supportDirectory` and
+  /// wants none. It is nil under `xcodebuild test`, which is what keeps a
+  /// test run out of the developer's real `videos.json` — see
+  /// `QueueHost.videoRecording`.
   static func submit(
     _ archives: [ChannelArchive], for watch: Watch, into controller: QueueController
   ) async -> Result {
+    let recording = QueueHost.shared.videoRecording
     var result = Result()
     for archive in archives {
       do {
@@ -62,7 +81,8 @@ enum ArchiveSubmission {
           // adds a job, and the duplicate guard inside `submit` has to see
           // the one its predecessor just made.
           existingJobs: controller.jobs,
-          into: IntakeModel(controller: controller))
+          into: IntakeModel(controller: controller),
+          recording: recording)
         result.queued.append(archive)
       } catch let failure as IntentSubmission.Failure {
         result.failures[archive.id] = String(localized: failure.localizedStringResource)

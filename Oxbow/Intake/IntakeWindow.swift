@@ -1004,7 +1004,7 @@ private func previewModel(
   let model = IntakeModel(
     fetchInfo: { _ in
       guard let info else { throw VideoInfoFetchError.unparseableOutput(snippet: "") }
-      return info
+      return VideoInfoFetcher.Fetched(info: info, payload: "")
     },
     enqueue: { _, _ in },
     fileExists: fileExists,

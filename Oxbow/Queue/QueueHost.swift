@@ -58,6 +58,25 @@ final class QueueHost {
   /// the single caller that only wants to stop it.
   private var liveController: QueueController?
 
+  /// Where a successful submission writes the video's facts and payload, or
+  /// nil when nothing should be written.
+  ///
+  /// **Here rather than injected into every submission site** because this is
+  /// already the one place that resolves `supportDirectory` for the engine,
+  /// and the record lives beside `queue.json` by the same decision. The three
+  /// `ArchiveSubmission.submit` call sites and the App Intent all reach the
+  /// controller through `ready()`, so this sits exactly where they already
+  /// look; threading a store from each of them instead would mean giving
+  /// `AddChannelWindow` — a SwiftUI view whose own doc comment records that
+  /// it deliberately has no `supportDirectory` — one purely to pass it on.
+  ///
+  /// **Nil under `xcodebuild test`, and that is the point.** `OxbowTests` is
+  /// hosted by this app, so a test run resolves a real engine against the
+  /// developer's real support directory. `AppComposition.isUserSession`
+  /// guards this for the same reason it guards `dock`, `notifier` and the
+  /// sweep: a test must not write the developer's own `videos.json`.
+  private(set) var videoRecording: VideoRecording?
+
   /// **`lazy`, and for the reason `AppDelegate`'s were.** Built on first use
   /// by whichever caller gets there, so neither depends on when it is first
   /// reached. Both stay `nil` under `xcodebuild test`: `OxbowTests` is hosted
@@ -202,6 +221,11 @@ final class QueueHost {
         // `ready()`, which waits for `start()` so no enqueuer ever sees a
         // pre-start engine. See `liveController`.
         liveController = controller
+        // Same guard, and the same reason, as `attachStatusObservers`'s own:
+        // see `videoRecording`.
+        if AppComposition.isUserSession {
+          videoRecording = VideoRecording.live(supportDirectory: support)
+        }
         attachStatusObservers(to: controller, supportDirectory: support)
         await controller.start()
         return .ready(controller)
