@@ -234,4 +234,45 @@ struct VideoInfoFetcherTests {
     #expect(launch.arguments == ["info", "--banner=false", "--id", "241234567", "--format", "Raw"])
     #expect(launch.executable == helperPath)
   }
+
+  /// The payload comes back beside the parsed info, byte for byte, because a
+  /// later parser has to read the parts `VideoInfo.parse` ignores.
+  @Test("fetchDetailed returns the raw payload alongside the info")
+  func detailedCarriesThePayload() async throws {
+    let payload = """
+      {"data":{"video":{"title":"day 46","createdAt":"2026-09-01T12:00:00Z",\
+      "lengthSeconds":10203,"owner":{"displayName":"WheelyF","login":"wheelyf"},\
+      "thumbnailURLs":["https://cdn/a.jpg"]}}}
+      {"data":{"video":{"id":"1","moments":{"edges":[]}}}}
+      #EXTM3U
+      #EXT-X-STREAM-INF:BANDWIDTH=6000000,RESOLUTION=1920x1080,STABLE-VARIANT-ID="1080p60"
+      https://example/1080p60.m3u8
+      """
+
+    let fetched = try await VideoInfoFetcher.fetchDetailed(
+      id: "2844787557",
+      helper: helperPath,
+      process: FakeInfoHelper(.succeeds(stdout: payload)))
+
+    #expect(fetched.info.login == "wheelyf")
+    #expect(fetched.payload == payload)
+    // The moments line survives even though nothing parses it — that is the
+    // entire point of keeping the payload.
+    #expect(fetched.payload.contains("moments"))
+  }
+
+  @Test("fetch still returns just the info")
+  func fetchIsUnchanged() async throws {
+    let payload = """
+      {"data":{"video":{"title":"t","createdAt":"2026-09-01T12:00:00Z",\
+      "lengthSeconds":60,"owner":{"displayName":"W"},"thumbnailURLs":[]}}}
+      #EXTM3U
+      """
+
+    let info = try await VideoInfoFetcher.fetch(
+      id: "1", helper: helperPath,
+      process: FakeInfoHelper(.succeeds(stdout: payload)))
+
+    #expect(info.title == "t")
+  }
 }

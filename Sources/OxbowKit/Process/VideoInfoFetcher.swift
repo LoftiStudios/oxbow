@@ -49,6 +49,23 @@ public enum VideoInfoFetcher {
     var joined: String { lines.joined(separator: "\n") }
   }
 
+  /// One `info` run: what we could parse, and everything the helper actually
+  /// said.
+  ///
+  /// The payload is kept because `VideoInfo.parse` reads a fraction of it —
+  /// the moments line not at all — and a record that stores only the parsed
+  /// half freezes today's field set into the archive
+  /// (`docs/design/video-record.md` §3.3).
+  public struct Fetched: Sendable {
+    public let info: VideoInfo
+    public let payload: String
+
+    public init(info: VideoInfo, payload: String) {
+      self.info = info
+      self.payload = payload
+    }
+  }
+
   /// Runs `info --id <id> --format Raw` and parses the result.
   ///
   /// The info payload — the video-info JSON, the moments JSON, and the m3u8
@@ -58,11 +75,11 @@ public enum VideoInfoFetcher {
   /// `StepLog`'s doc comment for the same distinction). Only the leading
   /// `[STATUS] - Fetching Video Info [1/1]` banner is `.status`, and it is
   /// ignored here — `VideoInfo.parse` finds its own start point regardless.
-  public static func fetch(
+  public static func fetchDetailed(
     id: String,
     helper: URL,
     process: HelperProcessing)
-    async throws -> VideoInfo
+    async throws -> Fetched
   {
     let launch = Launch(
       executable: helper,
@@ -113,7 +130,20 @@ public enum VideoInfoFetcher {
       throw VideoInfoFetchError.unparseableOutput(snippet: Self.snippet(of: joined))
     }
 
-    return info
+    return Fetched(info: info, payload: joined)
+  }
+
+  /// The metadata alone, for callers with nothing to do with the payload.
+  ///
+  /// Kept so intake — which fetches on every debounced keystroke and records
+  /// nothing (§3.5) — does not have to carry a payload it will discard.
+  public static func fetch(
+    id: String,
+    helper: URL,
+    process: HelperProcessing)
+    async throws -> VideoInfo
+  {
+    try await fetchDetailed(id: id, helper: helper, process: process).info
   }
 
   /// Truncates `output` to `snippetLimit`, leaving a visible marker so the
