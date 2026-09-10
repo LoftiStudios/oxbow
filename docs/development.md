@@ -502,6 +502,42 @@ xcrun stapler validate build/Oxbow.dmg
 
 ---
 
+## Planning work
+
+**Break a plan into the smallest slices that each change something a person can
+see.** A slice should be testable by opening the app and looking, not by
+reading a diff or inspecting a file in Application Support. Stop after each one
+and let me look before starting the next.
+
+**This is a correction to a real failure, not a preference.** Stage 3a of the
+video record shipped as thirteen tasks and twenty-three commits whose entire
+output was a JSON file. Every task was reviewed and every test passed, and none
+of it changed anything on screen — so there was no point in the whole build
+where I could tell it was going the right way. The first thing I did when I
+went to test it was look for a feature that stage deliberately did not build.
+The work was correct and the sequencing cost me the ability to steer.
+
+**I will sometimes ask for something too big.** When a request spans more than
+one visible outcome, break it up and say so rather than taking it as scoped. A
+plan I approved is not evidence it was the right size.
+
+**Some work genuinely has no visible slice** — a schema, a migration, a
+concurrency fix, scaffolding a later feature needs. When that is the case, say
+so plainly and say what the first visible thing after it will be. What is not
+acceptable is discovering at the end that nothing is observable.
+
+**Prefer an order that front-loads visibility**, even at some cost in rework. A
+store built before the view that reads it is defensible on paper and leaves
+nobody able to judge it. If the view can be built against a stub first, do
+that.
+
+**Verify on screen before handing work over.** Build it, run it, look at it.
+Killing and relaunching Oxbow during development is always authorized,
+including an instance I am running. A screenshot of the thing working is worth
+more than a green suite.
+
+---
+
 ## Conventions
 
 - SwiftUI first; AppKit only where SwiftUI can't express something.
