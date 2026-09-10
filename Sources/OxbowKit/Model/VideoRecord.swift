@@ -144,6 +144,33 @@ public enum WatchState: String, Equatable, Sendable, Codable, CaseIterable {
   /// Its job failed. Actionable again.
   case failed
 
+  /// Whether a row in this state belongs in a channel's default view.
+  ///
+  /// §5.1 of `docs/design/video-record.md`: by default a channel shows the
+  /// three things a person actually acts on — what you have, what is being
+  /// fetched, and what you could still get. `skipped` and `ignored` are the
+  /// two states that mean "you already decided about this", and §5.2 keeps
+  /// them behind a filter so a channel watched for a year does not become
+  /// mostly headstones. A backfilled channel is the case that makes this
+  /// matter: seeding one with "Only new" can mark a hundred archives skipped
+  /// at once.
+  ///
+  /// `failed` is visible on purpose. §6.3 of `channel-watching.md` leaves a
+  /// failed download actionable, so hiding it would strand the one row a
+  /// person most likely wants to retry.
+  ///
+  /// **An archive with no recorded state at all is visible**, and that is not
+  /// this property's business — a missing state means the sweep has seen the
+  /// archive and nothing has acted on it, which is `new` by another name. The
+  /// caller treats nil as visible rather than defaulting a state it has no
+  /// evidence for.
+  public var isVisibleByDefault: Bool {
+    switch self {
+    case .new, .queued, .downloaded, .failed: true
+    case .skipped, .ignored: false
+    }
+  }
+
   /// Whether a watch should treat this archive as already handled.
   ///
   /// **This is what `seen` used to be**, and the definition is unchanged:

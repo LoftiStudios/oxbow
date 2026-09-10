@@ -110,4 +110,27 @@ struct VideoLibraryTests {
     let data = try encoder.encode(library)
     #expect(try decoder.decode(VideoLibrary.self, from: data) == library)
   }
+
+  /// §5.1: a channel shows what you have, what is coming, and what you could
+  /// still get. The two "you already decided" states stay behind §5.2's
+  /// filter — without that, a channel backfilled with "Only new" opens as a
+  /// hundred headstones.
+  @Test("only the states a person still acts on are visible by default")
+  func defaultVisibility() {
+    #expect(WatchState.new.isVisibleByDefault)
+    #expect(WatchState.queued.isVisibleByDefault)
+    #expect(WatchState.downloaded.isVisibleByDefault)
+    #expect(WatchState.failed.isVisibleByDefault, "a failed download is the row most worth retrying")
+    #expect(!WatchState.skipped.isVisibleByDefault)
+    #expect(!WatchState.ignored.isVisibleByDefault)
+  }
+
+  /// Pins the whole enum rather than the six cases named above, so a case
+  /// added later cannot quietly default to hidden.
+  @Test("every state has a considered visibility")
+  func everyStateIsAccountedFor() {
+    let visible = WatchState.allCases.filter(\.isVisibleByDefault)
+    #expect(Set(visible) == [.new, .queued, .downloaded, .failed])
+  }
+
 }

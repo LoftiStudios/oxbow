@@ -708,6 +708,115 @@ final class WatchingModel {
   /// the banner survives exactly until the next thing happens, which is an
   /// honest "this is no longer the latest word" rather than a specific,
   /// misleading claim about what that next thing was.
+  /// One channel's rows, sourced from the record rather than from whatever
+  /// this sweep happened to return.
+  ///
+  /// **This is what stops a row's history being a lease on the queue.** Rows
+  /// used to be built from the sweep's archives minus the watch's seen-set,
+  /// joined against the queue's jobs — so an archive disappeared the moment it
+  /// was marked seen, and a completed download vanished when a person cleared
+  /// its job out of the queue. `docs/design/channel-history.md` §7.2 names
+  /// that as scaffolding to be replaced, and this replaces it.
+  ///
+  /// **The live sweep still wins where it overlaps.** An archive Twitch listed
+  /// this poll carries a real `status`, which is what tells a still-recording
+  /// broadcast apart from a finished one; the record has no equivalent. So a
+  /// recorded row is only synthesised into a `ChannelArchive` when the sweep
+  /// did not return one.
+  ///
+  /// **Two filters, and they answer different questions.** `isVisibleByDefault`
+  /// asks what a person has already decided about (§5.1); the live-or-held
+  /// test below asks whether there is anything left to show. An archive that is
+  /// gone from Twitch and was never downloaded is a headstone — §5.2 keeps
+  /// those behind a filter, so until that filter exists they simply do not
+  /// render.
+  ///
+  /// `dismissed` still applies, because an Ignore that has not yet reached
+  /// disk has to hold on screen — see that property's own doc comment.
+  private func rows(
+    for watch: Watch, liveArchives: [ChannelArchive], library: VideoLibrary
+  ) -> [Row] {
+    let live = Dictionary(liveArchives.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+    let recorded = library.videos.filter { $0.value.login == watch.login }
+
+    // **A union of the two sources, not one replacing the other.** The sweep
+    // is authoritative for what Twitch is listing right now; the record adds
+    // what a person still has that Twitch has since dropped. Sourcing rows
+    // from the record alone looks equivalent — `WatchPoller.record` writes
+    // every swept archive before this rebuilds — but that is an ordering, not
+    // a guarantee: the record write is best-effort by design, and one that
+    // failed would blank a channel that had just returned a hundred archives.
+    // Depending on it would reintroduce, from the other direction, exactly the
+    // disappearing-rows bug this change exists to fix.
+    let candidates: [(archive: ChannelArchive, record: VideoRecord?)] =
+      liveArchives.map { ($0, recorded[$0.id]) }
+      + recorded.values.filter { live[$0.id] == nil }.map { (Self.archive(from: $0), $0) }
+
+    // State is resolved for every candidate before anything is filtered,
+    // because whether a person still has the file is part of deciding whether
+    // the row belongs on screen at all — and that answer comes from the
+    // filesystem, not from the record's own opinion of itself.
+    return candidates
+      .map { candidate in
+        (archive: candidate.archive,
+         state: ArchiveRowState.state(
+           for: candidate.archive, jobs: jobs,
+           recordedPath: candidate.record?.deliveredPath, file: fileAnswer))
+      }
+      // **One precedence, highest first**, because every rule below was
+      // learned from a row that vanished when it should not have:
+      //
+      // 1. You have the file. §5.1 puts that in the default view
+      //    unconditionally, and no mark below can tell a download apart from
+      //    a dismissal — `Watch.seen` records both, and the migration turned
+      //    every pre-record download into `skipped` because a bare id carried
+      //    no evidence of which it was.
+      // 2. It is in flight. Every path that queues an archive marks it seen
+      //    in the same breath, and `add(_:from:)` leaves it briefly both
+      //    dismissed *and* queued — so without this the row would leave the
+      //    list at the exact moment a person asked for it.
+      // 3. An Ignore not yet written to disk.
+      // 4. The recorded state.
+      // 5. The legacy seen-set, where no state exists yet.
+      // 6. Otherwise it shows only while Twitch is still listing it.
+      .filter { row in
+        if row.state.holdsAFile { return true }
+        if row.state == .queued || row.state == .running { return true }
+        if dismissed.contains(row.archive.id) { return false }
+        if let state = library.watchStates[row.archive.id] {
+          return state.isVisibleByDefault
+        }
+        if watch.seen.contains(row.archive.id) { return false }
+
+        // Off Twitch and nothing on disk: a headstone, hidden until §5.2's
+        // filter can surface it deliberately.
+        return live[row.archive.id] != nil
+      }
+      .map { Row(archive: $0.archive, state: $0.state) }
+      // Newest first, the order the sweep already returns and the one a
+      // channel page reads in.
+      .sorted { $0.archive.publishedAt > $1.archive.publishedAt }
+  }
+
+  /// A recorded video, dressed as the archive the row rendering expects.
+  ///
+  /// Only reached for a video the current sweep did not return, which means
+  /// Twitch is no longer listing it. `status` is therefore a guess with no
+  /// evidence behind it, and `.recorded` is the harmless one: every state a
+  /// row in this position can reach — `downloaded`, `unverifiable` — is
+  /// decided by the recorded path before `isDownloadable` is ever consulted.
+  private static func archive(from record: VideoRecord) -> ChannelArchive {
+    ChannelArchive(
+      id: record.id,
+      title: record.title ?? record.id,
+      duration: .seconds(record.durationSeconds ?? 0),
+      publishedAt: record.publishedAt ?? .distantPast,
+      status: .recorded,
+      thumbnailURL: record.thumbnailURLs.first,
+      categoryName: record.categoryName)
+  }
+
+
   private func rebuild() {
     stopWatchingFailure = nil
     markSeenFailure = nil
@@ -724,89 +833,21 @@ final class WatchingModel {
     let stillSeen = watches.reduce(into: Set<String>()) { $0.formUnion($1.seen) }
     dismissed.formIntersection(stillSeen)
 
-    // Which archives the queue currently holds an unfinished or `.done` job
-    // for, computed once for every section rather than per row: the queue is
-    // one array and a channel can list a hundred archives.
-    //
-    // **Not "any job" — `.failed` and `.cancelled` do not count.** The
-    // Add → "In queue" transition below only ever needs *unfinished*, and
-    // `.done` is what keeps `.downloaded`, `.missing` and `.unverifiable`
-    // reachable once the job that produced them stops running. `.failed` and
-    // `.cancelled` are finished, and a finished job must not hold a row open
-    // against a person's Ignore: a cancellation is a person saying no, the
-    // same rule `AutoDownloadObserver` and `ArchiveRowState.state` already
-    // keep for their own decisions. Ignoring a `.failed` row now works
-    // because of this narrowing — the row simply stops rendering, which is
-    // Ignore doing what it says. A `.failed` archive that has *not* been
-    // ignored still renders as `.failed`, unaffected: it is neither seen nor
-    // dismissed, so `unacted` below still carries it.
-    //
-    // **This decides visibility, never `seen`.**
-    // `docs/design/channel-watching.md` §4 forbids deriving the seen-set from
-    // the queue, because a job a person removed would silently license a
-    // re-download — and nothing here writes `seen`. What a removed or
-    // finished-and-excluded job costs is a row its place in the list, which
-    // is precisely the lease §7.2 of `channel-history.md` already names as
-    // this stage's scaffolding; it never costs an archive its record of
-    // having been acted on.
-    let jobbed = Set(
-      jobs.filter { $0.status.isUnfinished || $0.status == .done }.compactMap(\.mediaIdentifier))
+    // Read once for every section rather than per watch: one file, and a
+    // channel can list a hundred archives. A failure reads as an empty
+    // library — the same posture every other reader of this store takes,
+    // because a row that cannot be built is a row missing from a list, never
+    // an error worth interrupting a person over.
+    let library = (try? videoRecordStore.load()) ?? VideoLibrary()
 
     sections = watches.map { watch in
       let outcome = latest.first(where: { $0.login == watch.login })?.outcome
       switch outcome {
       case .found(let archives):
-        // What "nobody has acted on this" means, and it is deliberately the
-        // watch's own persisted `seen` rather than only the in-memory
-        // `dismissed` overlay. `dismissed` only ever catches what *this*
-        // model wrote through *this* `store` — a seen-set written through a
-        // different `WatchStore`, which is exactly what `AddChannelModel`
-        // does, would otherwise leave rows on screen the watch itself
-        // already says are seen. Re-adding an already-watched channel with
-        // Only new is the concrete case: its caption promises "everything
-        // Twitch has right now is marked seen", but without this the inbox
-        // kept showing them until the next sweep, up to an hour later.
-        // `WatchPoll.sweep` deliberately hands over everything the channel
-        // has, seen or not — see that type's own comment on `.found` — so
-        // `Watch.findings(in:)` here is this model's own filter, not a
-        // second application of one the sweep already ran. That makes this
-        // the only place the seen-filter is applied for display, which
-        // closes the whole class of "some other writer changed `seen`"
-        // rather than just this one instance — `dismissed` is left
-        // responsible only for the write-failed case its own doc comment
-        // already describes. No fallback to the unfiltered `archives` here,
-        // deliberately: `watch` is always in hand — it is what this map is
-        // iterating — so there is nothing for a fallback to cover, and one
-        // that read "leave it unfiltered" would fail open the moment a
-        // future edit ever made the lookup optional again.
-        let unacted = Set(watch.findings(in: archives).map(\.id)).subtracting(dismissed)
-
-        // **A row is shown when the queue holds an unfinished or `.done`
-        // job for it, or when it is neither seen nor dismissed.** Being
-        // un-acted-on used to be the whole rule, and it hid every state this
-        // pane was built to show:
-        // `markSeen` and `WatchPoller.markSubmitted` both write `seen` at
-        // the instant something queues a download, so a row disappeared at
-        // exactly the moment it became "In queue", and `queued`, `running`,
-        // `downloaded`, `missing` and `unverifiable` could not render at
-        // all. `add(_:from:)` queues *then* marks seen, which leaves an
-        // archive momentarily both dismissed and queued — so the job has to
-        // outrank `dismissed` as well as `seen`, or the one transition this
-        // pane exists to show is the one it blinks through.
-        //
-        // An archive that is seen with no job stays hidden: ignored, seeded
-        // past, or a download whose job has since been cleared out of the
-        // queue. That is right for this stage — §5.2's filter is what
-        // surfaces those, once stage 3's store can say which of the three
-        // any given one was.
-        let visible = archives.filter { jobbed.contains($0.id) || unacted.contains($0.id) }
         return Section(
           login: watch.login, displayName: watch.displayName,
           avatarURL: watch.avatarURL,
-          rows: visible.map { archive in
-            Row(archive: archive,
-                state: ArchiveRowState.state(for: archive, jobs: jobs, file: fileAnswer))
-          },
+          rows: rows(for: watch, liveArchives: archives, library: library),
           failure: nil, settingsSummary: settingsSummary(for: watch.settings),
           downloadsAutomatically: watch.downloadsAutomatically)
       case .failed(let error):
@@ -820,10 +861,16 @@ final class WatchingModel {
         // Never polled — added moments ago, or waiting on its first sweep
         // since launch (requirement 1) — rather than staying invisible
         // until a sweep finally reaches it.
+        //
+        // **Its recorded rows still render.** Before the record existed this
+        // had to be empty, because a row could only be built from a sweep's
+        // own archives; now what a person already has does not wait on a
+        // network round trip to reappear.
         return Section(
           login: watch.login, displayName: watch.displayName,
           avatarURL: watch.avatarURL,
-          rows: [], failure: nil, settingsSummary: settingsSummary(for: watch.settings),
+          rows: rows(for: watch, liveArchives: [], library: library),
+          failure: nil, settingsSummary: settingsSummary(for: watch.settings),
           downloadsAutomatically: watch.downloadsAutomatically)
       }
     }

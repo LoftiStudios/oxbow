@@ -52,6 +52,25 @@ public enum ArchiveRowState: Equatable, Sendable {
   case unverifiable(volumeName: String)
   case failed
 
+  /// Whether this row has something on disk to show for itself.
+  ///
+  /// **The question a row asks when Twitch has stopped listing its archive.**
+  /// A record kept for a video that has since expired is worth rendering only
+  /// while the download it produced still exists; once the file is gone too,
+  /// the row is a headstone, and `docs/design/video-record.md` §5.2 keeps
+  /// those behind a filter rather than in the default view.
+  ///
+  /// `unverifiable` counts. The volume being unplugged is not evidence the
+  /// file was deleted — collapsing "could not ask" into "no" is the mistake
+  /// §4.1 exists to prevent, and here it would make an entire library vanish
+  /// from the view every time a disk was unmounted.
+  public var holdsAFile: Bool {
+    switch self {
+    case .downloaded, .unverifiable: true
+    case .available, .live, .queued, .running, .missing, .failed: false
+    }
+  }
+
   /// Whether a person may still choose to fetch this archive.
   ///
   /// `missing` is included deliberately: the file is gone and Twitch still
@@ -86,7 +105,10 @@ public enum ArchiveRowState: Equatable, Sendable {
   ///     A closure rather than a `VolumeSpace`, so a test answers without a
   ///     disk and this file needs no persistence import.
   public static func state(
-    for archive: ChannelArchive, jobs: [Job], file: (URL) -> FileAnswer
+    for archive: ChannelArchive,
+    jobs: [Job],
+    recordedPath: String?,
+    file: (URL) -> FileAnswer
   ) -> ArchiveRowState {
     let mine = jobs.filter { $0.mediaIdentifier == archive.id }
 
@@ -113,6 +135,33 @@ public enum ArchiveRowState: Equatable, Sendable {
       case .present(let url): return .downloaded(url)
       case .absent: return .missing
       case .unknown(let volume): return .unverifiable(volumeName: volume)
+      }
+    }
+
+    // The queue has forgotten this archive, but the record has not.
+    //
+    // **This is what stops a row's history being a lease on the queue's
+    // cleanup.** Every branch above reads a `Job`, and a person removing a
+    // finished download — an entirely ordinary thing to do to a queue — used
+    // to erase the only evidence the archive had ever been fetched.
+    // `docs/design/video-record.md` §7 records `deliveredPath` when the job
+    // settles, precisely so the answer outlives the job.
+    //
+    // The job still wins when there is one: it names the file this run
+    // actually produced, where the record names the file some earlier run
+    // did.
+    //
+    // **`absent` falls through rather than answering `.missing`.** A recorded
+    // path that is no longer on disk means the file was deleted, and §4 says
+    // that returns the archive to actionable — so the remaining checks get to
+    // run. That ordering matters when a retry failed after a delete: without
+    // it, a stale recorded path would answer `.missing` and hide the failure
+    // that is the more useful thing to say.
+    if let recordedPath {
+      switch file(URL(filePath: recordedPath)) {
+      case .present(let url): return .downloaded(url)
+      case .unknown(let volume): return .unverifiable(volumeName: volume)
+      case .absent: break
       }
     }
 
