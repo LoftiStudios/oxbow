@@ -183,6 +183,36 @@ WatchingView(
           Label("Watching", systemImage: "eye")
             .badge(watching?.unreadCount ?? 0)
             .tag(SidebarItem.watching)
+
+          // The watched channels, under `Watching` and belonging to it —
+          // Mail's `All Inboxes` shape, which is what
+          // `docs/design/watching-navigation.md` §4 specifies.
+          //
+          // **Inert in this slice, on purpose.** These carry no `.tag`, so a
+          // click cannot reach `sidebarSelection`; `.selectionDisabled(true)`
+          // is what stops that click *clearing* the selection instead, which
+          // would drop the detail pane to `.none` and show the queue.
+          //
+          // **No disclosure triangle.** A collapsible group whose label is
+          // itself a selectable row is a `DisclosureGroup` wrapping a tagged
+          // label, and whether List selection reaches a tag in that position
+          // is exactly the kind of thing `channel-watching.md` §8.1's
+          // badge/tag regression says not to assume. Always-expanded first;
+          // the triangle is worth having only if the list gets long enough
+          // to want it.
+          ForEach(watching?.channelListings ?? []) { channel in
+            Label(channel.displayName, systemImage: "person.crop.circle")
+              // Zero draws nothing. Mail's rule and this codebase's:
+              // `WatchingView`'s own doc comment argues a quiet channel
+              // should say nothing rather than say "none", and a column of
+              // zeroes is that mistake in a smaller font. `.badge(0)` already
+              // renders nothing — the ternary states the rule at the call
+              // site so nobody "simplifies" it away without noticing it was
+              // load-bearing.
+              .badge(channel.waiting > 0 ? channel.waiting : 0)
+              .padding(.leading, 12)
+          }
+          .selectionDisabled(true)
         }
         .listStyle(.sidebar)
         // Roughly fixed, the way Mail and Finder do it, rather than left to
