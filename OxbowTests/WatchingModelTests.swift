@@ -1588,9 +1588,9 @@ struct WatchingModelTests {
 
 
   /// §5.2: an archive Twitch has dropped, with nothing on disk, is a
-  /// headstone — counted but held back, so a channel watched for a year does
-  /// not become mostly gravestones.
-  @Test func anExpiredArchiveIsHeldBackAndCounted() throws {
+  /// headstone — held back from the inbox, so a channel watched for a year
+  /// does not become mostly gravestones, but kept in the record.
+  @Test func anExpiredArchiveIsHeldBackFromTheInboxButKeptInTheRecord() throws {
     let store = temporaryStore()
     try store.save([watch("ninja")])
     let records = temporaryRecordStore()
@@ -1606,13 +1606,19 @@ struct WatchingModelTests {
     // The sweep lists something else entirely, so "gone" is not live.
     model.apply([.init(login: "ninja", displayName: "Ninja", outcome: .found([archive("1")]))])
 
-    #expect(model.sections[0].rows.map(\.id) == ["1"], "the headstone stays out of the default view")
-    #expect(model.sections[0].hiddenCount == 1)
+    #expect(model.sections[0].rows.map(\.id) == ["1"], "the headstone stays out of the inbox")
+    #expect(model.sections[0].allRows.map(\.id).sorted() == ["1", "gone"],
+            "but the channel's own record keeps it")
   }
 
-  /// And revealing brings it back, saying plainly that Twitch no longer has
-  /// it rather than offering a download that cannot succeed.
-  @Test func revealingShowsTheHeldBackRowsAsExpired() throws {
+  /// And the channel's destination says plainly that Twitch no longer has it,
+  /// rather than offering a download that cannot succeed.
+  ///
+  /// **This used to be reached by revealing a fold in the inbox.** The fold is
+  /// gone (`docs/design/watching-navigation.md` §6) — the rows it hid now have
+  /// a destination of their own — but the thing it was protecting is not:
+  /// wherever a headstone is shown, it must never be `.available`.
+  @Test func theRecordCarriesTheHeadstoneMarkedExpired() throws {
     let store = temporaryStore()
     try store.save([watch("ninja")])
     let records = temporaryRecordStore()
@@ -1627,15 +1633,12 @@ struct WatchingModelTests {
       fileAnswer: { _ in .absent })
     model.apply([.init(login: "ninja", displayName: "Ninja", outcome: .found([archive("1")]))])
 
-    model.toggleHidden(for: "ninja")
-
-    #expect(model.sections[0].rows.map(\.id).sorted() == ["1", "gone"])
-    let headstone = try #require(model.sections[0].rows.first { $0.id == "gone" })
+    #expect(model.sections[0].allRows.map(\.id).sorted() == ["1", "gone"])
+    let headstone = try #require(model.sections[0].allRows.first { $0.id == "gone" })
     #expect(headstone.state == .expired, "never .available — Twitch cannot serve it")
     #expect(!headstone.state.isFetchable, "so the row must offer no Add")
 
-    model.toggleHidden(for: "ninja")
-    #expect(model.sections[0].rows.map(\.id) == ["1"], "and hiding puts it back")
+    #expect(model.sections[0].rows.map(\.id) == ["1"], "and the inbox still holds it back")
   }
 
   // MARK: - The unfiltered record a channel's own destination shows
@@ -1673,8 +1676,8 @@ struct WatchingModelTests {
     #expect(shown == ["1"], "only the unseen, still-listed archive is inbox material")
     #expect(shown.isSubset(of: all))
     #expect(all.count > shown.count, "the fixture must actually hide something")
-    #expect(all.count - shown.count == section.hiddenCount,
-            "what the destination adds is exactly what the fold counts")
+    #expect(all.subtracting(shown) == ["already-seen", "gone"],
+            "and what it adds is exactly what belongsInTheDefaultView rejects")
   }
 
   /// Newest first, the order the sweep already returns and the one a channel

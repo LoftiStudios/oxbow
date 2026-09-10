@@ -303,9 +303,15 @@ side now has a destination, and the destination is better in every way that
 matters: it has a title, it does not displace what you were reading, and it
 can be reached without first scrolling to the bottom of a channel.
 
-**Deliberately not in the first stage.** Removing it is a change to the inbox,
-and §8 keeps the inbox untouched until its own question is answered. It is
-staged separately for that reason, not because it is difficult.
+**Done 2026-09-10**, as stage 3. Removing it is a change to the inbox, so it
+was staged after the destination existed rather than beside it — a fold cannot
+be deleted before its far side has somewhere to live.
+
+The coverage it carried moved rather than went: `WatchingModelTests`'
+`revealingShowsTheHeldBackRowsAsExpired` asserted that a revealed headstone
+renders `.expired` and offers no Add. Revealing is gone; the requirement is
+not, so that test became `theRecordCarriesTheHeadstoneMarkedExpired` against
+`allRows`. A deleted control must not take a rule with it.
 
 ---
 

@@ -47,9 +47,9 @@ final class WatchingModel {
     ///
     /// **`rows` is a subset of this, by construction.** Both come from one
     /// `resolved` list and one predicate, sorted by one function; the
-    /// difference is exactly the rows `belongsInTheDefaultView` rejects, which
-    /// is what `hiddenCount` counts. Building them from two separate passes is
-    /// how they would come to disagree about a row's state or its order.
+    /// difference is exactly the rows `belongsInTheDefaultView` rejects.
+    /// Building them from two separate passes is how they would come to
+    /// disagree about a row's state or its order.
     var allRows: [Row] = []
 
     /// Why this channel produced nothing, when that is the reason.
@@ -96,15 +96,6 @@ final class WatchingModel {
     /// automatically (`decide` returns `.notAutomatic` and stops), so a manual
     /// channel gets no demotion and therefore no notice at all.
     var disconnectedDestination: String?
-
-    /// How many of this channel's rows the default view is holding back.
-    ///
-    /// `docs/design/channel-history.md` §5.2: archives you skipped, dismissed,
-    /// or missed entirely are kept forever and hidden, so a channel watched
-    /// for a year does not become mostly headstones. Kept as a count so the
-    /// pane can offer to show them without a person having to guess there is
-    /// anything there.
-    var hiddenCount: Int = 0
 
     var id: String { login }
   }
@@ -259,55 +250,6 @@ final class WatchingModel {
   /// has it measured against real hardware).
   private let fileAnswer: (URL) -> ArchiveRowState.FileAnswer
 
-  /// Archive ids `markSeen` could not persist.
-  ///
-  /// **Vestigial by design, kept for one narrow case.** This used to be the
-  /// only thing standing between a dismissal and the row it hid reappearing —
-  /// `rebuild()` filtered `latest` through this overlay and nothing else. It
-  /// no longer carries that weight: `rebuild()` now reconciles every section
-  /// against the watch's own persisted `seen` set (`Watch.findings(in:)`),
-  /// and `markSeen` persists that write *before* it ever calls `rebuild()`,
-  /// so a row is hidden by `seen` before this overlay is even consulted. The
-  /// one case left is `markSeen`'s write failing outright (deliberately best
-  /// effort — see that method's own comment), and this overlay **does not**
-  /// rescue it: `seen` on disk never gains the id, so `rebuild()`'s pruning
-  /// below drops it from here in the same pass and the row comes straight
-  /// back. That is deliberate. Oxbow holds no record that the archive was
-  /// ignored, and a row hidden on the strength of a write that failed would
-  /// be the app showing a state it did not manage to store. The banner
-  /// `markSeen` sets says so in as many words.
-  ///
-  /// Narrowed back down by `apply(_:)`, the same way it always was, so a
-  /// failed id does not sit here forever once a sweep stops carrying it at
-  /// all — an archive that has actually expired off the channel. `WatchPoll
-  /// .sweep` no longer excludes an id merely for being seen, so becoming
-  /// seen on its own does not shrink this set the way it once did; that is
-  /// harmless here, because `rebuild()`'s own reconciliation against `seen`
-  /// already hides a seen row regardless of whether this overlay still names
-  /// it.
-  ///
-  /// **Also narrowed by `rebuild()`, against every watch's own `seen` — this
-  /// is the second, newer way an id must stop being masked here.** A manual
-  /// Add persists the archive into `seen` and into this overlay together
-  /// (`markSeen`). If that download later fails, `AutoDownloadObserver
-  /// .forget` un-marks it — through a different `WatchStore` instance over
-  /// the same file, out of band, with nobody looking — but this overlay
-  /// never heard about that: it only ever narrows itself in `apply(_:)`,
-  /// against a sweep's *found* ids, and the archive is still found (it has
-  /// not expired). Without reconciling against `seen` too, the row would
-  /// stay masked here even though the watch itself now says it is unseen,
-  /// and it would only reappear after a relaunch throws this whole set away.
-  /// `rebuild()` is where every other reconciliation against `seen` already
-  /// happens (`Watch.findings(in:)`), so this is that same rule applied one
-  /// layer up, to the overlay sitting in front of it.
-  /// Channels whose held-back rows are currently on screen, by login.
-  ///
-  /// Deliberately not persisted: revealing is a thing a person does to answer
-  /// one question — "what did I miss on this channel" — not a preference about
-  /// how the pane should look from now on. It resets when the app does, which
-  /// is what stops a channel opened once out of curiosity from staying a wall
-  /// of headstones forever.
-  private var revealed: Set<String> = []
 
   private var dismissed: Set<String> = []
 
@@ -848,14 +790,6 @@ final class WatchingModel {
   /// the banner survives exactly until the next thing happens, which is an
   /// honest "this is no longer the latest word" rather than a specific,
   /// misleading claim about what that next thing was.
-  /// Shows or hides one channel's held-back rows.
-  func toggleHidden(for login: String) {
-    if revealed.contains(login) { revealed.remove(login) } else { revealed.insert(login) }
-    rebuild()
-  }
-
-  var revealedLogins: Set<String> { revealed }
-
   /// One channel's rows, sourced from the record rather than from whatever
   /// this sweep happened to return.
   ///
@@ -883,7 +817,7 @@ final class WatchingModel {
   /// disk has to hold on screen — see that property's own doc comment.
   private func rows(
     for watch: Watch, liveArchives: [ChannelArchive], library: VideoLibrary
-  ) -> (rows: [Row], allRows: [Row], hidden: Int) {
+  ) -> (rows: [Row], allRows: [Row]) {
     let live = Dictionary(liveArchives.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
     let recorded = library.videos.filter { $0.value.login == watch.login }
 
@@ -962,10 +896,7 @@ final class WatchingModel {
       return live[row.archive.id] != nil
     }
 
-    let held = resolved.filter { !belongsInTheDefaultView($0) }
-    let shown = revealed.contains(watch.login)
-      ? resolved
-      : resolved.filter(belongsInTheDefaultView)
+    let shown = resolved.filter(belongsInTheDefaultView)
 
     // Newest first, the order the sweep already returns and the one a channel
     // page reads in. Applied to both lists through one function so the inbox
@@ -978,7 +909,7 @@ final class WatchingModel {
         .sorted { $0.archive.publishedAt > $1.archive.publishedAt }
     }
 
-    return (newestFirst(shown), newestFirst(resolved), held.count)
+    return (newestFirst(shown), newestFirst(resolved))
   }
 
   /// The volume name to report when this channel's destination cannot be
@@ -1086,8 +1017,7 @@ final class WatchingModel {
           allRows: built.allRows,
           failure: nil, settingsSummary: settingsSummary(for: watch.settings),
           downloadsAutomatically: watch.downloadsAutomatically,
-          disconnectedDestination: disconnectedDestination(for: watch),
-          hiddenCount: built.hidden)
+          disconnectedDestination: disconnectedDestination(for: watch))
       case .failed(let error):
         return Section(
           login: watch.login, displayName: watch.displayName,
@@ -1113,8 +1043,7 @@ final class WatchingModel {
           allRows: built.allRows,
           failure: nil, settingsSummary: settingsSummary(for: watch.settings),
           downloadsAutomatically: watch.downloadsAutomatically,
-          disconnectedDestination: disconnectedDestination(for: watch),
-          hiddenCount: built.hidden)
+          disconnectedDestination: disconnectedDestination(for: watch))
       }
     }
   }
