@@ -353,7 +353,7 @@ final class WatchingModel {
   }
 
   func ignore(_ archive: ChannelArchive, from login: String) {
-    markSeen(archive.id, in: login)
+    markSeen(archive.id, in: login, recording: .ignored)
   }
 
   /// Queues the archive with its channel's frozen settings.
@@ -405,7 +405,10 @@ final class WatchingModel {
       submissionFailure = failure
       return
     }
-    markSeen(archive.id, in: login)
+    // No state recorded here: `IntakeAdd.perform` already wrote `queued`
+    // on the way through the submission, and overwriting it would demote a
+    // download in flight to something a person had dismissed.
+    markSeen(archive.id, in: login, recording: nil)
   }
 
   /// Opens intake for this archive, prefilled — the secondary action, for
@@ -417,7 +420,11 @@ final class WatchingModel {
   /// opens the form and abandons it has still answered the question, and
   /// re-offering the row next sweep would be asking it again.
   func openInIntake(_ archive: ChannelArchive, from login: String) {
-    guard let watch = markSeen(archive.id, in: login) else { return }
+    // `ignored` rather than a state of its own: opening the form is the
+    // person answering the question, and if they go on to add it,
+    // `IntakeAdd.perform` overwrites this with `queued`. Abandoning the form
+    // leaves it dismissed, which is what the rule above already promised.
+    guard let watch = markSeen(archive.id, in: login, recording: .ignored) else { return }
     openIntake(archive, watch)
   }
 
@@ -444,7 +451,9 @@ final class WatchingModel {
   /// first, so the row hides instantly regardless: the overlay only depends
   /// on that set, never on `refreshWatches()`'s snapshot.
   @discardableResult
-  private func markSeen(_ id: String, in login: String) -> Watch? {
+  private func markSeen(
+    _ id: String, in login: String, recording state: WatchState?
+  ) -> Watch? {
     dismissed.insert(id)
 
     var current: [Watch]
@@ -512,6 +521,26 @@ final class WatchingModel {
         """
       return result
     }
+
+    // **Recorded only now that the watch list actually saved.** Written
+    // earlier, this claimed the archive was acted on while the save that is
+    // supposed to make that true had not run — and if that save then failed,
+    // the record hid the row by state even though the catch above puts it
+    // back, so a refused action looked exactly like a completed one. That is
+    // the failure the banner exists to prevent, arriving through a second
+    // store instead.
+    //
+    // The row is recorded alongside the state, never the state alone: a bare
+    // `watchStates` entry belongs to no channel, and `removeWatch` scopes its
+    // cleanup by a row's `login`, so an orphan would outlive the watch that
+    // made it and keep an archive dismissed forever. `record` merges, so a
+    // row the sweep has already described keeps everything it knows.
+    if let state, var library = try? videoRecordStore.load() {
+      library.record(VideoRecord(id: id, login: login))
+      library.setState(state, for: id)
+      try? videoRecordStore.save(library)
+    }
+
     let result = current[index]
     rebuild()
     return result
@@ -818,6 +847,25 @@ final class WatchingModel {
         if let state = library.watchStates[row.archive.id] {
           return state.isVisibleByDefault
         }
+
+        // **The legacy seen-set, and why it is still consulted.** §3.1 retires
+        // `Watch.seen` in favour of derived state, and every path that marks
+        // an archive seen now records one too — Ignore and Open in Intake
+        // write `ignored`, a submission writes `queued`, and a channel seeded
+        // with "Only new" is folded in by `WatchPoller.migrateSeenIfNeeded` on
+        // every sweep.
+        //
+        // This is not a second source of truth, because the two can never
+        // disagree: it is reached only where the record is *silent* about an
+        // id. What it still covers is the window between something writing
+        // `seen` and the next migration pass seeing it — and any writer added
+        // later that forgets to record a state, where failing closed means a
+        // row a person dismissed stays dismissed.
+        //
+        // It comes out when `Watch.seen` stops being written at all. That is
+        // the producer side — `WatchPoller.unseenFindings` and
+        // `FindingAnnouncement.decide` still read it to decide what may be
+        // submitted and announced — and is its own change, not this one.
         if watch.seen.contains(row.archive.id) { return false }
 
         // Off Twitch and nothing on disk: a headstone, hidden until §5.2's

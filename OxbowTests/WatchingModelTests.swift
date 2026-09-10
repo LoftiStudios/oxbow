@@ -1540,6 +1540,52 @@ struct WatchingModelTests {
     #expect(model.sections[0].disconnectedDestination == nil)
   }
 
+
+  /// Ignoring records why the row went away, so the display side stops having
+  /// to infer it from the legacy seen-set.
+  @Test func ignoringRecordsTheState() throws {
+    let store = temporaryStore()
+    try store.save([watch("ninja")])
+    let records = temporaryRecordStore()
+    defer { try? FileManager.default.removeItem(at: records.fileURL.deletingLastPathComponent()) }
+    let model = WatchingModel(
+      store: store, videoRecordStore: records, openIntake: { _, _ in },
+      fileAnswer: { _ in .absent })
+    model.apply([.init(login: "ninja", displayName: "Ninja", outcome: .found([archive("1")]))])
+
+    model.ignore(archive("1"), from: "ninja")
+
+    let library = try records.load()
+    #expect(library.watchStates["1"] == .ignored)
+    #expect(library.videos["1"]?.login == "ninja",
+            "the row is recorded with the state, or removeWatch can never scope it away")
+  }
+
+  /// **A refused action must not look like a completed one.** Recording the
+  /// state before the watch list saved meant a failed save still hid the row
+  /// by state, while the banner said it was still there — the two surfaces
+  /// disagreeing about whether anything happened.
+  @Test func aRefusedIgnoreRecordsNothing() throws {
+    let store = try writeProtectedStore(seeding: [watch("ninja")])
+    let dir = store.fileURL.deletingLastPathComponent()
+    defer {
+      try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: dir.path)
+      try? FileManager.default.removeItem(at: dir)
+    }
+    let records = temporaryRecordStore()
+    defer { try? FileManager.default.removeItem(at: records.fileURL.deletingLastPathComponent()) }
+    let model = WatchingModel(
+      store: store, videoRecordStore: records, openIntake: { _, _ in },
+      fileAnswer: { _ in .absent })
+    model.apply([.init(login: "ninja", displayName: "Ninja", outcome: .found([archive("1")]))])
+
+    model.ignore(archive("1"), from: "ninja")
+
+    #expect(model.markSeenFailure != nil, "precondition: the save must have failed")
+    #expect(try records.load().watchStates["1"] == nil,
+            "nothing may be recorded for an action that was refused")
+  }
+
 }
 
 /// A tiny deterministic PRNG so a failure found by chance is reproducible —

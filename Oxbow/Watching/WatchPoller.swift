@@ -250,6 +250,17 @@ final class WatchPoller {
     // couldn't ask would tell the user about downloads that may no longer
     // exist.
     let watches = (try? store.load()) ?? []
+
+    // **Every sweep, not only launch.** Adding a channel with "Only new"
+    // seeds its whole back catalogue into `Watch.seen` without recording a
+    // state for any of it, and `AddChannelModel` has no record store to write
+    // one with — its window deliberately carries no support directory. Folding
+    // the seen-set in here catches that, and any other writer that marks seen
+    // without recording why, which is what lets the display side stop reading
+    // `seen` at all. Idempotent and short-circuiting when nothing changed, so
+    // the ordinary sweep pays one comparison.
+    Self.migrateSeenIfNeeded(watches: watches, into: videoRecordStore)
+
     guard !watches.isEmpty else {
       // `demotions` clears alongside `results` here rather than inside
       // `actOnFindings`: this early return is the only path that skips that
