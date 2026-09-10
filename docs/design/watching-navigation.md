@@ -404,12 +404,53 @@ because those archives are `.available`. They are still on Twitch and merely
 For a subscriber-only channel it is correct and useless. Every one of those
 buttons starts a download that fails at the manifest.
 
-**The app already knows this, and the knowledge does not reach the row.**
-`AutoDownloadPolicy.isContentRestricted(jobs:)` decides a channel is
-members-only after `restrictedFailureThreshold` (3) failures carrying
-`FailureInterpreter.subscriberOnlySummary`, and pauses *automatic*
-downloading with a demotion that says so plainly. The manual `Add` on each
-row consults none of it and keeps offering.
+**Two things were wrong with the first version of this section**, both found
+on 2026-09-10 by looking at what the app had actually done rather than at what
+it was designed to do.
+
+**First: the detection never fired at all.**
+`AutoDownloadPolicy.isContentRestricted(jobs:)` counts failures carrying
+`FailureInterpreter.subscriberOnlySummary`, which was produced only for stderr
+containing `vod_manifest_restricted` or `unauthorized_entitlements`. Those are
+what `usher` answers a **direct manifest request** — the probe
+`twitch-channel-api.md` §9.3 ran by hand. Oxbow never makes one. The CLI
+swallows the 403 inside `VideoDownloader.GetQualityPlaylist()` and rethrows
+`System.NullReferenceException: Insufficient access to VOD, OAuth may be
+required.`, which fell through to the unknown-error fallback and produced a
+perfectly readable sentence that was not the constant anything matched on.
+
+Measured across **84 real failures on `middleditch`** — the same channel §9.3
+was measured against — with automatic downloading on. The demotion that should
+have stopped the sweep at three never fired, so it attempted the whole channel
+until a person cancelled it by hand at around eighty. **Fixed**: `summarise`
+now matches the CLI's own wording, and `FailureInterpreterTests
+.recognisesTheCLIsOwnSubscriberOnlyWording` pins it to captured stderr rather
+than to an invented string.
+
+The lesson generalises past this bug: the test that covered this case used a
+synthetic fixture nobody had observed the CLI emit, so it stayed green for
+months while the behaviour it described never happened. `twitch-metadata.md`
+§7 already says an exit code is not evidence; a hand-written fixture is not
+either.
+
+**Second: for a manual channel the knowledge is computed and discarded.**
+`WatchPoller` calls `isContentRestricted(jobs:)` for every watch, but
+`AutoDownloadPolicy.decide` returns `.notAutomatic` at its first guard — seven
+lines above the `contentRestricted` one — so a channel with
+`downloadsAutomatically: false` can fail every archive it has and nothing is
+ever concluded. The manual `Add` on each row consults none of it and keeps
+offering.
+
+**Deliberately punted, 2026-09-10.** With the matcher fixed, an *automatic*
+channel now stops at three and its card says why, which is the case that was
+actively harmful. A *manual* channel still offers a hundred Adds that cannot
+work, and there is no good fix available: the only up-front probe is a manifest
+request per archive (§9.3), and a channel-level inference drawn from three
+failures would lock out ninety-six rows nobody has evidence about. Both
+alternatives are worse than the status quo. **The real answer is
+authentication, which this project has deliberately chosen never to do**
+(§2 of `twitch-channel-api.md`), so this stays open rather than being solved
+badly.
 
 Note what that policy's own doc comment establishes, because it constrains
 every fix: Twitch's metadata **cannot** be asked. §9.3 of
