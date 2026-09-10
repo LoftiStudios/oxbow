@@ -172,6 +172,51 @@ struct VideoInfoTests {
     #expect(StreamQuality(name: "x", resolution: "0x1080", bitsPerSecond: 0).pixelSize == nil)
     #expect(StreamQuality(name: "x", resolution: "1920", bitsPerSecond: 0).pixelSize == nil)
   }
+
+  /// Measured 2026-09-09, helper 1.56.5, VOD 2844787557: `owner` carries
+  /// `login` beside `displayName`.
+  @Test("a VOD's owner login is parsed")
+  func vodOwnerLogin() {
+    let payload = """
+      {"data":{"video":{"title":"day 46","createdAt":"2026-09-01T12:00:00Z",\
+      "lengthSeconds":10203,"owner":{"id":"57692118","displayName":"WheelyF",\
+      "login":"wheelyf"},"thumbnailURLs":["https://cdn/a.jpg"]}}}
+      #EXTM3U
+      """
+
+    let info = VideoInfo.parse(payload)
+    #expect(info?.login == "wheelyf")
+    #expect(info?.streamer == "WheelyF")
+  }
+
+  /// A login that is not the display name lowercased — the case that makes
+  /// deriving one from the other wrong rather than merely redundant.
+  @Test("a login unrelated to the display name is kept as sent")
+  func loginUnrelatedToDisplayName() {
+    let payload = """
+      {"data":{"video":{"title":"t","createdAt":"2026-09-01T12:00:00Z",\
+      "lengthSeconds":60,"owner":{"id":"1","displayName":"日本語配信",\
+      "login":"jpstreamer"},"thumbnailURLs":[]}}}
+      #EXTM3U
+      """
+
+    #expect(VideoInfo.parse(payload)?.login == "jpstreamer")
+  }
+
+  /// An older payload without the field must still parse. Nil is honest here;
+  /// a guess would not be.
+  @Test("an owner with no login parses with a nil login")
+  func missingLoginIsNil() {
+    let payload = """
+      {"data":{"video":{"title":"t","createdAt":"2026-09-01T12:00:00Z",\
+      "lengthSeconds":60,"owner":{"displayName":"WheelyF"},"thumbnailURLs":[]}}}
+      #EXTM3U
+      """
+
+    let info = VideoInfo.parse(payload)
+    #expect(info != nil)
+    #expect(info?.login == nil)
+  }
 }
 
 /// `info --format Raw` for a clip is a different document from a VOD's — one

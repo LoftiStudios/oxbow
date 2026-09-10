@@ -178,9 +178,9 @@ nonisolated struct JobInfo {
   /// `1:30` under an hour, `1:12:30` over it — the shape a video player uses,
   /// rather than a leading `0:` nobody reads.
   private static func timecode(_ duration: Duration) -> String {
-    duration.components.seconds >= 3600
-      ? duration.formatted(.time(pattern: .hourMinuteSecond))
-      : duration.formatted(.time(pattern: .minuteSecond))
+    // The one definition lives in `VideoLength`; this stays as a local name
+    // so the call sites below read the way they always have.
+    VideoLength.timecode(duration)
   }
 
   private static func name(of format: ChatFormat) -> String {

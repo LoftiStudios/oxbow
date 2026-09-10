@@ -1,6 +1,7 @@
 # Watching a channel, and why it is a notifier first
 
-**Status:** design, written 2026-09-04. Not implemented.
+**Status:** implemented. Written 2026-09-04; §2.2 and §6.1 revised 2026-09-07
+after the first build was used in anger — see the revision notes in each.
 
 Every claim this document makes about Twitch's API is measured, and lives in
 `docs/twitch-channel-api.md` rather than here. Where this document says the
@@ -72,8 +73,19 @@ So the notification is a pointer, not the product. What a find actually lands
 in is a **durable list**: channel, title, duration, when it was published, and
 Add / Ignore. The notification says how many are waiting and opens it.
 
-Each row is one click from the intake window that already exists, prefilled —
-so the notify-only path needs no headless composition at all. Only §6 does.
+**Revised 2026-09-07.** This section used to route a finding's Add through the
+intake window, prefilled, on the reasoning that the notify-only path then
+needed no headless composition of its own. That reasoning was about saving
+work inside the app, and it cost the person using it: quality, output and
+destination are frozen onto the watch at §3.2 *precisely* so they are not
+chosen twice, and then the primary action on every finding opened a form
+asking for them again. A button labelled Add that opens a second Add is not
+a shortcut to anything.
+
+So a finding's Add queues it, with that channel's frozen settings, and intake
+stays reachable as a secondary action — trimming one VOD is real, and there is
+no other way to reach it. The composition path is the same one §6.1 names; it
+simply is not reserved for the unattended half any more.
 
 ---
 
@@ -236,6 +248,25 @@ intent's parameters. That reuse is the point — a second path that composed job
 its own way would be a second path that drifts from the window's rules, which
 is what §4 of that document rejected.
 
+**Revised 2026-09-07: the sweep is no longer the only caller.** This section
+was written as though submission belonged to the unattended path, and the
+first build made that literally true — a watch was saved, and then nothing
+could act on it until a poll came round, up to an hour later. Adding a channel
+with the whole backfill and automatic downloading on therefore appeared to do
+nothing at all, while the window that had just been used said "Every archive
+shown above is queued and downloaded now".
+
+The three things that mean "queue this with the settings this channel already
+has" — adding a channel with backfill, clicking a finding, and a sweep finding
+something new — now share one function, `ArchiveSubmission.submit`. The first
+two run while a window is open, which is the second half of the fix: a refusal
+has somewhere to appear. The poller's version of this used to catch
+`IntentSubmission.Failure` and discard it, so a channel whose archives were
+all being refused was indistinguishable from a channel with nothing new. Every
+caller now surfaces what came back — §6.3 already required this of a download
+that fails, and a refusal before the job exists is the same promise one step
+earlier.
+
 ### 6.2 Demotion, not a budget, and never deletion
 
 Backfill is finite and priced (§3.3). Ongoing automatic downloading is not:
@@ -365,6 +396,31 @@ and a separate window is one you have to remember to go and look at — which is
 the exact failure the feature exists to prevent. The sidebar also gives the
 unread count somewhere to live, so "things are waiting" is visible without
 depending on a notification.
+
+### 8.1 A macOS 26 regression: `.badge()` before `.tag()` breaks selection
+
+Building this sidebar's `List` hit a genuine SwiftUI bug on macOS 26: apply
+`.badge()` to a row's label before `.tag()`, and clicking that row stops
+changing the `List`'s selection binding at all. AppKit still fires — the row
+highlights — but the value SwiftUI hands back to `selection` never updates.
+Neither modifier's documentation says order matters, and nothing else in this
+codebase's use of `.badge()` (§7.1 of `settings.md`, the menu-item icon
+regression) is the same failure — that one is about auto-iconing menu items,
+not about a `List` losing clicks.
+
+Bisected by hand against the built sidebar, one row shape at a time:
+
+| Row content | Click-to-select |
+|---|---|
+| `Text` alone, `.tag()` only | works |
+| `Label`, `.tag()` only | works |
+| `Label`, `.tag()` then `.badge()` | **broken** |
+| `Label`, `.badge()` then `.tag()` | works |
+
+The fix is the order, not the presence, of the two modifiers: `.badge()`
+always before `.tag()`. `QueueView`'s sidebar carries an inline comment at the
+call site recording this as load-bearing; this section is the place to look
+for the reasoning and the bisection behind it.
 
 ---
 

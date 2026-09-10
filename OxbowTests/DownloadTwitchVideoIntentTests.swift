@@ -333,13 +333,15 @@ struct DownloadTwitchVideoIntentTests {
     IntakeModel(
       fetchInfo: { _ in
         fetchCounter?.record()
-        return VideoInfo(
-          streamer: "streamer",
-          title: "A Stream",
-          createdAt: Date(timeIntervalSince1970: 1_755_000_000),
-          duration: .seconds(3600),
-          qualities: qualities,
-          hasDownloadableChat: hasDownloadableChat)
+        return VideoInfoFetcher.Fetched(
+          info: VideoInfo(
+            streamer: "streamer",
+            title: "A Stream",
+            createdAt: Date(timeIntervalSince1970: 1_755_000_000),
+            duration: .seconds(3600),
+            qualities: qualities,
+            hasDownloadableChat: hasDownloadableChat),
+          payload: "")
       },
       enqueue: { _, _ in },
       calendar: Self.pacific,

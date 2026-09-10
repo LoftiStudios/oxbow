@@ -206,6 +206,121 @@ struct IntakeModelTests {
     #expect(model.hasSettledMetadata, "metadata is untouched, not idled the way reset() idles it")
   }
 
+  // MARK: - Pending intake
+
+  /// `apply(_:)` is how a Watching finding reaches this form: `WatchingModel`
+  /// hands `IntakeWindow` the archive id and its channel's frozen settings,
+  /// and this is what turns those into the fields the rest of the model
+  /// reads. The seeded values below all differ from the pending ones, so a
+  /// version that silently kept whatever `Preferences` had seeded could not
+  /// pass this by accident.
+  ///
+  /// `fileExists` is stubbed to accept the pending destination, so this is
+  /// the "reachable" half of the fallback behaviour; see
+  /// `applyFallsBackToDownloadsWhenTheWatchDestinationIsUnreachable` below for
+  /// the other half, over the same pending intake.
+  @Test func applySetsTheLinkAndAllFourSettings() {
+    let model = makeModel(
+      preferences: Self.store {
+        $0.qualityCap = .best
+        $0.output = .videoWithChat
+        $0.chatSize = .medium
+        $0.destination = URL(filePath: "/Users/someone/Downloads")
+      },
+      fileExists: { $0 == URL(filePath: "/Users/someone/Archive") })
+
+    let pending = PendingIntake(
+      archiveID: "2844548319",
+      settings: Watch.Settings(
+        destinationPath: "/Users/someone/Archive",
+        qualityCap: .p720,
+        output: .video,
+        chatSize: .large))
+
+    model.apply(pending)
+
+    #expect(model.linkText == "2844548319")
+    #expect(model.target != nil, "a bare numeric id parses as a video")
+    #expect(model.qualityCap == .p720)
+    #expect(model.output == .video)
+    #expect(model.chatSize == .large)
+    #expect(model.folder == URL(filePath: "/Users/someone/Archive"))
+    #expect(model.destinationFellBack == false)
+  }
+
+  /// The finding this guards against: `Watch.Settings.destination` is an
+  /// unconditional `URL(filePath:)` with no existence check of its own, so
+  /// without one in `apply(_:)` itself, a channel configured to a since
+  /// unplugged volume would set `folder` to that dead path and
+  /// `QueueEngine.move` would recreate it on the boot volume instead of
+  /// falling back — see the doc comment on `apply(_:)` for the full chain.
+  ///
+  /// `fileExists` returns false for every path, so this cannot pass by
+  /// `apply(_:)` merely ignoring the watch's destination and reseeding from
+  /// `Preferences` instead: that store's own destination,
+  /// `/Users/someone/Downloads`, differs from the fallback asserted here,
+  /// `/Users/t/Downloads` — this model's injected `homeDirectory`.
+  @Test func applyFallsBackToDownloadsWhenTheWatchDestinationIsUnreachable() {
+    let model = makeModel(
+      preferences: Self.store {
+        $0.destination = URL(filePath: "/Users/someone/Downloads")
+      },
+      fileExists: { _ in false },
+      homeDirectory: URL(filePath: "/Users/t"))
+
+    let pending = PendingIntake(
+      archiveID: "2844548319",
+      settings: Watch.Settings(
+        destinationPath: "/Volumes/Unplugged/Archive",
+        qualityCap: .p720,
+        output: .video,
+        chatSize: .large))
+
+    model.apply(pending)
+
+    #expect(model.folder == URL(filePath: "/Users/t/Downloads"))
+    #expect(model.destinationFellBack)
+  }
+
+  /// The ordering `IntentSubmission.submit` already depends on, for the same
+  /// reason (see that type's own comment): `load()` reads `qualityCap` to
+  /// pick a rendition, so whatever `apply(_:)` sets has to be in place
+  /// *before* `load()` runs — never after.
+  ///
+  /// Proven rather than merely asserted-on-paper: the model starts on a
+  /// `.best` cap, which `load()` alone resolves to "best available" (an empty
+  /// `quality`). Applying a `.p720` cap and *then* loading instead resolves
+  /// `quality` to the rendition that cap actually selects. A version of
+  /// `apply(_:)` that ran too late — or an `IntakeWindow` that called
+  /// `load()` before `apply(_:)` — would leave `quality` empty here instead.
+  @Test func appliedSettingsAreInPlaceBeforeLoadResolvesQuality() async {
+    let model = makeModel(
+      preferences: Self.store {
+        $0.qualityCap = .best
+        $0.output = .videoWithChat
+      },
+      info: Self.info(qualities: [
+        StreamQuality(name: "1080p60", resolution: "1920x1080", bitsPerSecond: 8_000_000),
+        StreamQuality(name: "720p60", resolution: "1280x720", bitsPerSecond: 3_000_000),
+      ]))
+
+    let pending = PendingIntake(
+      archiveID: "2844548319",
+      settings: Watch.Settings(
+        destinationPath: "/Users/someone/Archive",
+        qualityCap: .p720,
+        output: .video,
+        chatSize: .medium))
+
+    model.apply(pending)
+    await model.load()
+
+    #expect(
+      model.quality == "720p60",
+      "load() must resolve against the applied .p720 cap, not the seeded .best one")
+    #expect(model.output == .video, "apply()'s output survives a load() that never touches it")
+  }
+
   // MARK: - Quality, both directions
 
   @Test func metadataResolvesTheCapIntoARendition() async {
@@ -776,7 +891,7 @@ struct IntakeModelTests {
     let model = IntakeModel(
       fetchInfo: { _ in
         await gate.arriveAndWait()
-        return IntakeModelTests.info()
+        return VideoInfoFetcher.Fetched(info: IntakeModelTests.info(), payload: "")
       },
       enqueue: { _, _ in },
       calendar: Self.pacific,
@@ -1022,19 +1137,21 @@ struct IntakeModelTests {
     failure: Error? = nil,
     recorder: Recorder = Recorder(),
     fileExists: @escaping (URL) -> Bool = { _ in false },
-    volumeSpace: VolumeSpace = IntakeModelTests.volume(free: 1_000_000_000_000))
+    volumeSpace: VolumeSpace = IntakeModelTests.volume(free: 1_000_000_000_000),
+    homeDirectory: URL = URL(filePath: "/Users/t"))
     -> IntakeModel
   {
     IntakeModel(
       fetchInfo: { _ in
         if let failure { throw failure }
         guard let info else { throw VideoInfoFetchError.unparseableOutput(snippet: "") }
-        return info
+        return VideoInfoFetcher.Fetched(info: info, payload: "")
       },
       enqueue: { recorder.templates.append((template: $0, title: $1)) },
       calendar: Self.pacific,
       fileExists: fileExists,
       volumeSpace: volumeSpace,
+      homeDirectory: homeDirectory,
       preferences: preferences)
   }
 
@@ -1918,7 +2035,9 @@ struct IntakeModelTests {
     let long = Self.info(duration: .seconds(2400))
     let short = Self.info(duration: .seconds(300))
     let model = IntakeModel(
-      fetchInfo: { id in id == "1111" ? long : short },
+      fetchInfo: { id in
+        VideoInfoFetcher.Fetched(info: id == "1111" ? long : short, payload: "")
+      },
       enqueue: { _, _ in },
       calendar: Self.pacific,
       preferences: Self.store())
@@ -2039,9 +2158,9 @@ struct IntakeModelTests {
       fetchInfo: { id in
         if id == "1111" {
           await gate.wait()
-          return stale
+          return VideoInfoFetcher.Fetched(info: stale, payload: "")
         }
-        return fresh
+        return VideoInfoFetcher.Fetched(info: fresh, payload: "")
       },
       enqueue: { _, _ in },
       calendar: Self.pacific,

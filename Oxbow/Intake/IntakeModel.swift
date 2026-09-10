@@ -171,6 +171,25 @@ final class IntakeModel {
   /// disagree, or a job gets composed for one video out of another's details.
   private(set) var metadataIdentifier: String?
 
+  /// Everything the last settled `info` run said, including the parts
+  /// `VideoInfo.parse` does not read.
+  ///
+  /// **Kept, not written.** Holding it here costs about 3.4 KB of memory and
+  /// nothing else; a submission is what turns it into a row on disk (see
+  /// `IntentSubmission.submit`). `load()` fires on every debounced keystroke
+  /// while somebody types a link into Add Download, so recording here would
+  /// permanently record every video a person merely looked at — which
+  /// `docs/design/video-record.md` §3.5 rules out.
+  ///
+  /// **Set inside `load()`'s generation guard, and that is load-bearing.** A
+  /// fetch superseded by a newer link can still land afterwards; if it set
+  /// this outside the guard, `lastFetch` would hold one video's payload while
+  /// the form — and the submission that follows — described another, and the
+  /// payload would be archived under the wrong video's id. Silent, permanent,
+  /// and very hard to trace back to here. Cleared everywhere the metadata it
+  /// belongs to is cleared, for the same reason.
+  private(set) var lastFetch: VideoInfoFetcher.Fetched?
+
   /// Set when Add refused. Only reachable if `canAdd` and
   /// `composedTemplate()` ever disagreed, which they cannot — but a sheet
   /// that closes on a job that was never composed is exactly the silent
@@ -180,7 +199,7 @@ final class IntakeModel {
 
   // MARK: - Collaborators
 
-  private let fetchInfo: (String) async throws -> VideoInfo
+  private let fetchInfo: (String) async throws -> VideoInfoFetcher.Fetched
   private let enqueue: (JobTemplate, String) async -> Void
   private let calendar: Calendar
   /// Injected so the collision rule is testable without touching a real
@@ -200,13 +219,19 @@ final class IntakeModel {
   /// drifts.
   private let workspaceVolumePath: URL
 
+  /// Where `apply(_:)` falls back to when a watch's frozen destination no
+  /// longer resolves — mirrors `Preferences.factoryDestination`, which needs
+  /// the same injected value for the same reason: a test cannot depend on
+  /// the real `~/`.
+  private let homeDirectory: URL
+
   /// Distinguishes the fetch in flight from one the user has already
   /// superseded by editing the link. Without it a slow fetch for the previous
   /// link lands last and names the job after the wrong video.
   private var generation = 0
 
   init(
-    fetchInfo: @escaping (String) async throws -> VideoInfo,
+    fetchInfo: @escaping (String) async throws -> VideoInfoFetcher.Fetched,
     enqueue: @escaping (JobTemplate, String) async -> Void,
     calendar: Calendar = .current,
     fileExists: @escaping (URL) -> Bool = {
@@ -214,6 +239,7 @@ final class IntakeModel {
     },
     volumeSpace: VolumeSpace = .live,
     workspaceVolumePath: URL = URL.applicationSupportDirectory,
+    homeDirectory: URL = .homeDirectory,
     preferences: Preferences)
   {
     self.fetchInfo = fetchInfo
@@ -222,6 +248,7 @@ final class IntakeModel {
     self.fileExists = fileExists
     self.volumeSpace = volumeSpace
     self.workspaceVolumePath = workspaceVolumePath
+    self.homeDirectory = homeDirectory
     self.preferences = preferences
     self.qualityCap = preferences.qualityCap
     self.output = preferences.output
@@ -246,7 +273,7 @@ final class IntakeModel {
     preferences: Preferences = Preferences())
   {
     self.init(
-      fetchInfo: { try await controller.fetchInfo(for: $0) },
+      fetchInfo: { try await controller.fetchInfoDetailed(for: $0) },
       enqueue: { await controller.enqueue($0, title: $1) },
       calendar: calendar,
       preferences: preferences)
@@ -286,6 +313,10 @@ final class IntakeModel {
     trimEndText = ""
     metadata = .idle
     metadataIdentifier = nil
+    // Goes with the metadata it belongs to. Add Download is one `Window` for
+    // the app's whole run, so a payload left here would outlive the video it
+    // describes and be waiting for the next link the next open pastes.
+    lastFetch = nil
     addFailure = nil
     // Invalidates a fetch still in flight the same way a new link does, so a
     // late arrival cannot settle metadata into the form it just emptied.
@@ -329,6 +360,51 @@ final class IntakeModel {
     isOptionsExpanded = preferences.optionsPanelIsExpanded
   }
 
+  /// Carries a Watching finding into this form: the archive id becomes the
+  /// link, and its channel's frozen settings are applied over whatever this
+  /// window was seeded with.
+  ///
+  /// **Before any `load()`, deliberately — the same ordering
+  /// `IntentSubmission.submit` already depends on, for the same reason (see
+  /// that type's own comment).** `load()` reads `output` to decide whether
+  /// resolution must skip a rendition a composite cannot use, and reads
+  /// `qualityCap` to pick the rendition at all. This method only ever sets
+  /// properties — it never calls `load()` itself — so the caller has to run
+  /// it first: `IntakeWindow` does, in `.onAppear`, before its own
+  /// `.task(id: model.linkText)` fires `load()` for the newly-set link.
+  /// Applied afterwards, `quality` would resolve against whichever policy was
+  /// already in place and end up naming a rendition nobody asked for.
+  /// **The destination gets the same unreachable-folder check
+  /// `Preferences.destination` gives the standing default, not a second,
+  /// unchecked assignment.** `Watch.Settings.destination` is a bare
+  /// `URL(filePath:)` — it has no opinion about whether that path still
+  /// resolves, because freezing a channel's settings at add-time (this
+  /// type's own doc comment) has nothing to do with whether the drive is
+  /// mounted months later when a finding fires. Skipping this check would
+  /// hand `folder` a dead path silently: `QueueEngine.move` creates any
+  /// destination it is given with `withIntermediateDirectories: true`, so an
+  /// unplugged `/Volumes/Archive/SomeChannel` would come back as a brand-new
+  /// empty directory on the boot volume instead of a warning (design doc
+  /// §6.2). Reuses `fileExists`, the same injected check `destinationCollision`
+  /// already uses, rather than a second mechanism — and reuses
+  /// `destinationFellBack`/`Preferences.factoryDestination`, the same flag and
+  /// fallback `reseedFromPreferences()` already surfaces, so `IntakeWindow`'s
+  /// existing "Oxbow will use Downloads" warning fires here for free.
+  func apply(_ pending: PendingIntake) {
+    linkText = pending.archiveID
+    qualityCap = pending.settings.qualityCap
+    output = pending.settings.output
+    chatSize = pending.settings.chatSize
+    let destination = pending.settings.destination
+    if fileExists(destination) {
+      folder = destination
+      destinationFellBack = false
+    } else {
+      folder = Preferences.factoryDestination(homeDirectory: homeDirectory)
+      destinationFellBack = true
+    }
+  }
+
   // MARK: - The link
 
   var target: TwitchLink.Target? { TwitchLink.parse(linkText) }
@@ -369,6 +445,7 @@ final class IntakeModel {
     guard let target else {
       metadata = .idle
       metadataIdentifier = nil
+      lastFetch = nil
       return
     }
 
@@ -377,8 +454,12 @@ final class IntakeModel {
     metadata = .loading
 
     do {
-      let info = try await fetchInfo(target.identifier)
+      let fetched = try await fetchInfo(target.identifier)
       guard issued == generation else { return }
+      let info = fetched.info
+      // Inside the guard, with `metadata` and `metadataIdentifier`, so all
+      // three always describe the same video. See `lastFetch`.
+      lastFetch = fetched
       metadata = .loaded(info)
       metadataIdentifier = target.identifier
       // Resolve the standing cap against what this video actually offers.
@@ -410,6 +491,10 @@ final class IntakeModel {
       guard issued == generation else { return }
       metadata = .failed(Self.message(for: error))
       metadataIdentifier = target.identifier
+      // This fetch has no payload, and the previous video's is not this
+      // video's. Left in place it would be recorded under this id by a
+      // submission that somehow got past a failed fetch.
+      lastFetch = nil
       quality = ""
       name = OutputNaming.sanitized(
         target.identifier, reservingSuffixBytes: OutputSuffix.longestBytes)

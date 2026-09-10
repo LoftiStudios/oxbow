@@ -32,15 +32,30 @@ struct IntakeWindow: View {
   @State private var isAdding = false
   @FocusState private var isLinkFocused: Bool
 
-  init(controller: QueueController) {
+  /// A finding waiting to be applied, from `OxbowApp`'s own `@State`.
+  ///
+  /// **A binding, not a plain value, so this window can clear it.** `OxbowApp`
+  /// holds the one instance of this scene's worth of state across opens and
+  /// closes (see `IntakeModel.reset()`'s own comment on why `Window` rather
+  /// than `WindowGroup` matters here), so a pending finding this window does
+  /// not clear after consuming would resurrect itself on the next ⌘N — the
+  /// exact staleness bug the Add Channel window's missing reset caused.
+  @Binding private var pendingIntake: PendingIntake?
+
+  init(controller: QueueController, pendingIntake: Binding<PendingIntake?>) {
     _model = State(initialValue: IntakeModel(controller: controller))
+    _pendingIntake = pendingIntake
   }
 
   /// For previews, and for anything else that wants to drive the sheet without
   /// an engine behind it — `IntakeModel`'s own init takes closures for exactly
   /// this reason, and this is what lets a preview reach them.
-  init(model: IntakeModel) {
+  ///
+  /// `pendingIntake` defaults to a constant `nil`: no preview below exercises
+  /// the Watching hand-off, so none of them need a real binding to clear.
+  init(model: IntakeModel, pendingIntake: Binding<PendingIntake?> = .constant(nil)) {
     _model = State(initialValue: model)
+    _pendingIntake = pendingIntake
   }
 
   var body: some View {
@@ -86,7 +101,17 @@ struct IntakeWindow: View {
       #if DEBUG
       if let link = ScreenshotFixture.link { model.linkText = link }
       #endif
-      prefillFromClipboard()
+      // A pending finding wins over the clipboard: someone who clicked Add on
+      // a specific video did not mean whatever happens to be on their
+      // pasteboard. Cleared immediately after applying — this is the one
+      // consumption point, and leaving it set would resurrect the same
+      // finding on the next ⌘N.
+      if let pendingIntake {
+        model.apply(pendingIntake)
+        self.pendingIntake = nil
+      } else {
+        prefillFromClipboard()
+      }
     }
     // Trim has to be opened *after* the metadata lands, not with the link:
     // `load()` clears `isTrimExpanded` when it arrives, because a trim carried
@@ -794,15 +819,27 @@ struct IntakeWindow: View {
 
   // MARK: - Actions
 
-  /// Dismisses only once the job is in the engine. `model.add()` awaits the
-  /// enqueue all the way in and reports whether it landed; a refusal leaves
-  /// the sheet open with its reason on screen. The checkbox's own save is
-  /// gated on that same success (§2.3), so it lands here rather than inside
-  /// `model.add()` itself.
+  /// Dismisses only once the job is in the engine. `IntakeAdd.perform` awaits
+  /// the enqueue all the way in and reports whether it landed; a refusal
+  /// leaves the sheet open with its reason on screen. The checkbox's own save
+  /// is gated on that same success (§2.3), so it lands here rather than
+  /// inside `model.add()` itself.
+  ///
+  /// **Through `IntakeAdd` rather than straight to `model.add()`, so that a
+  /// hand-pasted download is recorded like any other.** This is the case the
+  /// video record exists for (`docs/design/video-record.md` §3.5): you grab a
+  /// channel's video by hand today, add that channel as a watch later, and
+  /// the row should already know you have it. The recording handle comes from
+  /// `QueueHost` for the reason `ArchiveSubmission` gives — it is the one
+  /// place that resolves the support directory, and it is nil outside a user
+  /// session, so a test run or a preview writes nothing.
   private func add() {
     isAdding = true
     Task {
-      let didAdd = await model.add()
+      let didAdd = await IntakeAdd.perform(
+        model,
+        recording: QueueHost.shared.videoRecording,
+        helperVersion: AboutInfo.main.helperVersion)
       isAdding = false
       if didAdd {
         // After the enqueue succeeds and never before it (§2.3) —
@@ -979,7 +1016,7 @@ private func previewModel(
   let model = IntakeModel(
     fetchInfo: { _ in
       guard let info else { throw VideoInfoFetchError.unparseableOutput(snippet: "") }
-      return info
+      return VideoInfoFetcher.Fetched(info: info, payload: "")
     },
     enqueue: { _, _ in },
     fileExists: fileExists,

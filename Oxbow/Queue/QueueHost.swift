@@ -58,6 +58,25 @@ final class QueueHost {
   /// the single caller that only wants to stop it.
   private var liveController: QueueController?
 
+  /// Where a successful submission writes the video's facts and payload, or
+  /// nil when nothing should be written.
+  ///
+  /// **Here rather than injected into every submission site** because this is
+  /// already the one place that resolves `supportDirectory` for the engine,
+  /// and the record lives beside `queue.json` by the same decision. The three
+  /// `ArchiveSubmission.submit` call sites and the App Intent all reach the
+  /// controller through `ready()`, so this sits exactly where they already
+  /// look; threading a store from each of them instead would mean giving
+  /// `AddChannelWindow` — a SwiftUI view whose own doc comment records that
+  /// it deliberately has no `supportDirectory` — one purely to pass it on.
+  ///
+  /// **Nil under `xcodebuild test`, and that is the point.** `OxbowTests` is
+  /// hosted by this app, so a test run resolves a real engine against the
+  /// developer's real support directory. `AppComposition.isUserSession`
+  /// guards this for the same reason it guards `dock`, `notifier` and the
+  /// sweep: a test must not write the developer's own `videos.json`.
+  private(set) var videoRecording: VideoRecording?
+
   /// **`lazy`, and for the reason `AppDelegate`'s were.** Built on first use
   /// by whichever caller gets there, so neither depends on when it is first
   /// reached. Both stay `nil` under `xcodebuild test`: `OxbowTests` is hosted
@@ -111,6 +130,18 @@ final class QueueHost {
     notifier?.announceIntentSubmission(
       title: outcome.notificationTitle,
       body: outcome.notificationBody)
+  }
+
+  /// Tells the user a sweep turned up archives waiting in the Watching pane.
+  ///
+  /// Narrow for the same reason `notifyIntentOutcome` above is, and routed
+  /// through here rather than by handing `WatchPoller` a notifier of its own:
+  /// `notifier` is `lazy` precisely so that whichever caller reaches it first
+  /// builds the one instance, and a second would register a second delegate
+  /// on the notification centre — silently unregistering the first, taking
+  /// "Show in Finder" with it.
+  func notifyFindings(title: String, body: String) {
+    notifier?.announceFindings(title: title, body: body)
   }
 
   /// Resolves the engine, or returns why it could not. Safe to call from
@@ -190,7 +221,12 @@ final class QueueHost {
         // `ready()`, which waits for `start()` so no enqueuer ever sees a
         // pre-start engine. See `liveController`.
         liveController = controller
-        attachStatusObservers(to: controller)
+        // Same guard, and the same reason, as `attachStatusObservers`'s own:
+        // see `videoRecording`.
+        if AppComposition.isUserSession {
+          videoRecording = VideoRecording.live(supportDirectory: support)
+        }
+        attachStatusObservers(to: controller, supportDirectory: support)
         await controller.start()
         return .ready(controller)
       case .helperMissing(let message):
@@ -205,12 +241,44 @@ final class QueueHost {
   /// Wires the status surfaces to the queue. Moved here from `AppDelegate`
   /// because it must happen before `start()` regardless of which caller
   /// triggered resolution, and only this type knows when that is.
-  private func attachStatusObservers(to controller: QueueController) {
-    // Nil only under `xcodebuild test`, where both are deliberately absent.
+  ///
+  /// **This is the one subscription to `controller.onSnapshot`.**
+  /// `AutoDownloadObserver` — which returns a failed automatic download to
+  /// the inbox, `docs/design/channel-watching.md` §6.3 — is wired in here
+  /// alongside `dock` and `notifier` rather than opening a second
+  /// subscription of its own.
+  ///
+  /// **Gated on `AppComposition.isUserSession` directly, ahead of the
+  /// `dock`/`notifier` unwrap.** `OxbowTests` is hosted by this app, so
+  /// `xcodebuild test` builds a real `QueueController` against the
+  /// developer's own `queue.json` — but `WatchingModel` and `WatchPoller`
+  /// are deliberately never constructed in that case (`OxbowApp`'s own
+  /// `AppComposition.isUserSession`-guarded `.task`), specifically so a
+  /// test run never touches the developer's real `watches.json`. `dock` and
+  /// `notifier` merely *happen* to be nil under exactly that same condition
+  /// today (see their own declarations) — nothing enforces that the two
+  /// stay in lockstep, so unwrapping them was gating this observer on a
+  /// coincidence, not on the requirement. Of the three surfaces wired
+  /// below, `AutoDownloadObserver` is the one that *writes* user data
+  /// (`Watch.forgetting` mutates `watches.json`) rather than only
+  /// displaying it, so it is the one whose safety this guard must not lose
+  /// silently if `dock` or `notifier` ever gets a non-nil test double.
+  private func attachStatusObservers(to controller: QueueController, supportDirectory: URL) {
+    guard AppComposition.isUserSession else { return }
     guard let dock, let notifier else { return }
+    // The support directory is already resolved here, and `notifier` is
+    // already unwrapped — the same two facts that let `videoRecording` above
+    // be assigned rather than self-derived. `JobNotifier.init()` cannot do
+    // this itself: it can be built by `registerNotificationDelegate()` before
+    // this directory exists at all.
+    notifier.videoRecordStore = VideoRecordStore(
+      fileURL: AppComposition.videoRecordURL(supportDirectory: supportDirectory))
+    let autoDownloadObserver = AutoDownloadObserver(
+      store: WatchStore(fileURL: AppComposition.watchStoreURL(supportDirectory: supportDirectory)))
     controller.onSnapshot = { jobs in
       dock.apply(jobs)
       notifier.apply(jobs)
+      autoDownloadObserver.apply(jobs)
     }
     controller.onEnqueue = { notifier.requestAuthorizationIfNeeded() }
   }

@@ -49,6 +49,32 @@ public enum VideoInfoFetcher {
     var joined: String { lines.joined(separator: "\n") }
   }
 
+  /// One `info` run: what we could parse, and the helper's narrative output it
+  /// was parsed from.
+  ///
+  /// The payload is kept because `VideoInfo.parse` reads a fraction of it —
+  /// the moments line not at all — and a record that stores only the parsed
+  /// half freezes today's field set into the archive
+  /// (`docs/design/video-record.md` §3.3).
+  ///
+  /// **Not a transcript of the process, and a future parser should not read
+  /// it as one.** It is the `.log` and `.ffmpeg` lines joined with newlines,
+  /// so the `[STATUS]` banner `StatusLineParser` classifies separately never
+  /// reaches it, and blank lines are not preserved. What that costs is
+  /// nothing: the three parts anything would want — the video-info JSON line,
+  /// the moments JSON line and the m3u8 — are each a non-empty line that
+  /// matches no status preamble, so none of them can be the thing that was
+  /// dropped. Only the shape of the whitespace between them is gone.
+  public struct Fetched: Sendable {
+    public let info: VideoInfo
+    public let payload: String
+
+    public init(info: VideoInfo, payload: String) {
+      self.info = info
+      self.payload = payload
+    }
+  }
+
   /// Runs `info --id <id> --format Raw` and parses the result.
   ///
   /// The info payload — the video-info JSON, the moments JSON, and the m3u8
@@ -58,11 +84,11 @@ public enum VideoInfoFetcher {
   /// `StepLog`'s doc comment for the same distinction). Only the leading
   /// `[STATUS] - Fetching Video Info [1/1]` banner is `.status`, and it is
   /// ignored here — `VideoInfo.parse` finds its own start point regardless.
-  public static func fetch(
+  public static func fetchDetailed(
     id: String,
     helper: URL,
     process: HelperProcessing)
-    async throws -> VideoInfo
+    async throws -> Fetched
   {
     let launch = Launch(
       executable: helper,
@@ -113,7 +139,20 @@ public enum VideoInfoFetcher {
       throw VideoInfoFetchError.unparseableOutput(snippet: Self.snippet(of: joined))
     }
 
-    return info
+    return Fetched(info: info, payload: joined)
+  }
+
+  /// The metadata alone, for callers with nothing to do with the payload.
+  ///
+  /// Kept so intake — which fetches on every debounced keystroke and records
+  /// nothing (§3.5) — does not have to carry a payload it will discard.
+  public static func fetch(
+    id: String,
+    helper: URL,
+    process: HelperProcessing)
+    async throws -> VideoInfo
+  {
+    try await fetchDetailed(id: id, helper: helper, process: process).info
   }
 
   /// Truncates `output` to `snippetLimit`, leaving a visible marker so the

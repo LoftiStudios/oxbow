@@ -97,6 +97,7 @@ public struct Preferences {
     static let chatSize = "defaultChatSize"
     static let hasSavedDefaults = "hasSavedDefaults"
     static let optionsExpanded = "intakeOptionsExpanded"
+    static let freeSpaceFloor = "freeSpaceFloor"
   }
 
   private let store: PreferenceStore
@@ -175,6 +176,50 @@ public struct Preferences {
     }
   }
 
+  /// Below this much free space on a watch's destination volume, automatic
+  /// downloading declines to start a job rather than risk it.
+  ///
+  /// **Stored as an `Int64` count of bytes — that is a storage format, not
+  /// an implementation detail.** A saved value is meaningless without the
+  /// unit it was written in; if this is ever changed to kilobytes or a
+  /// fractional gigabyte, every value already on disk silently means
+  /// something else the moment the new build reads it back. `QualityCap`'s
+  /// raw strings carry the identical trap for the same reason — see its own
+  /// comment.
+  public var freeSpaceFloor: Int64 {
+    get {
+      (store.object(forKey: Key.freeSpaceFloor) as? Int64) ?? Self.factoryFreeSpaceFloor
+    }
+    set {
+      store.set(newValue, forKey: Key.freeSpaceFloor)
+      recordSave()
+    }
+  }
+
+  /// The factory free-space floor: what Oxbow will not spend, on top of what
+  /// the download itself is priced at.
+  ///
+  /// **Lowered from 49 GB to 10 GB on 2026-09-07, because the old number was
+  /// counting the job twice.** 49 GB came from `docs/design/disk-preflight
+  /// .md` §5's worked example — a six-hour 1080p60 job with chat peaks at
+  /// about 49 GB across source, chat-render intermediate and composite — and
+  /// the reasoning was that a floor below a single job's peak never fires in
+  /// time to help. That was correct when the floor was the *only* protection.
+  ///
+  /// It is not any more. `AutoDownloadPolicy` prices every batch with
+  /// `BackfillEstimate`, whose sum is peak-aware in exactly the same way
+  /// (`Σ delivered + max transient overhead`), and refuses any batch that
+  /// would take the volume below this. So the job's peak is already
+  /// subtracted before this number is consulted, and setting the floor to a
+  /// second copy of that peak reserved a worst-case 1080p-with-chat job's
+  /// worth of room in order to decline a 300 MB 360p one.
+  ///
+  /// What is left for the floor to do is keep the machine usable — leave
+  /// room for the system, not for the download. **10 GB**, which is also
+  /// already a rung on the settings picker. Anyone wanting the old behaviour
+  /// can pick 49 GB there, and someone on a very full disk can pick more.
+  public static let factoryFreeSpaceFloor: Int64 = 10_000_000_000
+
   /// Whether the intake's options panel opens expanded.
   ///
   /// **Its own stored value, not derived from `hasSavedDefaults`.** Deriving
@@ -211,7 +256,7 @@ public struct Preferences {
 
   public mutating func restoreDefaults() {
     for key in [Key.destination, Key.qualityCap, Key.output, Key.chatSize,
-                Key.hasSavedDefaults, Key.optionsExpanded] {
+                Key.hasSavedDefaults, Key.optionsExpanded, Key.freeSpaceFloor] {
       store.removeObject(forKey: key)
     }
   }

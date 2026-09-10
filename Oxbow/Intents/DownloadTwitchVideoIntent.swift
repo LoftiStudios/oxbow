@@ -80,6 +80,32 @@ enum IntentSubmission {
   /// **Nothing here saves a preference.** `saveDefaultsIfRequested()` is
   /// driven by the intake's checkbox, which this never sets. An override is a
   /// decision about one run.
+  ///
+  /// **`recording` is what this submission's fetch gets written into.** Every
+  /// path into this function has already run the helper's `info` verb —
+  /// `model.load()` below — because that is how a quality cap resolves
+  /// against a particular video's renditions; until now the payload that came
+  /// back was discarded at the end of every one. Recording it at the fetch
+  /// instead would be far easier and would be wrong: `load()` fires on every
+  /// debounced keystroke in Add Download, so it would permanently record every
+  /// link a person pasted and thought better of
+  /// (`docs/design/video-record.md` §3.5). So the write happens after a
+  /// submission has actually succeeded, in `IntakeAdd.perform` — shared with
+  /// the intake window's own Add button, which reaches the same place by the
+  /// same rule.
+  ///
+  /// It defaults to `nil` — record nothing — rather than to the live stores,
+  /// because `OxbowTests` is hosted by the app and a defaulted live store
+  /// would make every test run write the developer's own `videos.json`.
+  ///
+  /// **`helperVersion` stamps the payload**, and defaults to the running
+  /// build's. It is legitimately nil in a build with no embedded helper (the
+  /// UI-only fast path CONTRIBUTING.md promises) — including every
+  /// `xcodebuild test` run, since `scripts/stamp-version.sh` is what puts it
+  /// in the plist — and `VideoRecorder` then writes the facts without a
+  /// payload rather than storing bytes no future parser could pick a dialect
+  /// for. That nil is why this is a parameter at all: a test asserting a
+  /// payload landed has to be able to supply a stamp.
   @discardableResult
   static func submit(
     link: String,
@@ -88,7 +114,9 @@ enum IntentSubmission {
     chatSize: ChatSize?,
     destination: URL?,
     existingJobs: [Job] = [],
-    into model: IntakeModel) async throws -> Outcome
+    into model: IntakeModel,
+    recording: VideoRecording? = nil,
+    helperVersion: String? = AboutInfo.main.helperVersion) async throws -> Outcome
   {
     model.linkText = link
     guard !model.isLinkUnrecognized, let target = model.target else {
@@ -137,9 +165,19 @@ enum IntentSubmission {
     // job the window would have allowed makes the two disagree, which is
     // worse than a job that runs out of room in the way the window already
     // permits (docs/design/automation.md §7).
-    guard await model.add() else {
+    // `IntakeAdd.perform` rather than `model.add()` directly, so that this
+    // path and the Add button in the intake window record on exactly the same
+    // terms — after the enqueue lands and never before it, which is what §3.5
+    // rules on. The window used to call `model.add()` itself and so recorded
+    // nothing at all; a hand-pasted download left no trace, which is the one
+    // case the record exists for.
+    //
+    guard await IntakeAdd.perform(
+      model, recording: recording, helperVersion: helperVersion)
+    else {
       throw Failure.refused(model.addFailure ?? "Oxbow could not build that download.")
     }
+
     return .queued(model.outputBaseName)
   }
 
@@ -238,7 +276,8 @@ struct DownloadTwitchVideoIntent: AppIntent {
         chatSize: chatSize,
         destination: destination,
         existingJobs: controller.jobs,
-        into: IntakeModel(controller: controller))
+        into: IntakeModel(controller: controller),
+        recording: QueueHost.shared.videoRecording)
 
       // Notified from here rather than inside `submit`, which stays free of
       // app surfaces so it can be tested without one. Intent-only: the

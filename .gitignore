@@ -79,9 +79,12 @@ Config/Local.xcconfig
 build/
 build
 
-# Local AI tool config, untracked. CLAUDE.md is a symlink to docs/development.md.
+# Local AI tool config, untracked. CLAUDE.md and AGENTS.md are both symlinks to
+# docs/development.md — the guidance itself is versioned there; only the
+# agent-facing filenames stay out of the repo.
 .claude/
 CLAUDE.md
+AGENTS.md
 
 # DMG artwork intermediates — regenerate with
 #   swift scripts/dmg/make-background.swift

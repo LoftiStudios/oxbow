@@ -116,9 +116,9 @@ struct VideoCard: View {
   /// `16:31` for a clip or a short VOD, `3:12:04` for a long one — the same
   /// shape a video player shows, rather than a leading `0:` nobody reads.
   private static func length(of duration: Duration) -> String {
-    duration.components.seconds >= 3600
-      ? duration.formatted(.time(pattern: .hourMinuteSecond))
-      : duration.formatted(.time(pattern: .minuteSecond))
+    // The one definition lives in `VideoLength`; this stays as a local name
+    // so the call sites below read the way they always have.
+    VideoLength.timecode(duration)
   }
 }
 

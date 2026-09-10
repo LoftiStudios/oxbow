@@ -44,6 +44,34 @@ struct AppCompositionTests {
     #expect(configuration.store.fileURL.path.hasPrefix(support.path))
   }
 
+  @Test func sitesTheWatchStoreBesideTheQueueFile() throws {
+    guard case .ready(let configuration) = resolve(existing: bothPresent) else {
+      Issue.record("expected .ready")
+      return
+    }
+
+    // The whole point of deciding this in one place: both files are siblings
+    // in the support directory, not one of them off in the workspace cache
+    // that `QueueEngine.start()` sweeps on every launch.
+    let watchStoreURL = AppComposition.watchStoreURL(supportDirectory: support)
+    #expect(watchStoreURL == configuration.store.fileURL.deletingLastPathComponent()
+      .appending(path: "watches.json"))
+    #expect(watchStoreURL.path == "\(support.path)/watches.json")
+  }
+
+  /// One site decides where every piece of Oxbow's state on disk lives, for
+  /// the reason `watchStoreURL`'s doc comment gives.
+  @Test func videoRecordSitsBesideTheWatchList() {
+    let support = URL(filePath: "/tmp/support")
+
+    #expect(
+      AppComposition.videoRecordURL(supportDirectory: support).path
+        == "/tmp/support/videos.json")
+    #expect(
+      AppComposition.payloadDirectory(supportDirectory: support).path
+        == "/tmp/support/payloads")
+  }
+
   // MARK: - User session
 
   /// The test bundle is hosted by the app, so running this suite launches

@@ -74,6 +74,61 @@ nonisolated enum AppComposition {
       makeProcess: { HelperProcess() }))
   }
 
+  /// Where the watch list lives, decided once so nothing downstream has to
+  /// guess.
+  ///
+  /// This returns a `URL` rather than a ready-made `WatchStore` because the
+  /// caller that needs a `WatchStore` is `WatchPoller.live(supportDirectory:)`,
+  /// which builds its own from this URL, while `AppCompositionTests` needs
+  /// only the bare path to check it against where `resolve` places
+  /// `queue.json` — standing up a `WatchStore` just to read its `fileURL` back
+  /// would be a longer way to say the same thing. Keeping the decision here,
+  /// beside that line in `resolve`, means `WatchPoller` constructs its
+  /// `WatchStore` from this one URL instead of choosing a path of its own —
+  /// one site decides where every piece of Oxbow's state on disk lives, not
+  /// one per consumer.
+  ///
+  /// Like `queue.json` (see the `Important` note on
+  /// `QueueEngine.Configuration.store`), this file must **not** live under
+  /// `workspace.root`: `QueueEngine.start()` sweeps that directory on every
+  /// launch, and the OS is free to purge it independently. `watches.json` is
+  /// the app's own data, so it sits directly in `supportDirectory`, a
+  /// sibling of `queue.json`, never inside the workspace cache.
+  static func watchStoreURL(supportDirectory: URL) -> URL {
+    supportDirectory.appending(path: "watches.json")
+  }
+
+  /// Where the video record lives.
+  ///
+  /// Beside `watches.json` and `queue.json` for the reason `watchStoreURL`
+  /// gives at length: one site decides where every piece of Oxbow's state on
+  /// disk lives, rather than one per consumer.
+  static func videoRecordURL(supportDirectory: URL) -> URL {
+    supportDirectory.appending(path: "videos.json")
+  }
+
+  /// Where the helpers' raw `info` payloads live.
+  ///
+  /// A directory rather than a key inside `videos.json`: a payload is about
+  /// 3.4 KB, and folding them in would make the file the app re-reads and
+  /// rewrites grow linearly with every video ever downloaded
+  /// (`docs/design/video-record.md` §3.3).
+  static func payloadDirectory(supportDirectory: URL) -> URL {
+    supportDirectory.appending(path: "payloads")
+  }
+
+  /// Stored channel and archive images.
+  ///
+  /// A directory rather than a file, and **disposable in a way
+  /// `watches.json` is not**: everything in it is re-derivable from the
+  /// network while its source still exists, so deleting it costs refetches
+  /// and nothing else. It sits beside the watch list rather than inside
+  /// `workspace.root` for the reason above — `QueueEngine.start()` sweeps
+  /// that directory on every launch, and images have to survive a launch.
+  static func imageStoreURL(supportDirectory: URL) -> URL {
+    supportDirectory.appending(path: "images")
+  }
+
   /// `~/Library/Application Support/studio.lofti.Oxbow`, created if absent.
   ///
   /// In a DEBUG build `OXBOW_FIXTURE_DIR` overrides it, which is what lets

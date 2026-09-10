@@ -11,10 +11,74 @@ struct OxbowApp: App {
   /// the launch-time check should not queue behind helper discovery.
   @State private var updates = UpdateModel.live()
 
+  /// Built once a support directory is known, inside the guarded `.task`
+  /// below rather than here — unlike `updates`, it needs a resolved path and
+  /// must never exist during a test run. See that `.task` for why.
+  @State private var poller: WatchPoller?
+
+  /// The Watching list. Built alongside `poller`, from a `WatchStore` over
+  /// the same `watches.json` — `WatchPoller` only ever reads that file, and
+  /// `WatchingModel` is the one writer (see its own doc comment), so both
+  /// need to agree on the same path rather than each deriving it separately.
+  @State private var watching: WatchingModel?
+
+  /// The same `WatchStore` `watching` was built from, kept alongside it so
+  /// `AddChannelWindow` can open a second writer over `watches.json` without
+  /// resolving the support directory a second time. Optional, and nil for
+  /// the identical reason `watching` is: both are built together, behind the
+  /// same `AppComposition.isUserSession` guard, in the `.task` below.
+  @State private var watchStore: WatchStore?
+
+  /// Cached channel and archive images, built alongside `watching` and
+  /// `poller` and behind the same guard: it does network and file I/O, which
+  /// `xcodebuild test` must not do for a window it launched incidentally.
+  /// The video record, for the one reader that is not a watching surface.
+  ///
+  /// Get Info re-fetches a video's metadata on every open, and for a video
+  /// Twitch has dropped that fetch fails — which is exactly the case the
+  /// record was built to answer. Held here rather than resolved inside the
+  /// window: a window can be opened repeatedly, and
+  /// `AppComposition.defaultSupportDirectory()` does directory-creating I/O.
+  @State private var videoRecordStore: VideoRecordStore?
+
+  @State private var imageStore: ImageStore?
+
+  /// A Watching finding waiting to be applied the next time intake opens.
+  ///
+  /// Set by `WatchingModel.openIntake` (below) and consumed by
+  /// `IntakeWindow.onAppear`, which clears it back to `nil` immediately after
+  /// applying it — see that clearing's own comment for why leaving it set
+  /// would be the Add Channel window's missing-reset bug all over again.
+  /// Held here, rather than on `WatchingModel` itself, for the same reason
+  /// `watching` and `poller` are: this is the one instance of intake's state
+  /// across the app's whole run (`Window`, not `WindowGroup`), and the value
+  /// has to outlive whichever `WatchingModel` happened to set it.
+  @State private var pendingIntake: PendingIntake?
+
+  /// A watch waiting to be edited, set by `QueueView` when a Watching
+  /// section's context menu chooses Edit and consumed by `AddChannelWindow`
+  /// on its own `.onAppear` — the identical shape `pendingIntake` above
+  /// takes for its own hand-off, for the identical reason: `AddChannelWindow`
+  /// is a `Window`, not a `WindowGroup`, so the one long-lived instance of
+  /// its state needs somewhere outside itself to receive which watch to
+  /// edit before the window has even appeared to consume it.
+  @State private var pendingChannelEdit: Watch?
+
   /// Read once. Nothing in it can change while the app runs — it is all
   /// stamped into the bundle at build time — and both the menu item and the
   /// window title need the name.
   private let about = AboutInfo.main
+
+  /// Handed to `AddChannelWindow`'s `init` below, hoisted here rather than
+  /// built with `Preferences()` inline at that call site. `body` is a
+  /// computed property SwiftUI re-evaluates on every state change this scene
+  /// depends on, and `AddChannelWindow.init` only keeps its `preferences`
+  /// argument long enough to seed `AddChannelModel`'s own `@State` — so a
+  /// fresh `Preferences()` built inline there was constructed and discarded
+  /// on every re-render for no reason. `Preferences()`'s default init is
+  /// cheap (it wraps `.standard` and two closures, nothing eager), but a
+  /// value with no reason to be rebuilt should not be.
+  @State private var addChannelPreferences = Preferences()
 
   var body: some Scene {
     // `Window`, not `WindowGroup`. The engine is built once at launch
@@ -46,7 +110,11 @@ struct OxbowApp: App {
         // banner, so a payload-missing launch gets the `+`-disabled window
         // design §6 describes rather than a bare page with no chrome.
         if let content {
-          QueueView(content: content, updates: updates)
+          QueueView(
+            content: content, updates: updates, watching: watching, poller: poller,
+            canAddChannel: watchStore != nil, imageStore: imageStore,
+            pendingIntake: $pendingIntake,
+            pendingChannelEdit: $pendingChannelEdit)
         } else {
           // This spinner covers `QueueEngine.start()` too, deliberately.
           // `QueueHost.ready()` answers only after the saved queue is loaded
@@ -79,8 +147,92 @@ struct OxbowApp: App {
         guard AppComposition.isUserSession else { return }
         await updates.checkAutomatically()
       }
+      // Its own task for the same reason the update check has one: unrelated
+      // work, on an unrelated schedule.
+      //
+      // Guarded the same way and for the same reason: `OxbowTests` is hosted
+      // by this app, so `xcodebuild test` launches it for real, and an
+      // unguarded sweep would make a live Twitch request on every test run.
+      // See `AppComposition.isUserSession`.
+      .task {
+        guard AppComposition.isUserSession else { return }
+        guard poller == nil else { return }
+        guard let support = try? AppComposition.defaultSupportDirectory() else { return }
+        let store = WatchStore(fileURL: AppComposition.watchStoreURL(supportDirectory: support))
+        watching = WatchingModel(
+          store: store,
+          // Built here, from the one site that decides where Oxbow's video
+          // record lives, rather than inside the model — the same discipline
+          // `WatchPoller.live` and `VideoRecording.live` follow, so that
+          // "where does the record live" stays answerable in one place.
+          videoRecordStore: VideoRecordStore(
+            fileURL: AppComposition.videoRecordURL(supportDirectory: support)),
+          // Only sets the state — opening the window itself is `QueueView`'s
+          // job, via the `.onChange(of: pendingIntake)` beside its own
+          // `openWindow`. This closure has no environment to call it from:
+          // it runs inside a plain `.task`, not a view's own body.
+          openIntake: { archive, watch in
+            pendingIntake = PendingIntake(archiveID: archive.id, settings: watch.settings)
+          },
+          // A finding's primary Add queues it here, with the channel's own
+          // frozen settings, rather than opening a form to ask again for
+          // settings that were chosen when the channel was added. The
+          // answer is nil on success and a sentence on refusal — see
+          // `ArchiveSubmission`, and `WatchingModel.add(_:from:)`.
+          queue: { archive, watch in
+            guard case .ready(let controller) = await QueueHost.shared.ready() else {
+              return "Oxbow's download engine is not available."
+            }
+            let result = await ArchiveSubmission.submit([archive], for: watch, into: controller)
+            return result.failures[archive.id]
+          },
+          // Not `VolumeSpace.live` here — its accessors resolve through
+          // `nearestExisting`, which walks up to the deepest ancestor that
+          // exists. For an unmounted `/Volumes/Helios/f.mp4` that ancestor
+          // is `/Volumes` itself, which always exists on the boot volume,
+          // so both `VolumeSpace` accessors would answer non-nil and an
+          // unplugged drive would read as a deleted file. See
+          // `ArchiveRowState.FileAnswer.resolve`'s doc comment for the full
+          // reasoning; this just supplies its two disk probes.
+          fileAnswer: { url in
+            ArchiveRowState.FileAnswer.resolve(
+              url,
+              fileExists: { FileManager.default.fileExists(atPath: $0.path) },
+              folderExists: { FileManager.default.fileExists(atPath: $0.path) })
+          },
+          // Reads the image store at call time rather than capturing one,
+          // because there is no store to capture yet: it is stood up a few
+          // lines below this, after the model exists. Nil until then, which
+          // is correct — nothing can have been unwatched before the first
+          // sweep has even had a store to draw into.
+          purgeImages: { referenced in
+            Task { await imageStore?.purge(keeping: referenced) }
+          },
+          // Built here for the same reason `videoRecordStore` is, and from
+          // the same site: `AppComposition` decides where every piece of
+          // Oxbow's state on disk lives, and a payload directory chosen a
+          // second time — even the identical one — could drift away from the
+          // one `VideoRecording.live` writes into, leaving un-watching to
+          // delete from an empty directory while the real payloads piled up.
+          payloads: PayloadStore(
+            directory: AppComposition.payloadDirectory(supportDirectory: support)))
+        watchStore = store
+        imageStore = ImageStore.live(
+          directory: AppComposition.imageStoreURL(supportDirectory: support))
+        videoRecordStore = VideoRecordStore(
+          fileURL: AppComposition.videoRecordURL(supportDirectory: support))
+        poller = WatchPoller.live(supportDirectory: support)
+        poller?.start()
+      }
     }
-    .defaultSize(width: 720, height: 480)
+    // 720 was chosen for the queue alone, the same way its old 480pt minimum
+    // was (see `QueueView`'s `.frame`) — pre-sidebar, that gave the queue
+    // 240pt of room above its floor. Grown by the sidebar's own 180pt ideal
+    // width for the same reason as the minimum: without it, the queue opens
+    // at only 60pt above its new floor instead of the 240pt it used to get,
+    // which is the same truncation this task exists to fix, just at launch
+    // instead of at minimum width.
+    .defaultSize(width: 900, height: 480)
     .windowResizability(.contentMinSize)
     .commands {
       // Replace, not add. The stock item calls
@@ -106,6 +258,9 @@ struct OxbowApp: App {
       // Everything here is also reachable by right-clicking a row; the menu is
       // what makes it discoverable, and what gives it key equivalents.
       DownloadsCommands()
+      // Refresh, in View. See `WatchingCommands` for why it is not in
+      // Downloads alongside the row actions.
+      WatchingCommands()
     }
 
     // Intake as its own window, not a sheet on the queue.
@@ -123,7 +278,7 @@ struct OxbowApp: App {
       // button are disabled in that case — but the window needs one, and there
       // is no honest thing to put here instead.
       if let controller {
-        IntakeWindow(controller: controller)
+        IntakeWindow(controller: controller, pendingIntake: $pendingIntake)
       }
     }
     .defaultSize(width: 560, height: 680)
@@ -136,6 +291,43 @@ struct OxbowApp: App {
     // that was there.
     .restorationBehavior(.disabled)
 
+    // Add Channel, its own window for the same reasons intake is one — a
+    // form that can legitimately grow (§3.3's priced backfill line joins the
+    // usual settings) belongs in something that sizes to its own content
+    // rather than a sheet capped by the queue window's height.
+    //
+    // `Window`, so the toolbar button on the Watching pane re-focuses the one
+    // that exists rather than stacking a second lookup on top of the first.
+    Window("Add Channel", id: Self.addChannelWindowID) {
+      // Unreachable before `watchStore` resolves — the same guard `intake`
+      // above puts on `controller` — and there is nothing honest to show in
+      // its place: this window exists to write `watches.json`, and until the
+      // support directory is known there is no file to write to.
+      if let watchStore {
+        AddChannelWindow(
+          store: watchStore, preferences: addChannelPreferences,
+          pendingEdit: $pendingChannelEdit,
+          // The other half of the Watching pane refresh fix — see
+          // `AddChannelWindow.onClose`'s own doc comment and
+          // `WatchingModel.refresh()`'s. A channel added here writes through
+          // a `WatchStore` distinct from the one `watching` reads, so nothing
+          // tells that model to look again unless this does.
+          onClose: { watching?.refresh() },
+          // A watch that was just written has no sweep behind it, so its
+          // findings do not exist yet and its automatic path has had nothing
+          // to act on. See `AddChannelWindow.onSaved` for what this was
+          // like without it.
+          onSaved: { Task { await poller?.refreshNow() } })
+      }
+    }
+    .defaultSize(width: 480, height: 640)
+    .windowResizability(.contentMinSize)
+    .defaultPosition(.center)
+    // Not restored, matching intake: a channel half-typed into a login field
+    // is not a form worth resurrecting on the next launch, and its
+    // `AddChannelModel` is rebuilt empty regardless.
+    .restorationBehavior(.disabled)
+
     // Get Info, one window per download.
     //
     // `WindowGroup(for:)` rather than a single inspector window: asking for
@@ -143,9 +335,9 @@ struct OxbowApp: App {
     // instead of stacking duplicates, and two downloads can be compared side
     // by side — which is what Finder's ⌘I does and what a single
     // follows-the-selection panel cannot.
-    WindowGroup(id: Self.infoWindowID, for: JobID.self) { $jobID in
-      if let jobID, let controller {
-        JobInfoWindow(jobID: jobID, controller: controller)
+    WindowGroup(id: Self.infoWindowID, for: InfoTarget.self) { $target in
+      if let target, let controller {
+        JobInfoWindow(target: target, controller: controller, record: videoRecordStore)
       }
     }
     .defaultSize(width: 460, height: 620)
@@ -203,6 +395,9 @@ struct OxbowApp: App {
 
   /// The id both the menu item and `QueueView`'s toolbar button open.
   static let intakeWindowID = "intake"
+
+  /// The id `QueueView`'s toolbar button opens from the Watching pane.
+  static let addChannelWindowID = "addChannel"
 
   private var controller: QueueController? {
     if case .ready(let controller) = content { return controller }

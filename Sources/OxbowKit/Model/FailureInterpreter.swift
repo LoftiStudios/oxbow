@@ -38,13 +38,28 @@ public enum FailureInterpreter {
       detail: standardError.isEmpty ? nil : standardError)
   }
 
+  /// What a subscriber-only VOD's failure says.
+  ///
+  /// **A named constant because something else matches on it.**
+  /// `AutoDownloadPolicy.isContentRestricted` counts failures carrying this
+  /// exact summary to decide a whole channel is members-only, and a matcher
+  /// comparing against an English sentence written somewhere else is one
+  /// copy-edit away from silently never matching again. Naming it means the
+  /// wording and the test for it cannot drift apart.
+  ///
+  /// The upstream signal is `vod_manifest_restricted` on the manifest
+  /// request, or `unauthorized_entitlements`. Nothing in Twitch's metadata
+  /// says so first — see `docs/twitch-channel-api.md` §9.3, where every
+  /// restriction field on a members-only VOD reports it unrestricted.
+  public static let subscriberOnlySummary = "This is a subscriber-only VOD."
+
   /// Known failures get a real sentence; everything else gets the innermost
   /// exception message. A stack trace is never the summary.
   private static func summarise(_ standardError: String) -> String {
     if standardError.contains("vod_manifest_restricted")
       || standardError.contains("unauthorized_entitlements")
     {
-      return "This is a subscriber-only VOD."
+      return subscriberOnlySummary
     }
     // Checked before the VOD case below, and matched on the longer string:
     // upstream throws a *different* sentence for a clip whose parent VOD is

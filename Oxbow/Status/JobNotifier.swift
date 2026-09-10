@@ -17,6 +17,12 @@ final class JobNotifier: NSObject, UNUserNotificationCenterDelegate {
   nonisolated private static let finishedCategory = "studio.lofti.Oxbow.finished"
   nonisolated private static let filesKey = "files"
 
+  /// Marks a notification as one whose click should open the Watching pane
+  /// rather than reveal a file. Carried in `userInfo` rather than as a
+  /// `categoryIdentifier`, because the category exists to declare *actions*
+  /// and this notification has none beyond its default click.
+  nonisolated private static let revealWatchingKey = "revealWatching"
+
   /// The completion chime, in `Contents/Resources`.
   ///
   /// **Not the `.mp3` it arrived as.** `UNNotificationSound` reads `aiff`,
@@ -58,6 +64,25 @@ final class JobNotifier: NSObject, UNUserNotificationCenterDelegate {
   /// centre optionally, rather than gating each call site, means a future
   /// method cannot forget the check.
   private let center: UNUserNotificationCenter?
+
+  /// Where a settled job's outcome is written — see `apply(_:)`.
+  ///
+  /// Starts `nil` and is assigned by `QueueHost.attachStatusObservers`, the
+  /// same way `QueueHost.videoRecording` itself is populated: this type is
+  /// built before the support directory necessarily exists —
+  /// `registerNotificationDelegate()` can reach it well ahead of engine
+  /// resolution, precisely so a cold launch that later responds to a
+  /// notification is not dropped — so `init` has nothing to derive a store
+  /// from. By the time `attachStatusObservers` runs, the directory is already
+  /// resolved and handed straight in, which is also what makes the
+  /// self-constructed `AppComposition.defaultSupportDirectory()` call this
+  /// replaced redundant: that directory-creating I/O had already happened
+  /// once for this same launch.
+  ///
+  /// `nil` under `xcodebuild test`, for the same reason `center` is:
+  /// `attachStatusObservers` never runs in that case, so a test run never
+  /// writes the developer's own `videos.json` on a settled job in the suite.
+  var videoRecordStore: VideoRecordStore?
 
   override init() {
     center = AppComposition.isUserSession ? .current() : nil
@@ -121,12 +146,60 @@ final class JobNotifier: NSObject, UNUserNotificationCenterDelegate {
       trigger: nil))
   }
 
-  func apply(_ jobs: [Job]) {
+  /// Says that a sweep found archives waiting, and opens the Watching pane
+  /// when clicked. `docs/design/channel-watching.md` §2.2.
+  ///
+  /// **What to say is not decided here.** `FindingAnnouncement` decides both
+  /// strings and, crucially, *whether there is anything to say at all* — this
+  /// posts whatever it is handed. Putting the "is this new" question here
+  /// would bury the one rule in this feature that keeps a durable inbox from
+  /// becoming an hourly banner.
+  ///
+  /// **One identifier for every finding banner, so a later one replaces the
+  /// one before it.** The same reasoning as `announceIntentSubmission`'s
+  /// body-keyed identifier, applied to a notification that is a running
+  /// count rather than an event: two sweeps four hours apart should leave
+  /// one banner saying five are waiting, not one saying two and another
+  /// saying three.
+  ///
+  /// No chime, for the reason `announceIntentSubmission` gives: the chime
+  /// marks a download finishing, and this is the opposite end of the job.
+  func announceFindings(title: String, body: String) {
     guard let center else { return }
+    // A watch can be added, and start finding things, without a download
+    // ever having been enqueued — so the first-enqueue prompt may never have
+    // run on an install that only ever watches.
+    requestAuthorizationIfNeeded()
 
+    let content = UNMutableNotificationContent()
+    content.title = title
+    content.body = body
+    content.userInfo = [Self.revealWatchingKey: true]
+
+    center.add(UNNotificationRequest(
+      identifier: "watching-findings", content: content, trigger: nil))
+  }
+
+  func apply(_ jobs: [Job]) {
     // A job absent from `baseline` never fires, which is what makes the first
     // snapshot seed silently — see `NotificationDecision.events(from:to:)`.
     for event in NotificationDecision.events(from: baseline, to: jobs) {
+      // Where a download landed is not a notification concern, so this does
+      // not wait on `center` below — recording it happens for every event,
+      // whether or not a banner can be posted about it. The record write
+      // rides this diff rather than computing its own: `events(from:to:)` is
+      // already the one answer to "what just changed", and a second observer
+      // would be a second answer.
+      if let videoRecordStore,
+        let identifier = jobs.first(where: { $0.id == event.job })?.mediaIdentifier
+      {
+        VideoRecorder.recordCompletion(
+          mediaIdentifier: identifier, outcome: event.outcome,
+          files: event.files, into: videoRecordStore)
+      }
+
+      guard let center else { continue }
+
       let content = UNMutableNotificationContent()
       switch event.outcome {
       case .finished:
@@ -210,10 +283,20 @@ final class JobNotifier: NSObject, UNUserNotificationCenterDelegate {
     _ center: UNUserNotificationCenter,
     didReceive response: UNNotificationResponse) async
   {
-    let paths = response.notification.request.content
-      .userInfo[JobNotifier.filesKey] as? [String] ?? []
+    let userInfo = response.notification.request.content.userInfo
+    let paths = userInfo[JobNotifier.filesKey] as? [String] ?? []
+    let revealsWatching = userInfo[JobNotifier.revealWatchingKey] as? Bool ?? false
 
     await MainActor.run {
+      // Ahead of the file reveal, not beside it: the two are mutually
+      // exclusive by construction (a findings banner carries no files and a
+      // finished-job banner carries no reveal flag), and ordering them
+      // rather than nesting keeps that fact readable.
+      if revealsWatching {
+        NSApp.activate(ignoringOtherApps: true)
+        WatchingReveal.shared.request()
+        return
+      }
       guard !paths.isEmpty else {
         NSApp.activate(ignoringOtherApps: true)
         return
