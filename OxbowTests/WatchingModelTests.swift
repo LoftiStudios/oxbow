@@ -991,6 +991,76 @@ struct WatchingModelTests {
             "a still-watched channel's avatar is still referenced")
   }
 
+  /// **Payloads are the half the image purge could not cover.** A thumbnail
+  /// is keyed by a hash of its URL and shared between rows, so it is
+  /// collected by an unreferenced scan; a payload is `payloads/<id>.txt` and
+  /// belongs to exactly one row, so nothing ever names it as an orphan and it
+  /// stays on disk forever once its row is gone
+  /// (`docs/design/video-record.md` §3.6).
+  ///
+  /// The surviving row's payload is asserted still present, not just the
+  /// dropped one's absence: "remove the ids that went" and "remove this
+  /// channel's ids" are the same set only until a row is protected by a
+  /// delivered file, and this fixture has one.
+  @Test func stoppingAChannelLetsGoOfTheDroppedRowsPayloads() throws {
+    let store = temporaryStore()
+    try store.save([watch("ninja")])
+    let records = temporaryRecordStore()
+    var library = VideoLibrary()
+    library.record(VideoRecord(id: "1", login: "ninja", deliveredPath: "/out/1.mp4"))
+    library.record(VideoRecord(id: "2", login: "ninja"))
+    try records.save(library)
+
+    let directory = URL.temporaryDirectory.appending(path: "payloads-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let payloads = PayloadStore(directory: directory)
+    try payloads.save("kept", for: "1")
+    try payloads.save("dropped", for: "2")
+
+    let model = WatchingModel(
+      store: store, videoRecordStore: records, openIntake: { _, _ in },
+      payloads: payloads)
+
+    model.stopWatching("ninja")
+
+    #expect(try records.load().videos["2"] == nil, "precondition: the row was dropped")
+    #expect(payloads.payload(for: "2") == nil)
+    #expect(payloads.payload(for: "1") == "kept",
+            "the row survived, so its payload is still reachable")
+  }
+
+  /// A payload cannot be re-fetched for a video Twitch has dropped, so it goes
+  /// only once the surviving rows are actually on disk — the same ordering the
+  /// image purge follows, for the same reason. If the save failed, the file
+  /// still names the row that was dropped only in memory.
+  @Test func aFailedRecordSaveLeavesThePayloadsAlone() throws {
+    let store = temporaryStore()
+    try store.save([watch("ninja")])
+    var library = VideoLibrary()
+    library.record(VideoRecord(id: "2", login: "ninja"))
+    let records = try writeProtectedRecordStore(seeding: library)
+    let dir = records.fileURL.deletingLastPathComponent()
+    defer {
+      try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: dir.path)
+      try? FileManager.default.removeItem(at: dir)
+    }
+
+    let directory = URL.temporaryDirectory.appending(path: "payloads-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let payloads = PayloadStore(directory: directory)
+    try payloads.save("still needed", for: "2")
+
+    let model = WatchingModel(
+      store: store, videoRecordStore: records, openIntake: { _, _ in },
+      payloads: payloads)
+
+    model.stopWatching("ninja")
+
+    #expect(try records.load().videos["2"] != nil,
+            "the save must have actually failed — the row is still on disk")
+    #expect(payloads.payload(for: "2") == "still needed")
+  }
+
   /// **The guard on the record save, which nothing else reaches.**
   /// `aRefusedStopLeavesTheRecordAndTheImagesAlone` below breaks the *watch*
   /// store, which returns long before the record block runs. This breaks the

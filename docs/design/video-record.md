@@ -114,7 +114,7 @@ split is worth drawing.
 `seen` still stops being stored and becomes derived, unchanged from §3.1:
 *state is not `new` and not `failed`*.
 
-### 3.3 The raw payload, stored verbatim and versioned
+### 3.3 The raw payload, kept whole and versioned
 
 `VideoInfo.parse` reads a fraction of what the CLI emits. For a VOD, `info
 --format Raw` writes three parts on stdout: a line of video-info JSON, a line
@@ -139,10 +139,20 @@ that wants chapter markers could have them for videos downloaded after it
 ships and never for anything already kept — which is the opposite of what a
 record is for.
 
-So the payload is stored verbatim, in `payloads/<id>.txt` beside the JSON
-rather than inside it, with the helper version that produced it recorded on
-the row. **Measured at 3.4 KB** for the VOD above — against files measured in
+So the payload is stored, in `payloads/<id>.txt` beside the JSON rather than
+inside it, with the helper version that produced it recorded on the row.
+**Measured at 3.4 KB** for the VOD above — against files measured in
 gigabytes.
+
+**What is stored is the helper's narrative output, not a transcript of the
+run.** It is the `.log` and `.ffmpeg` lines joined with newlines, so the
+`[STATUS]` banner `StatusLineParser` classifies separately never reaches it
+and blank lines are not preserved. That is not the same as verbatim, and the
+difference is worth stating plainly rather than leaving a future parser to
+discover it: what a parser would want is safe, because the three load-bearing
+parts — the video-info JSON line, the moments JSON line and the m3u8 — are
+each a non-empty line matching no status preamble, so none of them can be
+what was dropped. Only the shape of the whitespace between them is gone.
 
 **The version stamp is load-bearing.** `VideoInfo`'s own doc comment is
 explicit that `--format Raw`'s shape is not a stable upstream contract. For a
@@ -208,10 +218,23 @@ Two things do remove:
 - **Clearing the queue** removes nothing. A cleared job is not a statement
   about the video.
 
-**Images are then expunged by an unreferenced scan** — one pass over the image
-store, deleting anything outside the keep-set. This is why removing a watch has
-to remove rows at all: with nothing ever removed, nothing could ever become
-unreferenced and the store could only grow.
+**A dropped row's payload goes with it.** §3.3 put payloads in
+`payloads/<id>.txt` rather than in `videos.json`, which is right for the file
+the app re-reads and rewrites and wrong for this: dropping a row no longer
+takes its payload with it, because nothing on disk connects the two except the
+id in the filename. A payload whose row is gone is unreachable — nothing will
+ever look it up again — so leaving it behind is not caution, it is litter that
+only ever accumulates. The removal is done by whoever dropped the rows, from
+the set of ids that actually went, because that set exists nowhere else: the
+record does not mark a removed row, it removes it.
+
+**Images, unlike payloads, cannot be named this way** — a thumbnail is keyed
+by a hash of its URL and shared by however many rows point at it, so "which
+files did that row own" has no answer. **So images are expunged by an
+unreferenced scan instead** — one pass over the image store, deleting anything
+outside the keep-set. This is why removing a watch has to remove rows at all:
+with nothing ever removed, nothing could ever become unreferenced and the
+store could only grow.
 
 **The keep-set is both halves of what the store holds**, and getting this
 wrong is the easy mistake: the surviving rows' thumbnails **union** the

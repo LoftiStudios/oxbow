@@ -198,7 +198,15 @@ struct OxbowApp: App {
           // sweep has even had a store to draw into.
           purgeImages: { referenced in
             Task { await imageStore?.purge(keeping: referenced) }
-          })
+          },
+          // Built here for the same reason `videoRecordStore` is, and from
+          // the same site: `AppComposition` decides where every piece of
+          // Oxbow's state on disk lives, and a payload directory chosen a
+          // second time — even the identical one — could drift away from the
+          // one `VideoRecording.live` writes into, leaving un-watching to
+          // delete from an empty directory while the real payloads piled up.
+          payloads: PayloadStore(
+            directory: AppComposition.payloadDirectory(supportDirectory: support)))
         watchStore = store
         imageStore = ImageStore.live(
           directory: AppComposition.imageStoreURL(supportDirectory: support))

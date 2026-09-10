@@ -120,6 +120,19 @@ final class WatchingModel {
   /// file.
   private let purgeImages: (Set<URL>) -> Void
 
+  /// Where this channel's stored `info` payloads live, so that un-watching
+  /// can let go of the ones whose rows it drops.
+  ///
+  /// A payload is a file of its own under `payloads/<id>.txt` rather than a
+  /// field in `videos.json` (`AppComposition.payloadDirectory`), so dropping
+  /// a row does not take its payload with it — nothing on disk connects the
+  /// two except the id, and only this call knows which ids went.
+  ///
+  /// Optional with a nil default for the reason `purgeImages` gives: an
+  /// un-supplied remover leaves a few kilobytes of text on disk, which is not
+  /// comparable to an un-supplied `videoRecordStore` rewriting the wrong file.
+  private let payloads: PayloadStore?
+
   private let openIntake: (ChannelArchive, Watch) -> Void
 
   /// Queues one archive with its channel's frozen settings, answering with a
@@ -230,7 +243,8 @@ final class WatchingModel {
     openIntake: @escaping (ChannelArchive, Watch) -> Void,
     queue: @escaping (ChannelArchive, Watch) async -> String? = { _, _ in nil },
     fileAnswer: @escaping (URL) -> ArchiveRowState.FileAnswer = { .present($0) },
-    purgeImages: @escaping (Set<URL>) -> Void = { _ in }
+    purgeImages: @escaping (Set<URL>) -> Void = { _ in },
+    payloads: PayloadStore? = nil
   ) {
     self.store = store
     self.videoRecordStore = videoRecordStore
@@ -238,6 +252,7 @@ final class WatchingModel {
     self.queue = queue
     self.fileAnswer = fileAnswer
     self.purgeImages = purgeImages
+    self.payloads = payloads
     // Populates `sections` from whatever is already watched before the first
     // sweep ever lands — requirement 1's "never polled" case starts the
     // instant a channel is added, not once `WatchPoller` gets around to it.
@@ -480,12 +495,13 @@ final class WatchingModel {
   /// Removes `login`'s watch and lets go of what it leaves behind, touching
   /// nothing about the other channels' settings or seen-sets.
   ///
-  /// **Does not delete anything already downloaded.** It edits three things
-  /// and only three: `watches.json` — the list of channels being watched —
-  /// this channel's rows in the video record, and the stored images nothing
-  /// names any more. Never a file a past download produced, and never the row
-  /// describing one. Stopping a watch and deleting its archive are two
-  /// different decisions, and this makes only the first one.
+  /// **Does not delete anything already downloaded.** It edits four things
+  /// and only four: `watches.json` — the list of channels being watched —
+  /// this channel's rows in the video record, the stored images nothing names
+  /// any more, and the stored payloads of the rows it dropped. Never a file a
+  /// past download produced, and never the row describing one. Stopping a
+  /// watch and deleting its archive are two different decisions, and this
+  /// makes only the first one.
   ///
   /// **Refuses rather than overwriting when the store cannot be read** — the
   /// same rule `AddChannelModel.add()` follows, guarding the identical bug:
@@ -548,7 +564,14 @@ final class WatchingModel {
       // no delivered file to protect it yet, and this is what protects it
       // instead.
       let jobbed = Set(jobFacts.compactMap(\.mediaIdentifier))
+
+      // Taken before the mutation, because afterwards there is nothing left
+      // to ask: `removeWatch` drops rows outright rather than marking them,
+      // so "which ids went" only exists as the difference between the two
+      // sides of this line.
+      let before = Set(library.videos.keys)
       library.removeWatch(login: login, keepingVideosWithJobs: jobbed)
+      let dropped = before.subtracting(library.videos.keys)
 
       // Images are let go of only once the surviving rows are actually on
       // disk. If that save failed, the file still names every row this call
@@ -574,9 +597,20 @@ final class WatchingModel {
       // un-watch it would not. The union is assembled here because this is
       // the only place that holds both halves at once
       // (`docs/design/video-record.md` §3.6).
+      //
+      // A dropped row's payload goes with it, on the same condition and for
+      // the same reason. `payloads/<id>.txt` is a file of its own beside
+      // `videos.json` (§3.3), so nothing removes it when its row goes — and
+      // a payload whose row is gone is unreachable, since the id in the
+      // filename is the only way anything ever finds it. Removing it before
+      // the save would be the image mistake in a second form: a save that
+      // failed leaves the row on disk still expecting its payload to be
+      // there, and a payload cannot be re-fetched for a video Twitch has
+      // dropped.
       if (try? videoRecordStore.save(library)) != nil {
         purgeImages(library.referencedImageURLs()
           .union(surviving.compactMap(\.avatarURL)))
+        payloads?.remove(ids: dropped)
       }
     }
 
