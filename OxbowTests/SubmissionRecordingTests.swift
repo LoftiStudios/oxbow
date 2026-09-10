@@ -45,7 +45,7 @@ struct SubmissionRecordingTests {
   }
 
   /// The moments line is stored even though nothing parses it. That is the
-  /// entire reason the payload is kept verbatim.
+  /// entire reason the payload is kept whole rather than parsed down.
   @Test("the unparsed parts of the payload survive")
   func unparsedPartsSurvive() throws {
     let directory = temporaryDirectory()
@@ -93,6 +93,32 @@ struct SubmissionRecordingTests {
 
     #expect(try records.load().videos["1"]?.qualities.count == 1)
     #expect(payloads.payload(for: "1") == nil)
+  }
+
+  /// **The write that was missing, and the bug it was one swap away from.**
+  /// `WatchState.countsAsSeen` reads `queued` as handled, and it is the whole
+  /// seen-set (`docs/design/video-record.md` §3.2). Nothing wrote `queued` at
+  /// all for a while, so a submitted-but-unfinished archive read as unseen —
+  /// latent only because `WatchPoller.markSubmitted` was still writing the
+  /// legacy `Watch.seen` beside it. The moment `seenIDs(forLogin:)` becomes
+  /// the answer, an archive whose download is still running gets offered and
+  /// downloaded a second time.
+  @Test("a submission leaves the video queued")
+  func submissionMarksQueued() throws {
+    let directory = temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let records = VideoRecordStore(fileURL: directory.appending(path: "videos.json"))
+    let payloads = PayloadStore(directory: directory.appending(path: "payloads"))
+
+    VideoRecorder.record(
+      fetched, for: "2844787557", helperVersion: "1.56.5",
+      records: records, payloads: payloads)
+
+    let library = try records.load()
+    #expect(library.watchStates["2844787557"] == .queued)
+    // The point of the state, asserted rather than assumed: the archive is
+    // handled, so the next sweep must not offer it again.
+    #expect(library.seenIDs(forLogin: "wheelyf") == ["2844787557"])
   }
 
   // MARK: - The two routes that actually record
@@ -164,6 +190,7 @@ struct SubmissionRecordingTests {
     #expect(library.videos["2844787557"]?.login == "wheelyf")
     #expect(library.videos["2844787557"]?.title == "day 46")
     #expect(library.videos["2844787557"]?.payloadHelperVersion == "1.56.5")
+    #expect(library.watchStates["2844787557"] == .queued)
     #expect(recording.payloads.payload(for: "2844787557") == fetched.payload)
   }
 
@@ -193,6 +220,7 @@ struct SubmissionRecordingTests {
     let library = try recording.records.load()
     #expect(library.videos["2844787557"]?.login == "wheelyf")
     #expect(library.videos["2844787557"]?.qualities.first?.name == "1080p60")
+    #expect(library.watchStates["2844787557"] == .queued)
     #expect(recording.payloads.payload(for: "2844787557") == fetched.payload)
   }
 
@@ -221,6 +249,7 @@ struct SubmissionRecordingTests {
     // that failed to do anything.
     #expect(model.lastFetch != nil)
     #expect(try recording.records.load().videos.isEmpty)
+    #expect(try recording.records.load().watchStates.isEmpty)
     #expect(recording.payloads.payload(for: "2844787557") == nil)
   }
 
@@ -242,5 +271,9 @@ struct SubmissionRecordingTests {
 
     #expect(!didAdd)
     #expect(try recording.records.load().videos.isEmpty)
+    // Nor a state: a video that was never submitted is not queued, and a
+    // `queued` state with no job behind it would mask the archive from the
+    // next sweep for good.
+    #expect(try recording.records.load().watchStates.isEmpty)
   }
 }

@@ -45,6 +45,9 @@ enum IntakeAdd {
   /// bearing rather than incidental: `videos.json` has four writers that are
   /// safe against each other only because each does its load-modify-save on
   /// the main actor with no suspension point in between. See `VideoRecorder`.
+  /// It is also what makes the `queued` state below unambiguous: nothing else
+  /// on the main actor — a job that finished while `add()` was suspended, say
+  /// — can land between the enqueue returning and the state being written.
   @discardableResult
   static func perform(
     _ model: IntakeModel,
@@ -59,6 +62,16 @@ enum IntakeAdd {
     // same assignment is what makes it impossible to file one video's payload
     // under another video's id; re-parsing `model.linkText` here would be a
     // second, independent answer to a question that already has one.
+    //
+    // This is also where a video becomes `queued`, and that write is the
+    // reason both routes have to come through here rather than each calling
+    // `model.add()` for itself. `WatchState.countsAsSeen` reads `queued` as
+    // handled, and it is the whole seen-set (`docs/design/video-record.md`
+    // §3.2, §7) — so a route that submitted without recording the state would
+    // leave its archive looking untouched to the next sweep and have it
+    // downloaded a second time while the first download was still running.
+    // `VideoRecorder.record` writes the facts and the state in one
+    // load-modify-save; see its own doc comment for why they are not two.
     if let recording, let fetched = model.lastFetch, let id = model.metadataIdentifier {
       VideoRecorder.record(
         fetched,

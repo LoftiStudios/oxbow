@@ -1,7 +1,7 @@
 import Foundation
 import OxbowKit
 
-/// Writes one fetched video's facts and payload into the record.
+/// Writes one video's facts, payload and watch state into the record.
 ///
 /// **Best effort, and that is a hard requirement rather than a convenience.**
 /// No write here may fail a download, fail a sweep, or mark a job failed. A
@@ -25,6 +25,21 @@ import OxbowKit
 @MainActor
 enum VideoRecorder {
 
+  /// Writes a submitted video's facts, its payload, and the `queued` state
+  /// that says a job now exists for it.
+  ///
+  /// **The state is written here rather than beside here**, in the same
+  /// load-modify-save as the facts, because a second pass over the file would
+  /// be a fifth writer to keep in step with the other four for no gain — and
+  /// because a submission that recorded its facts and not its state is
+  /// precisely the gap this write closes.
+  ///
+  /// **`queued` is what stops a submitted archive being offered twice.**
+  /// `WatchState.countsAsSeen` is the whole seen-set now
+  /// (`docs/design/video-record.md` §3.2), and it reads `queued` as handled.
+  /// A submission that left the state at `new` would leave the archive
+  /// looking untouched to the next sweep — downloaded again while the first
+  /// download was still running.
   static func record(
     _ fetched: VideoInfoFetcher.Fetched,
     for id: String,
@@ -50,6 +65,7 @@ enum VideoRecorder {
       qualities: fetched.info.qualities,
       thumbnailURLs: fetched.info.thumbnailURLs,
       payloadHelperVersion: stamp))
+    library.setState(.queued, for: id)
     try? records.save(library)
   }
 
@@ -59,8 +75,9 @@ enum VideoRecorder {
   /// delivers several — video, chat, rendered chat — and the row is about the
   /// video; the rest stay reachable from the job itself. A finished job that
   /// delivered nothing records no path rather than an empty one, because the
-  /// path is a claim stage 3b checks against the disk and a false claim is
-  /// worse than an absent one.
+  /// path is a claim about the disk that whatever renders the row has to
+  /// check before it trusts it (`docs/design/video-record.md` §5), and a
+  /// claim that fails that check is worse than no claim at all.
   ///
   /// `failed` is deliberately a state that does **not** count as seen
   /// (`WatchState.countsAsSeen`), so a failed archive becomes actionable again.
