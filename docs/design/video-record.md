@@ -104,8 +104,21 @@ has neither, and never will.
 
 So the row above holds video facts only, and the watch state —
 `new`/`skipped`/`queued`/`downloaded`/`ignored`/`failed`, exactly as
-`channel-history.md` §3.1 defines them — hangs off it, written only for videos
-belonging to a watched channel.
+`channel-history.md` §3.1 defines them — hangs off it.
+
+**Only two of those six are genuinely channel-relative.** `skipped` and
+`ignored` are the pair described above, and only a watched channel ever writes
+them. The other four are outcomes of what happened to the video itself:
+`queued` and `downloaded` and `failed` are facts about a job, and `new` is the
+absence of any of it. Those are written for every video, including one pasted
+by hand from a channel nobody watches.
+
+That is deliberate, and it is what makes §3.5's motivating case work. Download
+a video by hand today, add its channel as a watch next month, and the row
+already says you have it — because the state was recorded when it happened
+rather than withheld pending a watch that did not exist yet. Until that watch
+is added the state is simply inert: `seenIDs(forLogin:)` matches on the row's
+`login`, so an unwatched channel's rows answer nobody's question.
 
 Get Info reads the first half and nothing else. That is what makes it render
 identically no matter where a video came from, and it is the whole reason the
