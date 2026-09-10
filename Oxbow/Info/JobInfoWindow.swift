@@ -15,7 +15,7 @@ import OxbowKit
 /// change, so opening it on a running download shows the progress moving and
 /// the steps completing rather than a frozen picture of the moment you asked.
 struct JobInfoWindow: View {
-  let jobID: JobID
+  let target: InfoTarget
   let controller: QueueController
 
   /// Where an expired video's metadata comes from once Twitch has stopped
@@ -35,14 +35,51 @@ struct JobInfoWindow: View {
 
   @State private var metadata: Metadata = .loading
 
+  /// The download this window can talk about, when the queue still holds one.
+  ///
+  /// **Nil is an ordinary state now, not an error.** Keyed by video, this
+  /// window is asked about archives nobody has downloaded and about downloads
+  /// whose jobs have been cleared away; in both cases there is still a video
+  /// to describe. Only the job-keyed case treats a missing job as something
+  /// gone wrong, because there the job *was* the subject.
+  ///
+  /// One media id can name several jobs — a retry after a delete leaves the
+  /// old one behind — so this picks the one a person is actually waiting on,
+  /// in the same order `ArchiveRowState` reads them: still running, then
+  /// finished, then whatever is left.
   private var job: Job? {
-    controller.jobs.first { $0.id == jobID }
+    switch target {
+    case .job(let id):
+      return controller.jobs.first { $0.id == id }
+    case .video(let identifier):
+      let mine = controller.jobs.filter { $0.mediaIdentifier == identifier }
+      return mine.first { $0.status.isUnfinished }
+        ?? mine.first { $0.status == .done }
+        ?? mine.first
+    }
+  }
+
+  /// The video this window is about, for the metadata fetch and the record
+  /// lookup behind it.
+  private var videoIdentifier: String? {
+    switch target {
+    case .video(let identifier): return identifier
+    case .job(let id):
+      guard let job = controller.jobs.first(where: { $0.id == id }) else { return nil }
+      return JobInfo(job: job).sourceIdentifier
+    }
   }
 
   var body: some View {
     Group {
       if let job {
         content(for: job, info: JobInfo(job: job))
+      } else if case .video = target {
+        // A video with no download behind it — a watched archive nobody has
+        // fetched, or one whose job has been cleared out of the queue. There
+        // is still a video to describe, which is the whole reason this window
+        // stopped being keyed by the job.
+        videoOnlyContent
       } else {
         // The job was removed while its window was open. Saying so beats an
         // empty window, and beats closing itself out from under the user.
@@ -52,10 +89,49 @@ struct JobInfoWindow: View {
       }
     }
     .frame(minWidth: 420, minHeight: 360)
-    .navigationTitle(job?.title ?? "Download")
-    .task(id: JobInfo(job: job ?? emptyJob).sourceIdentifier) {
+    .navigationTitle(job?.title ?? cardTitle ?? "Video")
+    .task(id: videoIdentifier) {
       await loadMetadata()
     }
+  }
+
+  /// The title the card resolved, for a window with no job to borrow one from.
+  private var cardTitle: String? {
+    if case .loaded(let info) = metadata { return info.title }
+    return nil
+  }
+
+  /// Everything this window can say about a video nothing has downloaded.
+  ///
+  /// Deliberately the same card, in the same place, as the job case above —
+  /// a video should not look like a different kind of thing depending on
+  /// whether a download happened to exist for it. What is missing is only the
+  /// sections that describe a download, because there is no download.
+  private var videoOnlyContent: some View {
+    Form {
+      Section {
+        switch metadata {
+        case .loading: VideoCard(.loading)
+        case .loaded(let info): VideoCard(info: info)
+        case .unavailable: VideoCard(.unavailable(title: "Video"))
+        }
+        if case .video(let identifier) = target,
+           let source = URL(string: "https://www.twitch.tv/videos/\(identifier)")
+        {
+          LabeledContent("Link") {
+            Text(source.absoluteString)
+              .textSelection(.enabled)
+              .lineLimit(1)
+              .truncationMode(.middle)
+              .help(source.absoluteString)
+          }
+        }
+        LabeledContent("Status") {
+          Text("Not downloaded").foregroundStyle(.secondary)
+        }
+      }
+    }
+    .formStyle(.grouped)
   }
 
   private func content(for job: Job, info: JobInfo) -> some View {
@@ -160,7 +236,7 @@ struct JobInfoWindow: View {
   /// source of truth that goes stale. The fetch is the same one intake makes,
   /// and failing it costs only the thumbnail.
   private func loadMetadata() async {
-    guard let job, let identifier = JobInfo(job: job).sourceIdentifier else {
+    guard let identifier = videoIdentifier else {
       metadata = .unavailable
       return
     }
@@ -193,10 +269,6 @@ struct JobInfoWindow: View {
     metadata = .unavailable
   }
 
-  /// Stand-in so `.task(id:)` has something to key on when the job is gone.
-  private var emptyJob: Job {
-    Job(id: jobID, created: .now, title: "", steps: [])
-  }
 }
 
 /// The job's status, drawn the way the queue draws it: the same symbol and

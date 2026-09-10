@@ -60,6 +60,8 @@ struct WatchingView: View {
   /// A single id rather than a set: nothing here acts on several rows at once,
   /// and `QueueActions` already treats "exactly one selected" as the condition
   /// for its own per-item commands.
+  @Environment(\.openWindow) private var openWindow
+
   @State private var selection: WatchingModel.Row.ID?
 
   var imageStore: ImageStore? = nil
@@ -206,7 +208,10 @@ struct WatchingView: View {
                   onAdd: { onAdd(row.archive, section) },
                   onIgnore: { onIgnore(row.archive, section) },
                   onAddWithOptions: { onAddWithOptions(row.archive, section) },
-                  onReveal: { NSWorkspace.shared.activateFileViewerSelecting([$0]) })
+                  onReveal: { NSWorkspace.shared.activateFileViewerSelecting([$0]) },
+                  onShowInfo: {
+                    openWindow(id: OxbowApp.infoWindowID, value: InfoTarget.video(row.archive.id))
+                  })
                   // Double-click opens, the way it does in Finder and Music.
                   // `simultaneousGesture` rather than `onTapGesture`, which
                   // would swallow the single click the list needs to select

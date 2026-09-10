@@ -335,9 +335,9 @@ struct OxbowApp: App {
     // instead of stacking duplicates, and two downloads can be compared side
     // by side — which is what Finder's ⌘I does and what a single
     // follows-the-selection panel cannot.
-    WindowGroup(id: Self.infoWindowID, for: JobID.self) { $jobID in
-      if let jobID, let controller {
-        JobInfoWindow(jobID: jobID, controller: controller, record: videoRecordStore)
+    WindowGroup(id: Self.infoWindowID, for: InfoTarget.self) { $target in
+      if let target, let controller {
+        JobInfoWindow(target: target, controller: controller, record: videoRecordStore)
       }
     }
     .defaultSize(width: 460, height: 620)

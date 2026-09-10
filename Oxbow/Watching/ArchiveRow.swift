@@ -21,6 +21,14 @@ struct ArchiveRow: View {
   let onAddWithOptions: () -> Void
   let onReveal: (URL) -> Void
 
+  /// Opens Get Info for this row's video.
+  ///
+  /// Available in every state, unlike the actions above: what a video *is*
+  /// stays a sensible question whether or not you have it, are fetching it, or
+  /// ever will. It is also what gives the third arm below a menu at all —
+  /// `queued`, `running` and `unverifiable` rows previously had none.
+  let onShowInfo: () -> Void
+
   var body: some View {
     // The menu is attached only when it has something in it. A `.contextMenu`
     // whose builder produces no items still opens — an empty sliver under the
@@ -36,13 +44,21 @@ struct ArchiveRow: View {
       content.contextMenu {
         Button("Add…", action: onAddWithOptions)
         Button("Ignore", action: onIgnore)
+        Divider()
+        Button("Get Info", action: onShowInfo)
       }
     } else if case .downloaded(let url) = row.state {
       content.contextMenu {
         Button("Show in Finder") { onReveal(url) }
+        Divider()
+        Button("Get Info", action: onShowInfo)
       }
     } else {
-      content
+      // Now a real menu rather than none: Get Info is answerable in every
+      // state, which is what the comment above wanted and could not have.
+      content.contextMenu {
+        Button("Get Info", action: onShowInfo)
+      }
     }
   }
 
@@ -139,7 +155,8 @@ struct ArchiveRow: View {
     ArchiveRow(
       row: WatchingModel.Row(archive: ArchiveRowPreviewData.normal, state: .available),
       store: nil, now: ArchiveRowPreviewData.now,
-      onAdd: {}, onIgnore: {}, onAddWithOptions: {}, onReveal: { _ in })
+      onAdd: {}, onIgnore: {}, onAddWithOptions: {}, onReveal: { _ in },
+      onShowInfo: {})
   }
   .frame(width: 420, height: 100)
 }
@@ -149,7 +166,8 @@ struct ArchiveRow: View {
     ArchiveRow(
       row: WatchingModel.Row(archive: ArchiveRowPreviewData.normal, state: .live),
       store: nil, now: ArchiveRowPreviewData.now,
-      onAdd: {}, onIgnore: {}, onAddWithOptions: {}, onReveal: { _ in })
+      onAdd: {}, onIgnore: {}, onAddWithOptions: {}, onReveal: { _ in },
+      onShowInfo: {})
   }
   .frame(width: 420, height: 100)
 }
@@ -159,7 +177,8 @@ struct ArchiveRow: View {
     ArchiveRow(
       row: WatchingModel.Row(archive: ArchiveRowPreviewData.normal, state: .queued),
       store: nil, now: ArchiveRowPreviewData.now,
-      onAdd: {}, onIgnore: {}, onAddWithOptions: {}, onReveal: { _ in })
+      onAdd: {}, onIgnore: {}, onAddWithOptions: {}, onReveal: { _ in },
+      onShowInfo: {})
   }
   .frame(width: 420, height: 100)
 }
@@ -169,7 +188,8 @@ struct ArchiveRow: View {
     ArchiveRow(
       row: WatchingModel.Row(archive: ArchiveRowPreviewData.normal, state: .running),
       store: nil, now: ArchiveRowPreviewData.now,
-      onAdd: {}, onIgnore: {}, onAddWithOptions: {}, onReveal: { _ in })
+      onAdd: {}, onIgnore: {}, onAddWithOptions: {}, onReveal: { _ in },
+      onShowInfo: {})
   }
   .frame(width: 420, height: 100)
 }
@@ -181,7 +201,8 @@ struct ArchiveRow: View {
         archive: ArchiveRowPreviewData.normal,
         state: .downloaded(URL(fileURLWithPath: "/Users/me/Movies/Indie horror night.mp4"))),
       store: nil, now: ArchiveRowPreviewData.now,
-      onAdd: {}, onIgnore: {}, onAddWithOptions: {}, onReveal: { _ in })
+      onAdd: {}, onIgnore: {}, onAddWithOptions: {}, onReveal: { _ in },
+      onShowInfo: {})
   }
   .frame(width: 420, height: 100)
 }
@@ -191,7 +212,8 @@ struct ArchiveRow: View {
     ArchiveRow(
       row: WatchingModel.Row(archive: ArchiveRowPreviewData.normal, state: .missing),
       store: nil, now: ArchiveRowPreviewData.now,
-      onAdd: {}, onIgnore: {}, onAddWithOptions: {}, onReveal: { _ in })
+      onAdd: {}, onIgnore: {}, onAddWithOptions: {}, onReveal: { _ in },
+      onShowInfo: {})
   }
   .frame(width: 420, height: 100)
 }
@@ -202,7 +224,8 @@ struct ArchiveRow: View {
       row: WatchingModel.Row(
         archive: ArchiveRowPreviewData.normal, state: .unverifiable(volumeName: "Helios")),
       store: nil, now: ArchiveRowPreviewData.now,
-      onAdd: {}, onIgnore: {}, onAddWithOptions: {}, onReveal: { _ in })
+      onAdd: {}, onIgnore: {}, onAddWithOptions: {}, onReveal: { _ in },
+      onShowInfo: {})
   }
   .frame(width: 420, height: 100)
 }
@@ -212,7 +235,8 @@ struct ArchiveRow: View {
     ArchiveRow(
       row: WatchingModel.Row(archive: ArchiveRowPreviewData.normal, state: .failed),
       store: nil, now: ArchiveRowPreviewData.now,
-      onAdd: {}, onIgnore: {}, onAddWithOptions: {}, onReveal: { _ in })
+      onAdd: {}, onIgnore: {}, onAddWithOptions: {}, onReveal: { _ in },
+      onShowInfo: {})
   }
   .frame(width: 420, height: 100)
 }

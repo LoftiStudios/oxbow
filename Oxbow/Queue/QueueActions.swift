@@ -24,7 +24,21 @@ struct QueueActions {
   var retry: (JobID) -> Void
   var cancel: (JobID) -> Void
   /// Opens Get Info for one job.
-  var showInfo: (JobID) -> Void
+  ///
+  /// Takes an `InfoTarget` rather than a `JobID` because the window is keyed
+  /// by video: opening by video is what lets this and the Watching pane bring
+  /// forward the *same* window for the same video, instead of two describing
+  /// one thing. A job with no video id of its own falls back to naming itself.
+  var showInfo: (InfoTarget) -> Void
+
+  /// How to address one job's Get Info window: by its video when it has one,
+  /// by the job itself when it does not.
+  func infoTarget(for id: JobID) -> InfoTarget {
+    guard let job = jobs.first(where: { $0.id == id }),
+          let media = job.mediaIdentifier
+    else { return .job(id) }
+    return .video(media)
+  }
 
   func jobs(in ids: Set<JobID>) -> [Job] {
     jobs.filter { ids.contains($0.id) }
@@ -119,7 +133,7 @@ struct QueueActionButtons: View {
 
     if isMenuBar || single != nil {
       Button {
-        if let single { actions.showInfo(single) }
+        if let single { actions.showInfo(actions.infoTarget(for: single)) }
       } label: {
         Label("Get Info", systemImage: "info.circle")
       }
