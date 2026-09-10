@@ -1,6 +1,10 @@
 # A watched channel with contents
 
-**Status:** design, written 2026-09-07. **Stages 1 (§7.1) and 2 (§7.2) implemented**; stage 3 not started.
+**Status:** design, written 2026-09-07. **All three stages implemented** —
+1 (§7.1) and 2 (§7.2) on 2026-09-07, 3 (§7.3) on 2026-09-09/10, the last of
+them as `docs/design/video-record.md` rather than as written here. §5.2's
+filter is built; §5.3's counter is not, and remains as likely to be cut as
+kept.
 
 **Amended 2026-09-09 by `docs/design/video-record.md`**, which generalises the
 per-channel store proposed in §3 into one record of every video Oxbow has

@@ -18,6 +18,38 @@ is the repository's commit count, stamped into the bundle at build time by
 
 ### Added
 
+- **Oxbow watches a Twitch channel and keeps what it finds.** Paste a channel,
+  choose what it should download at, and Oxbow polls it — queueing new archives
+  on its own if you asked it to, or telling you they arrived if you did not.
+  Each channel is a card with its videos beneath it, and a row says which of
+  four things it is: you have it, it is being fetched, you could still get it,
+  or it failed and can be retried.
+
+  The part that took the longest is the part you cannot see. Oxbow used to
+  fetch a video's metadata, render it, and throw it away — so Get Info on a
+  download whose VOD had expired showed a grey rectangle and a stored title,
+  and a channel's history lived in the download queue, which meant clearing the
+  queue erased it. There is now a durable record of every video Oxbow has
+  touched: title, date, duration, category, thumbnails, the qualities it was
+  offered at, and the raw metadata payload it was all parsed from. The
+  filesystem stays the authority over what you actually have — delete a
+  download and the row offers it again — but the record is what lets an expired
+  video still render at all. `docs/design/video-record.md` has the reasoning,
+  including why the payload is stored whole rather than parsed and discarded.
+
+  Two consequences worth knowing. A download made before this shipped is
+  recognised at the path Oxbow would have written it to, so an existing library
+  mostly lights up on first launch — but a file you renamed or moved reads as
+  missing rather than being hunted for, because a wrong guess claims you have
+  something you do not. And a channel holds back what you skipped, dismissed,
+  or missed entirely, behind a line offering to show it, so a channel watched
+  for a year does not become mostly headstones.
+
+  An unplugged disk says so rather than quietly emptying the channel, and
+  automatic downloading pauses until it comes back.
+  `docs/design/channel-watching.md` and `docs/design/channel-history.md` cover
+  the watcher and the pane.
+
 - **Oxbow queues a download from Spotlight.** ⌘Space, "Download Twitch Video",
   paste a link, Return — the job is queued and the app never comes forward.
   macOS 26 surfaces third-party App Intents in Spotlight on its own, which is

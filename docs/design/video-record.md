@@ -1,6 +1,16 @@
 # The video record
 
-**Status:** design, written 2026-09-09. Not implemented.
+**Status:** written 2026-09-09, implemented 2026-09-09/10 on
+`channel-watching-loop`. §10's stages 3a and 3b are done; 3c landed as row
+selection, Return and double-click to open, and Get Info on the row's context
+menu — a ⌘I key equivalent is **not** done, because Get Info's shortcut would
+have to coexist with the queue's. 3d's per-path reachability is done; §5.3's
+counter is **not** built and may never be.
+
+Two things the implementation learned that this document did not know:
+§8's "does not reach backwards" was too pessimistic — a download made before
+the record existed is recognised at the path it would have been written to
+(§4.3) — and §3.6's image scan had to grow to cover avatars and payloads.
 
 `docs/design/channel-watching.md` built the watcher.
 `docs/design/channel-history.md` gave a watched channel contents, and its §3
