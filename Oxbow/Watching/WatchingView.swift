@@ -149,7 +149,16 @@ struct WatchingView: View {
               // replaces them, which is what tells a demoted channel apart
               // from a failed one (`FailureRow` above stands in for its rows,
               // this stands alongside them).
-              if let reason = demotions[section.login] {
+              // A destination-unreachable demotion is suppressed when the
+              // card is already naming that disconnection: the two say one
+              // fact in two vocabularies, one by volume and one by path, and
+              // the card's notice carries the half this row cannot — whether
+              // downloads that already happened are still there. Every other
+              // reason keeps its row, because none of them is announced
+              // anywhere else.
+              if let reason = demotions[section.login],
+                 !(reason.isDestinationUnreachable && section.disconnectedDestination != nil)
+              {
                 DemotionRow(reason: reason)
               }
               // **Only when the channel has nothing at all**, which is not

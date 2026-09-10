@@ -73,6 +73,20 @@ public enum AutoDownloadPolicy {
           + "until the destination is reachable again."
       }
     }
+
+    /// Whether this reason is the destination having gone away, as opposed to
+    /// a policy that would still hold with the disk plugged in.
+    ///
+    /// **Exists so one condition is not announced twice.** A channel whose
+    /// volume is unmounted already carries its own notice, and that notice
+    /// covers the half this reason cannot — whether downloads that already
+    /// happened are still there. Showing both leaves two lines naming the same
+    /// disk in different words, one by volume and one by path. Every other
+    /// reason stands alone and keeps its own row.
+    public var isDestinationUnreachable: Bool {
+      if case .destinationUnreachable = self { return true }
+      return false
+    }
   }
 
   /// Decides what a watch's unattended sweep should do with what it found.

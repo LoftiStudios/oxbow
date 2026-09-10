@@ -274,4 +274,18 @@ struct AutoDownloadPolicyTests {
     let sentence = AutoDownloadPolicy.Reason.contentRestricted.sentence
     #expect(sentence.contains("subscriber"))
   }
+
+  /// Only the unmounted-destination case is announced elsewhere, so only it
+  /// may be suppressed. A disk-space or subscriber-only demotion has no other
+  /// voice, and silencing one would leave a channel quietly not downloading
+  /// with nothing on screen saying why.
+  @Test("only a missing destination counts as unreachable")
+  func onlyTheDestinationCaseIsUnreachable() {
+    #expect(AutoDownloadPolicy.Reason.destinationUnreachable("/Volumes/Storage")
+      .isDestinationUnreachable)
+    #expect(!AutoDownloadPolicy.Reason.contentRestricted.isDestinationUnreachable)
+    #expect(!AutoDownloadPolicy.Reason
+      .belowFloor(needed: 1, available: 2, floor: 3).isDestinationUnreachable)
+  }
+
 }

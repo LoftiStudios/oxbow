@@ -191,7 +191,12 @@ struct ChannelCard: View {
   /// rather than borrowing the paused-bolt's colour or shape.
   private func disconnectedVolumeNotice(_ volume: String) -> some View {
     Label {
-      Text("\(volume) is disconnected. Oxbow can't tell whether downloads on it are still there.")
+      // The paused half is added only for a channel that downloads
+      // automatically — a manual one has nothing paused to speak of, and
+      // saying so would invent a policy it does not have.
+      Text(section.downloadsAutomatically
+        ? "\(volume) is disconnected. Oxbow can't tell whether downloads on it are still there, and new ones are paused until it's back."
+        : "\(volume) is disconnected. Oxbow can't tell whether downloads on it are still there.")
         .foregroundStyle(.secondary)
         .fixedSize(horizontal: false, vertical: true)
     } icon: {
