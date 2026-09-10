@@ -101,6 +101,53 @@ final class WatchingModel {
     var id: String { archive.id }
   }
 
+  /// One channel, as the sidebar lists it.
+  ///
+  /// **Deliberately not `Section`.** A section carries everything a channel's
+  /// rows need to draw — settings summary, avatar, failure text, the
+  /// disconnected-volume answer. A sidebar row needs three fields, and handing
+  /// it the whole section would make every sweep that changes a row's state
+  /// invalidate the sidebar too.
+  struct ChannelListing: Identifiable, Equatable {
+    var login: String
+    var displayName: String
+    /// Rows still waiting on a decision, for this channel alone.
+    ///
+    /// Zero is a real value and is not the same as absent: the channel still
+    /// has a row. Whether a zero draws a badge is the view's call, and
+    /// `docs/design/watching-navigation.md` §3.2 says it must not.
+    var waiting: Int
+
+    var id: String { login }
+  }
+
+  /// The sidebar's rows, alphabetically by display name.
+  ///
+  /// A `static` over `[Section]` rather than an instance method, the same move
+  /// `ChannelCard.disconnectedVolume(in:)` and `ArchiveRowState.state(...)`
+  /// already make: it can be tested without a store, a sweep or a view.
+  ///
+  /// Alphabetical rather than by recent activity — see
+  /// `docs/design/watching-navigation.md` §4.1. Most recent first would be
+  /// more useful for about a day, and would also mean the sidebar reshuffles
+  /// under the pointer every time a sweep lands, which is how a person clicks
+  /// the wrong channel.
+  static func listings(from sections: [Section]) -> [ChannelListing] {
+    sections
+      .map { section in
+        ChannelListing(
+          login: section.login,
+          displayName: section.displayName,
+          waiting: section.rows.filter { $0.state == .available }.count)
+      }
+      .sorted {
+        $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending
+      }
+  }
+
+  /// This model's sections as sidebar rows.
+  var channelListings: [ChannelListing] { Self.listings(from: sections) }
+
   private(set) var sections: [Section] = []
 
   /// The current watch list, kept in step with `watches.json` so a section
@@ -114,8 +161,14 @@ final class WatchingModel {
   /// **Counts only rows a person still has to act on.** A queued or
   /// downloaded row is in the list but is not waiting for anybody, and a
   /// badge that counted them would never reach zero.
+  ///
+  /// **Derived from `channelListings` so the parent cannot disagree with its
+  /// children.** The sidebar shows this number on `Watching` and each
+  /// listing's own `waiting` on the channel beneath it; computing them from
+  /// two expressions is how they drift. `docs/design/watching-navigation.md`
+  /// §3.2.
   var unreadCount: Int {
-    sections.reduce(0) { $0 + $1.rows.filter { $0.state == .available }.count }
+    channelListings.reduce(0) { $0 + $1.waiting }
   }
 
   private let store: WatchStore
