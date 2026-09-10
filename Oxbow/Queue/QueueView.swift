@@ -72,6 +72,13 @@ struct QueueView: View {
   private enum SidebarItem: Hashable {
     case queue
     case watching
+    /// One watched channel, by login.
+    ///
+    /// **Login, not display name.** `docs/design/video-record.md` §3.4: a
+    /// display name can be Japanese while the login is ASCII, and neither
+    /// derives from the other. The login is what `watches.json` is keyed on
+    /// and what every lookup here has to use.
+    case channel(String)
   }
 
   /// A removal waiting on the user, and the dialog's own presentation flag.
@@ -148,6 +155,78 @@ WatchingView(
   submissionFailure: watching?.submissionFailure)
   }
 
+  /// Whether the visible pane is on the Watching side — the inbox or any one
+  /// channel.
+  ///
+  /// The toolbar branches on this rather than on `== .watching` because a
+  /// channel destination needs the same two buttons: `Refresh` sweeps every
+  /// watched channel (there is no per-channel fetch), and `Add Channel` is how
+  /// a person reaches that window at all. Left as `== .watching`, selecting a
+  /// channel would swap in `Add Download` — whose own comment below says it
+  /// was kept off this pane precisely so nobody reads it as acting on the
+  /// visible rows.
+  private var isShowingWatchingSide: Bool {
+    switch sidebarSelection {
+    case .watching, .channel: return true
+    case .queue, .none: return false
+    }
+  }
+
+  /// The two modifiers every Watching-side destination needs, applied once
+  /// rather than copied into each branch.
+  ///
+  /// `.onAppear` re-reads `watches.json` the moment a pane becomes visible, so
+  /// a channel added from the Add Channel window while Queue was showing is
+  /// there the instant someone switches over, rather than waiting for the next
+  /// hourly sweep — see `WatchingModel.refresh()`'s own doc comment. The Add
+  /// Channel window's own close is the other half of that fix.
+  ///
+  /// The `focusedSceneValue` is published from inside these branches so ⌘R
+  /// greys out on the Queue pane — the same "the menu follows the visible
+  /// pane" rule the `queueActions` publication keeps.
+  ///
+  /// **A function rather than two copies.** There are two Watching-side
+  /// destinations now and the pair has to be identical on both; copied, the
+  /// first thing to happen is that a third destination gets one of them.
+  @ViewBuilder
+  private func watchingSide<Content: View>(
+    @ViewBuilder _ content: () -> Content
+  ) -> some View {
+    content()
+      .onAppear { watching?.refresh() }
+      .focusedSceneValue(\.watchingActions, WatchingActions(
+        canRefresh: poller != nil && poller?.isSweeping != true,
+        refresh: { [poller] in await poller?.refreshNow() }))
+  }
+
+  /// The destination for one watched channel.
+  ///
+  /// **Resolves the section by login on every rebuild rather than holding
+  /// one.** A sweep replaces `sections` wholesale, so a captured section would
+  /// go stale the moment one landed. A login with no section is a channel that
+  /// has just been stopped — Slice E moves the selection off it; until then it
+  /// renders nothing rather than crashing.
+  @ViewBuilder
+  private func channelPane(_ login: String) -> some View {
+    if let section = watching?.sections.first(where: { $0.login == login }) {
+      ChannelView(
+        section: section,
+        imageStore: imageStore,
+        demotionReason: poller?.demotions[login],
+        onAdd: { archive in Task { await watching?.add(archive, from: login) } },
+        onAddWithOptions: { archive in watching?.openInIntake(archive, from: login) },
+        onIgnore: { archive in watching?.ignore(archive, from: login) },
+        onEdit: {
+          watching?.refresh()
+          guard let watch = watching?.watches.first(where: { $0.login == login })
+          else { return }
+          pendingChannelEdit = watch
+          openWindow(id: OxbowApp.addChannelWindowID)
+        },
+        onStopWatching: { watching?.stopWatching(login) })
+    }
+  }
+
   var body: some View {
     VStack(spacing: 0) {
       if let banner {
@@ -188,11 +267,6 @@ WatchingView(
           // Mail's `All Inboxes` shape, which is what
           // `docs/design/watching-navigation.md` §4 specifies.
           //
-          // **Inert in this slice, on purpose.** These carry no `.tag`, so a
-          // click cannot reach `sidebarSelection`; `.selectionDisabled(true)`
-          // is what stops that click *clearing* the selection instead, which
-          // would drop the detail pane to `.none` and show the queue.
-          //
           // **No disclosure triangle.** A collapsible group whose label is
           // itself a selectable row is a `DisclosureGroup` wrapping a tagged
           // label, and whether List selection reaches a tag in that position
@@ -210,9 +284,14 @@ WatchingView(
               // site so nobody "simplifies" it away without noticing it was
               // load-bearing.
               .badge(channel.waiting > 0 ? channel.waiting : 0)
+              // `.badge()` BEFORE `.tag()`, same as `Watching` above and for
+              // the same bisected reason — `channel-watching.md` §8.1. The
+              // other order makes the row highlight, fire an AppKit selection
+              // action, and never update the binding. Five rows here is five
+              // fresh chances to reintroduce it.
+              .tag(SidebarItem.channel(channel.login))
               .padding(.leading, 12)
           }
-          .selectionDisabled(true)
         }
         .listStyle(.sidebar)
         // Roughly fixed, the way Mail and Finder do it, rather than left to
@@ -222,24 +301,18 @@ WatchingView(
         // legible.
         .navigationSplitViewColumnWidth(min: 150, ideal: 180, max: 240)
       } detail: {
+        // **No catch-all.** `case .queue, .none:` used to absorb everything
+        // that was not `.watching`, which for a new destination means landing
+        // silently on the queue. Written out, the compiler is what finds every
+        // site that has to learn about `.channel`.
         switch sidebarSelection {
         case .watching:
-          watchingPane
-          // Re-reads `watches.json` the moment this pane becomes visible, so
-          // a channel added from the Add Channel window while Queue was
-          // showing is there the instant someone switches over, rather than
-          // waiting for the next hourly sweep — see
-          // `WatchingModel.refresh()`'s own doc comment. The Add Channel
-          // window's own close is the other half of this fix; see
-          // `OxbowApp`'s wiring of it.
-          .onAppear { watching?.refresh() }
-          // Published from inside this branch, so ⌘R greys out on the Queue
-          // pane — the same "the menu follows the visible pane" rule the
-          // `queueActions` publication below keeps, and for the same reason.
-          .focusedSceneValue(\.watchingActions, WatchingActions(
-            canRefresh: poller != nil && poller?.isSweeping != true,
-            refresh: { [poller] in await poller?.refreshNow() }))
-        case .queue, .none:
+          watchingSide { watchingPane }
+        case .channel(let login):
+          watchingSide { channelPane(login) }
+        case .queue:
+          queue
+        case .none:
           queue
         }
       }
@@ -265,7 +338,7 @@ WatchingView(
       // offer. Living in this toolbar rather than in that empty state is what
       // keeps the button reachable whether the list is empty or full,
       // matching where `Add Download` already sits for the Queue pane.
-      if sidebarSelection == .watching {
+      if isShowingWatchingSide {
         // Before Add Channel, so the pair reads left to right as "look
         // again" then "watch something new" — the order they are reached in.
         ToolbarItem(placement: .primaryAction) {
