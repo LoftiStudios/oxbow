@@ -97,7 +97,7 @@ public actor ImageStore {
     }
   }
 
-  /// A filesystem-safe, collision-resistant name for a URL.
+  /// A filesystem-safe, collision-resistant name for a URL: `<sha256>.<ext>`.
   ///
   /// SHA-256 of the whole absolute string, not the last path component:
   /// Twitch's thumbnail URLs differ deep in the path and share their
@@ -105,6 +105,35 @@ public actor ImageStore {
   /// a channel collide onto one image.
   nonisolated static func filename(for url: URL) -> String {
     let digest = SHA256.hash(data: Data(url.absoluteString.utf8))
-    return digest.map { String(format: "%02x", $0) }.joined()
+    let hash = digest.map { String(format: "%02x", $0) }.joined()
+    return "\(hash).\(fileExtension(of: url))"
+  }
+
+  /// Image types worth naming, and the only ones this will write.
+  ///
+  /// **An allow-list rather than a cleanup**, for the reason `PayloadStore`
+  /// gives about identifiers: this is text that arrived over the network on its
+  /// way into a filename, and anything unrecognised becomes the default instead
+  /// of being scrubbed into something that merely looks safe.
+  private static let namedExtensions: Set<String> = ["jpg", "jpeg", "png", "gif", "webp"]
+
+  /// The extension to store `url`'s bytes under.
+  ///
+  /// **Why an extension at all.** Quick Look and Finder decide what a file is
+  /// from its extension, not its bytes, so a bare hash is a stored image nobody
+  /// can glance at — which is exactly what someone debugging this store wants
+  /// to do.
+  ///
+  /// **Why it is read rather than assumed.** Measured against the author's own
+  /// store on 2026-09-09: of 145 cached URLs, 109 ended `.jpg`, 25 `.png` and
+  /// 11 `.jpeg`. Twitch serves more than one type, so a flat `.jpg` would
+  /// mislabel a quarter of them.
+  ///
+  /// `pathExtension` reads the path alone, so a thumbnail URL's sizing query
+  /// never reaches the name. Lower-cased so one image cannot land twice under
+  /// two spellings of its own extension.
+  nonisolated static func fileExtension(of url: URL) -> String {
+    let candidate = url.pathExtension.lowercased()
+    return namedExtensions.contains(candidate) ? candidate : "jpg"
   }
 }

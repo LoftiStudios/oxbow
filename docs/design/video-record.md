@@ -379,6 +379,8 @@ reachability, and remains as provisional as that section says it is.
 URL, never evicts on its own, owned by whatever owns the history. §3.6 above
 is the deletion policy it was written to wait for.
 
+The stored name carries the source URL's file extension — `<sha256>.jpg`, `.png`, `.jpeg` — because Quick Look and Finder decide what a file is from its extension rather than its bytes, and a bare hash is a stored image nobody can glance at while debugging. Measured 2026-09-09 against a real store: 145 cached URLs split 109 `.jpg`, 25 `.png`, 11 `.jpeg`, so the extension is read from the URL rather than assumed. Anything unrecognised falls back to `.jpg` rather than being scrubbed — the same allow-list posture `PayloadStore` takes with identifiers.
+
 ### 6.1 Four frames or one, and why the difference is kept
 
 A VOD's `info` payload carries **four** sampled preview frames; the sweep's

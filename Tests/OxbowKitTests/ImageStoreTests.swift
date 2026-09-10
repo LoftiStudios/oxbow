@@ -88,6 +88,66 @@ struct ImageStoreTests {
     #expect(!a.contains(":"))
   }
 
+  /// The extension is what makes a stored image previewable in Finder — Quick
+  /// Look reads the extension, not the bytes, so a hash with no extension is a
+  /// file nobody can glance at while debugging.
+  ///
+  /// **Measured against the author's own store, 2026-09-09**: of 145 cached
+  /// URLs, 109 ended `.jpg`, 25 `.png` and 11 `.jpeg`. A flat `.jpg` would
+  /// therefore mislabel 36 of them — so the extension comes from the source
+  /// URL rather than being assumed.
+  @Test("the extension comes from the source URL")
+  func extensionFollowsTheSource() {
+    #expect(ImageStore.filename(for: URL(string: "https://cdn.example.com/a/thumb.jpg")!)
+      .hasSuffix(".jpg"))
+    #expect(ImageStore.filename(for: URL(string: "https://cdn.example.com/a/avatar.png")!)
+      .hasSuffix(".png"))
+    #expect(ImageStore.filename(for: URL(string: "https://cdn.example.com/a/avatar.jpeg")!)
+      .hasSuffix(".jpeg"))
+  }
+
+  /// Case is normalised so one image cannot be stored twice under two spellings
+  /// of its own extension.
+  @Test("an upper-case extension is stored lower-case")
+  func extensionIsLowercased() {
+    #expect(ImageStore.filename(for: URL(string: "https://cdn.example.com/a/T.JPG")!)
+      .hasSuffix(".jpg"))
+  }
+
+  /// **Allow-listed, not sanitised**, for the reason `PayloadStore` gives about
+  /// identifiers: this builds a filename out of text that arrived over the
+  /// network, so anything unrecognised becomes the default rather than being
+  /// cleaned up into something that merely looks safe.
+  @Test("an unrecognised extension falls back rather than being trusted")
+  func unknownExtensionFallsBack() {
+    for path in ["thumb.php", "thumb.", "thumb", "thumb.exe"] {
+      let name = ImageStore.filename(for: URL(string: "https://cdn.example.com/a/\(path)")!)
+      #expect(name.hasSuffix(".jpg"), "\(path) should fall back to .jpg, got \(name)")
+    }
+  }
+
+  /// A query string is not part of the path, so it must not reach the
+  /// filename — Twitch's thumbnail URLs carry sizing parameters.
+  @Test("a query string never reaches the filename")
+  func queryStringIsNotInTheName() {
+    let name = ImageStore.filename(
+      for: URL(string: "https://cdn.example.com/a/thumb.jpg?width=320&height=180")!)
+    #expect(name.hasSuffix(".jpg"))
+    #expect(!name.contains("?"))
+    #expect(!name.contains("="))
+    #expect(!name.contains("&"))
+  }
+
+  /// The extension must not weaken what the hash guarantees: two URLs that
+  /// differ only deep in the path still get different names.
+  @Test("two URLs sharing an extension still get distinct names")
+  func extensionDoesNotCauseCollisions() {
+    let a = ImageStore.filename(for: URL(string: "https://cdn.example.com/aaa/thumb.jpg")!)
+    let b = ImageStore.filename(for: URL(string: "https://cdn.example.com/bbb/thumb.jpg")!)
+    #expect(a != b)
+    #expect(a.hasSuffix(".jpg") && b.hasSuffix(".jpg"))
+  }
+
   /// Nothing is ever evicted — a thumbnail is about 15 KB and Twitch serves
   /// at most 100 archives per channel, so a capacity cap would guard an
   /// event that does not happen. This pins that: writing a third image does
