@@ -131,24 +131,7 @@ WatchingView(
     watching?.openInIntake(archive, from: section.login)
   },
   onIgnore: { archive, section in watching?.ignore(archive, from: section.login) },
-  // `watching?.watches`, not `section` itself: `Section` carries
-  // only what `WatchingView` needs to render a row (login, name,
-  // findings, the settings summary text), never the full `Watch`
-  // — including its `seen` set — that `AddChannelModel
-  // .beginEditing(_:)` needs to seed an edit from.
-  //
-  // `refresh()` here is belt-and-braces, not load-bearing:
-  // `WatchingModel.markSeen(_:in:)` already rebuilds `watches`
-  // after it persists, so this call is a no-op re-read on the
-  // normal path. Left in as cheap insurance against `watches`
-  // ever going stale again.
-  onEdit: { section in
-    watching?.refresh()
-    guard let watch = watching?.watches.first(where: { $0.login == section.login })
-    else { return }
-    pendingChannelEdit = watch
-    openWindow(id: OxbowApp.addChannelWindowID)
-  },
+  onEdit: { section in editChannel(section.login) },
   onStopWatching: { section in watching?.stopWatching(section.login) },
   stopWatchingFailure: watching?.stopWatchingFailure,
   markSeenFailure: watching?.markSeenFailure,
@@ -199,6 +182,27 @@ WatchingView(
         refresh: { [poller] in await poller?.refreshNow() }))
   }
 
+  /// Opens Add Channel in editing mode, seeded from that login's own watch.
+  ///
+  /// **`watching?.watches`, not a `Section`.** A section carries only what a
+  /// row needs to render; `AddChannelModel.beginEditing(_:)` needs the whole
+  /// `Watch`, including its `seen` set.
+  ///
+  /// The `refresh()` is belt-and-braces rather than load-bearing:
+  /// `WatchingModel.markSeen(_:in:)` already rebuilds `watches` after it
+  /// persists, so this is a no-op re-read on the normal path. Left in as cheap
+  /// insurance against `watches` ever going stale again.
+  ///
+  /// Defined once because three places now reach it: the inbox's section
+  /// header, a channel destination's card, and the sidebar row.
+  private func editChannel(_ login: String) {
+    watching?.refresh()
+    guard let watch = watching?.watches.first(where: { $0.login == login })
+    else { return }
+    pendingChannelEdit = watch
+    openWindow(id: OxbowApp.addChannelWindowID)
+  }
+
   /// The destination for one watched channel.
   ///
   /// **Resolves the section by login on every rebuild rather than holding
@@ -216,13 +220,7 @@ WatchingView(
         onAdd: { archive in Task { await watching?.add(archive, from: login) } },
         onAddWithOptions: { archive in watching?.openInIntake(archive, from: login) },
         onIgnore: { archive in watching?.ignore(archive, from: login) },
-        onEdit: {
-          watching?.refresh()
-          guard let watch = watching?.watches.first(where: { $0.login == login })
-          else { return }
-          pendingChannelEdit = watch
-          openWindow(id: OxbowApp.addChannelWindowID)
-        },
+        onEdit: { editChannel(login) },
         onStopWatching: { watching?.stopWatching(login) })
     }
   }
@@ -291,6 +289,15 @@ WatchingView(
               // fresh chances to reintroduce it.
               .tag(SidebarItem.channel(channel.login))
               .padding(.leading, 12)
+              // The same pair the card offers, where Mail puts an account's
+              // equivalents. One definition, three render sites — see
+              // `ChannelActionsMenu`.
+              .contextMenu {
+                ChannelActionsMenu(
+                  displayName: channel.displayName,
+                  onEdit: { editChannel(channel.login) },
+                  onStopWatching: { watching?.stopWatching(channel.login) })
+              }
           }
         }
         .listStyle(.sidebar)
@@ -397,6 +404,19 @@ WatchingView(
     // is not worth one on its own.
     .onChange(of: WatchingReveal.shared.requests) {
       sidebarSelection = .watching
+    }
+    // A destination pointed at a watch that no longer exists renders nothing
+    // and offers nothing — and Stop Watching is reachable from the sidebar row
+    // itself now, so this is not a rare path. Falls back to the inbox, which
+    // is always there.
+    //
+    // Keyed on the logins rather than on `sections`: a sweep rewrites every
+    // section on every poll, and comparing those would run this on each one.
+    // The only change that matters here is a channel appearing or leaving.
+    .onChange(of: watching?.channelListings.map(\.login) ?? []) { _, logins in
+      if case .channel(let login) = sidebarSelection, !logins.contains(login) {
+        sidebarSelection = .watching
+      }
     }
     // Keyed on `isSweeping` falling to `false`, not on `results` changing.
     //

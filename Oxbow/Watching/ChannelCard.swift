@@ -19,6 +19,46 @@ import OxbowKit
 /// would be warning about a loss that does not happen, so the wording
 /// carries that instead of a dialog — both the button's own label and its
 /// tooltip say plainly that downloaded files stay put.
+/// Edit and Stop Watching, defined once and rendered wherever a channel can be
+/// acted on: `ChannelCard`'s ‹…› button, its right-click, and — since channels
+/// became sidebar destinations — the sidebar row's right-click.
+///
+/// **Three render sites is the argument for this being a view, not against
+/// it.** Two copies of the pair were already two things to keep in step, and
+/// the first divergence would be a menu offering something another does not —
+/// or, worse, a Stop Watching that exists in one and not the other.
+///
+/// **The card keeps them even though the sidebar now has them too.** The ‹…›
+/// button was added specifically because both actions "lived only in the
+/// right-click until now, which the app's own author could not find"; removing
+/// it in favour of a different right-click would reproduce exactly that.
+struct ChannelActionsMenu: View {
+  let displayName: String
+  let onEdit: () -> Void
+  let onStopWatching: () -> Void
+
+  var body: some View {
+    // Above Stop Watching, matching how a Mac menu orders a reversible
+    // action before a destructive-adjacent one — this changes settings,
+    // that removes the channel entirely.
+    Button {
+      onEdit()
+    } label: {
+      Label("Edit\u{2026}", systemImage: "pencil")
+    }
+    .help("Change \(displayName)'s frozen settings.")
+
+    Button {
+      onStopWatching()
+    } label: {
+      Label("Stop Watching", systemImage: "eye.slash")
+    }
+    .help("""
+      Stops watching \(displayName). Files already downloaded are not deleted.
+      """)
+  }
+}
+
 struct ChannelCard: View {
   let section: WatchingModel.Section
   let imageStore: ImageStore?
@@ -66,33 +106,11 @@ struct ChannelCard: View {
     return nil
   }
 
-  /// Edit and Stop Watching, defined once.
-  ///
-  /// **Rendered by both the ‹…› button and the right-click.** Two copies of
-  /// the same pair is two things to keep in step, and the first divergence
-  /// would be a menu that offers something the right-click does not — or,
-  /// worse, a Stop Watching that exists in one and not the other.
-  @ViewBuilder
   private var actions: some View {
-    // Above Stop Watching, matching how a Mac menu orders a reversible
-    // action before a destructive-adjacent one — this changes settings,
-    // that removes the channel entirely.
-    Button {
-      onEdit()
-    } label: {
-      Label("Edit…", systemImage: "pencil")
-    }
-    .help("Change \(section.displayName)'s frozen settings.")
-
-    Button {
-      onStopWatching()
-    } label: {
-      Label("Stop Watching", systemImage: "eye.slash")
-    }
-    .help("""
-      Stops watching \(section.displayName). Files already downloaded are \
-      not deleted.
-      """)
+    ChannelActionsMenu(
+      displayName: section.displayName,
+      onEdit: onEdit,
+      onStopWatching: onStopWatching)
   }
 
   var body: some View {
