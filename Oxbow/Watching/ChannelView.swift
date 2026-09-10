@@ -15,9 +15,11 @@ import OxbowKit
 /// collide with, and the 88pt avatar is finally proportionate, because it is
 /// heading a whole pane rather than repeating four times down one scroll.
 ///
-/// **Shows `section.rows` — the same filtered list the inbox does — for now.**
-/// The unfiltered library is the next slice; keeping them apart means this
-/// navigation can be judged before the data underneath it changes.
+/// **Shows `section.allRows` — the whole record, not the inbox's filtered
+/// view.** Downloads, archives you skipped, ones you ignored, and headstones
+/// for videos Twitch has since dropped. That is the point of the destination:
+/// the inbox answers "what is waiting", and this answers "what does this
+/// channel have".
 struct ChannelView: View {
   let section: WatchingModel.Section
   let imageStore: ImageStore?
@@ -51,7 +53,7 @@ struct ChannelView: View {
         .listRowSeparator(.hidden)
         .selectionDisabled(true)
 
-      ForEach(section.rows) { row in
+      ForEach(section.allRows) { row in
         ArchiveRow(
           row: row,
           store: imageStore,
@@ -82,7 +84,7 @@ struct ChannelView: View {
 
   private var selectedRow: WatchingModel.Row? {
     guard let selection else { return nil }
-    return section.rows.first { $0.id == selection }
+    return section.allRows.first { $0.id == selection }
   }
 
   /// Opens the row's file in whatever plays it.
@@ -97,24 +99,31 @@ struct ChannelView: View {
   }
 }
 
-#Preview("A channel with findings and a download") {
-  ChannelView(
+/// The whole point of the destination, in one screen: the inbox would show
+/// only the first of these three, and this shows what the channel *has*.
+#Preview("A channel's whole record") {
+  func archive(_ id: String, _ title: String, daysAgo: Double) -> ChannelArchive {
+    ChannelArchive(
+      id: id, title: title, duration: .seconds(3 * 3600),
+      publishedAt: Date().addingTimeInterval(-daysAgo * 86400),
+      status: .recorded, thumbnailURL: nil)
+  }
+
+  let waiting = WatchingModel.Row(
+    archive: archive("1", "Indie horror night", daysAgo: 1), state: .available)
+  let kept = WatchingModel.Row(
+    archive: archive("2", "Patch notes and questions", daysAgo: 9),
+    state: .downloaded(URL(filePath: "/Users/me/Movies/Patch notes.mp4")))
+  let headstone = WatchingModel.Row(
+    archive: archive("3", "A stream from before the record existed", daysAgo: 200),
+    state: .expired)
+
+  return ChannelView(
     section: WatchingModel.Section(
       login: "leighxp", displayName: "LeighXP",
-      rows: [
-        WatchingModel.Row(
-          archive: ChannelArchive(
-            id: "1", title: "Indie horror night", duration: .seconds(3 * 3600),
-            publishedAt: Date().addingTimeInterval(-86400),
-            status: .recorded, thumbnailURL: nil),
-          state: .available),
-        WatchingModel.Row(
-          archive: ChannelArchive(
-            id: "2", title: "Patch notes and questions", duration: .seconds(5 * 3600),
-            publishedAt: Date().addingTimeInterval(-9 * 86400),
-            status: .recorded, thumbnailURL: nil),
-          state: .downloaded(URL(filePath: "/Users/me/Movies/Patch notes.mp4"))),
-      ],
+      // `rows` is what the inbox would draw; `allRows` is what this pane does.
+      rows: [waiting],
+      allRows: [waiting, kept, headstone],
       failure: nil,
       settingsSummary: "Video + chat · Best available · Medium chat · Downloads",
       downloadsAutomatically: true),

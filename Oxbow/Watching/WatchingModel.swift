@@ -37,6 +37,21 @@ final class WatchingModel {
     /// alongside the archive rather than inferring it from which list the
     /// archive was in.
     var rows: [Row]
+
+    /// Every row this channel has, including the ones `rows` holds back.
+    ///
+    /// `rows` is the inbox: what is waiting on a decision, plus what is
+    /// currently in flight. This is the library — downloads, skips, ignores,
+    /// and archives Twitch has since dropped — and it is what the channel's
+    /// own destination shows (`docs/design/watching-navigation.md` §5).
+    ///
+    /// **`rows` is a subset of this, by construction.** Both come from one
+    /// `resolved` list and one predicate, sorted by one function; the
+    /// difference is exactly the rows `belongsInTheDefaultView` rejects, which
+    /// is what `hiddenCount` counts. Building them from two separate passes is
+    /// how they would come to disagree about a row's state or its order.
+    var allRows: [Row] = []
+
     /// Why this channel produced nothing, when that is the reason.
     ///
     /// Distinct from `rows.isEmpty`, and that distinction is the point:
@@ -868,7 +883,7 @@ final class WatchingModel {
   /// disk has to hold on screen — see that property's own doc comment.
   private func rows(
     for watch: Watch, liveArchives: [ChannelArchive], library: VideoLibrary
-  ) -> (rows: [Row], hidden: Int) {
+  ) -> (rows: [Row], allRows: [Row], hidden: Int) {
     let live = Dictionary(liveArchives.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
     let recorded = library.videos.filter { $0.value.login == watch.login }
 
@@ -952,13 +967,18 @@ final class WatchingModel {
       ? resolved
       : resolved.filter(belongsInTheDefaultView)
 
-    return (
-      shown
+    // Newest first, the order the sweep already returns and the one a channel
+    // page reads in. Applied to both lists through one function so the inbox
+    // and the channel's own destination cannot order a row differently.
+    func newestFirst(
+      _ items: [(archive: ChannelArchive, state: ArchiveRowState)]
+    ) -> [Row] {
+      items
         .map { Row(archive: $0.archive, state: $0.state) }
-        // Newest first, the order the sweep already returns and the one a
-        // channel page reads in.
-        .sorted { $0.archive.publishedAt > $1.archive.publishedAt },
-      held.count)
+        .sorted { $0.archive.publishedAt > $1.archive.publishedAt }
+    }
+
+    return (newestFirst(shown), newestFirst(resolved), held.count)
   }
 
   /// The volume name to report when this channel's destination cannot be
@@ -1063,6 +1083,7 @@ final class WatchingModel {
           login: watch.login, displayName: watch.displayName,
           avatarURL: watch.avatarURL,
           rows: built.rows,
+          allRows: built.allRows,
           failure: nil, settingsSummary: settingsSummary(for: watch.settings),
           downloadsAutomatically: watch.downloadsAutomatically,
           disconnectedDestination: disconnectedDestination(for: watch),
@@ -1089,6 +1110,7 @@ final class WatchingModel {
           login: watch.login, displayName: watch.displayName,
           avatarURL: watch.avatarURL,
           rows: built.rows,
+          allRows: built.allRows,
           failure: nil, settingsSummary: settingsSummary(for: watch.settings),
           downloadsAutomatically: watch.downloadsAutomatically,
           disconnectedDestination: disconnectedDestination(for: watch),
