@@ -31,8 +31,12 @@ public struct VideoRecord: Equatable, Sendable, Codable {
   public var categoryName: String?
   public var thumbnailURLs: [URL]
 
-  /// Where the download landed. A `String` because it is persisted; the
-  /// filesystem check that reads it lives in stage 3b.
+  /// Where the download landed. A `String` because it is persisted.
+  ///
+  /// **A claim, not an answer.** Whatever renders a row asks the disk about
+  /// this path rather than trusting it, because deleting a download is a
+  /// thing people do and the record never hears about it — the filesystem is
+  /// the authority (`docs/design/video-record.md` §5).
   public var deliveredPath: String?
 
   /// Stamped by the sweep. Absent from the newest sweep means expired.

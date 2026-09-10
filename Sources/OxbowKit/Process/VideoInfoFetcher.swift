@@ -49,13 +49,22 @@ public enum VideoInfoFetcher {
     var joined: String { lines.joined(separator: "\n") }
   }
 
-  /// One `info` run: what we could parse, and everything the helper actually
-  /// said.
+  /// One `info` run: what we could parse, and the helper's narrative output it
+  /// was parsed from.
   ///
   /// The payload is kept because `VideoInfo.parse` reads a fraction of it —
   /// the moments line not at all — and a record that stores only the parsed
   /// half freezes today's field set into the archive
   /// (`docs/design/video-record.md` §3.3).
+  ///
+  /// **Not a transcript of the process, and a future parser should not read
+  /// it as one.** It is the `.log` and `.ffmpeg` lines joined with newlines,
+  /// so the `[STATUS]` banner `StatusLineParser` classifies separately never
+  /// reaches it, and blank lines are not preserved. What that costs is
+  /// nothing: the three parts anything would want — the video-info JSON line,
+  /// the moments JSON line and the m3u8 — are each a non-empty line that
+  /// matches no status preamble, so none of them can be the thing that was
+  /// dropped. Only the shape of the whitespace between them is gone.
   public struct Fetched: Sendable {
     public let info: VideoInfo
     public let payload: String
