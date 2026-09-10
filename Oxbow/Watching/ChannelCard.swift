@@ -42,8 +42,17 @@ struct ChannelCard: View {
   /// separately. If somehow more than one volume is involved, this names
   /// the first and does not invent a summary across them — that would be a
   /// claim nothing here actually computed.
+  /// **Two sources, because the rows alone cannot see the whole condition.**
+  /// A row answers `unverifiable` only where this app recorded delivering a
+  /// file there. A download recognised solely by the path it would have taken
+  /// carries no claim that survives an unanswerable question, so on an
+  /// unmounted disk those rows quietly become offerable again and no row is
+  /// left saying anything is wrong — the channel would read as though nothing
+  /// had ever been downloaded. `Section.disconnectedDestination` asks the
+  /// destination directly and covers that gap, and manual channels besides,
+  /// which never get an `AutoDownloadPolicy` demotion at all.
   private var disconnectedVolume: String? {
-    Self.disconnectedVolume(in: section.rows)
+    Self.disconnectedVolume(in: section.rows) ?? section.disconnectedDestination
   }
 
   /// Pulled out of the computed property above so `ChannelCardTests` can

@@ -1514,6 +1514,32 @@ struct WatchingModelTests {
     #expect(rows.count == 1)
     #expect(rows.first?.state == .downloaded(file))
   }
+
+  /// **The channel has to say the disk is gone even when no row can.** A
+  /// download recognised only by its derived path carries no claim that
+  /// survives an unreachable volume, so every such row falls back to being
+  /// offerable — and without this the channel would look like nothing had
+  /// ever been downloaded to it.
+  @Test func anUnreachableDestinationIsNamedOnTheChannel() throws {
+    let store = temporaryStore()
+    try store.save([watch("ninja")])
+    let model = model(store: store, fileAnswer: { _ in .unknown(volumeName: "Storage") })
+    model.apply([.init(login: "ninja", displayName: "Ninja", outcome: .found([archive("1")]))])
+
+    #expect(model.sections[0].disconnectedDestination == "Storage")
+  }
+
+  /// The ordinary case must stay silent — a reachable destination naming a
+  /// volume would put a false alarm on every channel.
+  @Test func aReachableDestinationNamesNothing() throws {
+    let store = temporaryStore()
+    try store.save([watch("ninja")])
+    let model = model(store: store, fileAnswer: { _ in .absent })
+    model.apply([.init(login: "ninja", displayName: "Ninja", outcome: .found([archive("1")]))])
+
+    #expect(model.sections[0].disconnectedDestination == nil)
+  }
+
 }
 
 /// A tiny deterministic PRNG so a failure found by chance is reproducible —

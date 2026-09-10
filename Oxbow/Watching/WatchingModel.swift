@@ -64,6 +64,24 @@ final class WatchingModel {
     /// to read even while a sweep is between decisions.
     var downloadsAutomatically: Bool
 
+    /// The name of the volume this channel saves to, when that volume is not
+    /// currently reachable.
+    ///
+    /// **Asked of the destination, not inferred from the rows.** `ChannelCard`
+    /// already derives a notice from any row that came back `unverifiable`,
+    /// which covers a channel whose downloads this app recorded. It does not
+    /// cover the rest: a download recognised only by the path it would have
+    /// taken carries no claim that survives an unanswerable question, so those
+    /// rows fall back to being offerable and no row is left saying the volume
+    /// is gone. A channel would then look like nothing had ever been
+    /// downloaded, which is the most misleading thing it could say.
+    ///
+    /// `AutoDownloadPolicy.Reason.destinationUnreachable` does not fill the
+    /// gap either — that is only computed for channels that download
+    /// automatically (`decide` returns `.notAutomatic` and stops), so a manual
+    /// channel gets no demotion and therefore no notice at all.
+    var disconnectedDestination: String?
+
     var id: String { login }
   }
 
@@ -812,6 +830,28 @@ final class WatchingModel {
       .sorted { $0.archive.publishedAt > $1.archive.publishedAt }
   }
 
+  /// The volume name to report when this channel's destination cannot be
+  /// reached, or nil when it can.
+  ///
+  /// Reuses the row probe rather than adding a second notion of "is it there":
+  /// `FileAnswer.resolve` already answers `present` / `absent` / `unknown` for
+  /// a path, and only `unknown` means the question could not be asked at all.
+  /// `absent` is a destination that was deleted while its disk stayed mounted —
+  /// a real problem, but a different one, and not something to call a
+  /// disconnected volume.
+  private func disconnectedDestination(for watch: Watch) -> String? {
+    // **Probes a file inside the destination, not the destination itself.**
+    // `resolve` answers `unknown` only when a path's *parent* is missing, so
+    // asking it about `/Volumes/Storage` directly would have it check
+    // `/Volumes` — which exists whether or not the disk is mounted, giving
+    // `absent` and never `unknown`. Naming a file inside the folder makes the
+    // folder the thing whose absence is the question, which is the question
+    // actually being asked. The probe never has to exist.
+    let probe = watch.settings.destination.appending(path: ".oxbow-destination-probe")
+    guard case .unknown(let volumeName) = fileAnswer(probe) else { return nil }
+    return volumeName
+  }
+
   /// Where this archive's download would land, if it were made now.
   ///
   /// **How a download made before the record existed is recognised.** The
@@ -892,14 +932,16 @@ final class WatchingModel {
           avatarURL: watch.avatarURL,
           rows: rows(for: watch, liveArchives: archives, library: library),
           failure: nil, settingsSummary: settingsSummary(for: watch.settings),
-          downloadsAutomatically: watch.downloadsAutomatically)
+          downloadsAutomatically: watch.downloadsAutomatically,
+          disconnectedDestination: disconnectedDestination(for: watch))
       case .failed(let error):
         return Section(
           login: watch.login, displayName: watch.displayName,
           avatarURL: watch.avatarURL,
           rows: [], failure: error.localizedDescription,
           settingsSummary: settingsSummary(for: watch.settings),
-          downloadsAutomatically: watch.downloadsAutomatically)
+          downloadsAutomatically: watch.downloadsAutomatically,
+          disconnectedDestination: disconnectedDestination(for: watch))
       case nil:
         // Never polled — added moments ago, or waiting on its first sweep
         // since launch (requirement 1) — rather than staying invisible
@@ -914,7 +956,8 @@ final class WatchingModel {
           avatarURL: watch.avatarURL,
           rows: rows(for: watch, liveArchives: [], library: library),
           failure: nil, settingsSummary: settingsSummary(for: watch.settings),
-          downloadsAutomatically: watch.downloadsAutomatically)
+          downloadsAutomatically: watch.downloadsAutomatically,
+          disconnectedDestination: disconnectedDestination(for: watch))
       }
     }
   }
