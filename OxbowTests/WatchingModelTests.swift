@@ -1586,6 +1586,58 @@ struct WatchingModelTests {
             "nothing may be recorded for an action that was refused")
   }
 
+
+  /// §5.2: an archive Twitch has dropped, with nothing on disk, is a
+  /// headstone — counted but held back, so a channel watched for a year does
+  /// not become mostly gravestones.
+  @Test func anExpiredArchiveIsHeldBackAndCounted() throws {
+    let store = temporaryStore()
+    try store.save([watch("ninja")])
+    let records = temporaryRecordStore()
+    defer { try? FileManager.default.removeItem(at: records.fileURL.deletingLastPathComponent()) }
+    var library = VideoLibrary()
+    library.record(VideoRecord(id: "gone", login: "ninja", title: "an old stream",
+                               publishedAt: Date(timeIntervalSince1970: 0)))
+    try records.save(library)
+
+    let model = WatchingModel(
+      store: store, videoRecordStore: records, openIntake: { _, _ in },
+      fileAnswer: { _ in .absent })
+    // The sweep lists something else entirely, so "gone" is not live.
+    model.apply([.init(login: "ninja", displayName: "Ninja", outcome: .found([archive("1")]))])
+
+    #expect(model.sections[0].rows.map(\.id) == ["1"], "the headstone stays out of the default view")
+    #expect(model.sections[0].hiddenCount == 1)
+  }
+
+  /// And revealing brings it back, saying plainly that Twitch no longer has
+  /// it rather than offering a download that cannot succeed.
+  @Test func revealingShowsTheHeldBackRowsAsExpired() throws {
+    let store = temporaryStore()
+    try store.save([watch("ninja")])
+    let records = temporaryRecordStore()
+    defer { try? FileManager.default.removeItem(at: records.fileURL.deletingLastPathComponent()) }
+    var library = VideoLibrary()
+    library.record(VideoRecord(id: "gone", login: "ninja", title: "an old stream",
+                               publishedAt: Date(timeIntervalSince1970: 0)))
+    try records.save(library)
+
+    let model = WatchingModel(
+      store: store, videoRecordStore: records, openIntake: { _, _ in },
+      fileAnswer: { _ in .absent })
+    model.apply([.init(login: "ninja", displayName: "Ninja", outcome: .found([archive("1")]))])
+
+    model.toggleHidden(for: "ninja")
+
+    #expect(model.sections[0].rows.map(\.id).sorted() == ["1", "gone"])
+    let headstone = try #require(model.sections[0].rows.first { $0.id == "gone" })
+    #expect(headstone.state == .expired, "never .available — Twitch cannot serve it")
+    #expect(!headstone.state.isFetchable, "so the row must offer no Add")
+
+    model.toggleHidden(for: "ninja")
+    #expect(model.sections[0].rows.map(\.id) == ["1"], "and hiding puts it back")
+  }
+
 }
 
 /// A tiny deterministic PRNG so a failure found by chance is reproducible —

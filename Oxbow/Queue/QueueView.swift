@@ -115,6 +115,8 @@ WatchingView(
   isSweeping: poller?.isSweeping ?? false,
   demotions: poller?.demotions ?? [:],
   imageStore: imageStore,
+  revealedLogins: watching?.revealedLogins ?? [],
+  onToggleHidden: { watching?.toggleHidden(for: $0) },
   onAdd: { archive, section in
     Task { await watching?.add(archive, from: section.login) }
   },

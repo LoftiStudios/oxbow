@@ -82,6 +82,15 @@ final class WatchingModel {
     /// channel gets no demotion and therefore no notice at all.
     var disconnectedDestination: String?
 
+    /// How many of this channel's rows the default view is holding back.
+    ///
+    /// `docs/design/channel-history.md` §5.2: archives you skipped, dismissed,
+    /// or missed entirely are kept forever and hidden, so a channel watched
+    /// for a year does not become mostly headstones. Kept as a count so the
+    /// pane can offer to show them without a person having to guess there is
+    /// anything there.
+    var hiddenCount: Int = 0
+
     var id: String { login }
   }
 
@@ -223,6 +232,15 @@ final class WatchingModel {
   /// `rebuild()` is where every other reconciliation against `seen` already
   /// happens (`Watch.findings(in:)`), so this is that same rule applied one
   /// layer up, to the overlay sitting in front of it.
+  /// Channels whose held-back rows are currently on screen, by login.
+  ///
+  /// Deliberately not persisted: revealing is a thing a person does to answer
+  /// one question — "what did I miss on this channel" — not a preference about
+  /// how the pane should look from now on. It resets when the app does, which
+  /// is what stops a channel opened once out of curiosity from staying a wall
+  /// of headstones forever.
+  private var revealed: Set<String> = []
+
   private var dismissed: Set<String> = []
 
   /// The latest sweep. `rebuild()` looks a login up in here; it never
@@ -762,6 +780,14 @@ final class WatchingModel {
   /// the banner survives exactly until the next thing happens, which is an
   /// honest "this is no longer the latest word" rather than a specific,
   /// misleading claim about what that next thing was.
+  /// Shows or hides one channel's held-back rows.
+  func toggleHidden(for login: String) {
+    if revealed.contains(login) { revealed.remove(login) } else { revealed.insert(login) }
+    rebuild()
+  }
+
+  var revealedLogins: Set<String> { revealed }
+
   /// One channel's rows, sourced from the record rather than from whatever
   /// this sweep happened to return.
   ///
@@ -789,7 +815,7 @@ final class WatchingModel {
   /// disk has to hold on screen — see that property's own doc comment.
   private func rows(
     for watch: Watch, liveArchives: [ChannelArchive], library: VideoLibrary
-  ) -> [Row] {
+  ) -> (rows: [Row], hidden: Int) {
     let live = Dictionary(liveArchives.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
     let recorded = library.videos.filter { $0.value.login == watch.login }
 
@@ -810,72 +836,76 @@ final class WatchingModel {
     // because whether a person still has the file is part of deciding whether
     // the row belongs on screen at all — and that answer comes from the
     // filesystem, not from the record's own opinion of itself.
-    return candidates
-      .map { candidate in
-        (archive: candidate.archive,
-         state: ArchiveRowState.state(
-           for: candidate.archive, jobs: jobs,
-           recordedPath: candidate.record?.deliveredPath,
-           // Only worth deriving where the record has no answer of its own —
-           // a recorded path outranks it anyway, and this builds a
-           // `DateFormatter` per row.
-           expectedPath: candidate.record?.deliveredPath == nil
-             ? Self.expectedPath(for: candidate.archive, watch: watch)
-             : nil,
-           file: fileAnswer))
-      }
-      // **One precedence, highest first**, because every rule below was
-      // learned from a row that vanished when it should not have:
-      //
-      // 1. You have the file. §5.1 puts that in the default view
-      //    unconditionally, and no mark below can tell a download apart from
-      //    a dismissal — `Watch.seen` records both, and the migration turned
-      //    every pre-record download into `skipped` because a bare id carried
-      //    no evidence of which it was.
-      // 2. It is in flight. Every path that queues an archive marks it seen
-      //    in the same breath, and `add(_:from:)` leaves it briefly both
-      //    dismissed *and* queued — so without this the row would leave the
-      //    list at the exact moment a person asked for it.
-      // 3. An Ignore not yet written to disk.
-      // 4. The recorded state.
-      // 5. The legacy seen-set, where no state exists yet.
-      // 6. Otherwise it shows only while Twitch is still listing it.
-      .filter { row in
-        if row.state.holdsAFile { return true }
-        if row.state == .queued || row.state == .running { return true }
-        if dismissed.contains(row.archive.id) { return false }
-        if let state = library.watchStates[row.archive.id] {
-          return state.isVisibleByDefault
+    let resolved = candidates
+      .map { candidate -> (archive: ChannelArchive, state: ArchiveRowState) in
+        let resolved = ArchiveRowState.state(
+          for: candidate.archive, jobs: jobs,
+          recordedPath: candidate.record?.deliveredPath,
+          // Only worth deriving where the record has no answer of its own —
+          // a recorded path outranks it anyway, and this builds a
+          // `DateFormatter` per row.
+          expectedPath: candidate.record?.deliveredPath == nil
+            ? Self.expectedPath(for: candidate.archive, watch: watch)
+            : nil,
+          file: fileAnswer)
+
+        // Twitch no longer lists it and nothing is on disk: a headstone. Said
+        // plainly rather than left as `available`, which would put an Add
+        // button on a video Twitch cannot serve. Only a row that would
+        // otherwise be offerable is rewritten — one queued or in flight is
+        // neither expired nor offerable, whatever the sweep currently says.
+        let isLive = live[candidate.archive.id] != nil
+        guard !isLive, !resolved.holdsAFile, resolved.isFetchable else {
+          return (candidate.archive, resolved)
         }
-
-        // **The legacy seen-set, and why it is still consulted.** §3.1 retires
-        // `Watch.seen` in favour of derived state, and every path that marks
-        // an archive seen now records one too — Ignore and Open in Intake
-        // write `ignored`, a submission writes `queued`, and a channel seeded
-        // with "Only new" is folded in by `WatchPoller.migrateSeenIfNeeded` on
-        // every sweep.
-        //
-        // This is not a second source of truth, because the two can never
-        // disagree: it is reached only where the record is *silent* about an
-        // id. What it still covers is the window between something writing
-        // `seen` and the next migration pass seeing it — and any writer added
-        // later that forgets to record a state, where failing closed means a
-        // row a person dismissed stays dismissed.
-        //
-        // It comes out when `Watch.seen` stops being written at all. That is
-        // the producer side — `WatchPoller.unseenFindings` and
-        // `FindingAnnouncement.decide` still read it to decide what may be
-        // submitted and announced — and is its own change, not this one.
-        if watch.seen.contains(row.archive.id) { return false }
-
-        // Off Twitch and nothing on disk: a headstone, hidden until §5.2's
-        // filter can surface it deliberately.
-        return live[row.archive.id] != nil
+        return (candidate.archive, .expired)
       }
-      .map { Row(archive: $0.archive, state: $0.state) }
-      // Newest first, the order the sweep already returns and the one a
-      // channel page reads in.
-      .sorted { $0.archive.publishedAt > $1.archive.publishedAt }
+
+    // **One precedence, highest first**, because every rule below was learned
+    // from a row that vanished when it should not have:
+    //
+    // 1. You have the file. §5.1 puts that in the default view
+    //    unconditionally, and no mark below can tell a download apart from a
+    //    dismissal — `Watch.seen` records both, and the migration turned every
+    //    pre-record download into `skipped` because a bare id carried no
+    //    evidence of which it was.
+    // 2. It is in flight. Every path that queues an archive marks it seen in
+    //    the same breath, and `add(_:from:)` leaves it briefly both dismissed
+    //    *and* queued — so without this the row would leave the list at the
+    //    exact moment a person asked for it.
+    // 3. An Ignore not yet written to disk.
+    // 4. The recorded state.
+    // 5. The legacy seen-set, where no state exists yet. Not a second source
+    //    of truth: it is reached only where the record is silent about an id,
+    //    so the two can never disagree. It covers the window between something
+    //    writing `seen` and the next migration pass, and any writer added later
+    //    that forgets to record a state — where failing closed means a row a
+    //    person dismissed stays dismissed. It comes out when `Watch.seen` stops
+    //    being written at all, which is the producer side
+    //    (`WatchPoller.unseenFindings`, `FindingAnnouncement.decide`) and its
+    //    own change.
+    // 6. Otherwise it shows only while Twitch is still listing it.
+    func belongsInTheDefaultView(_ row: (archive: ChannelArchive, state: ArchiveRowState)) -> Bool {
+      if row.state.holdsAFile { return true }
+      if row.state == .queued || row.state == .running { return true }
+      if dismissed.contains(row.archive.id) { return false }
+      if let state = library.watchStates[row.archive.id] { return state.isVisibleByDefault }
+      if watch.seen.contains(row.archive.id) { return false }
+      return live[row.archive.id] != nil
+    }
+
+    let held = resolved.filter { !belongsInTheDefaultView($0) }
+    let shown = revealed.contains(watch.login)
+      ? resolved
+      : resolved.filter(belongsInTheDefaultView)
+
+    return (
+      shown
+        .map { Row(archive: $0.archive, state: $0.state) }
+        // Newest first, the order the sweep already returns and the one a
+        // channel page reads in.
+        .sorted { $0.archive.publishedAt > $1.archive.publishedAt },
+      held.count)
   }
 
   /// The volume name to report when this channel's destination cannot be
@@ -975,13 +1005,15 @@ final class WatchingModel {
       let outcome = latest.first(where: { $0.login == watch.login })?.outcome
       switch outcome {
       case .found(let archives):
+        let built = rows(for: watch, liveArchives: archives, library: library)
         return Section(
           login: watch.login, displayName: watch.displayName,
           avatarURL: watch.avatarURL,
-          rows: rows(for: watch, liveArchives: archives, library: library),
+          rows: built.rows,
           failure: nil, settingsSummary: settingsSummary(for: watch.settings),
           downloadsAutomatically: watch.downloadsAutomatically,
-          disconnectedDestination: disconnectedDestination(for: watch))
+          disconnectedDestination: disconnectedDestination(for: watch),
+          hiddenCount: built.hidden)
       case .failed(let error):
         return Section(
           login: watch.login, displayName: watch.displayName,
@@ -999,13 +1031,15 @@ final class WatchingModel {
         // had to be empty, because a row could only be built from a sweep's
         // own archives; now what a person already has does not wait on a
         // network round trip to reappear.
+        let built = rows(for: watch, liveArchives: [], library: library)
         return Section(
           login: watch.login, displayName: watch.displayName,
           avatarURL: watch.avatarURL,
-          rows: rows(for: watch, liveArchives: [], library: library),
+          rows: built.rows,
           failure: nil, settingsSummary: settingsSummary(for: watch.settings),
           downloadsAutomatically: watch.downloadsAutomatically,
-          disconnectedDestination: disconnectedDestination(for: watch))
+          disconnectedDestination: disconnectedDestination(for: watch),
+          hiddenCount: built.hidden)
       }
     }
   }

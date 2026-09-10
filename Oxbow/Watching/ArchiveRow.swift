@@ -108,6 +108,15 @@ struct ArchiveRow: View {
         .font(.caption)
         .foregroundStyle(.secondary)
         .help("Not downloadable right now, and Oxbow will not fetch it on its own.")
+    case .expired:
+      // No button, deliberately. Twitch has dropped it and nothing is on
+      // disk, so there is nothing to offer — the row exists only to answer
+      // "what did I miss" (`docs/design/channel-history.md` §5.2), and an Add
+      // here would be a control that can only fail.
+      Text("No longer on Twitch")
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .help("Twitch no longer has this, and Oxbow has no copy of it.")
     case .queued:
       Text("In queue").font(.caption).foregroundStyle(.secondary)
     case .running:

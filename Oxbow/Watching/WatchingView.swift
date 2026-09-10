@@ -66,6 +66,14 @@ struct WatchingView: View {
 
   var imageStore: ImageStore? = nil
 
+  /// Which channels are currently showing their held-back rows, by login.
+  ///
+  /// Passed in rather than kept here, for the reason `sections` is: this view
+  /// owns no state a rebuild would have to be told about, and the model
+  /// already rebuilds when the reveal changes.
+  let revealedLogins: Set<String>
+  let onToggleHidden: (String) -> Void
+
   let onAdd: (ChannelArchive, WatchingModel.Section) -> Void
 
   /// The row's secondary action — see `ArchiveRow.onAddWithOptions`.
@@ -218,6 +226,28 @@ struct WatchingView: View {
                   // with — the two have to coexist on one row.
                   .simultaneousGesture(TapGesture(count: 2).onEnded { open(row) })
               }
+
+              // §5.2's filter, as one line under the rows it governs rather
+              // than a control in the toolbar: what is held back differs
+              // wildly per channel — a backfilled one hides a hundred rows
+              // while a fresh one hides none — so the offer belongs where the
+              // count is, and a channel hiding nothing says nothing at all.
+              if section.hiddenCount > 0 || revealedLogins.contains(section.login) {
+                Button {
+                  onToggleHidden(section.login)
+                } label: {
+                  Label(
+                    revealedLogins.contains(section.login)
+                      ? "Hide skipped and missed"
+                      : "Show \(section.hiddenCount) skipped or missed",
+                    systemImage: revealedLogins.contains(section.login)
+                      ? "chevron.up" : "chevron.down")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .padding(.vertical, 2)
+              }
             }
           } header: {
             ChannelCard(
@@ -350,6 +380,7 @@ private struct EmptyChannelRow: View {
         downloadsAutomatically: false)
     ],
     isSweeping: false, demotions: [:],
+    revealedLogins: [], onToggleHidden: { _ in },
     onAdd: { _, _ in }, onIgnore: { _, _ in }, onEdit: { _ in }, onStopWatching: { _ in },
     stopWatchingFailure: nil, markSeenFailure: nil)
 }
@@ -368,6 +399,7 @@ private struct EmptyChannelRow: View {
         settingsSummary: "Video · Up to 720p · Archive", downloadsAutomatically: false),
     ],
     isSweeping: false, demotions: [:],
+    revealedLogins: [], onToggleHidden: { _ in },
     onAdd: { _, _ in }, onIgnore: { _, _ in }, onEdit: { _ in }, onStopWatching: { _ in },
     stopWatchingFailure: nil, markSeenFailure: nil)
   .frame(width: 480, height: 420)
@@ -386,6 +418,7 @@ private struct EmptyChannelRow: View {
         downloadsAutomatically: false),
     ],
     isSweeping: false, demotions: [:],
+    revealedLogins: [], onToggleHidden: { _ in },
     onAdd: { _, _ in }, onIgnore: { _, _ in }, onEdit: { _ in }, onStopWatching: { _ in },
     stopWatchingFailure: "Oxbow could not read the watch list, so LeighXP was not stopped.",
     markSeenFailure: nil)
@@ -406,6 +439,7 @@ private struct EmptyChannelRow: View {
         downloadsAutomatically: false),
     ],
     isSweeping: false, demotions: [:],
+    revealedLogins: [], onToggleHidden: { _ in },
     onAdd: { _, _ in }, onIgnore: { _, _ in }, onEdit: { _ in }, onStopWatching: { _ in },
     stopWatchingFailure: nil,
     markSeenFailure: "Oxbow could not read the watch list: the file could not be read.")
@@ -427,6 +461,7 @@ private struct EmptyChannelRow: View {
         settingsSummary: "Video · Up to 1080p · Downloads", downloadsAutomatically: false),
     ],
     isSweeping: false, demotions: [:],
+    revealedLogins: [], onToggleHidden: { _ in },
     onAdd: { _, _ in }, onIgnore: { _, _ in }, onEdit: { _ in }, onStopWatching: { _ in },
     stopWatchingFailure: nil, markSeenFailure: nil)
   .frame(width: 480, height: 420)
@@ -446,6 +481,7 @@ private struct EmptyChannelRow: View {
         downloadsAutomatically: false),
     ],
     isSweeping: false, demotions: [:],
+    revealedLogins: [], onToggleHidden: { _ in },
     onAdd: { _, _ in }, onIgnore: { _, _ in }, onEdit: { _ in }, onStopWatching: { _ in },
     stopWatchingFailure: nil, markSeenFailure: nil)
   .frame(width: 480, height: 420)
@@ -467,6 +503,7 @@ private struct EmptyChannelRow: View {
         settingsSummary: "Video · Up to 720p · Archive", downloadsAutomatically: false),
     ],
     isSweeping: false, demotions: [:],
+    revealedLogins: [], onToggleHidden: { _ in },
     onAdd: { _, _ in }, onIgnore: { _, _ in }, onEdit: { _ in }, onStopWatching: { _ in },
     stopWatchingFailure: nil, markSeenFailure: nil)
   .frame(width: 480, height: 420)
@@ -490,6 +527,7 @@ private struct EmptyChannelRow: View {
     ],
     isSweeping: false,
     demotions: ["leighxp": .belowFloor(needed: 2_600_000_000, available: 12_000_000_000, floor: 49_000_000_000)],
+    revealedLogins: [], onToggleHidden: { _ in },
     onAdd: { _, _ in }, onIgnore: { _, _ in }, onEdit: { _ in }, onStopWatching: { _ in },
     stopWatchingFailure: nil, markSeenFailure: nil)
   .frame(width: 480, height: 420)
@@ -509,6 +547,7 @@ private struct EmptyChannelRow: View {
     ],
     isSweeping: false,
     demotions: ["leighxp": .destinationUnreachable("/Volumes/Archive")],
+    revealedLogins: [], onToggleHidden: { _ in },
     onAdd: { _, _ in }, onIgnore: { _, _ in }, onEdit: { _ in }, onStopWatching: { _ in },
     stopWatchingFailure: nil, markSeenFailure: nil)
   .frame(width: 480, height: 420)
@@ -517,6 +556,7 @@ private struct EmptyChannelRow: View {
 #Preview("No channels watched") {
   WatchingView(
     sections: [], isSweeping: false, demotions: [:],
+    revealedLogins: [], onToggleHidden: { _ in },
     onAdd: { _, _ in }, onIgnore: { _, _ in }, onEdit: { _ in }, onStopWatching: { _ in },
     stopWatchingFailure: nil, markSeenFailure: nil)
     .frame(width: 480, height: 420)
@@ -528,6 +568,7 @@ private struct EmptyChannelRow: View {
   // `isSweeping`'s doc above.
   WatchingView(
     sections: [], isSweeping: true, demotions: [:],
+    revealedLogins: [], onToggleHidden: { _ in },
     onAdd: { _, _ in }, onIgnore: { _, _ in }, onEdit: { _ in }, onStopWatching: { _ in },
     stopWatchingFailure: nil, markSeenFailure: nil)
     .frame(width: 480, height: 420)

@@ -52,6 +52,16 @@ public enum ArchiveRowState: Equatable, Sendable {
   case unverifiable(volumeName: String)
   case failed
 
+  /// Twitch no longer lists it and there is nothing on disk to show for it.
+  ///
+  /// **The state a revealed headstone needs.** Rows like this are hidden by
+  /// default (`docs/design/channel-history.md` §5.2) and only surface behind
+  /// the filter — but once surfaced they must not read as `available`, which
+  /// would put an Add button on a video Twitch cannot serve. There is nothing
+  /// to fetch and nothing to open; the row exists to answer "what did I
+  /// miss", and saying so is the whole of its job.
+  case expired
+
   /// The file this row can hand to a player, when there is one to hand over.
   ///
   /// **Narrower than `holdsAFile`, and the difference is the whole point.**
@@ -80,7 +90,7 @@ public enum ArchiveRowState: Equatable, Sendable {
   public var holdsAFile: Bool {
     switch self {
     case .downloaded, .unverifiable: true
-    case .available, .live, .queued, .running, .missing, .failed: false
+    case .available, .live, .queued, .running, .missing, .failed, .expired: false
     }
   }
 
@@ -104,6 +114,8 @@ public enum ArchiveRowState: Equatable, Sendable {
   public var isFetchable: Bool {
     switch self {
     case .available, .live, .missing, .failed: true
+    // Nothing to fetch: Twitch has dropped it and no file remains.
+    case .expired: false
     case .queued, .running, .downloaded, .unverifiable: false
     }
   }
