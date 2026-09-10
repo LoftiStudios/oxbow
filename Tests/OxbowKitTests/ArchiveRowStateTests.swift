@@ -335,6 +335,21 @@ struct ArchiveRowStateTests {
     #expect(state == .downloaded(recorded))
   }
 
+
+  /// The subtle one: `unverifiable` holds a file but cannot open it, because
+  /// the volume is unplugged. A gesture guarded on `holdsAFile` would accept
+  /// the key, call itself handled, and do nothing.
+  @Test("only a file that is actually there can be opened")
+  func openableFile() {
+    let url = URL(filePath: "/Volumes/Storage/a.mp4")
+    #expect(ArchiveRowState.downloaded(url).openableFile == url)
+    #expect(ArchiveRowState.unverifiable(volumeName: "Storage").openableFile == nil,
+            "an unplugged disk has nothing to hand a player")
+    for state: ArchiveRowState in [.available, .live, .queued, .running, .missing, .failed] {
+      #expect(state.openableFile == nil, "\(state) has no file")
+    }
+  }
+
 }
 
 /// `ArchiveRowState.FileAnswer.resolve` is the live probe's pure core: no

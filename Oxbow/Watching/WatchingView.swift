@@ -52,6 +52,16 @@ struct WatchingView: View {
   /// reason `watching` and `poller` are on `QueueView`: `OxbowApp` builds it
   /// only once a support directory resolves, and never under
   /// `xcodebuild test`. Nil renders the placeholder.
+  /// The row a person has picked, by archive id.
+  ///
+  /// **Selection is what makes this list reachable without a mouse.** Every
+  /// action here lived on a hover control or a right-click, so a keyboard or
+  /// VoiceOver user had no way to name a row at all, let alone act on one.
+  /// A single id rather than a set: nothing here acts on several rows at once,
+  /// and `QueueActions` already treats "exactly one selected" as the condition
+  /// for its own per-item commands.
+  @State private var selection: WatchingModel.Row.ID?
+
   var imageStore: ImageStore? = nil
 
   let onAdd: (ChannelArchive, WatchingModel.Section) -> Void
@@ -108,6 +118,14 @@ struct WatchingView: View {
         Divider()
       }
       content
+        // Return opens the selection, the keyboard's half of double-click.
+        // Unhandled when nothing is selected or the row has no file, so the
+        // key keeps its ordinary meaning everywhere else in the window.
+        .onKeyPress(.return) {
+          guard let url = selectedRow?.state.openableFile else { return .ignored }
+          NSWorkspace.shared.open(url)
+          return .handled
+        }
     }
   }
 
@@ -135,7 +153,7 @@ struct WatchingView: View {
         }
       }
     } else {
-      List {
+      List(selection: $selection) {
         ForEach(sections) { section in
           Section {
             if let failure = section.failure {
@@ -189,6 +207,11 @@ struct WatchingView: View {
                   onIgnore: { onIgnore(row.archive, section) },
                   onAddWithOptions: { onAddWithOptions(row.archive, section) },
                   onReveal: { NSWorkspace.shared.activateFileViewerSelecting([$0]) })
+                  // Double-click opens, the way it does in Finder and Music.
+                  // `simultaneousGesture` rather than `onTapGesture`, which
+                  // would swallow the single click the list needs to select
+                  // with — the two have to coexist on one row.
+                  .simultaneousGesture(TapGesture(count: 2).onEnded { open(row) })
               }
             }
           } header: {
@@ -211,6 +234,29 @@ struct WatchingView: View {
       .listRowSeparator(.visible)
     }
   }
+
+  /// The selected row, looked up across every section.
+  ///
+  /// Archive ids are unique across all of Twitch, so one id cannot name a row
+  /// in two channels and this needs no section to disambiguate.
+  private var selectedRow: WatchingModel.Row? {
+    guard let selection else { return nil }
+    return sections.lazy.flatMap(\.rows).first { $0.id == selection }
+  }
+
+  /// Opens the row's file in whatever plays it.
+  ///
+  /// **Only a file actually on disk opens.** `unverifiable` means the volume
+  /// could not be reached, so there is nothing to hand to a player, and every
+  /// other state has no file at all. Opening is deliberately the *only* thing
+  /// this gesture does: `docs/design/video-record.md` §4.3 rules out letting a
+  /// double-click start a download, because a gesture you can trigger by
+  /// clicking twice must never commit somebody to twenty gigabytes.
+  private func open(_ row: WatchingModel.Row) {
+    guard let url = row.state.openableFile else { return }
+    NSWorkspace.shared.open(url)
+  }
+
 }
 
 /// A failed channel's stand-in for its rows.

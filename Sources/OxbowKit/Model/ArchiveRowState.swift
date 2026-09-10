@@ -52,6 +52,19 @@ public enum ArchiveRowState: Equatable, Sendable {
   case unverifiable(volumeName: String)
   case failed
 
+  /// The file this row can hand to a player, when there is one to hand over.
+  ///
+  /// **Narrower than `holdsAFile`, and the difference is the whole point.**
+  /// `unverifiable` counts as holding a file — the volume being unplugged is
+  /// not evidence of deletion — but there is nothing to open while it is
+  /// unplugged. A gesture guarded on `holdsAFile` would accept the key,
+  /// report itself handled, and then do nothing, which reads as the app
+  /// ignoring you.
+  public var openableFile: URL? {
+    if case .downloaded(let url) = self { return url }
+    return nil
+  }
+
   /// Whether this row has something on disk to show for itself.
   ///
   /// **The question a row asks when Twitch has stopped listing its archive.**
