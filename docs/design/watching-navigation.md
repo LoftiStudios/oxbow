@@ -394,6 +394,37 @@ Note that the answer changes what §6 leaves behind. A flat inbox has no
 per-channel section to hang a fold on at all, so `revealed` dies either way;
 a grouped one keeps the option of a lighter header.
 
+### 9.1a A hundred Add buttons that cannot work
+
+Observed 2026-09-10, once the destination existed: a channel watched for six
+months shows its whole back catalogue, and every row of it offers `Add` —
+because those archives are `.available`. They are still on Twitch and merely
+`seen`, so the state is literally correct.
+
+For a subscriber-only channel it is correct and useless. Every one of those
+buttons starts a download that fails at the manifest.
+
+**The app already knows this, and the knowledge does not reach the row.**
+`AutoDownloadPolicy.isContentRestricted(jobs:)` decides a channel is
+members-only after `restrictedFailureThreshold` (3) failures carrying
+`FailureInterpreter.subscriberOnlySummary`, and pauses *automatic*
+downloading with a demotion that says so plainly. The manual `Add` on each
+row consults none of it and keeps offering.
+
+Note what that policy's own doc comment establishes, because it constrains
+every fix: Twitch's metadata **cannot** be asked. §9.3 of
+`docs/twitch-channel-api.md` measured a members-only channel reporting 908
+archives with `resourceRestriction` null and `self.isRestricted` false, the
+refusal arriving only at the manifest. So the signal is retrospective by
+nature — there is no per-archive fact to render, only a channel-level
+inference drawn from what already failed.
+
+Which makes this a question about what a demoted channel's *rows* should
+offer, not about adding a new row state. Deliberately not answered here: it
+wants the library pane to exist first, and it is entangled with §9.1 —
+a flat inbox and a per-channel library have different answers, because the
+inbox has few rows per channel and the library has hundreds.
+
 ### 9.2 Does Get Info become an inspector?
 
 The original shape this document came from was three columns: sidebar, list,
