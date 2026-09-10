@@ -40,13 +40,75 @@ struct ChannelView: View {
   @State private var selection: WatchingModel.Row.ID?
 
   var body: some View {
+    Group {
+      if section.failure != nil || section.allRows.isEmpty {
+        // **The card stays, even with nothing under it.**
+        // `channel-watching.md` §3.2 froze a watch's settings at add time and
+        // made this list the one place they can still be read — "or they
+        // become state nobody can audit". A pane that replaced the card
+        // wholesale with an empty state would hide the settings, and the Edit
+        // that changes them, for exactly the channels most likely to need
+        // both: the broken one and the one that has never produced anything.
+        VStack(spacing: 0) {
+          card
+            // Matches the inset a `List` row gets, so the card does not shift
+            // sideways between a channel that has rows and one that does not.
+            .padding(.horizontal, 20)
+          Divider()
+          emptyState
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+      } else {
+        list
+      }
+    }
+    .navigationTitle(section.displayName)
+  }
+
+  private var card: some View {
+    ChannelCard(
+      section: section,
+      imageStore: imageStore,
+      demotionReason: demotionReason,
+      onEdit: onEdit,
+      onStopWatching: onStopWatching)
+  }
+
+  /// What stands where the rows would be.
+  ///
+  /// **Two states that must never be confused**, which is the whole reason
+  /// `Section.failure` is distinct from `rows.isEmpty`: a broken sweep has to
+  /// read as an error, never as a channel with nothing new. Alone in a pane
+  /// the constraint that made `WatchingView`'s equivalents one-line labels is
+  /// gone — there are no quiet channels beside this one to shout over — so
+  /// they become the real thing, but the distinction they protect is
+  /// unchanged.
+  @ViewBuilder
+  private var emptyState: some View {
+    if let failure = section.failure {
+      ContentUnavailableView {
+        Label("Couldn't check \(section.displayName)",
+              systemImage: "exclamationmark.triangle.fill")
+      } description: {
+        Text(failure)
+      }
+    } else {
+      ContentUnavailableView {
+        Label("Nothing to show for \(section.displayName)", systemImage: "tray")
+      } description: {
+        // Deliberately vague about *why*, the same way `EmptyChannelRow` is:
+        // until something can tell an ignored archive from a channel that has
+        // genuinely never published one, claiming either would be a guess.
+        // `djjakerudh` reports `totalCount: 0` because a DJ's licensing keeps
+        // him live-only, and that is not something this pane could know.
+        Text("Oxbow hasn't seen any archives from this channel.")
+      }
+    }
+  }
+
+  private var list: some View {
     List(selection: $selection) {
-      ChannelCard(
-        section: section,
-        imageStore: imageStore,
-        demotionReason: demotionReason,
-        onEdit: onEdit,
-        onStopWatching: onStopWatching)
+      card
         // Not an item in the list: it is the pane's header that happens to
         // live inside the scroll, so it takes no separator and cannot be
         // selected out from under the rows below it.
@@ -71,7 +133,6 @@ struct ChannelView: View {
       }
     }
     .listRowSeparator(.visible)
-    .navigationTitle(section.displayName)
     // Return opens the selection, the keyboard's half of double-click.
     // Unhandled when nothing is selected or the row has no file, so the key
     // keeps its ordinary meaning everywhere else in the window.
@@ -134,12 +195,26 @@ struct ChannelView: View {
 }
 
 #Preview("A channel with nothing in it") {
-  // Slice D gives this a real `ContentUnavailableView`; today it is a header
-  // over an empty list, which is honest but not yet good.
   ChannelView(
     section: WatchingModel.Section(
       login: "djjakerudh", displayName: "djjakerudh", rows: [], failure: nil,
       settingsSummary: "Video · Up to 720p · Downloads",
+      downloadsAutomatically: false),
+    imageStore: nil, demotionReason: nil,
+    onAdd: { _ in }, onAddWithOptions: { _ in }, onIgnore: { _ in },
+    onEdit: {}, onStopWatching: {})
+  .frame(width: 560, height: 480)
+}
+
+// The pair that must never be confused with each other: this one broke, the
+// one above is simply empty. Two different icons, two different sentences,
+// and this one carries the error's own text.
+#Preview("A channel whose sweep failed") {
+  ChannelView(
+    section: WatchingModel.Section(
+      login: "brokenchannel", displayName: "A Broken Channel", rows: [],
+      failure: "The response did not include the expected video list.",
+      settingsSummary: "Video · Up to 1080p · Downloads",
       downloadsAutomatically: false),
     imageStore: nil, demotionReason: nil,
     onAdd: { _ in }, onAddWithOptions: { _ in }, onIgnore: { _ in },
