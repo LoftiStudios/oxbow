@@ -117,11 +117,19 @@ struct WatchPollerRecordingTests {
   /// so a version of `sweep()` that read `result.archives` instead of
   /// matching on `result.outcome` would call `record(archives: [], ...)` for
   /// a failure exactly as it does for a genuinely empty success — passing
-  /// `emptySweepIsNoOp()` above for the wrong reason. Seeding an existing
-  /// record and asserting it is byte-for-byte unchanged (not merely that no
-  /// *new* row appeared) is what catches that: `record` is a no-op on an
-  /// empty archive list either way, but only the `.found` match guarantees
-  /// `seenAt` is never considered at all when the sweep failed.
+  /// `emptySweepIsNoOp()` above for the wrong reason.
+  ///
+  /// **Which this test does not in fact catch, and the honest reading is
+  /// worth more than the comforting one.** Seeding an existing record and
+  /// asserting it is byte-for-byte unchanged still passes against a `sweep()`
+  /// that reads `result.archives`: `record`'s own `guard !archives.isEmpty`
+  /// returns before `seenAt` is ever considered, so the record is untouched
+  /// either way. What this pins is the *outcome* — a failed sweep leaves the
+  /// record alone — not which of the two guards produced it. That is the
+  /// coupling both guards now carry a comment about; there is no test that
+  /// separates them, and a test that faked one by reaching past `record` into
+  /// `sweep()`'s internals would be pinning the implementation rather than
+  /// the promise.
   @Test("a failed sweep records nothing and stamps no last-seen time")
   func failedSweepLeavesRecordUntouched() async throws {
     let file = temporaryFile()

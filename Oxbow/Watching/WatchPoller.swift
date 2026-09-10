@@ -79,15 +79,21 @@ final class WatchPoller {
   /// testable without a poller; this is only where a live poller's copy of
   /// the store lives, mirroring `store` above.
   ///
-  /// **The one `VideoRecordStore` this type uses.** `live(supportDirectory:)`
-  /// builds it once, from `AppComposition.videoRecordURL(supportDirectory:)`
-  /// — the single site that decides where Oxbow's on-disk video record
-  /// lives — and every code path on this type reads it from here rather than
-  /// standing up a second `VideoRecordStore` over the same file. That
-  /// discipline is what keeps "where does the video record live" answerable
-  /// in one place: a second call site that built its own store, even one
-  /// pointed at the identical path, would mean that answer could drift out
-  /// from under this one without either call site knowing.
+  /// **What is single is the path, not the store.** A `VideoRecordStore` is a
+  /// struct wrapping a `URL`, holds no state and caches nothing, so the app
+  /// builds several — this one, `WatchingModel`'s, the one `QueueHost` hands
+  /// `JobNotifier`, and `VideoRecording`'s — and they are safe against each
+  /// other because every one of them does its load-modify-save on the main
+  /// actor with no suspension point in between (`VideoRecorder`'s doc comment
+  /// has that rule in full).
+  ///
+  /// The thing that must stay in one place is
+  /// `AppComposition.videoRecordURL(supportDirectory:)`: every one of those
+  /// stores is pointed at the file that function names, and none of them
+  /// composes a path of its own. A call site that built its own path — even
+  /// the identical one today — could drift away from the others with nothing
+  /// to notice, and half of Oxbow would be writing a record the other half
+  /// never reads.
   let videoRecordStore: VideoRecordStore
 
   /// Where a sweep's announcement goes. Injected so a test can read what
@@ -144,10 +150,10 @@ final class WatchPoller {
       fileURL: AppComposition.watchStoreURL(supportDirectory: supportDirectory))
     let videoRecordStore = VideoRecordStore(
       fileURL: AppComposition.videoRecordURL(supportDirectory: supportDirectory))
-    // Run once per launch, against the one `VideoRecordStore` this app ever
-    // builds for this file — see that property's own doc comment for why a
-    // second instance over the same path is never the fix here, even for a
-    // one-off migration read.
+    // Run once per launch, against the store built two lines above rather
+    // than one composed here from a path of its own — see `videoRecordStore`
+    // for why the path is the thing kept single, and a second store value
+    // over `AppComposition`'s path is not the problem.
     migrateSeenIfNeeded(watches: (try? watchStore.load()) ?? [], into: videoRecordStore)
     return WatchPoller(
       store: watchStore,
@@ -286,6 +292,17 @@ final class WatchPoller {
     // says it must never be the only signal a caller reads. Matching on
     // `.found` here makes "a failed sweep records nothing" a deliberate
     // statement rather than a coincidence of the flattening.
+    //
+    // **Nothing pins this match, because `record`'s empty guard covers for
+    // it.** A failure's archives flatten to `[]`, so dropping this match
+    // sends a failed channel into `record`, which returns on the empty array
+    // before `seenAt` is ever considered — and every test stays green,
+    // `failedSweepLeavesRecordUntouched` included. That makes the two guards
+    // a pair with only one of them tested: `emptySweepIsNoOp` holds the other
+    // end. The day `record` stops returning early on `[]` — a stamp written
+    // outside the loop, say — this match is the only thing left between a
+    // failed sweep and a sighting recorded for a channel Twitch was never
+    // successfully asked about. Change either guard and check the other.
     for result in swept {
       guard case .found(let archives) = result.outcome else { continue }
       Self.record(
@@ -585,6 +602,14 @@ final class WatchPoller {
     seenAt: Date,
     into store: VideoRecordStore)
   {
+    // **The second of two guards against recording a failure, and it is the
+    // one carrying both.** `sweep()`'s `case .found` match above is the first
+    // — but a failure's archives flatten to `[]`, so this line stops one even
+    // when that match is gone. `emptySweepIsNoOp` pins this guard directly;
+    // nothing pins that match, precisely because this guard covers for it.
+    // So relaxing this one does more than let an empty save through: it makes
+    // that match load-bearing and untested at the same moment. Change either
+    // guard and check the other.
     guard !archives.isEmpty else { return }
     guard var library = try? store.load() else { return }
 
