@@ -1,6 +1,16 @@
 # Channels as destinations
 
-**Status:** written 2026-09-10. Not implemented.
+**Status:** written 2026-09-10, and §8's stages 1–3 implemented the same day
+on `watching-sidebar-channels`. The sidebar lists channels, each is a
+destination showing its whole record, the two empty states are real, the
+sidebar row carries Edit and Stop Watching, and the fold is gone.
+
+**Not done, and each has its own section:** §9.1 (flat vs grouped inbox,
+deferred by decision), §9.1a (a manual channel's dead Add buttons — punted,
+and the sentence in it about the app "already knowing" was wrong twice over;
+see the section), §9.2 (Get Info as an inspector), and the independent
+one-line fix for §1's transparent pinned header, which §9.1's answer may
+delete outright.
 
 `docs/design/channel-watching.md` built the watcher and put it behind a
 sidebar row. `docs/design/channel-history.md` gave a watched channel contents.
