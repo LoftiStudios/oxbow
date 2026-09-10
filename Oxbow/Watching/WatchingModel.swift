@@ -242,7 +242,14 @@ final class WatchingModel {
     videoRecordStore: VideoRecordStore,
     openIntake: @escaping (ChannelArchive, Watch) -> Void,
     queue: @escaping (ChannelArchive, Watch) async -> String? = { _, _ in nil },
-    fileAnswer: @escaping (URL) -> ArchiveRowState.FileAnswer = { .present($0) },
+    // **Fails closed.** The previous default answered `.present` for any URL
+    // at all, which was survivable only while this was consulted solely for a
+    // path a finished job had already delivered. It is now also asked about a
+    // path this app merely *would* have written, so a caller that forgot to
+    // supply a real check would report every archive on the channel as
+    // downloaded. Claiming nothing is the only safe thing an absent answer can
+    // do; the one production call site passes a real filesystem check.
+    fileAnswer: @escaping (URL) -> ArchiveRowState.FileAnswer = { _ in .absent },
     purgeImages: @escaping (Set<URL>) -> Void = { _ in },
     payloads: PayloadStore? = nil
   ) {
@@ -761,7 +768,14 @@ final class WatchingModel {
         (archive: candidate.archive,
          state: ArchiveRowState.state(
            for: candidate.archive, jobs: jobs,
-           recordedPath: candidate.record?.deliveredPath, file: fileAnswer))
+           recordedPath: candidate.record?.deliveredPath,
+           // Only worth deriving where the record has no answer of its own —
+           // a recorded path outranks it anyway, and this builds a
+           // `DateFormatter` per row.
+           expectedPath: candidate.record?.deliveredPath == nil
+             ? Self.expectedPath(for: candidate.archive, watch: watch)
+             : nil,
+           file: fileAnswer))
       }
       // **One precedence, highest first**, because every rule below was
       // learned from a row that vanished when it should not have:
@@ -796,6 +810,35 @@ final class WatchingModel {
       // Newest first, the order the sweep already returns and the one a
       // channel page reads in.
       .sorted { $0.archive.publishedAt > $1.archive.publishedAt }
+  }
+
+  /// Where this archive's download would land, if it were made now.
+  ///
+  /// **How a download made before the record existed is recognised.** The
+  /// destination is the channel's own frozen setting and the filename is
+  /// deterministic, so the file can be looked for exactly where this app would
+  /// have put it. `ArchiveRowState` treats the answer as the weaker evidence
+  /// it is — see its own comment on why only `present` counts.
+  ///
+  /// **Derived the same way the writer derives it, or it silently never
+  /// matches.** `IntakeModel.load` composes the name from the streamer's
+  /// display name, the video's date and its title, reserving room for the
+  /// longest suffix any output can take; every argument here mirrors that call.
+  /// A divergence would not fail — it would simply stop finding files, which
+  /// is the kind of bug that goes unnoticed.
+  ///
+  /// `Calendar.current` because the date is rendered in the timezone the file
+  /// was written in, and both happen on this machine.
+  private static func expectedPath(for archive: ChannelArchive, watch: Watch) -> String {
+    let base = OutputNaming.baseName(
+      streamer: watch.displayName,
+      date: archive.publishedAt,
+      title: archive.title,
+      calendar: .current,
+      reservingSuffixBytes: OutputSuffix.longestBytes)
+    return watch.settings.destination
+      .appending(path: base + OutputSuffix.video)
+      .path(percentEncoded: false)
   }
 
   /// A recorded video, dressed as the archive the row rendering expects.

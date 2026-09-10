@@ -81,10 +81,27 @@ struct WatchingModelTests {
                    thumbnailURL: nil)
   }
 
-  private func model(store: WatchStore) -> WatchingModel {
+  /// `fileAnswer` defaults to answering `absent` for everything, matching the
+  /// model's own fail-closed default. A test that wants a row to read as
+  /// downloaded says which path exists, rather than leaning on a stub that
+  /// claims every path does — the row state now also consults the path a
+  /// download *would* have taken, so a blanket `present` would report every
+  /// archive on the channel as already downloaded.
+  private func model(
+    store: WatchStore,
+    fileAnswer: @escaping (URL) -> ArchiveRowState.FileAnswer = { _ in .absent }
+  ) -> WatchingModel {
     WatchingModel(
       store: store, videoRecordStore: temporaryRecordStore(),
-      openIntake: { _, _ in })
+      openIntake: { _, _ in },
+      fileAnswer: fileAnswer)
+  }
+
+  /// Answers `present` for exactly the file `job(_:_:)` delivers and `absent`
+  /// for anything else — notably the derived path, which these tests must not
+  /// accidentally match.
+  private let onlyTheJobsFile: (URL) -> ArchiveRowState.FileAnswer = { url in
+    url.path(percentEncoded: false) == "/out/1.mp4" ? .present(url) : .absent
   }
 
   /// A job whose one download step carries `status` and is keyed to `id` via
@@ -212,7 +229,7 @@ struct WatchingModelTests {
   @Test func aStatusChangeStillRebuilds() throws {
     let store = temporaryStore()
     try store.save([watch("ninja")])
-    let model = model(store: store)
+    let model = model(store: store, fileAnswer: onlyTheJobsFile)
     model.apply([.init(login: "ninja", displayName: "Ninja", outcome: .found([archive("1")]))])
 
     model.updateJobs([job("1", .queued)])
@@ -388,7 +405,7 @@ struct WatchingModelTests {
   @Test func anArchiveSeenOnDiskIsStillShownWhileTheQueueHoldsAJobForIt() throws {
     let store = temporaryStore()
     try store.save([watch("ninja", seen: ["1", "2"])])
-    let model = model(store: store)
+    let model = model(store: store, fileAnswer: onlyTheJobsFile)
     model.apply([.init(login: "ninja", displayName: "Ninja",
                        outcome: .found([archive("1"), archive("2")]))])
 
@@ -407,7 +424,7 @@ struct WatchingModelTests {
   @Test func removingAJobHidesTheRowWithoutUnmarkingTheArchive() throws {
     let store = temporaryStore()
     try store.save([watch("ninja", seen: ["1"])])
-    let model = model(store: store)
+    let model = model(store: store, fileAnswer: onlyTheJobsFile)
     model.apply([.init(login: "ninja", displayName: "Ninja", outcome: .found([archive("1")]))])
     model.updateJobs([job("1", .done)])
     #expect(model.sections[0].rows.count == 1)

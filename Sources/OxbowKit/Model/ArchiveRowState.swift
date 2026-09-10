@@ -108,6 +108,7 @@ public enum ArchiveRowState: Equatable, Sendable {
     for archive: ChannelArchive,
     jobs: [Job],
     recordedPath: String?,
+    expectedPath: String?,
     file: (URL) -> FileAnswer
   ) -> ArchiveRowState {
     let mine = jobs.filter { $0.mediaIdentifier == archive.id }
@@ -163,6 +164,32 @@ public enum ArchiveRowState: Equatable, Sendable {
       case .unknown(let volume): return .unverifiable(volumeName: volume)
       case .absent: break
       }
+    }
+
+    // A file exactly where this archive's download *would* have been written,
+    // with nothing in the record saying it was.
+    //
+    // **This is how a download made before the record existed is recognised.**
+    // The destination is the channel's own, and the filename is deterministic
+    // — `OutputNaming.baseName` derives it from streamer, date and title, all
+    // of which the record holds. Measured against a real library: 10 files
+    // found where only 3 carried a `deliveredPath`.
+    //
+    // **Weaker evidence than `recordedPath`, and treated as such.** A recorded
+    // path is a claim this app made and can stand behind, so an unreachable
+    // volume leaves it `unverifiable` — we know the file was put there. An
+    // expected path is a guess about a file nobody has ever confirmed, so only
+    // `present` counts: `unknown` and `absent` both fall through rather than
+    // claiming a download that may never have happened. Without that split, a
+    // channel pointed at an unmounted disk would report every archive it has
+    // never downloaded as one it might have.
+    //
+    // It fails closed for the same reason `channel-history.md` §10.1 rejects
+    // following files by bookmark: rename or move the file and this simply
+    // stops finding it, which is the honest answer rather than a hunt that
+    // could match the wrong video.
+    if let expectedPath, case .present(let url) = file(URL(filePath: expectedPath)) {
+      return .downloaded(url)
     }
 
     // A failed job with no coexisting success. Checked after `.done` so a

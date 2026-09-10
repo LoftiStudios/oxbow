@@ -48,7 +48,7 @@ struct ArchiveRowStateTests {
 
   @Test("an archive with no job is available to fetch")
   func noJobIsAvailable() {
-    #expect(ArchiveRowState.state(for: archive("1"), jobs: [], recordedPath: nil, file: noFile) == .available)
+    #expect(ArchiveRowState.state(for: archive("1"), jobs: [], recordedPath: nil, expectedPath: nil, file: noFile) == .available)
   }
 
   /// §5.2 of the watching design: a broadcast still recording is skipped by
@@ -57,7 +57,7 @@ struct ArchiveRowStateTests {
   @Test("a still-recording broadcast is live, not available")
   func recordingIsLive() {
     let state = ArchiveRowState.state(
-      for: archive("1", status: .recording), jobs: [], recordedPath: nil, file: noFile)
+      for: archive("1", status: .recording), jobs: [], recordedPath: nil, expectedPath: nil, file: noFile)
     #expect(state == .live)
   }
 
@@ -69,16 +69,16 @@ struct ArchiveRowStateTests {
   @Test("an unrecognised status is not offered as available")
   func unknownStatusIsNotAvailable() {
     let state = ArchiveRowState.state(
-      for: archive("1", status: .other("PENDING_TRANSCODE")), jobs: [], recordedPath: nil, file: noFile)
+      for: archive("1", status: .other("PENDING_TRANSCODE")), jobs: [], recordedPath: nil, expectedPath: nil, file: noFile)
     #expect(state == .live)
   }
 
   @Test("a queued job reads as queued and a running one as running")
   func unfinishedJobsShowTheirProgress() {
     #expect(ArchiveRowState.state(
-      for: archive("1"), jobs: [job("1", .queued)], recordedPath: nil, file: noFile) == .queued)
+      for: archive("1"), jobs: [job("1", .queued)], recordedPath: nil, expectedPath: nil, file: noFile) == .queued)
     #expect(ArchiveRowState.state(
-      for: archive("1"), jobs: [job("1", .running)], recordedPath: nil, file: noFile) == .running)
+      for: archive("1"), jobs: [job("1", .running)], recordedPath: nil, expectedPath: nil, file: noFile) == .running)
   }
 
   @Test("a finished job whose file is there is downloaded")
@@ -86,7 +86,7 @@ struct ArchiveRowStateTests {
     let path = URL(filePath: "/Users/x/Downloads/a.mp4")
     let state = ArchiveRowState.state(
       for: archive("1"), jobs: [job("1", .done, files: [path])],
-      recordedPath: nil, file: { _ in .present(path) })
+      recordedPath: nil, expectedPath: nil, file: { _ in .present(path) })
     #expect(state == .downloaded(path))
   }
 
@@ -97,7 +97,7 @@ struct ArchiveRowStateTests {
     let state = ArchiveRowState.state(
       for: archive("1"),
       jobs: [job("1", .done, files: [URL(filePath: "/Users/x/Downloads/a.mp4")])],
-      recordedPath: nil, file: { _ in .absent })
+      recordedPath: nil, expectedPath: nil, file: { _ in .absent })
     #expect(state == .missing)
   }
 
@@ -109,14 +109,14 @@ struct ArchiveRowStateTests {
     let state = ArchiveRowState.state(
       for: archive("1"),
       jobs: [job("1", .done, files: [URL(filePath: "/Volumes/Helios/a.mp4")])],
-      recordedPath: nil, file: { _ in .unknown(volumeName: "Helios") })
+      recordedPath: nil, expectedPath: nil, file: { _ in .unknown(volumeName: "Helios") })
     #expect(state == .unverifiable(volumeName: "Helios"))
   }
 
   @Test("a failed job reads as failed")
   func failedJobIsFailed() {
     #expect(ArchiveRowState.state(
-      for: archive("1"), jobs: [job("1", .failed)], recordedPath: nil, file: noFile) == .failed)
+      for: archive("1"), jobs: [job("1", .failed)], recordedPath: nil, expectedPath: nil, file: noFile) == .failed)
   }
 
   /// A cancellation is a person saying no, not the app having tried and
@@ -125,13 +125,13 @@ struct ArchiveRowStateTests {
   @Test("a cancelled job leaves the archive available")
   func cancelledJobIsAvailableAgain() {
     #expect(ArchiveRowState.state(
-      for: archive("1"), jobs: [job("1", .cancelled)], recordedPath: nil, file: noFile) == .available)
+      for: archive("1"), jobs: [job("1", .cancelled)], recordedPath: nil, expectedPath: nil, file: noFile) == .available)
   }
 
   @Test("jobs for other archives are ignored")
   func otherJobsDoNotLeak() {
     #expect(ArchiveRowState.state(
-      for: archive("1"), jobs: [job("2", .running)], recordedPath: nil, file: noFile) == .available)
+      for: archive("1"), jobs: [job("2", .running)], recordedPath: nil, expectedPath: nil, file: noFile) == .available)
   }
 
   /// Re-downloading after a delete leaves two jobs for one archive. The
@@ -142,9 +142,9 @@ struct ArchiveRowStateTests {
     let path = URL(filePath: "/Users/x/Downloads/a.mp4")
     let jobs = [job("1", .done, files: [path]), job("1", .running)]
     #expect(ArchiveRowState.state(
-      for: archive("1"), jobs: jobs, recordedPath: nil, file: { _ in .present(path) }) == .running)
+      for: archive("1"), jobs: jobs, recordedPath: nil, expectedPath: nil, file: { _ in .present(path) }) == .running)
     #expect(ArchiveRowState.state(
-      for: archive("1"), jobs: jobs.reversed(), recordedPath: nil, file: { _ in .present(path) }) == .running)
+      for: archive("1"), jobs: jobs.reversed(), recordedPath: nil, expectedPath: nil, file: { _ in .present(path) }) == .running)
   }
 
   /// §6.3: a retried automatic download leaves the failed job in the queue
@@ -157,9 +157,9 @@ struct ArchiveRowStateTests {
     let path = URL(filePath: "/Users/x/Downloads/a.mp4")
     let jobs = [job("1", .failed), job("1", .done, files: [path])]
     #expect(ArchiveRowState.state(
-      for: archive("1"), jobs: jobs, recordedPath: nil, file: { _ in .present(path) }) == .downloaded(path))
+      for: archive("1"), jobs: jobs, recordedPath: nil, expectedPath: nil, file: { _ in .present(path) }) == .downloaded(path))
     #expect(ArchiveRowState.state(
-      for: archive("1"), jobs: jobs.reversed(), recordedPath: nil, file: { _ in .present(path) }) == .downloaded(path))
+      for: archive("1"), jobs: jobs.reversed(), recordedPath: nil, expectedPath: nil, file: { _ in .present(path) }) == .downloaded(path))
   }
 
   /// A finished job that delivered nothing cannot claim a file. Pinned
@@ -168,7 +168,7 @@ struct ArchiveRowStateTests {
   @Test("a finished job with no delivered file is missing, not a crash")
   func doneWithNoDeliveredFileIsMissing() {
     #expect(ArchiveRowState.state(
-      for: archive("1"), jobs: [job("1", .done, files: [])], recordedPath: nil, file: noFile) == .missing)
+      for: archive("1"), jobs: [job("1", .done, files: [])], recordedPath: nil, expectedPath: nil, file: noFile) == .missing)
   }
 
   /// `isFetchable` governs more than a button: `ArchiveRow` asks it whether
@@ -202,6 +202,7 @@ struct ArchiveRowStateTests {
     let state = ArchiveRowState.state(
       for: archive("1"), jobs: [],
       recordedPath: "/Volumes/Storage/wheelyf/day46.mp4",
+      expectedPath: nil,
       file: { _ in .present(path) })
     #expect(state == .downloaded(path))
   }
@@ -213,6 +214,7 @@ struct ArchiveRowStateTests {
     let state = ArchiveRowState.state(
       for: archive("1"), jobs: [],
       recordedPath: "/Volumes/Storage/a.mp4",
+      expectedPath: nil,
       file: { _ in .unknown(volumeName: "Storage") })
     #expect(state == .unverifiable(volumeName: "Storage"))
   }
@@ -224,6 +226,7 @@ struct ArchiveRowStateTests {
     let state = ArchiveRowState.state(
       for: archive("1"), jobs: [],
       recordedPath: "/Volumes/Storage/gone.mp4",
+      expectedPath: nil,
       file: { _ in .absent })
     #expect(state == .available)
   }
@@ -236,6 +239,7 @@ struct ArchiveRowStateTests {
     let state = ArchiveRowState.state(
       for: archive("1"), jobs: [job("1", .failed)],
       recordedPath: "/Volumes/Storage/gone.mp4",
+      expectedPath: nil,
       file: { _ in .absent })
     #expect(state == .failed)
   }
@@ -248,6 +252,7 @@ struct ArchiveRowStateTests {
     let state = ArchiveRowState.state(
       for: archive("1"), jobs: [job("1", .done, files: [fromJob])],
       recordedPath: "/out/from-record.mp4",
+      expectedPath: nil,
       file: { url in .present(url) })
     #expect(state == .downloaded(fromJob))
   }
@@ -263,6 +268,71 @@ struct ArchiveRowStateTests {
     for state: ArchiveRowState in [.available, .live, .queued, .running, .missing, .failed] {
       #expect(!state.holdsAFile, "\(state) has nothing on disk")
     }
+  }
+
+
+  /// A download made before the record existed leaves a file and no claim.
+  /// The destination and the filename are both derivable, so the file can be
+  /// recognised where it would have been written.
+  @Test("a file where the download would have gone reads as downloaded")
+  func expectedPathIsRecognised() {
+    let path = URL(filePath: "/Volumes/Storage/WheelyF - 2026-08-12 - day 46.mp4")
+    let state = ArchiveRowState.state(
+      for: archive("1"), jobs: [], recordedPath: nil,
+      expectedPath: "/Volumes/Storage/WheelyF - 2026-08-12 - day 46.mp4",
+      file: { _ in .present(path) })
+    #expect(state == .downloaded(path))
+  }
+
+  /// **The evidence split.** A recorded path is a claim this app made, so an
+  /// unreachable volume leaves it `unverifiable`. An expected path is a guess
+  /// about a file nobody confirmed — treating an unreachable volume as "you
+  /// might have it" would report every never-downloaded archive on an
+  /// unmounted disk as possibly downloaded.
+  @Test("an expected path on an unreachable volume claims nothing")
+  func expectedPathDoesNotClaimAnUnreachableVolume() {
+    let state = ArchiveRowState.state(
+      for: archive("1"), jobs: [], recordedPath: nil,
+      expectedPath: "/Volumes/Storage/a.mp4",
+      file: { _ in .unknown(volumeName: "Storage") })
+    #expect(state == .available, "a guess must not survive an unanswerable question")
+  }
+
+  /// The ordinary case: 150 of 160 recorded videos are not downloaded, and
+  /// each must stay offerable.
+  @Test("an expected path with no file leaves the archive actionable")
+  func expectedPathWithNoFileIsActionable() {
+    let state = ArchiveRowState.state(
+      for: archive("1"), jobs: [], recordedPath: nil,
+      expectedPath: "/Volumes/Storage/absent.mp4",
+      file: { _ in .absent })
+    #expect(state == .available)
+  }
+
+  /// §4 makes the filesystem authoritative, and this is the case that
+  /// prompted it: a job failed, was cleared from the queue, and the file from
+  /// an earlier hand-made download is sitting where it belongs. Offering to
+  /// fetch it again is the wrong answer.
+  @Test("a file on disk outranks a failed job")
+  func fileOutranksAFailedJob() {
+    let path = URL(filePath: "/Volumes/Storage/a.mp4")
+    let state = ArchiveRowState.state(
+      for: archive("1"), jobs: [job("1", .failed)], recordedPath: nil,
+      expectedPath: "/Volumes/Storage/a.mp4",
+      file: { _ in .present(path) })
+    #expect(state == .downloaded(path))
+  }
+
+  /// A recorded path names the file this app actually delivered; an expected
+  /// path is where it would have gone. The record wins.
+  @Test("a recorded path outranks an expected one")
+  func recordedPathOutranksExpected() {
+    let recorded = URL(filePath: "/Volumes/Storage/recorded.mp4")
+    let state = ArchiveRowState.state(
+      for: archive("1"), jobs: [], recordedPath: "/Volumes/Storage/recorded.mp4",
+      expectedPath: "/Volumes/Storage/expected.mp4",
+      file: { url in .present(url) })
+    #expect(state == .downloaded(recorded))
   }
 
 }
