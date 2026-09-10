@@ -75,6 +75,36 @@ public struct VideoRecord: Equatable, Sendable, Codable {
     self.payloadHelperVersion = payloadHelperVersion
   }
 
+  /// What this record can still say about the video, in the shape the rest of
+  /// the app already renders.
+  ///
+  /// **The answer when Twitch no longer has one.** Get Info re-fetches on every
+  /// open, and for an expired video that fetch fails — leaving a card with a
+  /// grey rectangle and whatever title the job happened to store. This is the
+  /// whole reason the record exists: the metadata was fetched once, while the
+  /// video still existed, and kept.
+  ///
+  /// Nil without a title, which is the one field a card cannot stand in for.
+  /// A row migrated from the old bare-id seen-set has no title and never will
+  /// (`docs/design/video-record.md` §8), so there is genuinely nothing to show.
+  ///
+  /// **`streamer` falls back to the login**, because that is the only name a
+  /// record holds — display names live on a `Watch`, and a video pasted by
+  /// hand belongs to no watch. So a remembered card may read `wheelyf` where a
+  /// live one reads `WheelyF`. Storing the display name too would fix it and
+  /// is not worth a schema change on its own.
+  public func remembered() -> VideoInfo? {
+    guard let title else { return nil }
+    return VideoInfo(
+      streamer: login ?? "",
+      login: login,
+      title: title,
+      createdAt: publishedAt ?? .distantPast,
+      duration: .seconds(durationSeconds ?? 0),
+      qualities: qualities,
+      thumbnailURLs: thumbnailURLs)
+  }
+
   /// This record updated with everything `other` knows and nothing it does not.
   ///
   /// **Additive, never destructive.** An incoming record's `nil` means "I did

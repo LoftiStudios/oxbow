@@ -32,6 +32,15 @@ struct OxbowApp: App {
   /// Cached channel and archive images, built alongside `watching` and
   /// `poller` and behind the same guard: it does network and file I/O, which
   /// `xcodebuild test` must not do for a window it launched incidentally.
+  /// The video record, for the one reader that is not a watching surface.
+  ///
+  /// Get Info re-fetches a video's metadata on every open, and for a video
+  /// Twitch has dropped that fetch fails — which is exactly the case the
+  /// record was built to answer. Held here rather than resolved inside the
+  /// window: a window can be opened repeatedly, and
+  /// `AppComposition.defaultSupportDirectory()` does directory-creating I/O.
+  @State private var videoRecordStore: VideoRecordStore?
+
   @State private var imageStore: ImageStore?
 
   /// A Watching finding waiting to be applied the next time intake opens.
@@ -210,6 +219,8 @@ struct OxbowApp: App {
         watchStore = store
         imageStore = ImageStore.live(
           directory: AppComposition.imageStoreURL(supportDirectory: support))
+        videoRecordStore = VideoRecordStore(
+          fileURL: AppComposition.videoRecordURL(supportDirectory: support))
         poller = WatchPoller.live(supportDirectory: support)
         poller?.start()
       }
@@ -326,7 +337,7 @@ struct OxbowApp: App {
     // follows-the-selection panel cannot.
     WindowGroup(id: Self.infoWindowID, for: JobID.self) { $jobID in
       if let jobID, let controller {
-        JobInfoWindow(jobID: jobID, controller: controller)
+        JobInfoWindow(jobID: jobID, controller: controller, record: videoRecordStore)
       }
     }
     .defaultSize(width: 460, height: 620)

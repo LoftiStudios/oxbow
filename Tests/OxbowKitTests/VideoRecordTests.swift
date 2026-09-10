@@ -103,4 +103,32 @@ struct VideoRecordTests {
     let data = try encoder.encode(submitted)
     #expect(try decoder.decode(VideoRecord.self, from: data) == submitted)
   }
+
+  /// The point of keeping any of this: an expired video still renders.
+  @Test("a record can still describe a video Twitch has dropped")
+  func rememberedRendersAnExpiredVideo() {
+    let info = submitted.remembered()
+    #expect(info?.title == "day 46")
+    #expect(info?.login == "wheelyf")
+    #expect(info?.duration == .seconds(10203))
+    #expect(info?.thumbnailURLs.count == 4)
+    #expect(info?.qualities.first?.name == "1080p60")
+  }
+
+  /// A row migrated from the old bare-id seen-set has no title and never
+  /// will, so there is nothing to render and it says so rather than
+  /// producing a card named after nobody.
+  @Test("a record with no title remembers nothing")
+  func rememberedNeedsATitle() {
+    #expect(VideoRecord(id: "1", login: "wheelyf").remembered() == nil)
+  }
+
+  /// Display names live on a `Watch`; a record holds only a login, and a
+  /// hand-pasted video belongs to no watch. The login is what it can honestly
+  /// offer.
+  @Test("the streamer falls back to the login")
+  func rememberedUsesTheLogin() {
+    #expect(submitted.remembered()?.streamer == "wheelyf")
+  }
+
 }

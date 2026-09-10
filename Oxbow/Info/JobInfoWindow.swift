@@ -18,6 +18,12 @@ struct JobInfoWindow: View {
   let jobID: JobID
   let controller: QueueController
 
+  /// Where an expired video's metadata comes from once Twitch has stopped
+  /// answering for it. Optional for the same reason `imageStore` is on the
+  /// watching surfaces: `OxbowApp` builds it only once a support directory
+  /// resolves, and never under `xcodebuild test`.
+  let record: VideoRecordStore?
+
   /// Where the metadata fetch has got to. Three states rather than an
   /// optional, so the card can tell "still coming" from "never arriving" —
   /// and stay the same size in both.
@@ -160,12 +166,31 @@ struct JobInfoWindow: View {
     }
     if let info = try? await controller.fetchInfo(for: identifier) {
       metadata = .loaded(info)
-    } else {
-      // A private, deleted or expired VOD. The card falls back to the job's
-      // own title, which was derived from that metadata when it still
-      // resolved — so it is the best record of it that survives.
-      metadata = .unavailable
+      return
     }
+
+    // A private, deleted or expired VOD. Twitch has no answer any more, but
+    // the metadata was fetched once while it did and written down — which is
+    // the entire reason `docs/design/video-record.md` exists. Before the
+    // record, this is where the card became a grey rectangle with whatever
+    // title the job happened to store.
+    //
+    // Rendered as `.loaded`, not as a third state: a remembered card and a
+    // live one describe the same video and should read identically. The one
+    // visible difference is that `streamer` falls back to the login, because
+    // a record holds no display name — see `VideoRecord.remembered()`.
+    if let remembered = record.flatMap({ try? $0.load() })?
+      .videos[identifier]?.remembered()
+    {
+      metadata = .loaded(remembered)
+      return
+    }
+
+    // Nothing live and nothing remembered — a video downloaded before the
+    // record existed, or one whose row migrated from the old bare-id
+    // seen-set and never gained a title. The card falls back to the job's own
+    // title, which is all that survives.
+    metadata = .unavailable
   }
 
   /// Stand-in so `.task(id:)` has something to key on when the job is gone.
