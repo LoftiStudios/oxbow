@@ -344,11 +344,56 @@ fixtures already are, so parsing is tested without the network.
 
 ## 11. Not in scope
 
-Deliberately, from the WPF feature set: OAuth for sub-only and private VODs
-(a credential, and it deserves its own design rather than a text field bolted
-on); the `chatupdate` verb; mass download by URL list or streamer search;
-per-type concurrency limiters; trim mode (exact versus safe); and download
-thread count.
+Deliberately, from the WPF feature set: the `chatupdate` verb; mass download
+by URL list or streamer search; per-type concurrency limiters; trim mode
+(exact versus safe); and download thread count.
 
 Also out: `{part}` in the filename template — Oxbow never splits a VOD, so
 there is nothing for it to mean.
+
+### Sign-in for sub-only VODs is closed, not deferred
+
+Filing this as a credential that deserves its own design — which is what this
+section said before — reads as an invitation to go and produce one. It is not
+one. The design was looked at, and there is no good version of it.
+
+`TwitchDownloaderCLI --oauth` does not take an OAuth token, whatever the
+option is called. It takes the twitch.tv `auth-token` session cookie, paired
+with Twitch's own hardcoded public web-player Client-ID against the private
+`gql.twitch.tv` endpoint — see `GetVideoToken` in `TwitchHelper.cs`. Upstream
+says as much in its own tooltip: "All 3rd party OAuth tokens will not work."
+
+So the pleasant flow is not merely unbuilt, it is unavailable.
+`ASWebAuthenticationSession` is the right API for a real OAuth handshake and
+it is perhaps forty lines, but the Helix token it returns carries *our*
+client ID, which `videoPlaybackAccessToken` rejects. It would be a polished
+sign-in sheet that unlocks nothing.
+
+The only flow that yields a working credential is a `WKWebView` pointed at
+twitch.tv/login followed by reading the cookie out of the store behind it.
+That is rejected on four counts, any one of which is enough:
+
+- **It is phishing by shape.** The app hosts Twitch's login page and then
+  reaches into the cookie jar behind it. A user cannot tell that apart from
+  the malicious version, and "we are open source" is what the malicious
+  version says too.
+- **The cookie is unscoped.** It is not read access to sub-only VODs, it is
+  the whole account — the same credential a session hijack wants — with no
+  expiry and nothing to revoke from inside Oxbow.
+- **It breaks in an embedded view.** Twitch's login hits reCAPTCHA and device
+  verification, both of which flag a `WKWebView` carrying a non-Safari user
+  agent. The nice UI degrades into a stuck page with nothing to debug.
+- **It leaks through argv.** `--oauth` is a CommandLineParser option, so the
+  value lands in the helper's argument vector, readable by any process running
+  as the same user. Fixing that needs an upstream change to accept it on stdin
+  or from the environment.
+
+If this is ever reopened, the only version worth arguing for is the
+unglamorous one: real Safari, an honest account of what the cookie is, a paste
+field, and the Keychain. Not nice, but legible — which for a full-account
+bearer token is worth more than nice. That trade was weighed and declined, so
+reopening this means arguing with it rather than re-costing the UI.
+
+`FailureInterpreter.subscriberOnlySummary` is the other half of this decision:
+it replaces the CLI's "OAuth may be required" with a flat statement of what
+happened, precisely so the app stops dangling a remedy it does not offer.
