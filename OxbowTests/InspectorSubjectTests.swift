@@ -41,14 +41,14 @@ struct InspectorSubjectTests {
   @Test func nothingSelectedIsNothing() {
     #expect(InspectorSubject.resolve(
       destination: .queue, queueSelection: [], watchingSelection: nil,
-      sections: [], jobs: []) == .nothing)
+      sections: [], library: VideoLibrary(), jobs: []) == .nothing)
   }
 
   @Test func oneQueueJobWithAVideoResolvesToThatVideo() {
     let j = videoJob("A", videoID: "123")
     #expect(InspectorSubject.resolve(
       destination: .queue, queueSelection: [j.id], watchingSelection: nil,
-      sections: [], jobs: [j])
+      sections: [], library: VideoLibrary(), jobs: [j])
       == .one(.video("123")))
   }
 
@@ -58,7 +58,7 @@ struct InspectorSubjectTests {
     let j = chatOnlyJob("A")
     #expect(InspectorSubject.resolve(
       destination: .queue, queueSelection: [j.id], watchingSelection: nil,
-      sections: [], jobs: [j])
+      sections: [], library: VideoLibrary(), jobs: [j])
       == .one(.job(j.id)))
   }
 
@@ -66,7 +66,7 @@ struct InspectorSubjectTests {
     let j = videoJob("A", videoID: "123")
     #expect(InspectorSubject.resolve(
       destination: .queue, queueSelection: [JobID(rawValue: UUID())],
-      watchingSelection: nil, sections: [], jobs: [j])
+      watchingSelection: nil, sections: [], library: VideoLibrary(), jobs: [j])
       == .nothing)
   }
 
@@ -77,7 +77,7 @@ struct InspectorSubjectTests {
                      .failed(StepFailure(kind: .noArtifact, summary: "no artifact")))
     let subject = InspectorSubject.resolve(
       destination: .queue, queueSelection: [a.id, b.id, c.id],
-      watchingSelection: nil, sections: [], jobs: [a, b, c])
+      watchingSelection: nil, sections: [], library: VideoLibrary(), jobs: [a, b, c])
     guard case .many(let many) = subject else {
       Issue.record("expected .many, got \(subject)")
       return
@@ -98,7 +98,7 @@ struct InspectorSubjectTests {
     let b = videoJob("B", videoID: "2")
     guard case .many(let many) = InspectorSubject.resolve(
       destination: .queue, queueSelection: [a.id, b.id], watchingSelection: nil,
-      sections: [], jobs: [a, b])
+      sections: [], library: VideoLibrary(), jobs: [a, b])
     else {
       Issue.record("expected .many")
       return
@@ -130,7 +130,7 @@ struct InspectorSubjectTests {
     let s = section("leighxp", rows: ["abc"], allRows: ["abc", "old"])
     #expect(InspectorSubject.resolve(
       destination: .watching, queueSelection: [], watchingSelection: "abc",
-      sections: [s], jobs: []) == .one(.video("abc")))
+      sections: [s], library: VideoLibrary(), jobs: []) == .one(.video("abc")))
   }
 
   /// A channel destination shows `allRows`, so a row the inbox holds back is
@@ -139,7 +139,7 @@ struct InspectorSubjectTests {
     let s = section("leighxp", rows: ["abc"], allRows: ["abc", "old"])
     #expect(InspectorSubject.resolve(
       destination: .channel("leighxp"), queueSelection: [], watchingSelection: "old",
-      sections: [s], jobs: []) == .one(.video("old")))
+      sections: [s], library: VideoLibrary(), jobs: []) == .one(.video("old")))
   }
 
   /// §3.2: one piece of state resolved against whatever is showing. Selecting
@@ -150,14 +150,14 @@ struct InspectorSubjectTests {
     let ava = section("avabamby", rows: ["zzz"], allRows: ["zzz"])
     #expect(InspectorSubject.resolve(
       destination: .channel("avabamby"), queueSelection: [], watchingSelection: "abc",
-      sections: [leigh, ava], jobs: []) == .nothing)
+      sections: [leigh, ava], library: VideoLibrary(), jobs: []) == .nothing)
   }
 
   @Test func noWatchingSelectionIsNothing() {
     let s = section("leighxp", rows: ["abc"], allRows: ["abc"])
     #expect(InspectorSubject.resolve(
       destination: .watching, queueSelection: [], watchingSelection: nil,
-      sections: [s], jobs: []) == .nothing)
+      sections: [s], library: VideoLibrary(), jobs: []) == .nothing)
   }
 
   /// §3.3: `.many` can arise only from the queue. A future multi-select in
@@ -169,7 +169,7 @@ struct InspectorSubjectTests {
     for destination: SidebarItem in [.watching, .channel("leighxp")] {
       let subject = InspectorSubject.resolve(
         destination: destination, queueSelection: [j.id, k.id],
-        watchingSelection: "abc", sections: [s], jobs: [j, k])
+        watchingSelection: "abc", sections: [s], library: VideoLibrary(), jobs: [j, k])
       if case .many = subject { Issue.record("\(destination) produced .many") }
     }
   }
@@ -184,13 +184,87 @@ struct InspectorSubjectTests {
   ///
   /// This replaces a weaker assertion written before the Watching branches
   /// existed, when nil was simply lumped in with "not the queue".
+  // MARK: - Pricing a multi-selection (§5.3)
+
+  private let sd = StreamQuality(name: "360p30", resolution: "640x360",
+                                 bitsPerSecond: 1_000_000)
+
+  /// A record that can be priced: it has both a duration and the quality the
+  /// job is downloading at.
+  private func priceable(_ id: String) -> VideoRecord {
+    VideoRecord(id: id, title: "Stream \(id)", durationSeconds: 3600,
+                qualities: [sd])
+  }
+
+  private func library(_ records: [VideoRecord]) -> VideoLibrary {
+    VideoLibrary(videos: Dictionary(uniqueKeysWithValues: records.map { ($0.id, $0) }))
+  }
+
+  private func many(
+    _ jobs: [Job], _ library: VideoLibrary
+  ) -> MultiSelection? {
+    guard case .many(let m) = InspectorSubject.resolve(
+      destination: .queue, queueSelection: Set(jobs.map(\.id)),
+      watchingSelection: nil, sections: [], library: library, jobs: jobs)
+    else { return nil }
+    return m
+  }
+
+  @Test func everySelectedJobPriceableYieldsAnEstimate() throws {
+    let a = videoJob("A", videoID: "1")
+    let b = videoJob("B", videoID: "2")
+    let m = try #require(many([a, b], library([priceable("1"), priceable("2")])))
+    let bytes = try #require(m.estimatedBytes)
+    // An hour at 1 Mbps is ~450 MB; two of them, and nothing is free.
+    #expect(bytes > 0)
+  }
+
+  /// **§5.3, and the one that must not regress into a partial sum.**
+  /// Mutation-check it: "incomplete" is not "smaller", and a test can appear
+  /// to cover this while passing against a total that silently dropped a job.
+  @Test func oneJobWithNoRecordOmitsTheEstimateEntirely() throws {
+    let a = videoJob("A", videoID: "1")
+    let b = videoJob("B", videoID: "2")
+    // Only "1" is in the record, so "2" cannot be priced at all.
+    let m = try #require(many([a, b], library([priceable("1")])))
+    #expect(m.estimatedBytes == nil, "omitted, never partial")
+    #expect(m.count == 2, "but the selection is still fully counted")
+  }
+
+  /// A row the record knows about but has no duration for — every field on
+  /// `VideoRecord` is optional, and `durationSeconds` is the one pricing needs.
+  @Test func aRecordWithNoDurationIsUnpriceable() throws {
+    let a = videoJob("A", videoID: "1")
+    let b = videoJob("B", videoID: "2")
+    let m = try #require(many([a, b], library([
+      priceable("1"),
+      VideoRecord(id: "2", title: "no duration", qualities: [sd]),
+    ])))
+    #expect(m.estimatedBytes == nil)
+  }
+
+  /// The job names a rendition the record has never heard of, so there is no
+  /// bitrate to price it at. Guessing a nominal one is exactly what §5.3
+  /// forbids — the figure is one people act on.
+  @Test func aQualityTheRecordDoesNotCarryIsUnpriceable() throws {
+    let a = videoJob("A", videoID: "1")
+    let b = videoJob("B", videoID: "2")
+    let m = try #require(many([a, b], library([
+      priceable("1"),
+      VideoRecord(id: "2", title: "other quality", durationSeconds: 3600,
+                  qualities: [StreamQuality(name: "1080p60", resolution: "1920x1080",
+                                            bitsPerSecond: 6_000_000)]),
+    ])))
+    #expect(m.estimatedBytes == nil)
+  }
+
   @Test func noDestinationFollowsTheQueueTheWindowIsShowing() {
     let j = videoJob("A", videoID: "1")
     #expect(InspectorSubject.resolve(
       destination: nil, queueSelection: [j.id], watchingSelection: nil,
-      sections: [], jobs: [j]) == .one(.video("1")))
+      sections: [], library: VideoLibrary(), jobs: [j]) == .one(.video("1")))
     #expect(InspectorSubject.resolve(
       destination: nil, queueSelection: [], watchingSelection: nil,
-      sections: [], jobs: [j]) == .nothing)
+      sections: [], library: VideoLibrary(), jobs: [j]) == .nothing)
   }
 }

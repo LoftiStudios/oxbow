@@ -56,6 +56,7 @@ extension InspectorSubject {
     queueSelection: Set<JobID>,
     watchingSelection: WatchingModel.Row.ID?,
     sections: [WatchingModel.Section],
+    library: VideoLibrary,
     jobs: [Job]
   ) -> InspectorSubject {
     switch destination {
@@ -100,8 +101,75 @@ extension InspectorSubject {
         case .cancelled: many.cancelled += 1
         }
       }
+      many.estimatedBytes = estimate(selected, library: library)
       return .many(many)
     }
+  }
+
+  /// What these downloads will occupy when they land, or **nil**.
+  ///
+  /// **Nil the moment any one of them cannot be priced** — §5.3. Not a
+  /// smaller number: a total that silently drops two of five looks complete
+  /// and is not, and a disk figure is precisely the kind people act on. The
+  /// same refusal `twitch-channel-api.md` §5.1 makes about `totalCount`,
+  /// `VolumeSpace.nearestExisting` makes about "could not ask", and
+  /// `ChannelCard` makes about naming one volume rather than summarising
+  /// across several.
+  ///
+  /// **Priced at the rendition the job is actually fetching, not a nominal
+  /// one.** A `Job` carries no duration but its download step does carry the
+  /// quality string it was built with, and `VideoRecord.qualities` holds the
+  /// `StreamQuality` — with a real measured bitrate — that string names. Both
+  /// halves have to be present: a record with no duration, or one that has
+  /// never heard of the rendition, makes the whole selection unpriceable
+  /// rather than approximately priced.
+  ///
+  /// `delivered` rather than `total`: the question is what these will occupy
+  /// once finished, not the transient peak while a composite is being written.
+  private static func estimate(_ jobs: [Job], library: VideoLibrary) -> Int64? {
+    var sum = Int64(0)
+    for job in jobs {
+      guard let request = videoRequest(in: job),
+            let record = library.videos[request.videoID],
+            let seconds = record.durationSeconds,
+            let quality = record.qualities.first(where: { $0.name == request.quality })
+      else { return nil }
+
+      // A trimmed job downloads the span, not the video. `trimEnd` unset runs
+      // to the end; `trimStart` unset starts at zero.
+      let whole = Duration.seconds(seconds)
+      let start = request.trimStart ?? .zero
+      let end = request.trimEnd ?? whole
+      let span = end - start
+
+      sum += SpaceEstimate(
+        quality: quality,
+        duration: span,
+        composite: compositeGeometry(in: job, quality: quality)).delivered
+    }
+    return sum
+  }
+
+  /// The job's video download, when it has one. A chat-only or clip job has
+  /// none, and is therefore unpriceable by this route.
+  private static func videoRequest(in job: Job) -> VideoRequest? {
+    for step in job.steps {
+      if case .downloadVideo(let request) = step.kind { return request }
+    }
+    return nil
+  }
+
+  /// The composite's geometry when the job actually composites, else nil —
+  /// which is what zeroes `SpaceEstimate`'s render and composite terms, so a
+  /// video-only job is priced as the one file it delivers.
+  private static func compositeGeometry(
+    in job: Job, quality: StreamQuality
+  ) -> CompositeGeometry? {
+    let composites = job.steps.contains { step in
+      if case .composite = step.kind { return true }
+      return false
+    }
+    return composites ? CompositeGeometry(quality: quality) : nil
   }
 
   /// One archive, if the selected id names a row that is actually showing.

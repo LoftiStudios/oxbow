@@ -137,6 +137,20 @@ struct InspectorPane: View {
         .font(.subheadline)
         .foregroundStyle(.secondary)
         .fixedSize(horizontal: false, vertical: true)
+
+      // **Shown only when every selected job could be priced** (§5.3). When
+      // one could not, this line is absent rather than smaller — a total that
+      // silently drops two of five looks complete and is not, and a disk
+      // figure is exactly the kind people act on.
+      //
+      // "about", matching how the Add Channel sheet words its own estimate,
+      // because this is a model of a download rather than a measurement of
+      // one.
+      if let bytes = many.estimatedBytes {
+        Text("about \(bytes.formatted(.byteCount(style: .file)))")
+          .font(.subheadline)
+          .foregroundStyle(.secondary)
+      }
       Spacer(minLength: 0)
     }
     .padding()
@@ -191,7 +205,17 @@ struct InspectorPane: View {
     .frame(width: 300, height: 420)
 }
 
-#Preview("Several selected") {
+#Preview("Several selected, priced") {
+  InspectorPane(
+    subject: .many(MultiSelection(
+      count: 5, queued: 3, failed: 2, estimatedBytes: 12_400_000_000)),
+    controller: nil)
+    .frame(width: 300, height: 420)
+}
+
+// §5.3's other half: one of these could not be priced, so the size line is
+// absent rather than quoting a total that silently dropped it.
+#Preview("Several selected, unpriceable") {
   InspectorPane(
     subject: .many(MultiSelection(count: 5, queued: 3, failed: 2)),
     controller: nil)

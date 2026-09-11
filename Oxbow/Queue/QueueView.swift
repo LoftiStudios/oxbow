@@ -94,6 +94,14 @@ struct QueueView: View {
   /// subtree published is a different data flow.
   @State private var watchingSelection: WatchingModel.Row.ID?
 
+  /// The video record, for pricing a multi-selection.
+  ///
+  /// Held rather than read inside `body`: `VideoRecordStore.load()` is disk
+  /// I/O, and `body` runs on every progress tick. Refreshed when the queue
+  /// selection changes, which is the only moment the estimate is recomputed
+  /// for a reason a person caused.
+  @State private var library = VideoLibrary()
+
   /// A removal waiting on the user, and the dialog's own presentation flag.
   ///
   /// Two pieces of state rather than one optional driving a computed
@@ -342,6 +350,9 @@ WatchingView(
     // because they are about the app rather than about the visible pane, so
     // they have to stay above the inspector exactly as they stay above the
     // sidebar and the detail.
+    .task(id: selection) {
+      library = videoRecordStore.flatMap { try? $0.load() } ?? VideoLibrary()
+    }
     .inspector(isPresented: $isInspectorOpen) {
       InspectorPane(
         subject: InspectorSubject.resolve(
@@ -349,6 +360,7 @@ WatchingView(
           queueSelection: selection,
           watchingSelection: watchingSelection,
           sections: watching?.sections ?? [],
+          library: library,
           jobs: controller?.jobs ?? []),
         controller: controller,
         record: videoRecordStore)
