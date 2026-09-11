@@ -33,47 +33,64 @@ struct SelectionStack: View {
   private static let drop: CGFloat = 2
   private static let turn: Double = -3
 
-  /// Whether the cards have dealt out of the front one yet.
+  /// Where a card comes in from, and how hard it is leaning when it does.
   ///
-  /// **False for exactly one frame.** The fan starts collapsed — every card
-  /// squared up behind the front one — and springs apart on appear, which is
-  /// the motion Mail uses when a multi-selection replaces a single one. It
-  /// says "these several" in a way a static fan has to be read to say.
+  /// **A real journey, not a nudge.** An earlier version parted the cards by
+  /// their resting offsets — five points each — which is a motion you have to
+  /// already be looking at to notice. Mail throws the whole message in from
+  /// the side, and the distance is most of what sells it.
+  private static let entry: CGFloat = 150
+  private static let entryTurn: Double = -10
+
+  /// Whether the cards have been dealt yet.
+  ///
+  /// **False for exactly one frame**, then they fly in from the right and land
+  /// on the pile — Mail's motion when a multi-selection replaces a single one.
   ///
   /// Deliberately keyed to *appearing*, not to the count. Extending a
-  /// selection by shift-clicking down a list would otherwise re-collapse and
-  /// re-deal on every row, which is four animations nobody asked for; a card
-  /// added to a fan already on screen slides in on its own instead (see the
+  /// selection by shift-clicking down a list would otherwise re-deal the whole
+  /// pile on every row, which is four animations nobody asked for; a card
+  /// added to a stack already on screen flies in on its own instead (see the
   /// `.animation` on the count below).
-  @State private var fanned = false
+  @State private var dealt = false
+
+  /// How far back in the pile a card sits. **The last one is on top.**
+  ///
+  /// Cards land on top of each other as they arrive, so the newest is
+  /// frontmost — a pile being built, not a hand being fanned. An earlier
+  /// version had this inverted, which made the first card the front one and
+  /// meant the card a person's eye lands on was the one that never moved.
+  private func depth(of index: Int) -> Int { thumbnails.count - 1 - index }
 
   var body: some View {
     ZStack {
-      // Reversed so index 0 is drawn last and lands on top: the fan reads
-      // front-to-back in the same order the queue does.
-      ForEach(Array(thumbnails.enumerated()).reversed(), id: \.offset) { index, url in
+      // Natural order, so a later card draws over an earlier one and the last
+      // to arrive ends up on top.
+      ForEach(Array(thumbnails.enumerated()), id: \.offset) { index, url in
+        let back = depth(of: index)
         StackTile(url: url, store: store)
           .rotationEffect(
-            .degrees(fanned ? Double(index) * Self.turn : 0), anchor: .bottomTrailing)
+            .degrees(dealt ? Double(back) * Self.turn : Self.entryTurn),
+            anchor: .bottomTrailing)
           .offset(
-            x: fanned ? CGFloat(index) * -Self.slide : 0,
-            y: fanned ? CGFloat(index) * Self.drop : 0)
-          // Hidden while stacked so the deal reads as cards emerging from
-          // behind the front one rather than a single card splitting apart.
-          // The front card never fades: something is always there.
-          .opacity(fanned || index == 0 ? 1 : 0)
-          // Staggered, back card last, so the eye follows the deal outward.
-          // Short enough that it is over before it can feel like waiting.
+            x: dealt ? CGFloat(back) * -Self.slide : Self.entry,
+            y: dealt ? CGFloat(back) * Self.drop : 0)
+          // Every card flies in, including the one that ends up on top —
+          // which is the whole point of dealing onto a pile rather than
+          // fanning one out.
+          .opacity(dealt ? 1 : 0)
+          // Staggered in arrival order, so the pile visibly builds and the
+          // last card to land is the one left facing you.
           .animation(
-            .spring(response: 0.32, dampingFraction: 0.72)
-              .delay(Double(index) * 0.04),
-            value: fanned)
+            .spring(response: 0.38, dampingFraction: 0.74)
+              .delay(Double(index) * 0.06),
+            value: dealt)
       }
     }
-    // A card added to a fan already on screen animates into place rather than
-    // popping — the other half of the rule `fanned`'s doc comment states.
-    .animation(.spring(response: 0.32, dampingFraction: 0.8), value: thumbnails.count)
-    .onAppear { fanned = true }
+    // A card added to a pile already on screen flies in rather than popping —
+    // the other half of the rule `dealt`'s doc comment states.
+    .animation(.spring(response: 0.38, dampingFraction: 0.8), value: thumbnails.count)
+    .onAppear { dealt = true }
     // Room for the rotated corners of the deepest card, which otherwise clip
     // against the section's edge.
     // Exactly enough for the deepest card's own offset, so the fan's left
