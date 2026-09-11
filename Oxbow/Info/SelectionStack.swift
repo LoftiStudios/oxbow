@@ -87,10 +87,29 @@ struct SelectionStack: View {
             value: dealt)
       }
     }
-    // A card added to a pile already on screen flies in rather than popping —
-    // the other half of the rule `dealt`'s doc comment states.
-    .animation(.spring(response: 0.38, dampingFraction: 0.8), value: thumbnails.count)
-    .onAppear { dealt = true }
+    // **Not `.onAppear`, and that was the bug.** Setting state from `onAppear`
+    // is coalesced with the view's first render, so SwiftUI sees no *change*
+    // and there is nothing to animate — the pile simply existed, fanned, from
+    // the first frame. The collapsed state has to survive one real frame
+    // before the spring starts, which is what the sleep buys.
+    //
+    // Keyed on the count rather than fired once: re-dealing when a card is
+    // added is a second chance to see it, and a pile that rebuilds as you
+    // shift-click down a list is closer to what Mail does than a pile that
+    // animates once and then never moves again.
+    .task(id: thumbnails.count) {
+      dealt = false
+      try? await Task.sleep(for: .milliseconds(16))
+      // **Belt and braces, and they cover different failures.** The per-card
+      // `.animation(_:value:)` above is what staggers the deal; this explicit
+      // `withAnimation` is the floor if a `Form` row turns out to swallow
+      // implicit animations, which `List`-backed containers on macOS have
+      // been known to do. Where both apply the per-card one wins, so this
+      // costs nothing when the stagger is working.
+      withAnimation(.spring(response: 0.38, dampingFraction: 0.74)) {
+        dealt = true
+      }
+    }
     // Room for the rotated corners of the deepest card, which otherwise clip
     // against the section's edge.
     // Exactly enough for the deepest card's own offset, so the fan's left
