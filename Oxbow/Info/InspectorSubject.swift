@@ -40,10 +40,22 @@ struct MultiSelection: Equatable {
   /// carries whenever a selection cannot be fully priced.
   var estimatedBytes: Int64?
 
-  /// Queue order, capped at four. A nil entry is a job whose video has no
-  /// thumbnail and draws a placeholder tile, keeping the stack's shape rather
-  /// than collapsing it.
-  var thumbnails: [URL?] = []
+  /// The newest four cards, oldest first — so the last one is on top.
+  ///
+  /// **Arrival order, not queue order.** §5.1 said queue order and gave the
+  /// right reason — a `Set` has none, so a fan rendered straight from one
+  /// would reshuffle every rebuild — but drew the wrong conclusion. Arrival
+  /// order is *remembered*, so it is just as stable, and it is the only order
+  /// that lets the card you just added be the card that lands on top.
+  ///
+  /// Queue order made extending a selection upward put the same card on top
+  /// every time, and made the first-selected one vanish outright once five
+  /// were picked.
+  ///
+  /// **Capped by dropping the oldest**, which is what keeps four visible while
+  /// still stacking. A nil `url` is a job whose video has no thumbnail and
+  /// draws a placeholder tile, so the fan keeps its shape.
+  var cards: [StackCard] = []
 
   /// Which channels the selection spans, in queue order, de-duplicated.
   ///
@@ -63,6 +75,16 @@ struct MultiSelection: Equatable {
   var channels: [String] = []
 }
 
+/// One card in the selection stack, identified by the job it stands for.
+///
+/// **Identified, not just positional.** A stable id per card is what lets
+/// SwiftUI animate an insertion or a removal as *that card* arriving or
+/// leaving, rather than redrawing a pile of a different length.
+struct StackCard: Identifiable, Equatable {
+  let id: JobID
+  let url: URL?
+}
+
 extension InspectorSubject {
 
   /// **Deliberately takes values, not a view.** §3.3: this is the whole
@@ -74,6 +96,10 @@ extension InspectorSubject {
     watchingSelection: WatchingModel.Row.ID?,
     sections: [WatchingModel.Section],
     library: VideoLibrary,
+    /// The queue selection in the order it was made, oldest first — see
+    /// `MultiSelection.cards`. Only the stack reads it; counts and the
+    /// estimate stay queue-ordered.
+    arrivals: [JobID] = [],
     jobs: [Job]
   ) -> InspectorSubject {
     switch destination {
@@ -119,7 +145,7 @@ extension InspectorSubject {
         }
       }
       many.estimatedBytes = estimate(selected, library: library)
-      many.thumbnails = stack(selected, library: library)
+      many.cards = stack(arrivals: arrivals, jobs: jobs, library: library)
       many.channels = channels(selected, library: library)
       return .many(many)
     }
@@ -169,22 +195,18 @@ extension InspectorSubject {
     return sum
   }
 
-  /// The first four selected videos' thumbnails, in queue order.
+  /// The newest four selected cards, oldest first.
   ///
-  /// **Queue order, never the selection's** — §5.1. `selected` is already
-  /// filtered out of `jobs` rather than iterated out of the `Set`, so this
-  /// inherits a stable order instead of reshuffling on every rebuild. That is
-  /// a glitch that survives review because nobody scrolls the same list twice.
-  ///
-  /// **Capped at four, and a miss stays as `nil`.** A fan of forty is a
-  /// smear, and `count` keeps the true number. A job whose video has no record
-  /// or no thumbnail holds its place so the stack keeps its shape — the same
-  /// call `VideoThumbnail` makes when Twitch has no preview, rather than
-  /// quietly drawing a shorter fan that misstates how many are selected.
-  private static func stack(_ jobs: [Job], library: VideoLibrary) -> [URL?] {
-    jobs.prefix(4).map { job in
-      guard let media = job.mediaIdentifier else { return nil }
-      return library.videos[media]?.thumbnailURLs.first
+  /// **Ordered by arrival and capped from the front**, so adding a fifth drops
+  /// the one picked longest ago rather than the one picked most recently —
+  /// which is what keeps the pile stacking while only four are visible.
+  private static func stack(
+    arrivals: [JobID], jobs: [Job], library: VideoLibrary
+  ) -> [StackCard] {
+    let byID = Dictionary(jobs.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+    return arrivals.suffix(4).map { id in
+      guard let media = byID[id]?.mediaIdentifier else { return StackCard(id: id, url: nil) }
+      return StackCard(id: id, url: library.videos[media]?.thumbnailURLs.first)
     }
   }
 

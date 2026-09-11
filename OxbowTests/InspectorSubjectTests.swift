@@ -265,29 +265,44 @@ struct InspectorSubjectTests {
                 qualities: [sd], thumbnailURLs: [URL(string: url)!])
   }
 
-  /// **Built deliberately out of queue order.** A `Set` will often *happen* to
-  /// iterate plausibly, so a test that builds the selection in queue order
-  /// proves nothing about the thing §5.1 is guarding against.
-  @Test func theStackIsOrderedByQueuePositionNotBySelection() throws {
+  /// **Selecting the bottom row and extending upward**, which is the case that
+  /// exposed the old rule. Queue order put the same card on top every time and
+  /// dropped the first-selected one outright once five were picked; arrival
+  /// order puts whatever you just added on top and drops the oldest.
+  @Test func theNewestFourArriveOnTopWithTheOldestDropped() throws {
     let jobs = (1...5).map { videoJob("J\($0)", videoID: "\($0)") }
     let lib = library((1...5).map { withThumbnail("\($0)", "https://x/\($0).jpg") })
-    // Selected last-to-first; the stack must still read 1, 2, 3, 4.
-    let picked = Set([jobs[4], jobs[2], jobs[0], jobs[3], jobs[1]].map(\.id))
+    // Picked 5 first, then 4, 3, 2, 1 — the order ⇧↑ produces from the bottom.
+    let arrivals = [jobs[4], jobs[3], jobs[2], jobs[1], jobs[0]].map(\.id)
+
     guard case .many(let m) = InspectorSubject.resolve(
-      destination: .queue, queueSelection: picked, watchingSelection: nil,
-      sections: [], library: lib, jobs: jobs)
+      destination: .queue, queueSelection: Set(arrivals), watchingSelection: nil,
+      sections: [], library: lib, arrivals: arrivals, jobs: jobs)
     else { Issue.record("expected .many"); return }
 
     #expect(m.count == 5, "the count keeps telling the truth")
-    #expect(m.thumbnails.count == 4, "capped at four")
-    #expect(m.thumbnails.map { $0?.absoluteString } == [
-      "https://x/1.jpg", "https://x/2.jpg", "https://x/3.jpg", "https://x/4.jpg",
-    ])
+    #expect(m.cards.count == 4, "four visible")
+    // Oldest first, so the last is on top: job 5 was picked first and is the
+    // one dropped; job 1 was picked last and faces you.
+    #expect(m.cards.map(\.id) == [jobs[3].id, jobs[2].id, jobs[1].id, jobs[0].id])
+    #expect(m.cards.last?.url?.absoluteString == "https://x/1.jpg")
   }
 
-  /// A job whose video has no thumbnail keeps its place as nil, so the stack
-  /// draws a placeholder tile rather than collapsing to a shorter fan.
-  @Test func aJobWithNoThumbnailKeepsItsPlaceAsNil() throws {
+  /// Fewer than the cap keeps every card, still oldest-first.
+  @Test func aSmallSelectionKeepsEveryCard() throws {
+    let jobs = (1...3).map { videoJob("J\($0)", videoID: "\($0)") }
+    let lib = library((1...3).map { withThumbnail("\($0)", "https://x/\($0).jpg") })
+    let arrivals = [jobs[2], jobs[0], jobs[1]].map(\.id)
+    guard case .many(let m) = InspectorSubject.resolve(
+      destination: .queue, queueSelection: Set(arrivals), watchingSelection: nil,
+      sections: [], library: lib, arrivals: arrivals, jobs: jobs)
+    else { Issue.record("expected .many"); return }
+    #expect(m.cards.map(\.id) == arrivals)
+  }
+
+  /// A job whose video has no thumbnail keeps its place with a nil url, so the
+  /// fan draws a placeholder tile rather than collapsing to a shorter pile.
+  @Test func aJobWithNoThumbnailKeepsItsPlaceAsANilURL() throws {
     let a = videoJob("A", videoID: "1")
     let b = videoJob("B", videoID: "2")
     let c = videoJob("C", videoID: "3")
@@ -296,13 +311,15 @@ struct InspectorSubjectTests {
       priceable("2"),                                   // no thumbnailURLs
       withThumbnail("3", "https://x/3.jpg"),
     ])
+    let arrivals = [a, b, c].map(\.id)
     guard case .many(let m) = InspectorSubject.resolve(
-      destination: .queue, queueSelection: Set([a, b, c].map(\.id)),
-      watchingSelection: nil, sections: [], library: lib, jobs: [a, b, c])
+      destination: .queue, queueSelection: Set(arrivals), watchingSelection: nil,
+      sections: [], library: lib, arrivals: arrivals, jobs: [a, b, c])
     else { Issue.record("expected .many"); return }
-    #expect(m.thumbnails.map { $0?.absoluteString }
+    #expect(m.cards.map { $0.url?.absoluteString }
       == ["https://x/1.jpg", nil, "https://x/3.jpg"])
   }
+
 
   /// The line under the count, and the reason `VideoRecord.displayName`
   /// exists: before it this would have read "leighxp, wheelyf".

@@ -9,18 +9,20 @@ import SwiftUI
 /// says *these*, with their artwork, so a mis-selection is visible before you
 /// act on it.
 ///
-/// **The order is the caller's and it matters.** `MultiSelection.thumbnails`
-/// is built in queue order rather than by iterating the selection `Set`, which
-/// has none — a fan rendered straight from a `Set` would reshuffle on every
-/// rebuild. This view must not sort, reverse, or otherwise have an opinion.
+/// **The order is the caller's and it matters.** `MultiSelection.cards` is
+/// built in *arrival* order — oldest first, so the newest lands on top — and
+/// capped by dropping the oldest. This view must not sort, reverse, or
+/// otherwise have an opinion; it only draws depth from position.
 ///
-/// **A `nil` entry draws a tile, not a gap.** A job whose video has no record
-/// or no thumbnail holds its place, so the fan's length keeps agreeing with
-/// what is selected rather than quietly understating it.
+/// **A nil `url` draws a tile, not a gap.** A job whose video has no record or
+/// no thumbnail holds its place, so the pile's height keeps agreeing with what
+/// is selected rather than quietly understating it.
 struct SelectionStack: View {
-  /// Already capped at four by `InspectorSubject.stack`. Not re-capped here:
-  /// two places deciding how many fit is two places to disagree.
-  let thumbnails: [URL?]
+  /// Oldest first, newest last — the last one is on top. Already capped at
+  /// four by `InspectorSubject.stack`, which drops the *oldest* to make room.
+  /// Not re-capped here: two places deciding how many fit is two places to
+  /// disagree.
+  let cards: [StackCard]
   let store: ImageStore?
 
   /// How far each deeper card slides and turns.
@@ -42,85 +44,75 @@ struct SelectionStack: View {
   private static let entry: CGFloat = 150
   private static let entryTurn: Double = -10
 
-  /// Whether the cards have been dealt yet.
+  /// Whether the opening deal has run.
   ///
-  /// **False for exactly one frame**, then they fly in from the right and land
-  /// on the pile — Mail's motion when a multi-selection replaces a single one.
-  ///
-  /// Deliberately keyed to *appearing*, not to the count. Extending a
-  /// selection by shift-clicking down a list would otherwise re-deal the whole
-  /// pile on every row, which is four animations nobody asked for; a card
-  /// added to a stack already on screen flies in on its own instead (see the
-  /// `.animation` on the count below).
+  /// **Once, on appear, and never again.** The pile builds itself after that:
+  /// a card added to a stack already on screen flies in as *itself* and a card
+  /// removed flies out, because each carries a stable id and its own
+  /// transition. Re-dealing the whole pile on every change was what made
+  /// extending a selection upward look like the same card landing five times.
   @State private var dealt = false
 
   /// How far back in the pile a card sits. **The last one is on top.**
   ///
   /// Cards land on top of each other as they arrive, so the newest is
-  /// frontmost — a pile being built, not a hand being fanned. An earlier
-  /// version had this inverted, which made the first card the front one and
-  /// meant the card a person's eye lands on was the one that never moved.
-  private func depth(of index: Int) -> Int { thumbnails.count - 1 - index }
+  /// frontmost — a pile being built, not a hand being fanned.
+  private func depth(of index: Int) -> Int { cards.count - 1 - index }
 
   var body: some View {
     ZStack {
       // Natural order, so a later card draws over an earlier one and the last
-      // to arrive ends up on top.
-      ForEach(Array(thumbnails.enumerated()), id: \.offset) { index, url in
+      // to arrive ends up on top. Keyed by `StackCard.id`, which is what lets
+      // an insertion or a removal animate as one card rather than as a pile
+      // of a different length.
+      ForEach(Array(cards.enumerated()), id: \.element.id) { index, card in
         let back = depth(of: index)
-        StackTile(url: url, store: store)
+        StackTile(url: card.url, store: store)
           .rotationEffect(
             .degrees(dealt ? Double(back) * Self.turn : Self.entryTurn),
             anchor: .bottomTrailing)
           .offset(
             x: dealt ? CGFloat(back) * -Self.slide : Self.entry,
             y: dealt ? CGFloat(back) * Self.drop : 0)
-          // Every card flies in, including the one that ends up on top —
-          // which is the whole point of dealing onto a pile rather than
-          // fanning one out.
           .opacity(dealt ? 1 : 0)
-          // Staggered in arrival order, so the pile visibly builds and the
-          // last card to land is the one left facing you.
+          // The opening deal only. Staggered in arrival order, so the pile
+          // visibly builds and the last card to land faces you.
           .animation(
             .spring(response: 0.38, dampingFraction: 0.74)
               .delay(Double(index) * 0.06),
             value: dealt)
+          // Afterwards: in from the side, out the same way. Symmetric, so
+          // deselecting reads as the undo of selecting rather than as the
+          // pile silently becoming shorter.
+          .transition(.offset(x: Self.entry).combined(with: .opacity))
       }
     }
-    // **Not `.onAppear`, and that was the bug.** Setting state from `onAppear`
-    // is coalesced with the view's first render, so SwiftUI sees no *change*
-    // and there is nothing to animate — the pile simply existed, fanned, from
-    // the first frame. The collapsed state has to survive one real frame
-    // before the spring starts, which is what the sleep buys.
+    // Drives the transitions above, and slides the survivors back a place when
+    // one is added or dropped.
+    .animation(.spring(response: 0.38, dampingFraction: 0.8), value: cards)
+    // **Not `.onAppear`.** Setting state there is coalesced with the view's
+    // first render, so SwiftUI sees no change and there is nothing to animate
+    // — the pile simply existed, already fanned, from the first frame. The
+    // collapsed state has to survive one real frame before the spring starts,
+    // which is what the sleep buys.
     //
-    // Keyed on the count rather than fired once: re-dealing when a card is
-    // added is a second chance to see it, and a pile that rebuilds as you
-    // shift-click down a list is closer to what Mail does than a pile that
-    // animates once and then never moves again.
-    .task(id: thumbnails.count) {
-      dealt = false
+    // No `id:`, so this runs once for the life of the stack. Additions and
+    // removals are the transitions' business, not this one's.
+    .task {
       try? await Task.sleep(for: .milliseconds(16))
-      // **Belt and braces, and they cover different failures.** The per-card
-      // `.animation(_:value:)` above is what staggers the deal; this explicit
-      // `withAnimation` is the floor if a `Form` row turns out to swallow
-      // implicit animations, which `List`-backed containers on macOS have
-      // been known to do. Where both apply the per-card one wins, so this
-      // costs nothing when the stagger is working.
       withAnimation(.spring(response: 0.38, dampingFraction: 0.74)) {
         dealt = true
       }
     }
     // Room for the rotated corners of the deepest card, which otherwise clip
-    // against the section's edge.
-    // Exactly enough for the deepest card's own offset, so the fan's left
-    // edge lines up with the text beneath it rather than floating inboard.
-    .padding(.leading, CGFloat(max(thumbnails.count - 1, 0)) * Self.slide)
-    .padding(.bottom, CGFloat(max(thumbnails.count - 1, 0)) * Self.drop + 8)
+    // against the section's edge. Exactly enough for the deepest card's own
+    // offset, so the fan's left edge lines up with the text beneath it.
+    .padding(.leading, CGFloat(max(cards.count - 1, 0)) * Self.slide)
+    .padding(.bottom, CGFloat(max(cards.count - 1, 0)) * Self.drop + 8)
     // One image of "the things you picked", not four separate controls.
     .accessibilityElement(children: .ignore)
     .accessibilityLabel("Thumbnails of the selected downloads")
   }
-
 }
 
 /// One card in the fan.
@@ -183,15 +175,18 @@ private struct StackTile: View {
   }
 }
 
-#Preview("Four, one without artwork") {
-  SelectionStack(
-    thumbnails: [nil, nil, nil, nil], store: nil)
+private func previewCards(_ n: Int) -> [StackCard] {
+  (0..<n).map { _ in StackCard(id: JobID(rawValue: UUID()), url: nil) }
+}
+
+#Preview("Four") {
+  SelectionStack(cards: previewCards(4), store: nil)
     .padding()
     .frame(width: 300, height: 200)
 }
 
 #Preview("Two") {
-  SelectionStack(thumbnails: [nil, nil], store: nil)
+  SelectionStack(cards: previewCards(2), store: nil)
     .padding()
     .frame(width: 300, height: 200)
 }

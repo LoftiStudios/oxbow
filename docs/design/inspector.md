@@ -192,11 +192,25 @@ with their artwork, so a mis-selection is visible before you act on it.
 
 - **Capped at four**, with the count beneath carrying the true number. A fan
   of forty is a smear.
-- **Ordered by queue position, never by the selection itself.** `selection` is
-  a `Set<JobID>` and a `Set` has no order — a stack rendered straight from it
-  would reshuffle on every rebuild, which reads as a glitch and is the kind of
-  thing that survives review because nobody scrolls twice. Queue order is
-  stable and matches what is on screen.
+- **Ordered by arrival, newest on top, and capped by dropping the oldest.**
+  This section first said *queue* order, for a good reason — `selection` is a
+  `Set<JobID>` and a `Set` has none, so a stack rendered straight from one
+  would reshuffle every rebuild — but it drew the wrong conclusion from it.
+  Arrival order is *remembered* rather than derived, so it is equally stable,
+  and it is the only order under which the card you just added is the card that
+  lands on top.
+
+  Queue order failed plainly in use: selecting the bottom row of five and
+  extending upward put the *same* card on top at every step, and dropped the
+  first-selected one outright once five were picked. `QueueView` keeps the
+  arrival list; a batch that arrives together — ⌘A, or a shift-click spanning
+  rows — is broken by queue position, which is the only tie-break available and
+  the one that matches the screen.
+
+- **Each card carries a stable id**, so an addition and a removal animate as
+  *that card* arriving or leaving. Re-dealing the whole pile on every count
+  change was what made extending a selection look like one card landing five
+  times, and it left removals with no animation at all.
 - **A missing thumbnail is a placeholder tile, not a gap.** A job whose video
   has no record has no artwork; the stack keeps its shape rather than
   collapsing, the same way `FilmstripThumbnail` plays a single frame straight

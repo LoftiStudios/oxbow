@@ -102,6 +102,20 @@ struct QueueView: View {
   /// for a reason a person caused.
   @State private var library = VideoLibrary()
 
+  /// The queue selection in the order it was made, oldest first.
+  ///
+  /// **`Set<JobID>` cannot answer "what did you just add", and the selection
+  /// stack needs that** — a card that lands on top has to be the newest one
+  /// (`inspector.md` §5.1). Survivors keep their places and newcomers append,
+  /// so the order is remembered rather than derived, which is what makes it
+  /// stable across rebuilds where iterating the `Set` would not be.
+  ///
+  /// A batch that arrives together — ⌘A, or a shift-click spanning rows — has
+  /// no arrival order among its own members, so it is broken by queue
+  /// position. Deterministic, and the only tie-break that matches what is on
+  /// screen.
+  @State private var selectionArrivals: [JobID] = []
+
   /// A removal waiting on the user, and the dialog's own presentation flag.
   ///
   /// Two pieces of state rather than one optional driving a computed
@@ -156,6 +170,92 @@ WatchingView(
   stopWatchingFailure: watching?.stopWatchingFailure,
   markSeenFailure: watching?.markSeenFailure,
   submissionFailure: watching?.submissionFailure)
+  }
+
+  /// Keeps `selectionArrivals` in step with the selection.
+  ///
+  /// Survivors keep their places, so the order is remembered rather than
+  /// recomputed; newcomers append in queue order, which is the only tie-break
+  /// available for a batch that arrived together and the one that matches what
+  /// is on screen.
+  ///
+  /// Extracted from the `.onChange` closure because `body` is already at the
+  /// type checker's limit — the same reason `watchingPane` is its own property.
+  private func rememberArrivals(_ now: Set<JobID>) {
+    var order = selectionArrivals.filter { now.contains($0) }
+    let known = Set(order)
+    for job in controller?.jobs ?? [] where now.contains(job.id) && !known.contains(job.id) {
+      order.append(job.id)
+    }
+    selectionArrivals = order
+  }
+
+  /// The sidebar's own list, extracted for the reason `watchingPane` is:
+  /// `body` had grown past what the type checker will solve in reasonable
+  /// time, and adding one `.onChange` to it was enough to tip it over. Nothing
+  /// about what is built changes.
+  @ViewBuilder
+  private var sidebar: some View {
+      List(selection: $sidebarSelection) {
+        Label("Queue", systemImage: "tray.full")
+          .tag(SidebarItem.queue)
+        // `.badge` before `.tag`, not after — verified the hard way. With
+        // `.tag` applied first, clicking this row on macOS 26 stopped
+        // changing `sidebarSelection` at all: the row highlighted, an
+        // AppKit selection action fired, and the binding never saw it. No
+        // such regression is on record anywhere the settings.md §7 probe
+        // looked, so treat this order as load-bearing rather than
+        // stylistic until Apple documents otherwise.
+        Label("Watching", systemImage: "eye")
+          .badge(watching?.unreadCount ?? 0)
+          .tag(SidebarItem.watching)
+
+        // The watched channels, under `Watching` and belonging to it —
+        // Mail's `All Inboxes` shape, which is what
+        // `docs/design/watching-navigation.md` §4 specifies.
+        //
+        // **No disclosure triangle.** A collapsible group whose label is
+        // itself a selectable row is a `DisclosureGroup` wrapping a tagged
+        // label, and whether List selection reaches a tag in that position
+        // is exactly the kind of thing `channel-watching.md` §8.1's
+        // badge/tag regression says not to assume. Always-expanded first;
+        // the triangle is worth having only if the list gets long enough
+        // to want it.
+        ForEach(watching?.channelListings ?? []) { channel in
+          Label(channel.displayName, systemImage: "person.crop.circle")
+            // Zero draws nothing. Mail's rule and this codebase's:
+            // `WatchingView`'s own doc comment argues a quiet channel
+            // should say nothing rather than say "none", and a column of
+            // zeroes is that mistake in a smaller font. `.badge(0)` already
+            // renders nothing — the ternary states the rule at the call
+            // site so nobody "simplifies" it away without noticing it was
+            // load-bearing.
+            .badge(channel.waiting > 0 ? channel.waiting : 0)
+            // `.badge()` BEFORE `.tag()`, same as `Watching` above and for
+            // the same bisected reason — `channel-watching.md` §8.1. The
+            // other order makes the row highlight, fire an AppKit selection
+            // action, and never update the binding. Five rows here is five
+            // fresh chances to reintroduce it.
+            .tag(SidebarItem.channel(channel.login))
+            .padding(.leading, 12)
+            // The same pair the card offers, where Mail puts an account's
+            // equivalents. One definition, three render sites — see
+            // `ChannelActionsMenu`.
+            .contextMenu {
+              ChannelActionsMenu(
+                displayName: channel.displayName,
+                onEdit: { editChannel(channel.login) },
+                onStopWatching: { watching?.stopWatching(channel.login) })
+            }
+        }
+      }
+      .listStyle(.sidebar)
+      // Roughly fixed, the way Mail and Finder do it, rather than left to
+      // SwiftUI's default proportional split. Unconstrained, the sidebar
+      // claimed close to a third of the window at minimum width, which is
+      // most of what the queue below needs just to keep a job's title
+      // legible.
+      .navigationSplitViewColumnWidth(min: 150, ideal: 180, max: 240)
   }
 
   /// Whether the visible pane is on the Watching side — the inbox or any one
@@ -268,66 +368,7 @@ WatchingView(
       // so putting them in the detail pane would hide "Downloads unavailable"
       // behind whichever destination happened to be selected.
       NavigationSplitView {
-        List(selection: $sidebarSelection) {
-          Label("Queue", systemImage: "tray.full")
-            .tag(SidebarItem.queue)
-          // `.badge` before `.tag`, not after — verified the hard way. With
-          // `.tag` applied first, clicking this row on macOS 26 stopped
-          // changing `sidebarSelection` at all: the row highlighted, an
-          // AppKit selection action fired, and the binding never saw it. No
-          // such regression is on record anywhere the settings.md §7 probe
-          // looked, so treat this order as load-bearing rather than
-          // stylistic until Apple documents otherwise.
-          Label("Watching", systemImage: "eye")
-            .badge(watching?.unreadCount ?? 0)
-            .tag(SidebarItem.watching)
-
-          // The watched channels, under `Watching` and belonging to it —
-          // Mail's `All Inboxes` shape, which is what
-          // `docs/design/watching-navigation.md` §4 specifies.
-          //
-          // **No disclosure triangle.** A collapsible group whose label is
-          // itself a selectable row is a `DisclosureGroup` wrapping a tagged
-          // label, and whether List selection reaches a tag in that position
-          // is exactly the kind of thing `channel-watching.md` §8.1's
-          // badge/tag regression says not to assume. Always-expanded first;
-          // the triangle is worth having only if the list gets long enough
-          // to want it.
-          ForEach(watching?.channelListings ?? []) { channel in
-            Label(channel.displayName, systemImage: "person.crop.circle")
-              // Zero draws nothing. Mail's rule and this codebase's:
-              // `WatchingView`'s own doc comment argues a quiet channel
-              // should say nothing rather than say "none", and a column of
-              // zeroes is that mistake in a smaller font. `.badge(0)` already
-              // renders nothing — the ternary states the rule at the call
-              // site so nobody "simplifies" it away without noticing it was
-              // load-bearing.
-              .badge(channel.waiting > 0 ? channel.waiting : 0)
-              // `.badge()` BEFORE `.tag()`, same as `Watching` above and for
-              // the same bisected reason — `channel-watching.md` §8.1. The
-              // other order makes the row highlight, fire an AppKit selection
-              // action, and never update the binding. Five rows here is five
-              // fresh chances to reintroduce it.
-              .tag(SidebarItem.channel(channel.login))
-              .padding(.leading, 12)
-              // The same pair the card offers, where Mail puts an account's
-              // equivalents. One definition, three render sites — see
-              // `ChannelActionsMenu`.
-              .contextMenu {
-                ChannelActionsMenu(
-                  displayName: channel.displayName,
-                  onEdit: { editChannel(channel.login) },
-                  onStopWatching: { watching?.stopWatching(channel.login) })
-              }
-          }
-        }
-        .listStyle(.sidebar)
-        // Roughly fixed, the way Mail and Finder do it, rather than left to
-        // SwiftUI's default proportional split. Unconstrained, the sidebar
-        // claimed close to a third of the window at minimum width, which is
-        // most of what the queue below needs just to keep a job's title
-        // legible.
-        .navigationSplitViewColumnWidth(min: 150, ideal: 180, max: 240)
+        sidebar
       } detail: {
         // **No catch-all.** `case .queue, .none:` used to absorb everything
         // that was not `.watching`, which for a new destination means landing
@@ -353,6 +394,7 @@ WatchingView(
     .task(id: selection) {
       library = videoRecordStore.flatMap { try? $0.load() } ?? VideoLibrary()
     }
+    .onChange(of: selection) { _, now in rememberArrivals(now) }
     .inspector(isPresented: $isInspectorOpen) {
       InspectorPane(
         subject: InspectorSubject.resolve(
@@ -361,6 +403,7 @@ WatchingView(
           watchingSelection: watchingSelection,
           sections: watching?.sections ?? [],
           library: library,
+          arrivals: selectionArrivals,
           jobs: controller?.jobs ?? []),
         controller: controller,
         record: videoRecordStore,

@@ -199,8 +199,8 @@ struct InspectorPane: View {
       Section {
         // §5.1: Mail's shape. Above the text, because it is what identifies
         // the selection — the count merely sizes it.
-        if !many.thumbnails.isEmpty {
-          SelectionStack(thumbnails: many.thumbnails, store: imageStore)
+        if !many.cards.isEmpty {
+          SelectionStack(cards: many.cards, store: imageStore)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         VStack(alignment: .leading, spacing: 2) {
