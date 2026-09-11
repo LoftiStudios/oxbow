@@ -24,16 +24,12 @@ struct JobInfoWindow: View {
   /// resolves, and never under `xcodebuild test`.
   let record: VideoRecordStore?
 
-  /// Where the metadata fetch has got to. Three states rather than an
-  /// optional, so the card can tell "still coming" from "never arriving" —
-  /// and stay the same size in both.
-  private enum Metadata {
-    case loading
-    case loaded(VideoInfo)
-    case unavailable
-  }
-
-  @State private var metadata: Metadata = .loading
+  /// Where the metadata fetch has got to.
+  ///
+  /// `VideoInfoLoad`, shared with `InspectorPane` — see that type. The states
+  /// and the order they are attempted in are unchanged by the extraction;
+  /// they simply live somewhere both surfaces can reach.
+  @State private var metadata: VideoInfoLoad = .loading
 
   /// The download this window can talk about, when the queue still holds one.
   ///
@@ -62,12 +58,7 @@ struct JobInfoWindow: View {
   /// The video this window is about, for the metadata fetch and the record
   /// lookup behind it.
   private var videoIdentifier: String? {
-    switch target {
-    case .video(let identifier): return identifier
-    case .job(let id):
-      guard let job = controller.jobs.first(where: { $0.id == id }) else { return nil }
-      return JobInfo(job: job).sourceIdentifier
-    }
+    VideoInfoLoad.identifier(for: target, jobs: controller.jobs)
   }
 
   var body: some View {
@@ -236,37 +227,8 @@ struct JobInfoWindow: View {
   /// source of truth that goes stale. The fetch is the same one intake makes,
   /// and failing it costs only the thumbnail.
   private func loadMetadata() async {
-    guard let identifier = videoIdentifier else {
-      metadata = .unavailable
-      return
-    }
-    if let info = try? await controller.fetchInfo(for: identifier) {
-      metadata = .loaded(info)
-      return
-    }
-
-    // A private, deleted or expired VOD. Twitch has no answer any more, but
-    // the metadata was fetched once while it did and written down — which is
-    // the entire reason `docs/design/video-record.md` exists. Before the
-    // record, this is where the card became a grey rectangle with whatever
-    // title the job happened to store.
-    //
-    // Rendered as `.loaded`, not as a third state: a remembered card and a
-    // live one describe the same video and should read identically. The one
-    // visible difference is that `streamer` falls back to the login, because
-    // a record holds no display name — see `VideoRecord.remembered()`.
-    if let remembered = record.flatMap({ try? $0.load() })?
-      .videos[identifier]?.remembered()
-    {
-      metadata = .loaded(remembered)
-      return
-    }
-
-    // Nothing live and nothing remembered — a video downloaded before the
-    // record existed, or one whose row migrated from the old bare-id
-    // seen-set and never gained a title. The card falls back to the job's own
-    // title, which is all that survives.
-    metadata = .unavailable
+    metadata = await VideoInfoLoad.resolve(
+      identifier: videoIdentifier, controller: controller, record: record)
   }
 
 }

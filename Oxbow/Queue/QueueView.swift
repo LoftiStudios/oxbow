@@ -29,6 +29,10 @@ struct QueueView: View {
   /// Handed straight through to `WatchingView` — this view never reads it.
   var imageStore: ImageStore? = nil
 
+  /// Handed to `InspectorPane` so an expired video still renders a card.
+  /// Optional for the same reason `imageStore` is.
+  var videoRecordStore: VideoRecordStore? = nil
+
   /// A Watching finding waiting to be applied, from `OxbowApp`'s own `@State`.
   ///
   /// **This is where `WatchingModel.openIntake` actually opens anything.**
@@ -329,7 +333,8 @@ WatchingView(
           destination: sidebarSelection,
           queueSelection: selection,
           jobs: controller?.jobs ?? []),
-        controller: controller)
+        controller: controller,
+        record: videoRecordStore)
     }
     // 480 is the queue's own minimum, not the window's — it is what a job
     // row needs to keep its title legible, from before this view had a

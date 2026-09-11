@@ -10,14 +10,27 @@ import OxbowKit
 /// shows a pane that follows the selection — and they are not felt as
 /// competing because they are not answering the same question.
 ///
-/// **No `VideoCard` yet.** Slice B shares the window's, which means first
-/// extracting the metadata loading out of `JobInfoWindow`. Until then this
-/// shows what it can name without a fetch, rather than growing a second,
-/// lesser card that would have to be deleted again — §11 rejects a compact
-/// variant outright.
+/// **The card is the window's, not a copy of it.** Both render `VideoCard`
+/// from the same `VideoInfoLoad`, which is §4's contract: the card is
+/// identical on both surfaces and the sections beneath are each pane's own.
+/// The full step breakdown and the delivered-files list stay in the window —
+/// that is what keeps it worth opening rather than a wider inspector. §11
+/// rejects a compact card variant outright: if this reads badly at 300pt, the
+/// fix belongs in `VideoCard`.
 struct InspectorPane: View {
   let subject: InspectorSubject
   let controller: QueueController?
+  /// Where an expired video's metadata comes from once Twitch has stopped
+  /// answering. Optional for the same reason it is on `JobInfoWindow`:
+  /// `OxbowApp` builds it only once a support directory resolves.
+  var record: VideoRecordStore? = nil
+
+  /// The shared loader's answer for whatever is selected.
+  ///
+  /// **The same `VideoInfoLoad` the window uses**, not a second route to the
+  /// same fact — §4: the card must not fork, and a card is only as shared as
+  /// the thing feeding it.
+  @State private var metadata: VideoInfoLoad = .loading
 
   var body: some View {
     Group {
@@ -51,11 +64,25 @@ struct InspectorPane: View {
   private func single(_ target: InfoTarget) -> some View {
     ScrollView {
       VStack(alignment: .leading, spacing: 12) {
-        if let job = job(for: target) {
-          Text(job.title)
-            .font(.headline)
-            .fixedSize(horizontal: false, vertical: true)
+        // **Identical to the window's**, from the same loader.
+        // `video-record.md` §4.1's "one component", and `inspector.md` §11
+        // rejects a compact variant outright: if this reads badly at 300pt
+        // the fix belongs in `VideoCard`, not in a second card here.
+        switch metadata {
+        case .loading:
+          VideoCard(.loading)
+        case .loaded(let info):
+          VideoCard(info: info)
+        case .unavailable:
+          VideoCard(.unavailable(title: job(for: target)?.title ?? "Video"))
+        }
 
+        if let job = job(for: target) {
+          // **No job title here.** The card above already names the video,
+          // and a job's title is that name with the channel and date prefixed
+          // — printed under the card it reads as the same sentence twice.
+          // §4's table lists the card, the facts, a one-line status and Show
+          // in Finder; the title was never one of them.
           LabeledContent("Status", value: statusText(job.status))
 
           // The one ambient *action* worth carrying (§4). "Where did that go"
@@ -71,17 +98,25 @@ struct InspectorPane: View {
             }
           }
         } else {
-          // A target that names a video the queue has never carried — an
-          // archive selected in the Watching pane, once slice C wires that up.
-          // Slice B's card is what will make this case say something useful;
-          // saying little is better than saying something wrong.
-          Text("Not in the queue")
+          // No job, but the card above still describes the video — which is
+          // `video-record.md` §4.3's case: a watched archive you have not
+          // downloaded has a card, a date and a duration, and one line saying
+          // you do not have it.
+          Text("Not downloaded")
             .foregroundStyle(.secondary)
         }
         Spacer(minLength: 0)
       }
       .padding()
       .frame(maxWidth: .infinity, alignment: .leading)
+    }
+    // Keyed on the identifier, matching `JobInfoWindow`'s own `.task(id:)`,
+    // so moving between two rows for the same video does not refetch.
+    .task(id: VideoInfoLoad.identifier(for: target, jobs: controller?.jobs ?? [])) {
+      guard let controller else { return }
+      metadata = await VideoInfoLoad.resolve(
+        identifier: VideoInfoLoad.identifier(for: target, jobs: controller.jobs),
+        controller: controller, record: record)
     }
   }
 
@@ -155,9 +190,10 @@ struct InspectorPane: View {
     .frame(width: 300, height: 420)
 }
 
-// The case the pane cannot yet say much about, kept visible so slice B's
-// improvement is measurable against it rather than asserted.
-#Preview("One selected, not in the queue") {
+// `video-record.md` §4.3: a video nothing has downloaded still has a card.
+// Renders `.unavailable` here because a preview has no controller to fetch
+// with, which is also what an expired video looks like.
+#Preview("One selected, not downloaded") {
   InspectorPane(subject: .one(.video("2844787557")), controller: nil)
     .frame(width: 300, height: 420)
 }
