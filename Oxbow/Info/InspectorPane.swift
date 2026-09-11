@@ -24,6 +24,9 @@ struct InspectorPane: View {
   /// answering. Optional for the same reason it is on `JobInfoWindow`:
   /// `OxbowApp` builds it only once a support directory resolves.
   var record: VideoRecordStore? = nil
+  /// Where the selection stack reads cached frames from. The same store the
+  /// watching surfaces use — this adds no fetching of its own.
+  var imageStore: ImageStore? = nil
 
   /// The shared loader's answer for whatever is selected.
   ///
@@ -130,7 +133,12 @@ struct InspectorPane: View {
 
   @ViewBuilder
   private func multiple(_ many: MultiSelection) -> some View {
-    VStack(alignment: .leading, spacing: 8) {
+    VStack(alignment: .leading, spacing: 12) {
+      // §5.1: Mail's shape. Above the text, because it is what identifies the
+      // selection — the count merely sizes it.
+      if !many.thumbnails.isEmpty {
+        SelectionStack(thumbnails: many.thumbnails, store: imageStore)
+      }
       Text("\(many.count) downloads selected")
         .font(.headline)
       Text(statusSummary(many))

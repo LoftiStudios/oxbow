@@ -258,6 +258,52 @@ struct InspectorSubjectTests {
     #expect(m.estimatedBytes == nil)
   }
 
+  // MARK: - The stack (§5.1)
+
+  private func withThumbnail(_ id: String, _ url: String) -> VideoRecord {
+    VideoRecord(id: id, title: "Stream \(id)", durationSeconds: 3600,
+                qualities: [sd], thumbnailURLs: [URL(string: url)!])
+  }
+
+  /// **Built deliberately out of queue order.** A `Set` will often *happen* to
+  /// iterate plausibly, so a test that builds the selection in queue order
+  /// proves nothing about the thing §5.1 is guarding against.
+  @Test func theStackIsOrderedByQueuePositionNotBySelection() throws {
+    let jobs = (1...5).map { videoJob("J\($0)", videoID: "\($0)") }
+    let lib = library((1...5).map { withThumbnail("\($0)", "https://x/\($0).jpg") })
+    // Selected last-to-first; the stack must still read 1, 2, 3, 4.
+    let picked = Set([jobs[4], jobs[2], jobs[0], jobs[3], jobs[1]].map(\.id))
+    guard case .many(let m) = InspectorSubject.resolve(
+      destination: .queue, queueSelection: picked, watchingSelection: nil,
+      sections: [], library: lib, jobs: jobs)
+    else { Issue.record("expected .many"); return }
+
+    #expect(m.count == 5, "the count keeps telling the truth")
+    #expect(m.thumbnails.count == 4, "capped at four")
+    #expect(m.thumbnails.map { $0?.absoluteString } == [
+      "https://x/1.jpg", "https://x/2.jpg", "https://x/3.jpg", "https://x/4.jpg",
+    ])
+  }
+
+  /// A job whose video has no thumbnail keeps its place as nil, so the stack
+  /// draws a placeholder tile rather than collapsing to a shorter fan.
+  @Test func aJobWithNoThumbnailKeepsItsPlaceAsNil() throws {
+    let a = videoJob("A", videoID: "1")
+    let b = videoJob("B", videoID: "2")
+    let c = videoJob("C", videoID: "3")
+    let lib = library([
+      withThumbnail("1", "https://x/1.jpg"),
+      priceable("2"),                                   // no thumbnailURLs
+      withThumbnail("3", "https://x/3.jpg"),
+    ])
+    guard case .many(let m) = InspectorSubject.resolve(
+      destination: .queue, queueSelection: Set([a, b, c].map(\.id)),
+      watchingSelection: nil, sections: [], library: lib, jobs: [a, b, c])
+    else { Issue.record("expected .many"); return }
+    #expect(m.thumbnails.map { $0?.absoluteString }
+      == ["https://x/1.jpg", nil, "https://x/3.jpg"])
+  }
+
   @Test func noDestinationFollowsTheQueueTheWindowIsShowing() {
     let j = videoJob("A", videoID: "1")
     #expect(InspectorSubject.resolve(

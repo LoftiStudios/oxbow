@@ -102,6 +102,7 @@ extension InspectorSubject {
         }
       }
       many.estimatedBytes = estimate(selected, library: library)
+      many.thumbnails = stack(selected, library: library)
       return .many(many)
     }
   }
@@ -148,6 +149,25 @@ extension InspectorSubject {
         composite: compositeGeometry(in: job, quality: quality)).delivered
     }
     return sum
+  }
+
+  /// The first four selected videos' thumbnails, in queue order.
+  ///
+  /// **Queue order, never the selection's** — §5.1. `selected` is already
+  /// filtered out of `jobs` rather than iterated out of the `Set`, so this
+  /// inherits a stable order instead of reshuffling on every rebuild. That is
+  /// a glitch that survives review because nobody scrolls the same list twice.
+  ///
+  /// **Capped at four, and a miss stays as `nil`.** A fan of forty is a
+  /// smear, and `count` keeps the true number. A job whose video has no record
+  /// or no thumbnail holds its place so the stack keeps its shape — the same
+  /// call `VideoThumbnail` makes when Twitch has no preview, rather than
+  /// quietly drawing a shorter fan that misstates how many are selected.
+  private static func stack(_ jobs: [Job], library: VideoLibrary) -> [URL?] {
+    jobs.prefix(4).map { job in
+      guard let media = job.mediaIdentifier else { return nil }
+      return library.videos[media]?.thumbnailURLs.first
+    }
   }
 
   /// The job's video download, when it has one. A chat-only or clip job has

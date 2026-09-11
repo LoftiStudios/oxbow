@@ -363,7 +363,8 @@ WatchingView(
           library: library,
           jobs: controller?.jobs ?? []),
         controller: controller,
-        record: videoRecordStore)
+        record: videoRecordStore,
+        imageStore: imageStore)
     }
     // 480 is the queue's own minimum, not the window's — it is what a job
     // row needs to keep its title legible, from before this view had a
