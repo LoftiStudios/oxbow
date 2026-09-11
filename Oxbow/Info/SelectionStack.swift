@@ -150,6 +150,16 @@ private struct StackTile: View {
           }
       }
     }
+    // **The image swap gets its own, much shorter animation.** Without this
+    // it inherits whatever the fan is running — a 0.38s spring — so a
+    // thumbnail arriving mid-deal cross-fades on the spring's timing and the
+    // two motions compete for the same moment. A nearer `.animation` wins for
+    // this subtree, so the card can be flying in at spring speed while its
+    // picture simply appears.
+    //
+    // Keyed on `image != nil` because `NSImage` is not `Equatable`; the only
+    // transition worth animating here is empty-to-loaded anyway.
+    .animation(.easeOut(duration: 0.12), value: image != nil)
     // Fills the width it is given and keeps 16:9, so the fan scales with the
     // inspector rather than pinning itself to one column width.
     .aspectRatio(16.0 / 9.0, contentMode: .fit)
