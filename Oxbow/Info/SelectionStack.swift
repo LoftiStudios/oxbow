@@ -44,6 +44,10 @@ struct SelectionStack: View {
   private static let entry: CGFloat = 150
   private static let entryTurn: Double = -10
 
+  /// The one animation everything here uses — the deal, an addition, a
+  /// removal, and the survivors sliding back a place as the pile deepens.
+  private static let settle = Animation.spring(response: 0.38, dampingFraction: 0.8)
+
   /// The cards actually on screen, which trails `cards` during the opening
   /// deal and matches it thereafter.
   ///
@@ -98,32 +102,28 @@ struct SelectionStack: View {
               : .offset(x: Self.entry).combined(with: .opacity)))
       }
     }
-    .animation(.spring(response: 0.38, dampingFraction: 0.8), value: visible)
-    // The opening deal is the same insertion, one card at a time. No separate
-    // animation path, so it cannot drift from what an addition does later.
+    // The first sleep is what makes the opening animate at all: state set in
+    // the same pass as the first render is coalesced with it, so SwiftUI sees
+    // no change.
     //
-    // The first sleep is what makes any of it animate at all: state set in the
-    // same pass as the first render is coalesced with it, and SwiftUI sees no
-    // change to animate.
-    // **One assignment, no loop, and the loop was a bug.**
+    // **`withAnimation` around the mutation, not `.animation(value:)` on the
+    // container.** That is the whole reason nothing arrived: an implicit
+    // container animation reliably animates a child's *properties*, but it is
+    // not a dependable way to drive a child's insertion `transition`. So the
+    // survivors' depth change animated — every existing card slides further
+    // back and rotates more when one is added, the deepest one travelling
+    // furthest — while the new card had no transaction to transition in on,
+    // and simply appeared.
     //
-    // This used to deal the cards in one at a time with a sleep between, to
-    // stagger the opening. `.task` captures `cards` by value when it starts,
-    // so a card selected during those ~250ms was written into `visible` by
-    // `onChange` and then overwritten when the loop finished and assigned its
-    // own stale copy back. Adding to a selection is exactly the thing done in
-    // quick succession — ⇧↑ four times — so the race was reachable almost
-    // every time, while a deselect made later was never affected.
-    //
-    // The stagger is not worth a state race. The opening is now four cards
-    // arriving together, which is the same motion an addition makes.
+    // That is what "animating the back of the stack out of the view" was: the
+    // pile settling backwards was the only motion running.
     .task {
       try? await Task.sleep(for: .milliseconds(16))
-      visible = cards
+      withAnimation(Self.settle) { visible = cards }
     }
-    // After the deal, the pile follows the selection directly: one card in, or
-    // one card out, each animating as itself because ids are stable.
-    .onChange(of: cards) { _, now in visible = now }
+    .onChange(of: cards) { _, now in
+      withAnimation(Self.settle) { visible = now }
+    }
     // Room for the rotated corners of the deepest card, which otherwise clip
     // against the section's edge. Exactly enough for the deepest card's own
     // offset, so the fan's left edge lines up with the text beneath it.
