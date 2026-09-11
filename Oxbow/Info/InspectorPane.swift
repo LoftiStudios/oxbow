@@ -244,12 +244,15 @@ struct InspectorPane: View {
   /// **Uniform reads as a count of one thing** — "22 Finished" — which is what
   /// a person wants nine times in ten.
   ///
-  /// **Mixed spells out every part, each with its own icon.** An earlier
-  /// version drew one icon for the most serious status and left the rest as
-  /// bare words, which made "1 failed · 3 finished" look like one warning
-  /// about four things. The parts are different outcomes and each is entitled
-  /// to say which it is — the failure count is what §5.2 says earns this
-  /// feature, and it should not be the only one wearing a symbol.
+  /// **Mixed stacks, one status per line.** They were laid out across the
+  /// value column, which at 300pt gave four parts a quarter of a narrow column
+  /// each and broke every word in half: "faile d · canc elled · down loadi ng".
+  /// A `LabeledContent` value has a whole column of *height* available and
+  /// almost no width, so the parts go down it rather than across.
+  ///
+  /// Each part keeps its own icon. They are different outcomes and each is
+  /// entitled to say which it is — the failure count is what §5.2 says earns
+  /// this feature, and it should not be the only one wearing a symbol.
   ///
   /// Ordered most serious first, so the thing worth acting on is read first.
   @ViewBuilder
@@ -259,18 +262,22 @@ struct InspectorPane: View {
       (.running, many.running), (.queued, many.queued), (.done, many.done),
     ].filter { $0.1 > 0 }
 
-    HStack(spacing: 6) {
-      ForEach(Array(parts.enumerated()), id: \.offset) { index, part in
-        if index > 0 {
-          Text("·").foregroundStyle(.secondary)
-        }
+    VStack(alignment: .trailing, spacing: 4) {
+      ForEach(Array(parts.enumerated()), id: \.offset) { _, part in
         let icon = JobPresentation.icon(for: part.0)
-        Image(systemName: icon.name)
-          .foregroundStyle(icon.tone.color(for: colorScheme))
-          .accessibilityHidden(true)
-        Text(parts.count == 1
-          ? "\(many.count) \(JobPresentation.accessibilityStatus(of: part.0).capitalized)"
-          : "\(part.1) \(JobPresentation.accessibilityStatus(of: part.0))")
+        HStack(spacing: QueueMetrics.iconSpacing) {
+          Image(systemName: icon.name)
+            .foregroundStyle(icon.tone.color(for: colorScheme))
+            .accessibilityHidden(true)
+          Text(parts.count == 1
+            ? "\(many.count) \(JobPresentation.accessibilityStatus(of: part.0).capitalized)"
+            : "\(part.1) \(JobPresentation.accessibilityStatus(of: part.0))")
+            // One line each, and never hyphenated. A status is two short
+            // words; if it will not fit, the column is too narrow for the
+            // pane rather than the text being too long.
+            .lineLimit(1)
+            .fixedSize(horizontal: true, vertical: false)
+        }
       }
     }
     .accessibilityElement(children: .combine)
@@ -296,6 +303,18 @@ struct InspectorPane: View {
 #Preview("Nothing selected") {
   InspectorPane(subject: .nothing, controller: nil)
     .frame(width: 300, height: 420)
+}
+
+// The state that broke: four statuses at once, which laid across the value
+// column gave each a quarter of a narrow column and hyphenated every word.
+#Preview("Several selected, four statuses") {
+  InspectorPane(
+    subject: .many(MultiSelection(
+      count: 10, queued: 0, running: 1, done: 7, failed: 1, cancelled: 1,
+      estimatedBytes: 4_200_000_000,
+      cards: [], channels: ["LeighXP", "WheelyF", "lilbadsnacks"])),
+    controller: nil)
+    .frame(width: 320, height: 460)
 }
 
 #Preview("Several selected, priced") {
