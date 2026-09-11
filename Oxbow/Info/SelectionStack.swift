@@ -44,71 +44,65 @@ struct SelectionStack: View {
   private static let entry: CGFloat = 150
   private static let entryTurn: Double = -10
 
-  /// Whether the opening deal has run.
+  /// The cards actually on screen, which trails `cards` during the opening
+  /// deal and matches it thereafter.
   ///
-  /// **Once, on appear, and never again.** The pile builds itself after that:
-  /// a card added to a stack already on screen flies in as *itself* and a card
-  /// removed flies out, because each carries a stable id and its own
-  /// transition. Re-dealing the whole pile on every change was what made
-  /// extending a selection upward look like the same card landing five times.
-  @State private var dealt = false
+  /// **One mechanism for every motion.** The deal, an addition and a removal
+  /// are all just this array changing, so they all animate through the same
+  /// transition and cannot disagree. The previous version drove the deal with
+  /// a separate `dealt` flag and a per-card `.animation(_:value:)`, which
+  /// overrode the container's animation for every card whose `dealt` had not
+  /// changed — so survivors snapped to their new depth while one card moved.
+  @State private var visible: [StackCard] = []
 
   /// How far back in the pile a card sits. **The last one is on top.**
   ///
   /// Cards land on top of each other as they arrive, so the newest is
   /// frontmost — a pile being built, not a hand being fanned.
-  private func depth(of index: Int) -> Int { cards.count - 1 - index }
+  private func depth(of index: Int) -> Int { visible.count - 1 - index }
 
   var body: some View {
     ZStack {
-      // Natural order, so a later card draws over an earlier one and the last
-      // to arrive ends up on top. Keyed by `StackCard.id`, which is what lets
-      // an insertion or a removal animate as one card rather than as a pile
-      // of a different length.
-      ForEach(Array(cards.enumerated()), id: \.element.id) { index, card in
+      ForEach(Array(visible.enumerated()), id: \.element.id) { index, card in
         let back = depth(of: index)
         StackTile(url: card.url, store: store)
-          .rotationEffect(
-            .degrees(dealt ? Double(back) * Self.turn : Self.entryTurn),
-            anchor: .bottomTrailing)
-          .offset(
-            x: dealt ? CGFloat(back) * -Self.slide : Self.entry,
-            y: dealt ? CGFloat(back) * Self.drop : 0)
-          .opacity(dealt ? 1 : 0)
-          // The opening deal only. Staggered in arrival order, so the pile
-          // visibly builds and the last card to land faces you.
-          .animation(
-            .spring(response: 0.38, dampingFraction: 0.74)
-              .delay(Double(index) * 0.06),
-            value: dealt)
-          // Afterwards: in from the side, out the same way. Symmetric, so
-          // deselecting reads as the undo of selecting rather than as the
-          // pile silently becoming shorter.
+          .rotationEffect(.degrees(Double(back) * Self.turn), anchor: .bottomTrailing)
+          .offset(x: CGFloat(back) * -Self.slide, y: CGFloat(back) * Self.drop)
+          // **Explicit, and load-bearing during a transition.** A `ZStack`
+          // draws a `ForEach` in order, but a view being inserted or removed
+          // is composited outside that order — so without this the card flying
+          // in could land *behind* the pile, which reads as the bottom
+          // thumbnail animating rather than the new one.
+          .zIndex(Double(index))
+          // In from the side, out the same way. Symmetric, so deselecting
+          // reads as the undo of selecting rather than the pile silently
+          // becoming shorter.
           .transition(.offset(x: Self.entry).combined(with: .opacity))
       }
     }
-    // Drives the transitions above, and slides the survivors back a place when
-    // one is added or dropped.
-    .animation(.spring(response: 0.38, dampingFraction: 0.8), value: cards)
-    // **Not `.onAppear`.** Setting state there is coalesced with the view's
-    // first render, so SwiftUI sees no change and there is nothing to animate
-    // — the pile simply existed, already fanned, from the first frame. The
-    // collapsed state has to survive one real frame before the spring starts,
-    // which is what the sleep buys.
+    .animation(.spring(response: 0.38, dampingFraction: 0.8), value: visible)
+    // The opening deal is the same insertion, one card at a time. No separate
+    // animation path, so it cannot drift from what an addition does later.
     //
-    // No `id:`, so this runs once for the life of the stack. Additions and
-    // removals are the transitions' business, not this one's.
+    // The first sleep is what makes any of it animate at all: state set in the
+    // same pass as the first render is coalesced with it, and SwiftUI sees no
+    // change to animate.
     .task {
       try? await Task.sleep(for: .milliseconds(16))
-      withAnimation(.spring(response: 0.38, dampingFraction: 0.74)) {
-        dealt = true
+      for card in cards where !visible.contains(card) {
+        visible.append(card)
+        try? await Task.sleep(for: .milliseconds(55))
       }
+      visible = cards
     }
+    // After the deal, the pile follows the selection directly: one card in, or
+    // one card out, each animating as itself because ids are stable.
+    .onChange(of: cards) { _, now in visible = now }
     // Room for the rotated corners of the deepest card, which otherwise clip
     // against the section's edge. Exactly enough for the deepest card's own
     // offset, so the fan's left edge lines up with the text beneath it.
-    .padding(.leading, CGFloat(max(cards.count - 1, 0)) * Self.slide)
-    .padding(.bottom, CGFloat(max(cards.count - 1, 0)) * Self.drop + 8)
+    .padding(.leading, CGFloat(max(visible.count - 1, 0)) * Self.slide)
+    .padding(.bottom, CGFloat(max(visible.count - 1, 0)) * Self.drop + 8)
     // One image of "the things you picked", not four separate controls.
     .accessibilityElement(children: .ignore)
     .accessibilityLabel("Thumbnails of the selected downloads")
