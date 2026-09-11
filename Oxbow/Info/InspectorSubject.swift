@@ -54,13 +54,28 @@ extension InspectorSubject {
   static func resolve(
     destination: SidebarItem?,
     queueSelection: Set<JobID>,
+    watchingSelection: WatchingModel.Row.ID?,
+    sections: [WatchingModel.Section],
     jobs: [Job]
   ) -> InspectorSubject {
-    // **Not a fall-through to the queue's selection.** Slice C replaces this
-    // with the Watching branches; until then a channel destination resolves to
-    // nothing, because a pane showing a queue row while you are looking at a
-    // channel is worse than a pane showing nothing at all.
-    guard destination == .queue else { return .nothing }
+    switch destination {
+    case .watching:
+      // The inbox is cross-channel, so its rows are every section's `rows`.
+      return watching(watchingSelection, in: sections.flatMap(\.rows))
+    case .channel(let login):
+      // A channel destination shows `allRows`, so a row the inbox holds back
+      // is still selectable there.
+      guard let section = sections.first(where: { $0.login == login }) else {
+        return .nothing
+      }
+      return watching(watchingSelection, in: section.allRows)
+    case .queue, .none:
+      // **nil is the queue**, matching `QueueView`'s detail switch, which
+      // renders the queue for `case .none`. The inspector has to agree with
+      // the pane on screen; blanking while a selected queue row sits beside it
+      // would be the pane disagreeing with itself.
+      break
+    }
 
     // **Queue order, not selection order.** `queueSelection` is a `Set` and a
     // `Set` has none — filtering the jobs preserves the order on screen, where
@@ -87,6 +102,27 @@ extension InspectorSubject {
       }
       return .many(many)
     }
+  }
+
+  /// One archive, if the selected id names a row that is actually showing.
+  ///
+  /// **A selection from another destination is not an error.** §3.2: one piece
+  /// of state is resolved against whatever is visible, so selecting a row in
+  /// LeighXP and switching to AvaBamby simply matches nothing — no reset step,
+  /// and no chance of resolving to the wrong row, because archive ids are
+  /// unique across Twitch.
+  ///
+  /// **Never `.many`.** Both Watching destinations are single-select, and §3.3
+  /// wants that encoded rather than implied.
+  private static func watching(
+    _ selection: WatchingModel.Row.ID?, in rows: [WatchingModel.Row]
+  ) -> InspectorSubject {
+    guard let selection, rows.contains(where: { $0.id == selection }) else {
+      return .nothing
+    }
+    // An archive id *is* a video id — `video-record.md` §3.1's "join key to
+    // everything", and why this design costs so little.
+    return .one(.video(selection))
   }
 
   /// The video when there is one, the job when there is not.

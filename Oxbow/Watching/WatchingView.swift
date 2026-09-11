@@ -48,6 +48,14 @@ struct WatchingView: View {
   /// only that a channel is set to want it.
   let demotions: [String: AutoDownloadPolicy.Reason]
 
+  /// The picked row, owned by `QueueView` so the inspector above can see it.
+  ///
+  /// **Hoisted, not published.** `docs/design/inspector.md` §3.2: every
+  /// existing use of `focusedSceneValue` here is a descendant publishing to
+  /// the menu bar, and a view reading what its own subtree published is a
+  /// different data flow.
+  @Binding var selection: WatchingModel.Row.ID?
+
   /// Where `ChannelAvatar` reads cached bytes from. Optional for the same
   /// reason `watching` and `poller` are on `QueueView`: `OxbowApp` builds it
   /// only once a support directory resolves, and never under
@@ -61,8 +69,6 @@ struct WatchingView: View {
   /// and `QueueActions` already treats "exactly one selected" as the condition
   /// for its own per-item commands.
   @Environment(\.openWindow) private var openWindow
-
-  @State private var selection: WatchingModel.Row.ID?
 
   var imageStore: ImageStore? = nil
 
@@ -349,7 +355,7 @@ private struct EmptyChannelRow: View {
         settingsSummary: "Video · Up to 720p · Downloads",
         downloadsAutomatically: false)
     ],
-    isSweeping: false, demotions: [:],
+    isSweeping: false, demotions: [:], selection: .constant(nil),
     onAdd: { _, _ in }, onIgnore: { _, _ in }, onEdit: { _ in }, onStopWatching: { _ in },
     stopWatchingFailure: nil, markSeenFailure: nil)
 }
@@ -367,7 +373,7 @@ private struct EmptyChannelRow: View {
         rows: [], failure: nil,
         settingsSummary: "Video · Up to 720p · Archive", downloadsAutomatically: false),
     ],
-    isSweeping: false, demotions: [:],
+    isSweeping: false, demotions: [:], selection: .constant(nil),
     onAdd: { _, _ in }, onIgnore: { _, _ in }, onEdit: { _ in }, onStopWatching: { _ in },
     stopWatchingFailure: nil, markSeenFailure: nil)
   .frame(width: 480, height: 420)
@@ -385,7 +391,7 @@ private struct EmptyChannelRow: View {
         settingsSummary: "Video + chat · Best available · Medium chat · Downloads",
         downloadsAutomatically: false),
     ],
-    isSweeping: false, demotions: [:],
+    isSweeping: false, demotions: [:], selection: .constant(nil),
     onAdd: { _, _ in }, onIgnore: { _, _ in }, onEdit: { _ in }, onStopWatching: { _ in },
     stopWatchingFailure: "Oxbow could not read the watch list, so LeighXP was not stopped.",
     markSeenFailure: nil)
@@ -405,7 +411,7 @@ private struct EmptyChannelRow: View {
         settingsSummary: "Video + chat · Best available · Medium chat · Downloads",
         downloadsAutomatically: false),
     ],
-    isSweeping: false, demotions: [:],
+    isSweeping: false, demotions: [:], selection: .constant(nil),
     onAdd: { _, _ in }, onIgnore: { _, _ in }, onEdit: { _ in }, onStopWatching: { _ in },
     stopWatchingFailure: nil,
     markSeenFailure: "Oxbow could not read the watch list: the file could not be read.")
@@ -426,7 +432,7 @@ private struct EmptyChannelRow: View {
         failure: "The response did not include the expected video list.",
         settingsSummary: "Video · Up to 1080p · Downloads", downloadsAutomatically: false),
     ],
-    isSweeping: false, demotions: [:],
+    isSweeping: false, demotions: [:], selection: .constant(nil),
     onAdd: { _, _ in }, onIgnore: { _, _ in }, onEdit: { _ in }, onStopWatching: { _ in },
     stopWatchingFailure: nil, markSeenFailure: nil)
   .frame(width: 480, height: 420)
@@ -445,7 +451,7 @@ private struct EmptyChannelRow: View {
         settingsSummary: "Video + chat · Best available · Small chat · Downloads",
         downloadsAutomatically: false),
     ],
-    isSweeping: false, demotions: [:],
+    isSweeping: false, demotions: [:], selection: .constant(nil),
     onAdd: { _, _ in }, onIgnore: { _, _ in }, onEdit: { _ in }, onStopWatching: { _ in },
     stopWatchingFailure: nil, markSeenFailure: nil)
   .frame(width: 480, height: 420)
@@ -466,7 +472,7 @@ private struct EmptyChannelRow: View {
         rows: [], failure: nil,
         settingsSummary: "Video · Up to 720p · Archive", downloadsAutomatically: false),
     ],
-    isSweeping: false, demotions: [:],
+    isSweeping: false, demotions: [:], selection: .constant(nil),
     onAdd: { _, _ in }, onIgnore: { _, _ in }, onEdit: { _ in }, onStopWatching: { _ in },
     stopWatchingFailure: nil, markSeenFailure: nil)
   .frame(width: 480, height: 420)
@@ -490,6 +496,7 @@ private struct EmptyChannelRow: View {
     ],
     isSweeping: false,
     demotions: ["leighxp": .belowFloor(needed: 2_600_000_000, available: 12_000_000_000, floor: 49_000_000_000)],
+    selection: .constant(nil),
     onAdd: { _, _ in }, onIgnore: { _, _ in }, onEdit: { _ in }, onStopWatching: { _ in },
     stopWatchingFailure: nil, markSeenFailure: nil)
   .frame(width: 480, height: 420)
@@ -509,6 +516,7 @@ private struct EmptyChannelRow: View {
     ],
     isSweeping: false,
     demotions: ["leighxp": .destinationUnreachable("/Volumes/Archive")],
+    selection: .constant(nil),
     onAdd: { _, _ in }, onIgnore: { _, _ in }, onEdit: { _ in }, onStopWatching: { _ in },
     stopWatchingFailure: nil, markSeenFailure: nil)
   .frame(width: 480, height: 420)
@@ -516,7 +524,7 @@ private struct EmptyChannelRow: View {
 
 #Preview("No channels watched") {
   WatchingView(
-    sections: [], isSweeping: false, demotions: [:],
+    sections: [], isSweeping: false, demotions: [:], selection: .constant(nil),
     onAdd: { _, _ in }, onIgnore: { _, _ in }, onEdit: { _ in }, onStopWatching: { _ in },
     stopWatchingFailure: nil, markSeenFailure: nil)
     .frame(width: 480, height: 420)
@@ -527,7 +535,7 @@ private struct EmptyChannelRow: View {
   // still empty, but this must not read as "no channels watched" — see
   // `isSweeping`'s doc above.
   WatchingView(
-    sections: [], isSweeping: true, demotions: [:],
+    sections: [], isSweeping: true, demotions: [:], selection: .constant(nil),
     onAdd: { _, _ in }, onIgnore: { _, _ in }, onEdit: { _ in }, onStopWatching: { _ in },
     stopWatchingFailure: nil, markSeenFailure: nil)
     .frame(width: 480, height: 420)

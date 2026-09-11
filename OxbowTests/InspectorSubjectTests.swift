@@ -40,13 +40,15 @@ struct InspectorSubjectTests {
 
   @Test func nothingSelectedIsNothing() {
     #expect(InspectorSubject.resolve(
-      destination: .queue, queueSelection: [], jobs: []) == .nothing)
+      destination: .queue, queueSelection: [], watchingSelection: nil,
+      sections: [], jobs: []) == .nothing)
   }
 
   @Test func oneQueueJobWithAVideoResolvesToThatVideo() {
     let j = videoJob("A", videoID: "123")
     #expect(InspectorSubject.resolve(
-      destination: .queue, queueSelection: [j.id], jobs: [j])
+      destination: .queue, queueSelection: [j.id], watchingSelection: nil,
+      sections: [], jobs: [j])
       == .one(.video("123")))
   }
 
@@ -55,14 +57,16 @@ struct InspectorSubjectTests {
   @Test func oneQueueJobWithoutAVideoResolvesToTheJob() {
     let j = chatOnlyJob("A")
     #expect(InspectorSubject.resolve(
-      destination: .queue, queueSelection: [j.id], jobs: [j])
+      destination: .queue, queueSelection: [j.id], watchingSelection: nil,
+      sections: [], jobs: [j])
       == .one(.job(j.id)))
   }
 
   @Test func aSelectedIdThatMatchesNoJobIsNothing() {
     let j = videoJob("A", videoID: "123")
     #expect(InspectorSubject.resolve(
-      destination: .queue, queueSelection: [JobID(rawValue: UUID())], jobs: [j])
+      destination: .queue, queueSelection: [JobID(rawValue: UUID())],
+      watchingSelection: nil, sections: [], jobs: [j])
       == .nothing)
   }
 
@@ -72,7 +76,8 @@ struct InspectorSubjectTests {
     let c = videoJob("C", videoID: "3",
                      .failed(StepFailure(kind: .noArtifact, summary: "no artifact")))
     let subject = InspectorSubject.resolve(
-      destination: .queue, queueSelection: [a.id, b.id, c.id], jobs: [a, b, c])
+      destination: .queue, queueSelection: [a.id, b.id, c.id],
+      watchingSelection: nil, sections: [], jobs: [a, b, c])
     guard case .many(let many) = subject else {
       Issue.record("expected .many, got \(subject)")
       return
@@ -92,7 +97,8 @@ struct InspectorSubjectTests {
     let a = videoJob("A", videoID: "1")
     let b = videoJob("B", videoID: "2")
     guard case .many(let many) = InspectorSubject.resolve(
-      destination: .queue, queueSelection: [a.id, b.id], jobs: [a, b])
+      destination: .queue, queueSelection: [a.id, b.id], watchingSelection: nil,
+      sections: [], jobs: [a, b])
     else {
       Issue.record("expected .many")
       return
@@ -100,22 +106,91 @@ struct InspectorSubjectTests {
     #expect(many.estimatedBytes == nil)
   }
 
-  /// Slice C wires these up. Until then the Watching side must resolve to
-  /// `.nothing` rather than to whatever the queue happens to have selected —
-  /// a pane showing a queue row while you are looking at a channel is worse
-  /// than a pane showing nothing.
-  @Test func watchingDestinationsResolveToNothingForNow() {
-    let j = videoJob("A", videoID: "1")
-    #expect(InspectorSubject.resolve(
-      destination: .watching, queueSelection: [j.id], jobs: [j]) == .nothing)
-    #expect(InspectorSubject.resolve(
-      destination: .channel("leighxp"), queueSelection: [j.id], jobs: [j])
-      == .nothing)
+  // MARK: - The Watching side
+
+  private func archive(_ id: String) -> ChannelArchive {
+    ChannelArchive(id: id, title: "Stream \(id)", duration: .seconds(3600),
+                   publishedAt: Date(timeIntervalSince1970: 0), status: .recorded,
+                   thumbnailURL: nil)
   }
 
-  @Test func noDestinationIsNothing() {
+  private func section(
+    _ login: String, rows: [String], allRows: [String]
+  ) -> WatchingModel.Section {
+    WatchingModel.Section(
+      login: login, displayName: login.capitalized,
+      rows: rows.map { WatchingModel.Row(archive: archive($0), state: .available) },
+      allRows: allRows.map { WatchingModel.Row(archive: archive($0), state: .available) },
+      failure: nil, settingsSummary: "", downloadsAutomatically: false)
+  }
+
+  /// An archive id *is* a video id — `video-record.md` §3.1's "join key to
+  /// everything", and the reason this whole design is cheap.
+  @Test func theInboxResolvesToItsSelectedArchive() {
+    let s = section("leighxp", rows: ["abc"], allRows: ["abc", "old"])
+    #expect(InspectorSubject.resolve(
+      destination: .watching, queueSelection: [], watchingSelection: "abc",
+      sections: [s], jobs: []) == .one(.video("abc")))
+  }
+
+  /// A channel destination shows `allRows`, so a row the inbox holds back is
+  /// still selectable there.
+  @Test func aChannelResolvesAgainstItsWholeRecord() {
+    let s = section("leighxp", rows: ["abc"], allRows: ["abc", "old"])
+    #expect(InspectorSubject.resolve(
+      destination: .channel("leighxp"), queueSelection: [], watchingSelection: "old",
+      sections: [s], jobs: []) == .one(.video("old")))
+  }
+
+  /// §3.2: one piece of state resolved against whatever is showing. Selecting
+  /// in LeighXP and switching to AvaBamby is not an error and needs no reset
+  /// step — the id simply matches nothing there.
+  @Test func aSelectionFromAnotherChannelResolvesToNothing() {
+    let leigh = section("leighxp", rows: ["abc"], allRows: ["abc"])
+    let ava = section("avabamby", rows: ["zzz"], allRows: ["zzz"])
+    #expect(InspectorSubject.resolve(
+      destination: .channel("avabamby"), queueSelection: [], watchingSelection: "abc",
+      sections: [leigh, ava], jobs: []) == .nothing)
+  }
+
+  @Test func noWatchingSelectionIsNothing() {
+    let s = section("leighxp", rows: ["abc"], allRows: ["abc"])
+    #expect(InspectorSubject.resolve(
+      destination: .watching, queueSelection: [], watchingSelection: nil,
+      sections: [s], jobs: []) == .nothing)
+  }
+
+  /// §3.3: `.many` can arise only from the queue. A future multi-select in
+  /// Watching should have to come back to the design rather than inherit one.
+  @Test func theWatchingSideNeverProducesMany() {
+    let s = section("leighxp", rows: ["abc"], allRows: ["abc"])
+    let j = videoJob("A", videoID: "1")
+    let k = videoJob("B", videoID: "2")
+    for destination: SidebarItem in [.watching, .channel("leighxp")] {
+      let subject = InspectorSubject.resolve(
+        destination: destination, queueSelection: [j.id, k.id],
+        watchingSelection: "abc", sections: [s], jobs: [j, k])
+      if case .many = subject { Issue.record("\(destination) produced .many") }
+    }
+  }
+
+  /// **A nil destination is the queue, because the window shows the queue.**
+  ///
+  /// `QueueView`'s detail switch renders `queue` for `case .none` — a `List`
+  /// reports "nothing selected" as nil, most visibly when someone
+  /// command-clicks the current sidebar row off. The inspector has to agree
+  /// with the pane a person is actually looking at; resolving to `.nothing`
+  /// there would blank the pane while a selected queue row sat beside it.
+  ///
+  /// This replaces a weaker assertion written before the Watching branches
+  /// existed, when nil was simply lumped in with "not the queue".
+  @Test func noDestinationFollowsTheQueueTheWindowIsShowing() {
     let j = videoJob("A", videoID: "1")
     #expect(InspectorSubject.resolve(
-      destination: nil, queueSelection: [j.id], jobs: [j]) == .nothing)
+      destination: nil, queueSelection: [j.id], watchingSelection: nil,
+      sections: [], jobs: [j]) == .one(.video("1")))
+    #expect(InspectorSubject.resolve(
+      destination: nil, queueSelection: [], watchingSelection: nil,
+      sections: [], jobs: [j]) == .nothing)
   }
 }

@@ -34,10 +34,12 @@ struct ChannelView: View {
 
   @Environment(\.openWindow) private var openWindow
 
-  /// The row a person has picked, by archive id — the same single-selection
-  /// model `WatchingView` uses, and for the same reason: nothing here acts on
-  /// several rows at once.
-  @State private var selection: WatchingModel.Row.ID?
+  /// The row a person has picked, by archive id.
+  ///
+  /// Owned by `QueueView` so the inspector above can see it — the same one
+  /// piece of state the inbox uses, resolved against whichever destination is
+  /// showing (`docs/design/inspector.md` §3.2).
+  @Binding var selection: WatchingModel.Row.ID?
 
   var body: some View {
     Group {
@@ -190,7 +192,7 @@ struct ChannelView: View {
       downloadsAutomatically: true),
     imageStore: nil, demotionReason: nil,
     onAdd: { _ in }, onAddWithOptions: { _ in }, onIgnore: { _ in },
-    onEdit: {}, onStopWatching: {})
+    onEdit: {}, onStopWatching: {}, selection: .constant(nil))
   .frame(width: 560, height: 480)
 }
 
@@ -202,7 +204,7 @@ struct ChannelView: View {
       downloadsAutomatically: false),
     imageStore: nil, demotionReason: nil,
     onAdd: { _ in }, onAddWithOptions: { _ in }, onIgnore: { _ in },
-    onEdit: {}, onStopWatching: {})
+    onEdit: {}, onStopWatching: {}, selection: .constant(nil))
   .frame(width: 560, height: 480)
 }
 
@@ -218,6 +220,6 @@ struct ChannelView: View {
       downloadsAutomatically: false),
     imageStore: nil, demotionReason: nil,
     onAdd: { _ in }, onAddWithOptions: { _ in }, onIgnore: { _ in },
-    onEdit: {}, onStopWatching: {})
+    onEdit: {}, onStopWatching: {}, selection: .constant(nil))
   .frame(width: 560, height: 480)
 }

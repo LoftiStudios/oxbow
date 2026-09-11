@@ -113,6 +113,14 @@ struct InspectorPane: View {
     // Keyed on the identifier, matching `JobInfoWindow`'s own `.task(id:)`,
     // so moving between two rows for the same video does not refetch.
     .task(id: VideoInfoLoad.identifier(for: target, jobs: controller?.jobs ?? [])) {
+      // **Cleared first, every time.** `metadata` survives a change of
+      // subject, so without this the pane keeps drawing the *previous*
+      // video's card — its artwork, its title, its streamer — beneath a row
+      // that is not about it, until the new fetch lands. A placeholder is a
+      // far smaller lie than another video, and this pane exists to be
+      // glanced at rather than read carefully, which is exactly the habit a
+      // wrong card would poison.
+      metadata = .loading
       guard let controller else { return }
       metadata = await VideoInfoLoad.resolve(
         identifier: VideoInfoLoad.identifier(for: target, jobs: controller.jobs),

@@ -81,6 +81,19 @@ struct QueueView: View {
   /// argument about the content applied to the chrome.
   @State private var isInspectorOpen = false
 
+  /// The selected archive, shared by the inbox and every channel destination.
+  ///
+  /// **One piece of state, not one per destination** (`inspector.md` §3.2).
+  /// Archive ids are unique across Twitch, so an id from one channel resolves
+  /// to nothing in another rather than to the wrong row — which is what lets
+  /// switching destinations need no reset step.
+  ///
+  /// Hoisted out of `WatchingView` and `ChannelView` rather than lifted with
+  /// `focusedSceneValue`: every existing use of that idiom here is a
+  /// descendant publishing to the menu bar, and a view reading what its own
+  /// subtree published is a different data flow.
+  @State private var watchingSelection: WatchingModel.Row.ID?
+
   /// A removal waiting on the user, and the dialog's own presentation flag.
   ///
   /// Two pieces of state rather than one optional driving a computed
@@ -121,6 +134,7 @@ WatchingView(
   sections: watching?.sections ?? [],
   isSweeping: poller?.isSweeping ?? false,
   demotions: poller?.demotions ?? [:],
+  selection: $watchingSelection,
   imageStore: imageStore,
   onAdd: { archive, section in
     Task { await watching?.add(archive, from: section.login) }
@@ -219,7 +233,8 @@ WatchingView(
         onAddWithOptions: { archive in watching?.openInIntake(archive, from: login) },
         onIgnore: { archive in watching?.ignore(archive, from: login) },
         onEdit: { editChannel(login) },
-        onStopWatching: { watching?.stopWatching(login) })
+        onStopWatching: { watching?.stopWatching(login) },
+        selection: $watchingSelection)
     }
   }
 
@@ -332,6 +347,8 @@ WatchingView(
         subject: InspectorSubject.resolve(
           destination: sidebarSelection,
           queueSelection: selection,
+          watchingSelection: watchingSelection,
+          sections: watching?.sections ?? [],
           jobs: controller?.jobs ?? []),
         controller: controller,
         record: videoRecordStore)
