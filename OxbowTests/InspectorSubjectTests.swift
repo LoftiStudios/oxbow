@@ -304,6 +304,39 @@ struct InspectorSubjectTests {
       == ["https://x/1.jpg", nil, "https://x/3.jpg"])
   }
 
+  /// The line under the count, and the reason `VideoRecord.displayName`
+  /// exists: before it this would have read "leighxp, wheelyf".
+  @Test func theChannelsAreDisplayNamesInQueueOrderWithoutRepeats() throws {
+    let jobs = (1...4).map { videoJob("J\($0)", videoID: "\($0)") }
+    let lib = library([
+      VideoRecord(id: "1", displayName: "LeighXP", durationSeconds: 60, qualities: [sd]),
+      VideoRecord(id: "2", displayName: "WheelyF", durationSeconds: 60, qualities: [sd]),
+      VideoRecord(id: "3", displayName: "LeighXP", durationSeconds: 60, qualities: [sd]),
+      VideoRecord(id: "4", displayName: "AvaBamby", durationSeconds: 60, qualities: [sd]),
+    ])
+    guard case .many(let m) = InspectorSubject.resolve(
+      destination: .queue, queueSelection: Set(jobs.map(\.id)),
+      watchingSelection: nil, sections: [], library: lib, jobs: jobs)
+    else { Issue.record("expected .many"); return }
+    #expect(m.channels == ["LeighXP", "WheelyF", "AvaBamby"])
+  }
+
+  /// A record that never learned a name contributes nothing rather than its
+  /// login — one lowercase entry among proper names reads as a bug.
+  @Test func aChannelWithNoRememberedNameIsOmitted() throws {
+    let a = videoJob("A", videoID: "1")
+    let b = videoJob("B", videoID: "2")
+    let lib = library([
+      VideoRecord(id: "1", displayName: "LeighXP", durationSeconds: 60, qualities: [sd]),
+      priceable("2"),
+    ])
+    guard case .many(let m) = InspectorSubject.resolve(
+      destination: .queue, queueSelection: Set([a, b].map(\.id)),
+      watchingSelection: nil, sections: [], library: lib, jobs: [a, b])
+    else { Issue.record("expected .many"); return }
+    #expect(m.channels == ["LeighXP"])
+  }
+
   @Test func noDestinationFollowsTheQueueTheWindowIsShowing() {
     let j = videoJob("A", videoID: "1")
     #expect(InspectorSubject.resolve(

@@ -23,34 +23,35 @@ struct SelectionStack: View {
   let thumbnails: [URL?]
   let store: ImageStore?
 
-  private static let tileWidth: CGFloat = 104
-  private static let step: CGFloat = 16
-
-  private var tileHeight: CGFloat { Self.tileWidth * 9 / 16 }
+  /// How far each deeper card slides and turns.
+  ///
+  /// **Rotated as well as offset**, which is the difference between a fan and
+  /// a stepped column: a pile of photographs tossed down, not a spreadsheet.
+  /// Small angles — past about five degrees per card the deepest one reads as
+  /// broken rather than casual.
+  private static let slide: CGFloat = 7
+  private static let drop: CGFloat = 3
+  private static let turn: Double = -3.5
 
   var body: some View {
-    ZStack(alignment: .topLeading) {
-      // Reversed so index 0 ends up drawn last and therefore on top: the fan
-      // reads front-to-back in the same order the queue does.
+    ZStack {
+      // Reversed so index 0 is drawn last and lands on top: the fan reads
+      // front-to-back in the same order the queue does.
       ForEach(Array(thumbnails.enumerated()).reversed(), id: \.offset) { index, url in
-        tile(url)
-          .offset(
-            x: CGFloat(index) * Self.step,
-            y: CGFloat(index) * Self.step * 0.375)
+        StackTile(url: url, store: store)
+          .rotationEffect(.degrees(Double(index) * Self.turn), anchor: .bottomTrailing)
+          .offset(x: CGFloat(index) * -Self.slide, y: CGFloat(index) * Self.drop)
       }
     }
-    .frame(
-      width: Self.tileWidth + CGFloat(max(thumbnails.count - 1, 0)) * Self.step,
-      height: tileHeight + CGFloat(max(thumbnails.count - 1, 0)) * Self.step * 0.375,
-      alignment: .topLeading)
+    // Room for the rotated corners of the deepest card, which otherwise clip
+    // against the section's edge.
+    .padding(.leading, CGFloat(max(thumbnails.count - 1, 0)) * Self.slide + 6)
+    .padding(.bottom, CGFloat(max(thumbnails.count - 1, 0)) * Self.drop + 10)
     // One image of "the things you picked", not four separate controls.
     .accessibilityElement(children: .ignore)
     .accessibilityLabel("Thumbnails of the selected downloads")
   }
 
-  private func tile(_ url: URL?) -> some View {
-    StackTile(url: url, store: store, width: Self.tileWidth)
-  }
 }
 
 /// One card in the fan.
@@ -64,7 +65,6 @@ struct SelectionStack: View {
 private struct StackTile: View {
   let url: URL?
   let store: ImageStore?
-  let width: CGFloat
 
   @State private var image: NSImage?
 
@@ -76,18 +76,24 @@ private struct StackTile: View {
         Rectangle().fill(.quaternary)
           .overlay {
             Image(systemName: "photo")
-              .font(.system(size: width * 0.2))
+              .font(.title2)
               .foregroundStyle(.tertiary)
           }
       }
     }
-    .frame(width: width, height: width * 9 / 16)
-    .clipShape(RoundedRectangle(cornerRadius: 5))
-    // The stroke is what makes the overlap read as separate cards rather than
-    // one smeared image — Twitch frames are photographic and frequently
-    // near-black at the edges.
-    .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(.separator))
-    .shadow(color: .black.opacity(0.35), radius: 3, x: 0, y: 1)
+    // Fills the width it is given and keeps 16:9, so the fan scales with the
+    // inspector rather than pinning itself to one column width.
+    .aspectRatio(16.0 / 9.0, contentMode: .fit)
+    .frame(maxWidth: .infinity)
+    .clipShape(RoundedRectangle(cornerRadius: 6))
+    // **Stroke and shadow both, and both are doing work.** Twitch frames are
+    // photographic and frequently near-black at the edges, so without the
+    // stroke the overlap reads as one smeared image; without the shadow the
+    // cards read as flat cut-outs rather than a pile with depth. The offset
+    // leans the same way the fan does, so each card's shadow falls on the one
+    // behind it.
+    .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(.separator))
+    .shadow(color: .black.opacity(0.5), radius: 6, x: -2, y: 4)
     .task(id: url) {
       image = nil
       guard let url, let store else { return }
@@ -100,8 +106,7 @@ private struct StackTile: View {
 
 #Preview("Four, one without artwork") {
   SelectionStack(
-    thumbnails: [nil, nil, nil, nil],
-    store: nil)
+    thumbnails: [nil, nil, nil, nil], store: nil)
     .padding()
     .frame(width: 300, height: 200)
 }

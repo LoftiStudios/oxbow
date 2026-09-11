@@ -39,6 +39,8 @@ struct InspectorPane: View {
   /// task as the metadata. Nil until measured, and nil when it cannot be.
   @State private var deliveredBytes: Int64?
 
+  @Environment(\.colorScheme) private var colorScheme
+
   var body: some View {
     Group {
       switch subject {
@@ -193,36 +195,82 @@ struct InspectorPane: View {
 
   @ViewBuilder
   private func multiple(_ many: MultiSelection) -> some View {
-    VStack(alignment: .leading, spacing: 12) {
-      // §5.1: Mail's shape. Above the text, because it is what identifies the
-      // selection — the count merely sizes it.
-      if !many.thumbnails.isEmpty {
-        SelectionStack(thumbnails: many.thumbnails, store: imageStore)
+    Form {
+      Section {
+        // §5.1: Mail's shape. Above the text, because it is what identifies
+        // the selection — the count merely sizes it.
+        if !many.thumbnails.isEmpty {
+          SelectionStack(thumbnails: many.thumbnails, store: imageStore)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        VStack(alignment: .leading, spacing: 2) {
+          Text("\(many.count) downloads selected")
+            .font(.headline)
+          // Which channels, not how many of each. The names are what makes a
+          // mis-selection obvious — "I meant only LeighXP" — and they are
+          // display names because `VideoRecord.displayName` now keeps them.
+          if !many.channels.isEmpty {
+            Text(many.channels.joined(separator: ", "))
+              .font(.subheadline)
+              .foregroundStyle(.secondary)
+              .lineLimit(1)
+              .truncationMode(.tail)
+          }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
       }
-      Text("\(many.count) downloads selected")
-        .font(.headline)
-      Text(statusSummary(many))
-        .font(.subheadline)
-        .foregroundStyle(.secondary)
-        .fixedSize(horizontal: false, vertical: true)
 
-      // **Shown only when every selected job could be priced** (§5.3). When
-      // one could not, this line is absent rather than smaller — a total that
-      // silently drops two of five looks complete and is not, and a disk
-      // figure is exactly the kind people act on.
-      //
-      // "about", matching how the Add Channel sheet words its own estimate,
-      // because this is a model of a download rather than a measurement of
-      // one.
-      if let bytes = many.estimatedBytes {
-        Text("about \(bytes.formatted(.byteCount(style: .file)))")
-          .font(.subheadline)
-          .foregroundStyle(.secondary)
+      Section("Download") {
+        LabeledContent("Status") { statusValue(many) }
+        // **Shown only when every selected job could be priced** (§5.3). When
+        // one could not, this row is absent rather than smaller — a total
+        // that silently drops two of five looks complete and is not, and a
+        // disk figure is exactly the kind people act on.
+        //
+        // "about", matching how the Add Channel sheet words its own estimate,
+        // because this is a model of a download rather than a measurement of
+        // one — unlike the single case's Filesize, which is measured.
+        if let bytes = many.estimatedBytes {
+          LabeledContent(
+            "Filesize", value: "about \(bytes.formatted(.byteCount(style: .file)))")
+        }
       }
-      Spacer(minLength: 0)
     }
-    .padding()
-    .frame(maxWidth: .infinity, alignment: .leading)
+    .formStyle(.grouped)
+  }
+
+  /// One status row for a whole selection.
+  ///
+  /// **Uniform reads as a count of one thing** — "22 Finished" — which is what
+  /// a person wants nine times in ten. Mixed spells out the parts instead, and
+  /// takes the icon of the most serious status present: a selection that is
+  /// mostly finished with two failures in it is a selection with a problem,
+  /// and a green check over that would be the pane reassuring somebody about
+  /// the wrong thing (§5.2).
+  @ViewBuilder
+  private func statusValue(_ many: MultiSelection) -> some View {
+    let parts: [(JobStatus, Int)] = [
+      (.failed, many.failed), (.cancelled, many.cancelled),
+      (.running, many.running), (.queued, many.queued), (.done, many.done),
+    ].filter { $0.1 > 0 }
+
+    // Already ordered most-serious-first above, so the first present one is
+    // the one to show.
+    let lead = parts.first?.0 ?? .queued
+    let icon = JobPresentation.icon(for: lead)
+
+    HStack(spacing: QueueMetrics.iconSpacing) {
+      Image(systemName: icon.name)
+        .foregroundStyle(icon.tone.color(for: colorScheme))
+        .accessibilityHidden(true)
+      if parts.count == 1 {
+        Text("\(many.count) \(JobPresentation.accessibilityStatus(of: lead).capitalized)")
+      } else {
+        Text(parts
+          .map { "\($0.1) \(JobPresentation.accessibilityStatus(of: $0.0))" }
+          .joined(separator: " · "))
+      }
+    }
   }
 
   /// The queue's job for this target, when it has one.
@@ -240,22 +288,6 @@ struct InspectorPane: View {
     }
   }
 
-  /// **Only non-zero parts appear.** A row of five counts, four of them zero,
-  /// is the loud thing on a quiet screen that `WatchingView`'s own doc comment
-  /// already argues against for a "no new videos" row under every channel.
-  ///
-  /// The failure count is the line that earns this whole feature (§5.2):
-  /// selecting a run of rows and reading "4 failed" is how a systematic
-  /// problem gets noticed without opening four windows.
-  private func statusSummary(_ many: MultiSelection) -> String {
-    var parts: [String] = []
-    if many.queued > 0 { parts.append("\(many.queued) queued") }
-    if many.running > 0 { parts.append("\(many.running) downloading") }
-    if many.done > 0 { parts.append("\(many.done) done") }
-    if many.failed > 0 { parts.append("\(many.failed) failed") }
-    if many.cancelled > 0 { parts.append("\(many.cancelled) cancelled") }
-    return parts.joined(separator: " · ")
-  }
 }
 
 #Preview("Nothing selected") {

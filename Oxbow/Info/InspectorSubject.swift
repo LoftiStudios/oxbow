@@ -42,8 +42,18 @@ struct MultiSelection: Equatable {
 
   /// Queue order, capped at four. A nil entry is a job whose video has no
   /// thumbnail and draws a placeholder tile, keeping the stack's shape rather
-  /// than collapsing it. Filled by slice E.
+  /// than collapsing it.
   var thumbnails: [URL?] = []
+
+  /// Which channels the selection spans, in queue order, de-duplicated.
+  ///
+  /// **Display names, which is why `VideoRecord.displayName` had to exist.**
+  /// Before it, this line would have read `leighxp, wheelyf` — the logins,
+  /// which `video-record.md` §3.4 is clear are a different string from the
+  /// name a person recognises. A record that has never learned a name
+  /// contributes nothing rather than its login: one lowercase entry in a list
+  /// of proper names reads as a bug, and the list is already truncated.
+  var channels: [String] = []
 }
 
 extension InspectorSubject {
@@ -103,6 +113,7 @@ extension InspectorSubject {
       }
       many.estimatedBytes = estimate(selected, library: library)
       many.thumbnails = stack(selected, library: library)
+      many.channels = channels(selected, library: library)
       return .many(many)
     }
   }
@@ -168,6 +179,24 @@ extension InspectorSubject {
       guard let media = job.mediaIdentifier else { return nil }
       return library.videos[media]?.thumbnailURLs.first
     }
+  }
+
+  /// The distinct channels the selection spans, first-seen order.
+  ///
+  /// Queue order again rather than the selection's, for §5.1's reason — the
+  /// list is truncated on screen, so which names survive the truncation has to
+  /// be stable between rebuilds.
+  private static func channels(_ jobs: [Job], library: VideoLibrary) -> [String] {
+    var seen = Set<String>()
+    var names: [String] = []
+    for job in jobs {
+      guard let media = job.mediaIdentifier,
+            let name = library.videos[media]?.displayName,
+            seen.insert(name).inserted
+      else { continue }
+      names.append(name)
+    }
+    return names
   }
 
   /// The job's video download, when it has one. A chat-only or clip job has
