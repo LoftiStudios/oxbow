@@ -74,10 +74,28 @@ struct SelectionStack: View {
           // in could land *behind* the pile, which reads as the bottom
           // thumbnail animating rather than the new one.
           .zIndex(Double(index))
-          // In from the side, out the same way. Symmetric, so deselecting
-          // reads as the undo of selecting rather than the pile silently
-          // becoming shorter.
-          .transition(.offset(x: Self.entry).combined(with: .opacity))
+          // **In from the side always; out two different ways.**
+          //
+          // A card leaves for one of two reasons, and they do not look alike.
+          // Deselecting dismisses a card you can see, so it flies out the way
+          // it came in — the undo of selecting it. Being *pushed off the
+          // bottom* by a newer arrival is not a dismissal at all: that card is
+          // at the back of the pile, largely hidden, and the motion worth
+          // watching is the new one landing on top. Flying it out sideways
+          // made the eye follow the wrong card entirely.
+          //
+          // Told apart by position rather than by cause, which needs no extra
+          // state: the card pushed off is always the deepest one, and the
+          // deepest card is the one you can least see. It fades whatever sent
+          // it away — including a deselect, where flying a mostly-occluded
+          // card out from behind the others would look stranger than a fade.
+          //
+          // The last card standing is the front one, so it flies.
+          .transition(.asymmetric(
+            insertion: .offset(x: Self.entry).combined(with: .opacity),
+            removal: index == 0 && visible.count > 1
+              ? .opacity
+              : .offset(x: Self.entry).combined(with: .opacity)))
       }
     }
     .animation(.spring(response: 0.38, dampingFraction: 0.8), value: visible)
