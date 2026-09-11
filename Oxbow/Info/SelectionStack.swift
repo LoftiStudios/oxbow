@@ -105,12 +105,20 @@ struct SelectionStack: View {
     // The first sleep is what makes any of it animate at all: state set in the
     // same pass as the first render is coalesced with it, and SwiftUI sees no
     // change to animate.
+    // **One assignment, no loop, and the loop was a bug.**
+    //
+    // This used to deal the cards in one at a time with a sleep between, to
+    // stagger the opening. `.task` captures `cards` by value when it starts,
+    // so a card selected during those ~250ms was written into `visible` by
+    // `onChange` and then overwritten when the loop finished and assigned its
+    // own stale copy back. Adding to a selection is exactly the thing done in
+    // quick succession — ⇧↑ four times — so the race was reachable almost
+    // every time, while a deselect made later was never affected.
+    //
+    // The stagger is not worth a state race. The opening is now four cards
+    // arriving together, which is the same motion an addition makes.
     .task {
       try? await Task.sleep(for: .milliseconds(16))
-      for card in cards where !visible.contains(card) {
-        visible.append(card)
-        try? await Task.sleep(for: .milliseconds(55))
-      }
       visible = cards
     }
     // After the deal, the pile follows the selection directly: one card in, or
