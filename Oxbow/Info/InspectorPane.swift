@@ -127,7 +127,13 @@ struct InspectorPane: View {
       guard let controller else { return }
       metadata = await VideoInfoLoad.resolve(
         identifier: VideoInfoLoad.identifier(for: target, jobs: controller.jobs),
-        controller: controller, record: record)
+        controller: controller, record: record,
+        // **Record first here, live first in the window.** This pane is
+        // glanced at while arrowing down a list; paying an `info` subprocess
+        // per row made that cost a second each and spent bandwidth on
+        // metadata already sitting in `videos.json`. See
+        // `VideoInfoLoad.Freshness`.
+        freshness: .remembered)
     }
   }
 

@@ -35,36 +35,55 @@ extension VideoInfoLoad {
     }
   }
 
-  /// Live from Twitch, else remembered from the record, else nothing.
+  /// Which source to try first.
   ///
-  /// **Moved verbatim out of `JobInfoWindow.loadMetadata()`** — the order of
-  /// these three attempts is the behaviour `video-record.md` exists to
-  /// provide, and this extraction deliberately changed none of it.
+  /// **The two surfaces want opposite orders, and the reason is what the whole
+  /// inspector design rests on.** Get Info is a deliberate gesture on one
+  /// video, where the freshest possible answer is worth a wait. The inspector
+  /// is *ambient* and follows the selection, so the same wait is paid on every
+  /// arrow-key press down a list.
+  ///
+  /// That wait is not small: `QueueController.fetchInfo` runs the CLI's `info`
+  /// verb as a **child process** — .NET startup, a GraphQL call and an m3u8
+  /// fetch — for metadata the record usually already holds on disk. Measured
+  /// at a second or two on a phone tether, where it also spends bandwidth
+  /// somebody is paying for.
+  ///
+  /// `video-record.md` §6.1 already draws this line: the live upgrade belongs
+  /// "in one place only", which is Get Info.
+  enum Freshness {
+    /// Ask Twitch, fall back to the record. Get Info's order, unchanged.
+    case live
+    /// Use the record when there is one, and ask Twitch only when there is
+    /// not. Instant, offline, and free — at the cost of a retitled VOD
+    /// reading by its old name until something fetches it live.
+    case remembered
+  }
+
+  /// Live from Twitch, else remembered from the record, else nothing — or the
+  /// first two swapped, per `freshness`.
+  ///
+  /// The live-first order moved verbatim out of `JobInfoWindow.loadMetadata()`
+  /// and is what `.live` still does. `.live` is the default so the window's
+  /// call site did not change and cannot change by omission.
   static func resolve(
     identifier: String?,
     controller: QueueController,
-    record: VideoRecordStore?
+    record: VideoRecordStore?,
+    freshness: Freshness = .live
   ) async -> VideoInfoLoad {
     guard let identifier else { return .unavailable }
+
+    if freshness == .remembered, let known = remembered(identifier, in: record) {
+      return .loaded(known)
+    }
 
     if let info = try? await controller.fetchInfo(for: identifier) {
       return .loaded(info)
     }
 
-    // A private, deleted or expired VOD. Twitch has no answer any more, but
-    // the metadata was fetched once while it did and written down — which is
-    // the entire reason `docs/design/video-record.md` exists. Before the
-    // record, this is where the card became a grey rectangle with whatever
-    // title the job happened to store.
-    //
-    // Rendered as `.loaded`, not as a third state: a remembered card and a
-    // live one describe the same video and should read identically. The one
-    // visible difference is that `streamer` falls back to the login, because
-    // a record holds no display name — see `VideoRecord.remembered()`.
-    if let remembered = record.flatMap({ try? $0.load() })?
-      .videos[identifier]?.remembered()
-    {
-      return .loaded(remembered)
+    if let known = remembered(identifier, in: record) {
+      return .loaded(known)
     }
 
     // Nothing live and nothing remembered — a video downloaded before the
@@ -72,5 +91,23 @@ extension VideoInfoLoad {
     // seen-set and never gained a title. The card falls back to the job's own
     // title, which is all that survives.
     return .unavailable
+  }
+
+  /// What the record kept, if anything.
+  ///
+  /// A private, deleted or expired VOD reaches this having had no live answer.
+  /// The metadata was fetched once while Twitch still had it and written down,
+  /// which is the entire reason `docs/design/video-record.md` exists — before
+  /// the record, that card was a grey rectangle with whatever title the job
+  /// happened to store.
+  ///
+  /// Rendered as `.loaded`, not as a third state: a remembered card and a live
+  /// one describe the same video and should read identically. The one visible
+  /// difference is that `streamer` falls back to the login, because a record
+  /// holds no display name — see `VideoRecord.remembered()`.
+  private static func remembered(
+    _ identifier: String, in record: VideoRecordStore?
+  ) -> VideoInfo? {
+    record.flatMap { try? $0.load() }?.videos[identifier]?.remembered()
   }
 }
