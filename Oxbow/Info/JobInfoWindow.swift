@@ -187,37 +187,8 @@ struct JobInfoWindow: View {
       .formStyle(.grouped)
 
       Divider()
-      footer(for: info)
+      SavedToFooter(info: info)
     }
-  }
-
-  private func footer(for info: JobInfo) -> some View {
-    HStack(spacing: 8) {
-      Text("Saved to").foregroundStyle(.secondary)
-      if let folder = info.destinationFolder {
-        Image(nsImage: NSWorkspace.shared.icon(forFile: folder.path(percentEncoded: false)))
-          .resizable()
-          .frame(width: 16, height: 16)
-        Text(folder.lastPathComponent)
-          .lineLimit(1)
-          .truncationMode(.middle)
-          .help(folder.path(percentEncoded: false))
-      } else {
-        Text("Unknown").foregroundStyle(.secondary)
-      }
-
-      Spacer(minLength: 8)
-
-      Button("Show in Finder") {
-        NSWorkspace.shared.activateFileViewerSelecting(
-          info.deliveredFiles.isEmpty
-            ? [info.destinationFolder].compactMap { $0 }
-            : info.deliveredFiles)
-      }
-      .disabled(info.destinationFolder == nil && info.deliveredFiles.isEmpty)
-    }
-    .padding(.horizontal, 20)
-    .padding(.vertical, 14)
   }
 
   /// Re-fetches the video's metadata for the thumbnail and title.
@@ -242,7 +213,11 @@ struct JobInfoWindow: View {
 /// one, and this row is the only place in the app that has room for both.
 /// It is also what keeps the row legible to VoiceOver, which is why the image
 /// is hidden from it here for the same reason it is in `JobRow`.
-private struct JobStatusValue: View {
+/// **Internal, not private: `InspectorPane` renders the same row.** The two
+/// surfaces must not develop separate vocabularies for the same five states —
+/// a status that reads "Done" in one place and "Finished" in another is the
+/// drift this whole design keeps refusing.
+struct JobStatusValue: View {
   let status: JobStatus
 
   @Environment(\.colorScheme) private var colorScheme

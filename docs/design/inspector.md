@@ -153,10 +153,22 @@ component."
 two surfaces share a component while answering opposite questions underneath.
 So the rule for the 300pt problem is simple and it is not a compromise:
 
-| | Card | Facts | Job status | Steps | Delivered files |
-|---|---|---|---|---|---|
-| **Inspector** | ✓ identical | ✓ | one line | — | Show in Finder only |
-| **Window** | ✓ identical | ✓ | ✓ | ✓ full | ✓ full list |
+| | Card | Download facts | Steps | Delivered files |
+|---|---|---|---|---|
+| **Inspector** | ✓ identical | Status · Outputs · Quality · Trim · Filesize | — | Show in Finder |
+| **Window** | ✓ identical | Status · Outputs · Quality · Trim | ✓ full | ✓ full list |
+
+**Every value in that column is `JobInfo`'s**, the same property the window's
+own Download section reads — `outputs`, `quality`, `trim` — rendered by the
+same `JobStatusValue` and closed by the same `SavedToFooter`. The two surfaces
+show a different *amount* and never a different *answer*.
+
+**Filesize is the inspector's alone, and it is the one thing here the window
+does not show.** It is the delivered files' actual size on disk rather than an
+estimate, and it follows §5.3's rule rather than the estimate's: shown only
+when every delivered file could be measured, absent when one could not. A file
+on an unmounted volume has no size to report, and a total quietly omitting it
+would read as a smaller download rather than an unmeasured one.
 
 Show in Finder is the one ambient *action* worth carrying, because "where did
 that go" is asked far more often than "which of the four steps failed".

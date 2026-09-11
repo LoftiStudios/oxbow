@@ -35,6 +35,10 @@ struct InspectorPane: View {
   /// the thing feeding it.
   @State private var metadata: VideoInfoLoad = .loading
 
+  /// The delivered files' size on disk, measured off the main path in the same
+  /// task as the metadata. Nil until measured, and nil when it cannot be.
+  @State private var deliveredBytes: Int64?
+
   var body: some View {
     Group {
       switch subject {
@@ -65,53 +69,48 @@ struct InspectorPane: View {
 
   @ViewBuilder
   private func single(_ target: InfoTarget) -> some View {
-    ScrollView {
-      VStack(alignment: .leading, spacing: 12) {
-        // **Identical to the window's**, from the same loader.
-        // `video-record.md` §4.1's "one component", and `inspector.md` §11
-        // rejects a compact variant outright: if this reads badly at 300pt
-        // the fix belongs in `VideoCard`, not in a second card here.
-        switch metadata {
-        case .loading:
-          VideoCard(.loading)
-        case .loaded(let info):
-          VideoCard(info: info)
-        case .unavailable:
-          VideoCard(.unavailable(title: job(for: target)?.title ?? "Video"))
-        }
-
-        if let job = job(for: target) {
-          // **No job title here.** The card above already names the video,
-          // and a job's title is that name with the channel and date prefixed
-          // — printed under the card it reads as the same sentence twice.
-          // §4's table lists the card, the facts, a one-line status and Show
-          // in Finder; the title was never one of them.
-          LabeledContent("Status", value: statusText(job.status))
-
-          // The one ambient *action* worth carrying (§4). "Where did that go"
-          // is asked far more often than "which of the four steps failed",
-          // and the second stays the window's job.
+    let job = job(for: target)
+    VStack(spacing: 0) {
+      ScrollView {
+        VStack(alignment: .leading, spacing: 16) {
+          // **Identical to the window's**, from the same loader.
+          // `video-record.md` §4.1's "one component", and `inspector.md` §11
+          // rejects a compact variant outright: if this reads badly at 300pt
+          // the fix belongs in `VideoCard`, not in a second card here.
           //
-          // `Job.deliveredFiles` rather than a second accessor of our own —
-          // it is what `JobInfoWindow` already asks, and it is only the files
-          // that actually landed, not the workspace copies.
-          if !job.deliveredFiles.isEmpty {
-            Button("Show in Finder") {
-              NSWorkspace.shared.activateFileViewerSelecting(job.deliveredFiles)
-            }
+          // The card draws its own title, streamer and date line, which is why
+          // none of those are repeated below it.
+          switch metadata {
+          case .loading:
+            VideoCard(.loading)
+          case .loaded(let info):
+            VideoCard(info: info)
+          case .unavailable:
+            VideoCard(.unavailable(title: job?.title ?? "Video"))
           }
-        } else {
-          // No job, but the card above still describes the video — which is
-          // `video-record.md` §4.3's case: a watched archive you have not
-          // downloaded has a card, a date and a duration, and one line saying
-          // you do not have it.
-          Text("Not downloaded")
-            .foregroundStyle(.secondary)
+
+          if let job {
+            facts(JobInfo(job: job))
+          } else {
+            // No job, but the card above still describes the video — which is
+            // `video-record.md` §4.3's case: a watched archive you have not
+            // downloaded has a card, a date and a duration, and one line
+            // saying you do not have it.
+            Text("Not downloaded")
+              .foregroundStyle(.secondary)
+          }
         }
-        Spacer(minLength: 0)
+        .padding()
+        .frame(maxWidth: .infinity, alignment: .leading)
       }
-      .padding()
-      .frame(maxWidth: .infinity, alignment: .leading)
+
+      if let job {
+        Divider()
+        // Shared with the window — see `SavedToFooter`. Pinned rather than
+        // scrolled: "where did that go" should not require reaching the
+        // bottom of a card.
+        SavedToFooter(info: JobInfo(job: job))
+      }
     }
     // Keyed on the identifier, matching `JobInfoWindow`'s own `.task(id:)`,
     // so moving between two rows for the same video does not refetch.
@@ -124,6 +123,7 @@ struct InspectorPane: View {
       // glanced at rather than read carefully, which is exactly the habit a
       // wrong card would poison.
       metadata = .loading
+      deliveredBytes = nil
       guard let controller else { return }
       metadata = await VideoInfoLoad.resolve(
         identifier: VideoInfoLoad.identifier(for: target, jobs: controller.jobs),
@@ -134,7 +134,67 @@ struct InspectorPane: View {
         // metadata already sitting in `videos.json`. See
         // `VideoInfoLoad.Freshness`.
         freshness: .remembered)
+      deliveredBytes = Self.sizeOnDisk(of: job?.deliveredFiles ?? [])
     }
+  }
+
+  /// What the download was asked to do, and what it produced.
+  ///
+  /// **Every value here is `JobInfo`'s**, the same one `JobInfoWindow`'s
+  /// Download section reads. The two surfaces show a different *amount* —
+  /// §4's table gives the window the step breakdown and keeps it out of here —
+  /// but never a different *answer*.
+  private func facts(_ info: JobInfo) -> some View {
+    GroupBox {
+      VStack(spacing: 0) {
+        row("Status") { JobStatusValue(status: info.job.status) }
+        Divider()
+        row("Outputs") { Text(info.outputs.joined(separator: ", ")) }
+        if !info.quality.isEmpty {
+          Divider()
+          row("Quality") { Text(info.quality) }
+        }
+        Divider()
+        row("Trim") { Text(info.trim) }
+        // **Shown only when every delivered file could be measured** — the
+        // same rule §5.3 applies to the multi-selection estimate, for the same
+        // reason. A file on an unmounted volume cannot be sized, and a total
+        // that quietly omitted it would read as a smaller download rather than
+        // an unmeasured one.
+        if let deliveredBytes {
+          Divider()
+          row("Filesize") { Text(deliveredBytes.formatted(.byteCount(style: .file))) }
+        }
+      }
+    }
+  }
+
+  private func row<Value: View>(
+    _ label: String, @ViewBuilder value: () -> Value
+  ) -> some View {
+    HStack {
+      Text(label)
+      Spacer(minLength: 12)
+      value().fontWeight(.medium)
+    }
+    .padding(.vertical, 6)
+  }
+
+  /// The delivered files' total size, or nil if any of them could not be read.
+  ///
+  /// Never a partial sum, and never zero standing in for "could not ask" — the
+  /// distinction `VolumeSpace.nearestExisting` exists to preserve, applied to a
+  /// smaller number. A download on a disconnected volume shows no size rather
+  /// than a wrong one.
+  private static func sizeOnDisk(of files: [URL]) -> Int64? {
+    guard !files.isEmpty else { return nil }
+    var total = Int64(0)
+    for file in files {
+      guard let size = try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize
+      else { return nil }
+      total += Int64(size)
+    }
+    return total
   }
 
   @ViewBuilder
@@ -183,16 +243,6 @@ struct InspectorPane: View {
       return controller.jobs.first { $0.id == id }
     case .video(let media):
       return controller.jobs.first { $0.mediaIdentifier == media }
-    }
-  }
-
-  private func statusText(_ status: JobStatus) -> String {
-    switch status {
-    case .queued: return "Queued"
-    case .running: return "Downloading"
-    case .done: return "Done"
-    case .failed: return "Failed"
-    case .cancelled: return "Cancelled"
     }
   }
 
