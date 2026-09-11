@@ -69,18 +69,6 @@ struct QueueView: View {
   /// nil the same way rather than showing a blank pane.
   @State private var sidebarSelection: SidebarItem? = .queue
 
-  private enum SidebarItem: Hashable {
-    case queue
-    case watching
-    /// One watched channel, by login.
-    ///
-    /// **Login, not display name.** `docs/design/video-record.md` §3.4: a
-    /// display name can be Japanese while the login is ASCII, and neither
-    /// derives from the other. The login is what `watches.json` is keyed on
-    /// and what every lookup here has to use.
-    case channel(String)
-  }
-
   /// A removal waiting on the user, and the dialog's own presentation flag.
   ///
   /// Two pieces of state rather than one optional driving a computed
