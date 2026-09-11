@@ -484,24 +484,21 @@ inbox has few rows per channel and the library has hundreds.
 
 ### 9.2 Does Get Info become an inspector?
 
-The original shape this document came from was three columns: sidebar, list,
-and a trailing pane showing the selected row's info — Agenda's layout, and the
-one Notes, Freeform and Xcode use.
+**Answered elsewhere: `docs/design/inspector.md`.** Yes — but *beside* the Get
+Info window rather than instead of it.
 
-It is a real improvement to argue for and it is not free. `OxbowApp.swift:333`
-records why Get Info is a `WindowGroup(for:)` today, and the reasons are
-specific: asking twice about the same video focuses the open window instead of
-stacking duplicates, and two videos can be compared side by side — "which is
-what Finder's ⌘I does and what a single follows-the-selection panel cannot."
-`video-record.md` §4.1 says the same. An inspector genuinely cannot compare
-two things.
+The framing in this section was wrong and that document says so. It presented
+the choice as a trade, on the grounds that an inspector "genuinely cannot
+compare two things" while `OxbowApp.swift:333` argues for the window on
+exactly that ground. Both halves are true and they are not in conflict,
+because **Finder ships both**: ⌘I opens a window per item, and ⇧⌘P shows a
+pane that follows the selection. They answer different questions — "keep this
+in front of me" and "what am I looking at now" — and Oxbow has only ever had
+the first.
 
-The other cost is width: the window's floor is 660pt (480 + 180) and an
-inspector wants 280–320, putting comfortable use near 1000.
-
-Worth doing, worth doing after this, and worth its own document — including
-whether ⌘I still tears off a window for the comparison case, or whether that
-case is conceded.
+So nothing here is conceded, `OxbowApp.swift:333` stays true of the window,
+and the width cost this section quoted is the one real objection that
+survives.
 
 ---
 
