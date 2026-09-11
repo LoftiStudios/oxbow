@@ -253,6 +253,19 @@ private func thumbnailPlaceholderSymbol(_ name: String) -> some View {
   Image(systemName: name)
     .font(.title2)
     .foregroundStyle(.tertiary)
+    // **Fills the slot rather than sitting in it.** `VideoThumbnail` applies
+    // `.aspectRatio(16:9, contentMode: .fit)` around this, and `.fit` sizes
+    // against the content's own ideal size — a bare `Image` is symbol-sized,
+    // so the frame collapsed to a ~30pt bar and the card lost the one thing
+    // the slot exists to guarantee.
+    //
+    // That shape is not decoration: `VideoCard.Content`'s doc comment
+    // promises the card "draws the same layout at the same size" in all three
+    // states, and `VideoThumbnail`'s own explains that a card which changed
+    // shape with the link "would move every control below it". Both were
+    // false for every placeholder case — which is `video-record.md` §1's
+    // motivating case, the expired VOD whose card it exists to repair.
+    .frame(maxWidth: .infinity, maxHeight: .infinity)
 }
 
 /// Plays a VOD's sampled preview frames as a slow, continuous filmstrip: a
