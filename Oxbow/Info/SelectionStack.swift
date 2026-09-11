@@ -33,16 +33,47 @@ struct SelectionStack: View {
   private static let drop: CGFloat = 2
   private static let turn: Double = -3
 
+  /// Whether the cards have dealt out of the front one yet.
+  ///
+  /// **False for exactly one frame.** The fan starts collapsed — every card
+  /// squared up behind the front one — and springs apart on appear, which is
+  /// the motion Mail uses when a multi-selection replaces a single one. It
+  /// says "these several" in a way a static fan has to be read to say.
+  ///
+  /// Deliberately keyed to *appearing*, not to the count. Extending a
+  /// selection by shift-clicking down a list would otherwise re-collapse and
+  /// re-deal on every row, which is four animations nobody asked for; a card
+  /// added to a fan already on screen slides in on its own instead (see the
+  /// `.animation` on the count below).
+  @State private var fanned = false
+
   var body: some View {
     ZStack {
       // Reversed so index 0 is drawn last and lands on top: the fan reads
       // front-to-back in the same order the queue does.
       ForEach(Array(thumbnails.enumerated()).reversed(), id: \.offset) { index, url in
         StackTile(url: url, store: store)
-          .rotationEffect(.degrees(Double(index) * Self.turn), anchor: .bottomTrailing)
-          .offset(x: CGFloat(index) * -Self.slide, y: CGFloat(index) * Self.drop)
+          .rotationEffect(
+            .degrees(fanned ? Double(index) * Self.turn : 0), anchor: .bottomTrailing)
+          .offset(
+            x: fanned ? CGFloat(index) * -Self.slide : 0,
+            y: fanned ? CGFloat(index) * Self.drop : 0)
+          // Hidden while stacked so the deal reads as cards emerging from
+          // behind the front one rather than a single card splitting apart.
+          // The front card never fades: something is always there.
+          .opacity(fanned || index == 0 ? 1 : 0)
+          // Staggered, back card last, so the eye follows the deal outward.
+          // Short enough that it is over before it can feel like waiting.
+          .animation(
+            .spring(response: 0.32, dampingFraction: 0.72)
+              .delay(Double(index) * 0.04),
+            value: fanned)
       }
     }
+    // A card added to a fan already on screen animates into place rather than
+    // popping — the other half of the rule `fanned`'s doc comment states.
+    .animation(.spring(response: 0.32, dampingFraction: 0.8), value: thumbnails.count)
+    .onAppear { fanned = true }
     // Room for the rotated corners of the deepest card, which otherwise clip
     // against the section's edge.
     // Exactly enough for the deepest card's own offset, so the fan's left
