@@ -71,8 +71,7 @@ struct InspectorPane: View {
   private func single(_ target: InfoTarget) -> some View {
     let job = job(for: target)
     VStack(spacing: 0) {
-      ScrollView {
-        VStack(alignment: .leading, spacing: 16) {
+      Form {
           // **Identical to the window's**, from the same loader.
           // `video-record.md` §4.1's "one component", and `inspector.md` §11
           // rejects a compact variant outright: if this reads badly at 300pt
@@ -80,6 +79,7 @@ struct InspectorPane: View {
           //
           // The card draws its own title, streamer and date line, which is why
           // none of those are repeated below it.
+        Section {
           switch metadata {
           case .loading:
             VideoCard(.loading)
@@ -89,20 +89,23 @@ struct InspectorPane: View {
             VideoCard(.unavailable(title: job?.title ?? "Video"))
           }
 
-          if let job {
-            facts(JobInfo(job: job))
-          } else {
-            // No job, but the card above still describes the video — which is
-            // `video-record.md` §4.3's case: a watched archive you have not
-            // downloaded has a card, a date and a duration, and one line
-            // saying you do not have it.
-            Text("Not downloaded")
-              .foregroundStyle(.secondary)
+        }
+
+        if let job {
+          facts(JobInfo(job: job))
+        } else {
+          // No job, but the card above still describes the video — which is
+          // `video-record.md` §4.3's case: a watched archive you have not
+          // downloaded has a card, a date and a duration, and one line saying
+          // you do not have it.
+          Section {
+            Text("Not downloaded").foregroundStyle(.secondary)
           }
         }
-        .padding()
-        .frame(maxWidth: .infinity, alignment: .leading)
       }
+      // The same style Get Info uses, so the two read as one app rather than
+      // two surfaces that happen to show the same facts.
+      .formStyle(.grouped)
 
       if let job {
         Divider()
@@ -140,44 +143,35 @@ struct InspectorPane: View {
 
   /// What the download was asked to do, and what it produced.
   ///
-  /// **Every value here is `JobInfo`'s**, the same one `JobInfoWindow`'s
-  /// Download section reads. The two surfaces show a different *amount* —
-  /// §4's table gives the window the step breakdown and keeps it out of here —
-  /// but never a different *answer*.
+  /// **Every value here is `JobInfo`'s**, the same property `JobInfoWindow`'s
+  /// own Download section reads, rendered by the same `JobStatusValue`. The
+  /// two surfaces show a different *amount* — §4's table gives the window the
+  /// step breakdown and keeps it out of here — but never a different *answer*.
+  ///
+  /// **`LabeledContent` in a grouped `Form`, not a hand-rolled row.** That is
+  /// what gives a label its primary weight and a value its secondary one,
+  /// which is the convention every Apple inspector-style list follows and the
+  /// one Get Info already follows two feet away. An earlier version here drew
+  /// the values in medium weight, which emphasised all of them and therefore
+  /// none — and disagreed with the window about the same five facts.
   private func facts(_ info: JobInfo) -> some View {
-    GroupBox {
-      VStack(spacing: 0) {
-        row("Status") { JobStatusValue(status: info.job.status) }
-        Divider()
-        row("Outputs") { Text(info.outputs.joined(separator: ", ")) }
-        if !info.quality.isEmpty {
-          Divider()
-          row("Quality") { Text(info.quality) }
-        }
-        Divider()
-        row("Trim") { Text(info.trim) }
-        // **Shown only when every delivered file could be measured** — the
-        // same rule §5.3 applies to the multi-selection estimate, for the same
-        // reason. A file on an unmounted volume cannot be sized, and a total
-        // that quietly omitted it would read as a smaller download rather than
-        // an unmeasured one.
-        if let deliveredBytes {
-          Divider()
-          row("Filesize") { Text(deliveredBytes.formatted(.byteCount(style: .file))) }
-        }
+    Section("Download") {
+      LabeledContent("Status") { JobStatusValue(status: info.job.status) }
+      LabeledContent("Outputs", value: info.outputs.joined(separator: ", "))
+      if !info.quality.isEmpty {
+        LabeledContent("Quality", value: info.quality)
+      }
+      LabeledContent("Trim", value: info.trim)
+      // **Shown only when every delivered file could be measured** — the same
+      // rule §5.3 applies to the multi-selection estimate, for the same
+      // reason. A file on an unmounted volume cannot be sized, and a total
+      // that quietly omitted it would read as a smaller download rather than
+      // an unmeasured one.
+      if let deliveredBytes {
+        LabeledContent(
+          "Filesize", value: deliveredBytes.formatted(.byteCount(style: .file)))
       }
     }
-  }
-
-  private func row<Value: View>(
-    _ label: String, @ViewBuilder value: () -> Value
-  ) -> some View {
-    HStack {
-      Text(label)
-      Spacer(minLength: 12)
-      value().fontWeight(.medium)
-    }
-    .padding(.vertical, 6)
   }
 
   /// The delivered files' total size, or nil if any of them could not be read.

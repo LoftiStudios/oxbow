@@ -24,6 +24,23 @@ public struct VideoRecord: Equatable, Sendable, Codable {
   public var id: String
 
   public var login: String?
+
+  /// The channel's name as Twitch presents it — `VideoInfo.streamer`, which is
+  /// `video.owner.displayName`.
+  ///
+  /// **Stored rather than derived, because it cannot be derived.**
+  /// `video-record.md` §3.4 is explicit that a display name and a login are
+  /// two different strings and neither follows from the other: a display name
+  /// can be Japanese while the login is ASCII. Without this field a remembered
+  /// card had to fall back to the login, so an expired VOD read `seecatplay`
+  /// where a live one read `SeeCatPlay` — a visible difference between a card
+  /// the record drew and the same card drawn from Twitch, which §4.1 of that
+  /// document says must not exist.
+  ///
+  /// Optional like every other field here: a sweep learns it from the watch,
+  /// a submission from the payload, and a record written before this existed
+  /// has none.
+  public var displayName: String?
   public var title: String?
   public var durationSeconds: Int?
   public var publishedAt: Date?
@@ -52,6 +69,7 @@ public struct VideoRecord: Equatable, Sendable, Codable {
   public init(
     id: String,
     login: String? = nil,
+    displayName: String? = nil,
     title: String? = nil,
     durationSeconds: Int? = nil,
     publishedAt: Date? = nil,
@@ -64,6 +82,7 @@ public struct VideoRecord: Equatable, Sendable, Codable {
   {
     self.id = id
     self.login = login
+    self.displayName = displayName
     self.title = title
     self.durationSeconds = durationSeconds
     self.publishedAt = publishedAt
@@ -96,7 +115,10 @@ public struct VideoRecord: Equatable, Sendable, Codable {
   public func remembered() -> VideoInfo? {
     guard let title else { return nil }
     return VideoInfo(
-      streamer: login ?? "",
+      // The display name when the record kept one, the login when it did not.
+      // Before `displayName` existed this was always the login, which is what
+      // made a remembered card visibly different from a live one.
+      streamer: displayName ?? login ?? "",
       login: login,
       title: title,
       createdAt: publishedAt ?? .distantPast,
@@ -128,6 +150,7 @@ public struct VideoRecord: Equatable, Sendable, Codable {
 
     var merged = self
     merged.login = other.login ?? login
+    merged.displayName = other.displayName ?? displayName
     merged.title = other.title ?? title
     merged.durationSeconds = other.durationSeconds ?? durationSeconds
     merged.publishedAt = other.publishedAt ?? publishedAt

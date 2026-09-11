@@ -34,7 +34,7 @@ struct WatchPollerRecordingTests {
 
     WatchPoller.record(
       archives: [archive("1"), archive("2")],
-      forLogin: "wheelyf",
+      forLogin: "wheelyf", displayName: "WheelyF",
       seenAt: Date(timeIntervalSince1970: 1_757_100_000),
       into: store)
 
@@ -42,6 +42,10 @@ struct WatchPollerRecordingTests {
     #expect(library.videos.keys.sorted() == ["1", "2"])
     #expect(library.videos["1"]?.title == "day 1")
     #expect(library.videos["1"]?.login == "wheelyf")
+    // A display name and a login are two different strings and neither
+    // follows from the other (`video-record.md` §3.4), so the sweep has to
+    // carry it rather than let a remembered card fall back to the login.
+    #expect(library.videos["1"]?.displayName == "WheelyF")
     #expect(library.videos["1"]?.durationSeconds == 10203)
     #expect(library.videos["1"]?.categoryName == "ELDEN RING")
     #expect(library.videos["1"]?.lastSeenOnTwitch == Date(timeIntervalSince1970: 1_757_100_000))
@@ -63,7 +67,7 @@ struct WatchPollerRecordingTests {
     try store.save(seeded)
 
     WatchPoller.record(
-      archives: [archive("1")], forLogin: "wheelyf",
+      archives: [archive("1")], forLogin: "wheelyf", displayName: "WheelyF",
       seenAt: Date(timeIntervalSince1970: 1_757_100_000), into: store)
 
     let library = try store.load()
@@ -78,7 +82,8 @@ struct WatchPollerRecordingTests {
     defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
     let store = VideoRecordStore(fileURL: file)
 
-    WatchPoller.record(archives: [], forLogin: "wheelyf", seenAt: .now, into: store)
+    WatchPoller.record(archives: [], forLogin: "wheelyf", displayName: "WheelyF",
+                       seenAt: .now, into: store)
 
     #expect(!FileManager.default.fileExists(atPath: file.path))
   }

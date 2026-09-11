@@ -317,7 +317,8 @@ final class WatchPoller {
     for result in swept {
       guard case .found(let archives) = result.outcome else { continue }
       Self.record(
-        archives: archives, forLogin: result.login, seenAt: now(), into: videoRecordStore)
+        archives: archives, forLogin: result.login,
+        displayName: result.displayName, seenAt: now(), into: videoRecordStore)
     }
     lastPolled = now()
     let submitted = await actOnFindings(watches: watches, results: swept)
@@ -610,6 +611,7 @@ final class WatchPoller {
   static func record(
     archives: [ChannelArchive],
     forLogin login: String,
+    displayName: String?,
     seenAt: Date,
     into store: VideoRecordStore)
   {
@@ -628,6 +630,7 @@ final class WatchPoller {
       library.record(VideoRecord(
         id: archive.id,
         login: login,
+        displayName: displayName,
         title: archive.title,
         durationSeconds: Int(archive.duration.components.seconds),
         publishedAt: archive.publishedAt,
