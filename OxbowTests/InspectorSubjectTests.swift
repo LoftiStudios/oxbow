@@ -321,14 +321,32 @@ struct InspectorSubjectTests {
     #expect(m.channels == ["LeighXP", "WheelyF", "AvaBamby"])
   }
 
-  /// A record that never learned a name contributes nothing rather than its
-  /// login — one lowercase entry among proper names reads as a bug.
-  @Test func aChannelWithNoRememberedNameIsOmitted() throws {
+  /// **A record with no display name falls back to its login, never to
+  /// nothing.** Observed naming two of three channels because the third was
+  /// never watched and so never backfilled — a line listing the channels that
+  /// silently drops one is the same partial-answer mistake `estimatedBytes`
+  /// refuses.
+  @Test func aChannelWithNoRememberedNameFallsBackToItsLogin() throws {
     let a = videoJob("A", videoID: "1")
     let b = videoJob("B", videoID: "2")
     let lib = library([
       VideoRecord(id: "1", displayName: "LeighXP", durationSeconds: 60, qualities: [sd]),
-      priceable("2"),
+      VideoRecord(id: "2", login: "lilbadsnacks", durationSeconds: 60, qualities: [sd]),
+    ])
+    guard case .many(let m) = InspectorSubject.resolve(
+      destination: .queue, queueSelection: Set([a, b].map(\.id)),
+      watchingSelection: nil, sections: [], library: lib, jobs: [a, b])
+    else { Issue.record("expected .many"); return }
+    #expect(m.channels == ["LeighXP", "lilbadsnacks"])
+  }
+
+  /// Only a record with neither is skipped — there is nothing to print.
+  @Test func aChannelWithNeitherNameNorLoginIsSkipped() throws {
+    let a = videoJob("A", videoID: "1")
+    let b = videoJob("B", videoID: "2")
+    let lib = library([
+      VideoRecord(id: "1", displayName: "LeighXP", durationSeconds: 60, qualities: [sd]),
+      VideoRecord(id: "2", durationSeconds: 60, qualities: [sd]),
     ])
     guard case .many(let m) = InspectorSubject.resolve(
       destination: .queue, queueSelection: Set([a, b].map(\.id)),

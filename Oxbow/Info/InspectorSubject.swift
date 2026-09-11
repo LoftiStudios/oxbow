@@ -47,12 +47,19 @@ struct MultiSelection: Equatable {
 
   /// Which channels the selection spans, in queue order, de-duplicated.
   ///
-  /// **Display names, which is why `VideoRecord.displayName` had to exist.**
-  /// Before it, this line would have read `leighxp, wheelyf` — the logins,
-  /// which `video-record.md` §3.4 is clear are a different string from the
-  /// name a person recognises. A record that has never learned a name
-  /// contributes nothing rather than its login: one lowercase entry in a list
-  /// of proper names reads as a bug, and the list is already truncated.
+  /// **Display names where the record kept one, the login where it did not.**
+  /// `video-record.md` §3.4: the two are different strings and neither follows
+  /// from the other, which is why `VideoRecord.displayName` exists — without
+  /// it this line read `leighxp, wheelyf`.
+  ///
+  /// **A record with neither is the only thing omitted.** An earlier version
+  /// dropped every record that had no display name, on the theory that one
+  /// lowercase entry among proper names would read as a bug. That was wrong
+  /// twice: plenty of Twitch display names *are* lowercase, and a line naming
+  /// the channels that silently drops one is the same "partial answer
+  /// presented as complete" this file refuses for `estimatedBytes`. Observed
+  /// naming two of three channels, with the third missing only because it was
+  /// never watched.
   var channels: [String] = []
 }
 
@@ -191,7 +198,8 @@ extension InspectorSubject {
     var names: [String] = []
     for job in jobs {
       guard let media = job.mediaIdentifier,
-            let name = library.videos[media]?.displayName,
+            let record = library.videos[media],
+            let name = record.displayName ?? record.login,
             seen.insert(name).inserted
       else { continue }
       names.append(name)

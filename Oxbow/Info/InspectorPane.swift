@@ -242,11 +242,16 @@ struct InspectorPane: View {
   /// One status row for a whole selection.
   ///
   /// **Uniform reads as a count of one thing** — "22 Finished" — which is what
-  /// a person wants nine times in ten. Mixed spells out the parts instead, and
-  /// takes the icon of the most serious status present: a selection that is
-  /// mostly finished with two failures in it is a selection with a problem,
-  /// and a green check over that would be the pane reassuring somebody about
-  /// the wrong thing (§5.2).
+  /// a person wants nine times in ten.
+  ///
+  /// **Mixed spells out every part, each with its own icon.** An earlier
+  /// version drew one icon for the most serious status and left the rest as
+  /// bare words, which made "1 failed · 3 finished" look like one warning
+  /// about four things. The parts are different outcomes and each is entitled
+  /// to say which it is — the failure count is what §5.2 says earns this
+  /// feature, and it should not be the only one wearing a symbol.
+  ///
+  /// Ordered most serious first, so the thing worth acting on is read first.
   @ViewBuilder
   private func statusValue(_ many: MultiSelection) -> some View {
     let parts: [(JobStatus, Int)] = [
@@ -254,23 +259,21 @@ struct InspectorPane: View {
       (.running, many.running), (.queued, many.queued), (.done, many.done),
     ].filter { $0.1 > 0 }
 
-    // Already ordered most-serious-first above, so the first present one is
-    // the one to show.
-    let lead = parts.first?.0 ?? .queued
-    let icon = JobPresentation.icon(for: lead)
-
-    HStack(spacing: QueueMetrics.iconSpacing) {
-      Image(systemName: icon.name)
-        .foregroundStyle(icon.tone.color(for: colorScheme))
-        .accessibilityHidden(true)
-      if parts.count == 1 {
-        Text("\(many.count) \(JobPresentation.accessibilityStatus(of: lead).capitalized)")
-      } else {
-        Text(parts
-          .map { "\($0.1) \(JobPresentation.accessibilityStatus(of: $0.0))" }
-          .joined(separator: " · "))
+    HStack(spacing: 6) {
+      ForEach(Array(parts.enumerated()), id: \.offset) { index, part in
+        if index > 0 {
+          Text("·").foregroundStyle(.secondary)
+        }
+        let icon = JobPresentation.icon(for: part.0)
+        Image(systemName: icon.name)
+          .foregroundStyle(icon.tone.color(for: colorScheme))
+          .accessibilityHidden(true)
+        Text(parts.count == 1
+          ? "\(many.count) \(JobPresentation.accessibilityStatus(of: part.0).capitalized)"
+          : "\(part.1) \(JobPresentation.accessibilityStatus(of: part.0))")
       }
     }
+    .accessibilityElement(children: .combine)
   }
 
   /// The queue's job for this target, when it has one.

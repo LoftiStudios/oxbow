@@ -29,9 +29,9 @@ struct SelectionStack: View {
   /// a stepped column: a pile of photographs tossed down, not a spreadsheet.
   /// Small angles — past about five degrees per card the deepest one reads as
   /// broken rather than casual.
-  private static let slide: CGFloat = 7
-  private static let drop: CGFloat = 3
-  private static let turn: Double = -3.5
+  private static let slide: CGFloat = 5
+  private static let drop: CGFloat = 2
+  private static let turn: Double = -3
 
   var body: some View {
     ZStack {
@@ -45,8 +45,10 @@ struct SelectionStack: View {
     }
     // Room for the rotated corners of the deepest card, which otherwise clip
     // against the section's edge.
-    .padding(.leading, CGFloat(max(thumbnails.count - 1, 0)) * Self.slide + 6)
-    .padding(.bottom, CGFloat(max(thumbnails.count - 1, 0)) * Self.drop + 10)
+    // Exactly enough for the deepest card's own offset, so the fan's left
+    // edge lines up with the text beneath it rather than floating inboard.
+    .padding(.leading, CGFloat(max(thumbnails.count - 1, 0)) * Self.slide)
+    .padding(.bottom, CGFloat(max(thumbnails.count - 1, 0)) * Self.drop + 8)
     // One image of "the things you picked", not four separate controls.
     .accessibilityElement(children: .ignore)
     .accessibilityLabel("Thumbnails of the selected downloads")
