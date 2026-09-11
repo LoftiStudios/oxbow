@@ -69,6 +69,14 @@ struct QueueView: View {
   /// nil the same way rather than showing a blank pane.
   @State private var sidebarSelection: SidebarItem? = .queue
 
+  /// Whether the trailing inspector is open.
+  ///
+  /// **One flag for every destination, not one each.** A control that
+  /// remembers a different answer depending on where you are standing is one
+  /// you cannot predict — `docs/design/inspector.md` §7, which is §6's
+  /// argument about the content applied to the chrome.
+  @State private var isInspectorOpen = false
+
   /// A removal waiting on the user, and the dialog's own presentation flag.
   ///
   /// Two pieces of state rather than one optional driving a computed
@@ -310,6 +318,19 @@ WatchingView(
         }
       }
     }
+    // **On the split view, not on the `VStack` above it** —
+    // `docs/design/inspector.md` §3.1. The banners span the whole window
+    // because they are about the app rather than about the visible pane, so
+    // they have to stay above the inspector exactly as they stay above the
+    // sidebar and the detail.
+    .inspector(isPresented: $isInspectorOpen) {
+      InspectorPane(
+        subject: InspectorSubject.resolve(
+          destination: sidebarSelection,
+          queueSelection: selection,
+          jobs: controller?.jobs ?? []),
+        controller: controller)
+    }
     // 480 is the queue's own minimum, not the window's — it is what a job
     // row needs to keep its title legible, from before this view had a
     // sidebar at all. The +180 is the sidebar's ideal column width (set
@@ -376,6 +397,23 @@ WatchingView(
           .help("Add Download (⌘N)")
           .disabled(controller == nil)
         }
+      }
+
+      // **Outside the branch above**: the inspector belongs to the window,
+      // not to one pane, so unlike Refresh / Add Channel / Add Download it is
+      // present wherever you are standing.
+      //
+      // ⌥⌘I, never ⌘I. ⌘I is Get Info and opens the window it always has —
+      // the two answer different questions (`inspector.md` §2) and the
+      // shortcuts have to say so.
+      ToolbarItem(placement: .primaryAction) {
+        Button {
+          isInspectorOpen.toggle()
+        } label: {
+          Label("Inspector", systemImage: "sidebar.trailing")
+        }
+        .keyboardShortcut("i", modifiers: [.command, .option])
+        .help("Show or hide details for what is selected (⌥⌘I)")
       }
     }
     // Clicking a "new archives are waiting" notification lands here — see
