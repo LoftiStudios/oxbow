@@ -14,7 +14,7 @@ there as part of the release commit. The build number is not tracked here — it
 is the repository's commit count, stamped into the bundle at build time by
 `scripts/stamp-version.sh`.
 
-## [0.5.0] - 2026-09-11
+## [0.5.0] - 2026-09-12
 
 Two releases ago Oxbow was a window you opened to fetch a video. This one is
 about what happens when you are not looking at it: a channel is watched rather

@@ -54,7 +54,12 @@ window, and it is a differentiator worth writing about — nothing else in this
 space on the Mac has it.
 
 What it does not remove is the reason someone forgets to download a VOD at
-all. VODs expire after 14 days, or 60 for partners, and a missed one is gone.
+all. VODs expire and a missed one is gone. (The 14-days-or-60-for-partners
+figure this section originally cited did not survive measurement — see
+`twitch-channel-api.md` §6, which found 43 days to over nine months across
+seven channels and no relationship to tier. It does not change the argument
+here: a clock nobody can read is a worse reason to rely on memory, not a
+better one.)
 No entry point solves that; a channel watcher would. That is a different
 project and is deliberately not this one.
 
@@ -595,6 +600,15 @@ wants to run rather than be opened, and a posture question — "save this VOD fo
 the flight" and "continuously archive a channel" read very differently beside
 the copyright paragraph in the README. It gets its own design doc and its own
 session.
+
+**It got both, and shipped in 0.5.0.**
+[`channel-watching.md`](channel-watching.md) is the design. Two of the three
+worries above resolved smaller than they look: the app does *not* want to run
+rather than be opened — §5.1 there measures the retention window in months and
+concludes that polling at launch and on a timer is sufficient, so there is no
+agent and no daemon — and the scope question is answered by asking the person
+adding the channel rather than by the app taking a position. The GraphQL
+surface is the part that stayed large; `twitch-channel-api.md` is its record.
 
 The one thing this document owes it: **§5's `QueueHost` is the piece a watcher
 needs too.** Anything that enqueues without a window has the same problem, and

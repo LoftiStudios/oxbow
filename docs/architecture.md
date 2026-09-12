@@ -22,6 +22,18 @@ more exotic WPF features are explicitly out of scope for v1.
 
 **Non-goals:** Windows, Linux, iOS. Cross-platform UI frameworks. App Store.
 
+**What shipped past that line (2026-09-11).** 0.5.0 watches channels: Oxbow
+polls a channel and either queues what it finds or says it arrived. That is
+adjacent to the mass downloader trimmed above and worth naming as a deliberate
+crossing rather than a drift — the reason is that VODs expire and a missed one
+is unrecoverable, which no amount of making the intake faster addresses. The
+trim held for what it was about: there is still no "download this entire
+channel's back catalogue" button, and a watch fetches only what appears after
+you add it unless you ask otherwise.
+[`docs/design/channel-watching.md`](design/channel-watching.md) is the design,
+and [`automation.md`](design/automation.md) §10.4 records the framing that led
+to it.
+
 ---
 
 ## 2. The two-repo split (important)
