@@ -73,13 +73,8 @@ struct QueueView: View {
   /// nil the same way rather than showing a blank pane.
   @State private var sidebarSelection: SidebarItem? = .queue
 
-  /// Whether the trailing inspector is open.
-  ///
-  /// **One flag for every destination, not one each.** A control that
-  /// remembers a different answer depending on where you are standing is one
-  /// you cannot predict — `docs/design/inspector.md` §7, which is §6's
-  /// argument about the content applied to the chrome.
-  @State private var isInspectorOpen = false
+  /// Whether the launch selection has been made yet. See `selectAtLaunch`.
+  @State private var hasSelectedAtLaunch = false
 
   /// The selected archive, shared by the inbox and every channel destination.
   ///
@@ -395,7 +390,11 @@ WatchingView(
       library = videoRecordStore.flatMap { try? $0.load() } ?? VideoLibrary()
     }
     .onChange(of: selection) { _, now in rememberArrivals(now) }
-    .inspector(isPresented: $isInspectorOpen) {
+    // **Always open, and there is no control that closes it** —
+    // `docs/design/inspector.md` §7. A constant binding rather than state
+    // with no writer: the flag would read as something a control could still
+    // flip, and nothing flips it.
+    .inspector(isPresented: .constant(true)) {
       InspectorPane(
         subject: InspectorSubject.resolve(
           destination: sidebarSelection,
@@ -414,9 +413,13 @@ WatchingView(
     // sidebar at all. The +180 is the sidebar's ideal column width (set
     // above), added on top rather than carved out of the 480, so the detail
     // pane keeps roughly its designed minimum even if the split view ever
-    // shrinks the sidebar down to its own 150pt floor. Height is untouched:
-    // a sidebar costs no height.
-    .frame(minWidth: 480 + 180, minHeight: 320)
+    // shrinks the sidebar down to its own 150pt floor. The +260 is the
+    // inspector's own floor, and it is in here because the inspector is
+    // permanent now: with nothing able to close it, a window narrower than
+    // the three columns' minimums is a window whose detail pane gets
+    // squeezed rather than one whose inspector is away. Height is untouched:
+    // neither a sidebar nor an inspector costs height.
+    .frame(minWidth: 480 + 180 + 260, minHeight: 320)
     .toolbar {
       // Two different buttons behind the same placement, switched on which
       // pane is showing — never both, and never neither. `Add Download`
@@ -477,22 +480,8 @@ WatchingView(
         }
       }
 
-      // **Outside the branch above**: the inspector belongs to the window,
-      // not to one pane, so unlike Refresh / Add Channel / Add Download it is
-      // present wherever you are standing.
-      //
-      // ⌥⌘I, never ⌘I. ⌘I is Get Info and opens the window it always has —
-      // the two answer different questions (`inspector.md` §2) and the
-      // shortcuts have to say so.
-      ToolbarItem(placement: .primaryAction) {
-        Button {
-          isInspectorOpen.toggle()
-        } label: {
-          Label("Inspector", systemImage: "sidebar.trailing")
-        }
-        .keyboardShortcut("i", modifiers: [.command, .option])
-        .help("Show or hide details for what is selected (⌥⌘I)")
-      }
+      // **No inspector button, and no ⌥⌘I.** The pane is always open, so a
+      // toggle would have nothing to toggle — `inspector.md` §7.
     }
     // Clicking a "new archives are waiting" notification lands here — see
     // `WatchingReveal` for why that click cannot simply set state on
@@ -563,6 +552,11 @@ WatchingView(
       watching?.updateJobs(controller?.jobs ?? [])
     }
     .task { watching?.updateJobs(controller?.jobs ?? []) }
+    // The queue arrives from disk after this view does, so the launch
+    // selection cannot be an initial value — it has to wait for the jobs.
+    // Same pairing as above, and for the same reason.
+    .onChange(of: controller?.jobs) { selectAtLaunch(controller?.jobs ?? []) }
+    .task { selectAtLaunch(controller?.jobs ?? []) }
     // See `pendingIntake`'s own doc comment above: this is the one place that
     // turns a finding's Add into the intake window actually opening. If the
     // window is already open, `openWindow` just re-focuses it — `Window`'s
@@ -686,6 +680,31 @@ WatchingView(
   /// The confirmation is not for the row — a row is cheap to lose — it is for
   /// the work. Removing a running job kills its helper, and a two-hour chat
   /// render deserves better than a mis-hit Delete key. Nothing settled asks.
+  /// Selects the running job the first time the queue has any, so the
+  /// inspector opens with something in it.
+  ///
+  /// **Because the inspector is permanent now.** A pane that cannot be closed
+  /// and says "Nothing selected" every time the app opens is a third of the
+  /// window spent on a placeholder — `docs/design/inspector.md` §7.1. The
+  /// running job is the one someone opening Oxbow is most likely to be
+  /// opening it about; with nothing running, the first row is simply what the
+  /// eye lands on anyway.
+  ///
+  /// **Once, and never again.** Guarded by a flag rather than by
+  /// `selection.isEmpty` alone: deselecting everything is a thing a person
+  /// does on purpose, and a queue that re-selects a row the moment a progress
+  /// tick rebuilt the list would be undoing that over and over. The flag is
+  /// set as soon as jobs exist, whether or not a selection was made, so a
+  /// launch into an already-selected queue does not arm it for later.
+  private func selectAtLaunch(_ jobs: [Job]) {
+    guard !hasSelectedAtLaunch, !jobs.isEmpty else { return }
+    hasSelectedAtLaunch = true
+    guard selection.isEmpty else { return }
+    guard let pick = jobs.first(where: { $0.status == .running }) ?? jobs.first
+    else { return }
+    selection = [pick.id]
+  }
+
   private func requestRemoval(of ids: Set<JobID>, from controller: QueueController) {
     guard !ids.isEmpty else { return }
 

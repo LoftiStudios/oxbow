@@ -151,7 +151,8 @@ component."
 **The sections beneath it are each pane's own business.** That is the same
 §4.1 principle, not a departure from it — that section's whole point is that
 two surfaces share a component while answering opposite questions underneath.
-So the rule for the 300pt problem is simple and it is not a compromise:
+So the rule for the narrow-column problem is simple and it is not a
+compromise:
 
 | | Card | Download facts | Steps | Delivered files |
 |---|---|---|---|---|
@@ -281,13 +282,55 @@ on purpose and start absorbing it.
 
 **⌘I is untouched.** It opens the window, exactly as it does now.
 
-**⌥⌘I toggles the inspector**, plus a toolbar button, which is where every
-Mac inspector lives.
+**The inspector has no toggle at all — no ⌥⌘I, no toolbar button.** It ships
+open on launch, at the widest column it allows, and stays there. This replaces
+the shipped design, which had both.
 
-**One open/closed state, shared across destinations.** Not per-pane: a control
-that remembers a different answer depending on where you are standing is one
-you cannot predict, which is §6's argument applied to the chrome instead of
-the content.
+The reason is that a toggle has to earn the chrome it occupies, and this one
+could not: the pane answers "what am I looking at", a question that does not
+stop being asked, so the honest default is open. A button whose only job is to
+take the answer away is a button people press once by accident and then have
+to find again. What used to justify it was width (§8) — and the resolution
+there is the window's floor, not a control: `QueueView`'s `minWidth` now
+carries the inspector's own 260pt floor, so the three columns cannot be
+squeezed past their minimums instead. Someone who wants the width back drags
+the divider to 260; they do not make the pane disappear.
+
+**The consequence to accept, stated plainly**: on a laptop this window is now
+wider than it was, and that cost cannot be paid by closing anything. If that
+turns out to be the wrong trade, the fix is a narrower card (§11), not the
+button back.
+
+**One open/closed state, shared across destinations** — moot now that the
+state is a constant, and recorded because it was the right answer while there
+was one: a control that remembers a different answer depending on where you
+are standing is one you cannot predict, which is §6's argument applied to the
+chrome instead of the content.
+
+### 7.1 The launch selection
+
+**The queue selects the running job the first time it has any.** With no
+toggle, "Nothing selected" is what a permanent, 420pt-wide pane says every
+time Oxbow opens — a third of the window spent on a placeholder, on the one
+surface a person cannot dismiss. Selecting something is the cheaper half of
+the fix; the other half would be a smaller empty state, which §6 already
+argues against making interesting.
+
+**The running job, falling back to the first row.** Someone opening Oxbow
+while a download is going is opening it about that download. With nothing
+running the first row is where the eye lands anyway, so the rule does not
+need a second case.
+
+**Once, and never again in that launch.** Guarded by a flag rather than by
+`selection.isEmpty`: deselecting everything is something people do on
+purpose, and a queue that re-selected a row on the next progress tick would
+undo that repeatedly. The flag arms on the first queue that has jobs in it,
+whether or not a selection was made — so launching into an already-selected
+queue does not leave it primed to fire later.
+
+**Not on the Watching side.** The inbox and the channel destinations keep
+their own selection, which starts empty, because there is no equivalent of
+"the one you came here about": a sweep's findings are all equally new.
 
 **A shortcut this may unblock, noted rather than promised.**
 `video-record.md`'s status records that ⌘I was never bound in the Watching
@@ -302,9 +345,10 @@ rediscover the constraint and assume it still binds.
 
 ## 8. What this costs
 
-**Width.** The window's floor is 660pt (480 + 180, set in `QueueView`'s
-`.frame`). An inspector wants 280–320, so comfortable use lands near 1000.
-It is collapsible and its state is remembered, but on a laptop this is a real
+**Width.** The window's floor is 920pt (480 + 180 + 260, set in `QueueView`'s
+`.frame`): the queue's minimum, the sidebar's ideal, and the inspector's own
+floor. The pane opens at 420 — the widest its column allows — so comfortable
+use lands past 1100. It is not collapsible (§7), so on a laptop this is a real
 ask and it is the single most likely reason to dislike the feature.
 
 **A second place a video is drawn.** Mitigated by §4's shared card rather than
@@ -369,15 +413,17 @@ Finder ships both.
 **`focusedSceneValue` for the selection.** §3.2 — the existing uses are a
 descendant publishing to the menu bar, which is not this.
 
-**A per-destination inspector toggle.** §7.
+**A per-destination inspector toggle**, and, since the pane became
+permanent, any toggle at all. §7.
 
 **Showing the channel or the queue when nothing is selected.** §6.
 
 **Quoting a partial byte total.** §5.3.
 
 **A second, compact card for narrow widths.** The card is the one thing that
-must not fork (§4). If it does not work at 300pt the answer is to make it
-work, not to grow a variant that will drift.
+must not fork (§4). If it does not work at 420pt — or at the 260 floor
+somebody has dragged down to — the answer is to make it work, not to grow a
+variant that will drift.
 
 ---
 
