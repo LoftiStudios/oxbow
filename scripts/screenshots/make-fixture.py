@@ -25,6 +25,9 @@ What gets replaced, and why each one:
                   diff on every run. Made deterministic instead.
   created         real timestamps. Not what orders the list — QueueView
                   draws controller.jobs in array order — but still real.
+  trimStart/End   dropped outright: a development queue trims to four minutes
+                  so a test download finishes, and the screenshot should not
+                  advertise that as what Oxbow does.
 
 Usage:
     ./make-fixture.py                       # from the live app's queue.json
@@ -79,6 +82,49 @@ INTAKE = {
     "thumbnailPaths": ["thumbnail.jpg"],
 }
 INTAKE_LINK = "https://www.twitch.tv/videos/2850120005"
+
+# The metadata the *inspector* shows for the mid-flight job, which since the
+# inspector became permanent is on screen next to that job's own row. It has
+# to agree with TITLES[RUNNING_JOB]: one canned answer for every id used to be
+# enough, back when the intake was the only surface asking, but it put the
+# intake video's title on a card beside a queue row naming a different one.
+# `ScreenshotFixture.videoInfo(for:)` reads this by id, falling back to
+# videoinfo.json for everything else.
+RUNNING_INFO = {
+    "streamer": "AcidBurn",
+    "title": "persona 3 - full moon op, wish us luck 🌕",
+    "createdAt": "2026-08-04T19:42:00Z",
+    "durationSeconds": 15_120,
+    "qualities": [
+        {"name": "1080p60", "resolution": "1920x1080", "bitsPerSecond": 6_184_466},
+        {"name": "720p60", "resolution": "1280x720", "bitsPerSecond": 3_411_940},
+        {"name": "480p30", "resolution": "852x480", "bitsPerSecond": 1_427_697},
+    ],
+    "thumbnailPaths": ["thumbnail.jpg"],
+}
+
+# The watch list. Written whole rather than transformed from a real
+# watches.json, unlike queue.json above: a `Watch` is four scalars, a settings
+# struct and a set of ids, with no Swift-Codable exotica to get wrong by hand.
+#
+# Two of the three are the streamers the queue is already full of, because a
+# screenshot where the sidebar names channels nobody in the queue is watching
+# reads as two unrelated screenshots stitched together. The third is watched
+# but quiet, which is the ordinary case and worth showing.
+#
+# No `avatarURL`: it would have to name the loopback port scripts/screenshots.sh
+# picks at random, and this file is written long before that port exists. The
+# channels draw their initials instead, which is also what a real watch added
+# before avatars existed does.
+#
+# `destinationPath` is deliberately not under a real home directory — it can
+# surface on a channel card, and this file is published.
+WATCHES = [
+    ("crashoverride", "CrashOverride", True),
+    ("acidburn", "AcidBurn", True),
+    ("leighxp", "LeighXP", False),
+]
+WATCH_DESTINATION = "/Users/you/Movies/Oxbow"
 RUNNING_PLAN = {
     "downloadChat": ("done", {"phase": "Writing Output File", "fraction": 1}),
     "renderChat": ("running", {"phase": "Rendering Video", "fraction": 0.62,
@@ -120,6 +166,14 @@ def scrub(node, job_index, counter):
             elif key in ("destination", "artifact") and isinstance(value, str):
                 name = Path(value).name
                 out[key] = f"file:///Users/oxbow/Downloads/{name}"
+            elif key in ("trimStart", "trimEnd"):
+                # Dropped, not replaced. A development queue is full of
+                # four-minute trims because that is how you test a download
+                # without waiting for one; in a published screenshot that reads
+                # as "Oxbow fetches four minutes of a four-hour stream". Both
+                # fields are optional on the request, so leaving them out is
+                # the same as never having trimmed.
+                continue
             elif key == "rawValue" and isinstance(value, str) and "-" in value:
                 counter[0] += 1
                 out[key] = stable_uuid(job_index, counter[0])
@@ -245,16 +299,38 @@ def main():
     # two places holding that independently is two places to forget.
     (OUT.parent / "expand.txt").write_text(TITLES[RUNNING_JOB] + "\n")
     (OUT.parent / "videoinfo.json").write_text(json.dumps(INTAKE, indent=2) + "\n")
-    # The mid-flight job's own id. Job Info is a `WindowGroup(for: JobID.self)`,
-    # so opening it needs an id rather than just a window name -- and it has to
-    # be one the fixture contains. The job's id is the first `rawValue` the
-    # walk above assigns, hence ordinal 0.
-    (OUT.parent / "infojob.txt").write_text(stable_uuid(RUNNING_JOB, 0) + "\n")
     (OUT.parent / "link.txt").write_text(INTAKE_LINK + "\n")
+    # Named by the id `scrub` gives the mid-flight job, so the two cannot
+    # drift apart the way a hardcoded id would.
+    running_id = f"20000000{RUNNING_JOB:02d}"
+    (OUT.parent / f"videoinfo-{running_id}.json").write_text(
+        json.dumps(RUNNING_INFO, indent=2, ensure_ascii=False) + "\n")
+    # The watch list, in WatchStore's envelope. `seen` is what stops a channel
+    # reading as never-polled once a sweep does run; the ids are invented on
+    # the same pattern as the queue's, so nothing here resolves to a real VOD.
+    (OUT.parent / "watches.json").write_text(json.dumps({
+        "version": 1,
+        "watches": [
+            {
+                "login": login,
+                "displayName": name,
+                "settings": {
+                    "destinationPath": WATCH_DESTINATION,
+                    "qualityCap": "best",
+                    "output": "videoWithChat",
+                    "chatSize": "medium",
+                },
+                "downloadsAutomatically": auto,
+                "seen": [f"3000000{index}{ordinal}" for ordinal in range(3)],
+            }
+            for index, (login, name, auto) in enumerate(WATCHES)
+        ],
+    }, indent=2) + "\n")
 
     print(f"wrote {OUT.relative_to(Path.cwd()) if OUT.is_relative_to(Path.cwd()) else OUT}")
     print(f"  {len(rebuilt)} jobs, job {RUNNING_JOB} caught mid-flight")
     print(f"  intake: {INTAKE['streamer']} - {INTAKE['title']}")
+    print(f"  watching: {', '.join(name for _, name, _ in WATCHES)}")
 
 
 if __name__ == "__main__":

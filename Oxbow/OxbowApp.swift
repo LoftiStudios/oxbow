@@ -132,9 +132,8 @@ struct OxbowApp: App {
       #if DEBUG
       .background {
         ScreenshotWindowSizer()
-        ScreenshotIntakeOpener(
-          windowID: Self.intakeWindowID,
-          infoWindowID: Self.infoWindowID)
+        ScreenshotIntakeOpener(windowID: Self.intakeWindowID)
+        ScreenshotWindowFocus()
       }
       #endif
       // Its own task, not a step inside `setUp()`: the two are unrelated,
@@ -222,6 +221,16 @@ struct OxbowApp: App {
           directory: AppComposition.imageStoreURL(supportDirectory: support))
         videoRecordStore = VideoRecordStore(
           fileURL: AppComposition.videoRecordURL(supportDirectory: support))
+        // **Not during a screenshot run.** The fixture's channels are
+        // invented, so a sweep would spend the capture's first seconds
+        // failing to reach Twitch for three logins that do not exist and
+        // leave that on screen. The same reasoning as `QueueController`'s
+        // `runsWork: false`: a fixture run loads state and is looked at, it
+        // does not do work. `watching` above is still built, which is what
+        // puts the channels in the sidebar.
+        #if DEBUG
+        guard ScreenshotFixture.directory == nil else { return }
+        #endif
         poller = WatchPoller.live(supportDirectory: support)
         poller?.start()
       }

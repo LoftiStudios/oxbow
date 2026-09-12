@@ -1,0 +1,53 @@
+{
+  "version": 1,
+  "watches": [
+    {
+      "login": "crashoverride",
+      "displayName": "CrashOverride",
+      "settings": {
+        "destinationPath": "/Users/you/Movies/Oxbow",
+        "qualityCap": "best",
+        "output": "videoWithChat",
+        "chatSize": "medium"
+      },
+      "downloadsAutomatically": true,
+      "seen": [
+        "300000000",
+        "300000001",
+        "300000002"
+      ]
+    },
+    {
+      "login": "acidburn",
+      "displayName": "AcidBurn",
+      "settings": {
+        "destinationPath": "/Users/you/Movies/Oxbow",
+        "qualityCap": "best",
+        "output": "videoWithChat",
+        "chatSize": "medium"
+      },
+      "downloadsAutomatically": true,
+      "seen": [
+        "300000010",
+        "300000011",
+        "300000012"
+      ]
+    },
+    {
+      "login": "leighxp",
+      "displayName": "LeighXP",
+      "settings": {
+        "destinationPath": "/Users/you/Movies/Oxbow",
+        "qualityCap": "best",
+        "output": "videoWithChat",
+        "chatSize": "medium"
+      },
+      "downloadsAutomatically": false,
+      "seen": [
+        "300000020",
+        "300000021",
+        "300000022"
+      ]
+    }
+  ]
+}
