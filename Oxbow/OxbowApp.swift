@@ -133,6 +133,7 @@ struct OxbowApp: App {
       .background {
         ScreenshotWindowSizer()
         ScreenshotIntakeOpener(windowID: Self.intakeWindowID)
+        ScreenshotWindowFocus()
       }
       #endif
       // Its own task, not a step inside `setUp()`: the two are unrelated,

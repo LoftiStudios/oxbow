@@ -17,10 +17,6 @@
               "_0": {
                 "format": "json",
                 "isEmbeddingImages": false,
-                "trimEnd": [
-                  17,
-                  6405350746937622528
-                ],
                 "videoID": "2000000000"
               }
             }
@@ -86,10 +82,6 @@
             "downloadVideo": {
               "_0": {
                 "quality": "720p",
-                "trimEnd": [
-                  17,
-                  6405350746937622528
-                ],
                 "videoID": "2000000000"
               }
             }
@@ -184,14 +176,6 @@
               "_0": {
                 "format": "json",
                 "isEmbeddingImages": false,
-                "trimEnd": [
-                  74,
-                  14940938545493180416
-                ],
-                "trimStart": [
-                  32,
-                  9704189641294348288
-                ],
                 "videoID": "2000000001"
               }
             }
@@ -257,14 +241,6 @@
             "downloadVideo": {
               "_0": {
                 "quality": "1080p60",
-                "trimEnd": [
-                  74,
-                  14940938545493180416
-                ],
-                "trimStart": [
-                  32,
-                  9704189641294348288
-                ],
                 "videoID": "2000000001"
               }
             }
@@ -359,14 +335,6 @@
               "_0": {
                 "format": "json",
                 "isEmbeddingImages": false,
-                "trimEnd": [
-                  87,
-                  15133265587269009408
-                ],
-                "trimStart": [
-                  55,
-                  5429075945974661120
-                ],
                 "videoID": "2000000002"
               }
             }
@@ -432,14 +400,6 @@
             "downloadVideo": {
               "_0": {
                 "quality": "1080p60",
-                "trimEnd": [
-                  87,
-                  15133265587269009408
-                ],
-                "trimStart": [
-                  55,
-                  5429075945974661120
-                ],
                 "videoID": "2000000002"
               }
             }
@@ -530,10 +490,6 @@
               "_0": {
                 "format": "json",
                 "isEmbeddingImages": false,
-                "trimEnd": [
-                  19,
-                  9511862599518519296
-                ],
                 "videoID": "2000000003"
               }
             }
@@ -599,10 +555,6 @@
             "downloadVideo": {
               "_0": {
                 "quality": "1080p",
-                "trimEnd": [
-                  19,
-                  9511862599518519296
-                ],
                 "videoID": "2000000003"
               }
             }
@@ -697,14 +649,6 @@
               "_0": {
                 "format": "json",
                 "isEmbeddingImages": false,
-                "trimEnd": [
-                  120,
-                  6390711154853806080
-                ],
-                "trimStart": [
-                  87,
-                  15133265587269009408
-                ],
                 "videoID": "2000000004"
               }
             }
@@ -770,14 +714,6 @@
             "downloadVideo": {
               "_0": {
                 "quality": "1080p60",
-                "trimEnd": [
-                  120,
-                  6390711154853806080
-                ],
-                "trimStart": [
-                  87,
-                  15133265587269009408
-                ],
                 "videoID": "2000000004"
               }
             }
@@ -868,14 +804,6 @@
               "_0": {
                 "format": "json",
                 "isEmbeddingImages": false,
-                "trimEnd": [
-                  47,
-                  3003028535651074048
-                ],
-                "trimStart": [
-                  34,
-                  2810701493875245056
-                ],
                 "videoID": "2000000005"
               }
             }
@@ -940,14 +868,6 @@
             "downloadVideo": {
               "_0": {
                 "quality": "720p60",
-                "trimEnd": [
-                  47,
-                  3003028535651074048
-                ],
-                "trimStart": [
-                  34,
-                  2810701493875245056
-                ],
                 "videoID": "2000000005"
               }
             }

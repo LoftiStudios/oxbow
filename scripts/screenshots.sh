@@ -129,23 +129,63 @@ python3 -m http.server "$PORT" --bind 127.0.0.1 --directory "$FIXTURE" >/dev/nul
 SERVER_PID=$!
 
 echo "launching with OXBOW_FIXTURE_DIR=$STATE  size=$SIZE  thumbs=:$PORT"
+# Launched through `open`, not by running the executable, and that is about
+# focus. A shell-launched app is not frontmost, so macOS draws its windows
+# inactive -- grey traffic lights, an unaccented default button, and a smaller
+# shadow. The captures used to accept that; they should not, because an
+# inactive window is not what anyone's Oxbow looks like while they are using
+# it. `open -n` is a normal foreground launch, so the app comes forward the way
+# it would from the Dock, and `ScreenshotWindowFocus` raises the queue window
+# back over the intake that opened after it.
+#
+# `-n` is load-bearing: it opens a *new* instance rather than activating the
+# Oxbow the developer already has running, which would otherwise capture their
+# real queue. The PID is then found by path, since `open` returns immediately
+# and tells us nothing about what it started -- and the path is unique to this
+# build, so it cannot match the developer's own instance.
+#
 # `-key value` pairs land in NSArgumentDomain, which outranks everything in
 # UserDefaults. That is how the intake is kept off the developer's own saved
-# defaults -- destination, quality cap, chat size -- without writing to the
-# real domain the way `defaults write` would. `intakeOptionsExpanded` is a
-# genuine preference, so this is also how the Download Options section is
-# opened; the trim section is not one, and comes in by environment.
-OXBOW_FIXTURE_DIR="$STATE" \
-OXBOW_FIXTURE_EXPAND="$EXPAND" \
-OXBOW_FIXTURE_SIZE="$SIZE" \
-OXBOW_FIXTURE_LINK="$LINK" \
-OXBOW_FIXTURE_TRIM="$TRIM" \
-OXBOW_FIXTURE_THUMBS="http://127.0.0.1:$PORT" \
-  "$APP/Contents/MacOS/Oxbow" \
+# defaults without writing to the real domain the way `defaults write` would.
+#
+# **Every value key is pinned, not just `hasSavedDefaults`.** That flag says
+# whether a preference was ever expressed; it does not gate the reads, so with
+# only it overridden the intake still drew whatever the developer last chose.
+# It did: a capture came back offering "Video" at "480p30" because this Mac had
+# `defaultOutput = video` and `defaultQualityCap = p360` stored. A published
+# screenshot that changes with the settings of whoever regenerated it is the
+# same class of problem as the fixture itself -- and unlike a real queue, this
+# one leaves no trace of where it came from.
+#
+# The destination is the real Downloads folder rather than an invented path:
+# only the folder *name* is drawn, so nothing leaks, and a path that does not
+# exist would raise the "this folder is missing" warning instead.
+#
+# `intakeOptionsExpanded` is a genuine preference, so this is also how the
+# Download Options section is opened; the trim section is not one, and comes in
+# by environment.
+open -n -a "$APP" \
+  --env "OXBOW_FIXTURE_DIR=$STATE" \
+  --env "OXBOW_FIXTURE_EXPAND=$EXPAND" \
+  --env "OXBOW_FIXTURE_SIZE=$SIZE" \
+  --env "OXBOW_FIXTURE_LINK=$LINK" \
+  --env "OXBOW_FIXTURE_TRIM=$TRIM" \
+  --env "OXBOW_FIXTURE_THUMBS=http://127.0.0.1:$PORT" \
+  --args \
   -hasSavedDefaults NO \
   -intakeOptionsExpanded YES \
-  >/dev/null 2>&1 &
-APP_PID=$!
+  -defaultOutput videoWithChat \
+  -defaultQualityCap best \
+  -defaultChatSize medium \
+  -defaultDestinationPath "$HOME/Downloads"
+
+APP_PID=""
+for _ in $(seq 1 40); do
+  APP_PID="$(pgrep -f "^$APP/Contents/MacOS/Oxbow" | head -1 || true)"
+  [[ -n "$APP_PID" ]] && break
+  sleep 0.25
+done
+[[ -n "$APP_PID" ]] || { echo "the app never started from $APP" >&2; exit 1; }
 
 # Capture one window by title. Retries because the window arrives a moment
 # after the process does, and SwiftUI needs a beat to lay it out.
@@ -282,9 +322,17 @@ body_w, body_h = queue_w - 2 * inset, queue_h - 2 * inset
 # Scale to the tighter of the two margins, and never up past 1:1 -- an
 # upscaled capture is a blurry one, and a window smaller than the canvas is
 # better shown small than stretched.
+#
+# The last two terms fit the *capture*, shadow and all, inside the canvas with
+# no margin at all. They are what keeps an active window's shadow from being
+# clipped at the canvas edge: an active window's shadow is much larger than an
+# inactive one's, enough that a body sitting a comfortable 74px inside the
+# canvas can still have its shadow running off it.
 scale = min(1.0,
             (canvas_h - 2 * MARGIN) / body_h,
-            (canvas_w - 2 * MARGIN) / body_w)
+            (canvas_w - 2 * MARGIN) / body_w,
+            canvas_h / queue_h,
+            canvas_w / queue_w)
 
 # Centred on the body, not on the capture -- they share a centre, since the
 # shadow padding is symmetric, but saying so keeps this true if it stops being.

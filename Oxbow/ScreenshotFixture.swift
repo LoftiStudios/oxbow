@@ -211,24 +211,48 @@ struct ScreenshotIntakeOpener: View {
       .onAppear {
         guard ScreenshotFixture.link != nil else { return }
         openWindow(id: windowID)
-        // Deliberately not activating the app.
-        //
-        // A shell-launched app is not frontmost, so its windows draw inactive:
-        // grey traffic lights, and a default button that is not accented. An
-        // earlier version called NSApp.activate to fix that, and it worked
-        // often enough to look correct -- but macOS does not let an app take
-        // focus from whatever the person is actually using, so whether it
-        // succeeded depended on what else happened to be running. A capture
-        // that is prettier on some machines than others is worse than one that
-        // is plainly consistent, and the difference is not only cosmetic: an
-        // inactive window gets a smaller shadow, so the composite's geometry
-        // moved too.
-        //
-        // Inactive on purpose, therefore. The layout arithmetic in
-        // screenshots.sh derives the shadow inset from the capture, so it
-        // stays correct either way.
+        // Focus is `ScreenshotWindowFocus`'s business, below, not this
+        // view's -- opening the intake is the last thing that happens here,
+        // and it is precisely what takes key status away from the window the
+        // hero is of.
       }
   }
+}
+
+/// Brings the app forward and puts the window hosting it back in front.
+///
+/// **The captures used to be of an inactive app, deliberately.** A
+/// shell-launched process is not frontmost, so macOS drew grey traffic
+/// lights, an unaccented default button and a smaller shadow; an earlier
+/// version called `NSApp.activate` to fix that and got it only sometimes,
+/// because macOS will not let an app take focus from whatever the person is
+/// actually using. A capture prettier on some machines than others is worse
+/// than one that is plainly wrong in the same way everywhere, so the harness
+/// settled for inactive.
+///
+/// What changed is the launch, not the API: `scripts/screenshots.sh` now
+/// starts the app with `open -n`, which is an ordinary foreground launch, so
+/// coming forward is not something this has to win against the Finder.
+///
+/// **Raising is the other half.** The intake window opens a moment after this
+/// one and takes key status with it, which would leave the hero -- the queue
+/// window -- drawn inactive in an app that is otherwise frontmost. The delay
+/// is what lets the intake finish appearing before this takes it back; the
+/// script waits considerably longer than this before capturing anything.
+///
+/// `view.window` rather than a title match: this view is in the queue
+/// window's own background, so it needs no way to identify it.
+struct ScreenshotWindowFocus: NSViewRepresentable {
+  func makeNSView(context: Context) -> NSView {
+    let view = NSView(frame: .zero)
+    DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+      NSApp.activate()
+      view.window?.makeKeyAndOrderFront(nil)
+    }
+    return view
+  }
+
+  func updateNSView(_ nsView: NSView, context: Context) {}
 }
 
 /// Resizes the window hosting it to `ScreenshotFixture.windowSize`.

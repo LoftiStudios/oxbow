@@ -25,6 +25,9 @@ What gets replaced, and why each one:
                   diff on every run. Made deterministic instead.
   created         real timestamps. Not what orders the list — QueueView
                   draws controller.jobs in array order — but still real.
+  trimStart/End   dropped outright: a development queue trims to four minutes
+                  so a test download finishes, and the screenshot should not
+                  advertise that as what Oxbow does.
 
 Usage:
     ./make-fixture.py                       # from the live app's queue.json
@@ -163,6 +166,14 @@ def scrub(node, job_index, counter):
             elif key in ("destination", "artifact") and isinstance(value, str):
                 name = Path(value).name
                 out[key] = f"file:///Users/oxbow/Downloads/{name}"
+            elif key in ("trimStart", "trimEnd"):
+                # Dropped, not replaced. A development queue is full of
+                # four-minute trims because that is how you test a download
+                # without waiting for one; in a published screenshot that reads
+                # as "Oxbow fetches four minutes of a four-hour stream". Both
+                # fields are optional on the request, so leaving them out is
+                # the same as never having trimmed.
+                continue
             elif key == "rawValue" and isinstance(value, str) and "-" in value:
                 counter[0] += 1
                 out[key] = stable_uuid(job_index, counter[0])
