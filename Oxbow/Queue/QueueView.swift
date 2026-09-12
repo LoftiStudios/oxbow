@@ -73,6 +73,9 @@ struct QueueView: View {
   /// nil the same way rather than showing a blank pane.
   @State private var sidebarSelection: SidebarItem? = .queue
 
+  /// Whether the launch selection has been made yet. See `selectAtLaunch`.
+  @State private var hasSelectedAtLaunch = false
+
   /// The selected archive, shared by the inbox and every channel destination.
   ///
   /// **One piece of state, not one per destination** (`inspector.md` §3.2).
@@ -549,6 +552,11 @@ WatchingView(
       watching?.updateJobs(controller?.jobs ?? [])
     }
     .task { watching?.updateJobs(controller?.jobs ?? []) }
+    // The queue arrives from disk after this view does, so the launch
+    // selection cannot be an initial value — it has to wait for the jobs.
+    // Same pairing as above, and for the same reason.
+    .onChange(of: controller?.jobs) { selectAtLaunch(controller?.jobs ?? []) }
+    .task { selectAtLaunch(controller?.jobs ?? []) }
     // See `pendingIntake`'s own doc comment above: this is the one place that
     // turns a finding's Add into the intake window actually opening. If the
     // window is already open, `openWindow` just re-focuses it — `Window`'s
@@ -672,6 +680,31 @@ WatchingView(
   /// The confirmation is not for the row — a row is cheap to lose — it is for
   /// the work. Removing a running job kills its helper, and a two-hour chat
   /// render deserves better than a mis-hit Delete key. Nothing settled asks.
+  /// Selects the running job the first time the queue has any, so the
+  /// inspector opens with something in it.
+  ///
+  /// **Because the inspector is permanent now.** A pane that cannot be closed
+  /// and says "Nothing selected" every time the app opens is a third of the
+  /// window spent on a placeholder — `docs/design/inspector.md` §7.1. The
+  /// running job is the one someone opening Oxbow is most likely to be
+  /// opening it about; with nothing running, the first row is simply what the
+  /// eye lands on anyway.
+  ///
+  /// **Once, and never again.** Guarded by a flag rather than by
+  /// `selection.isEmpty` alone: deselecting everything is a thing a person
+  /// does on purpose, and a queue that re-selects a row the moment a progress
+  /// tick rebuilt the list would be undoing that over and over. The flag is
+  /// set as soon as jobs exist, whether or not a selection was made, so a
+  /// launch into an already-selected queue does not arm it for later.
+  private func selectAtLaunch(_ jobs: [Job]) {
+    guard !hasSelectedAtLaunch, !jobs.isEmpty else { return }
+    hasSelectedAtLaunch = true
+    guard selection.isEmpty else { return }
+    guard let pick = jobs.first(where: { $0.status == .running }) ?? jobs.first
+    else { return }
+    selection = [pick.id]
+  }
+
   private func requestRemoval(of ids: Set<JobID>, from controller: QueueController) {
     guard !ids.isEmpty else { return }
 

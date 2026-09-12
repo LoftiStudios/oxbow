@@ -307,6 +307,31 @@ was one: a control that remembers a different answer depending on where you
 are standing is one you cannot predict, which is §6's argument applied to the
 chrome instead of the content.
 
+### 7.1 The launch selection
+
+**The queue selects the running job the first time it has any.** With no
+toggle, "Nothing selected" is what a permanent, 420pt-wide pane says every
+time Oxbow opens — a third of the window spent on a placeholder, on the one
+surface a person cannot dismiss. Selecting something is the cheaper half of
+the fix; the other half would be a smaller empty state, which §6 already
+argues against making interesting.
+
+**The running job, falling back to the first row.** Someone opening Oxbow
+while a download is going is opening it about that download. With nothing
+running the first row is where the eye lands anyway, so the rule does not
+need a second case.
+
+**Once, and never again in that launch.** Guarded by a flag rather than by
+`selection.isEmpty`: deselecting everything is something people do on
+purpose, and a queue that re-selected a row on the next progress tick would
+undo that repeatedly. The flag arms on the first queue that has jobs in it,
+whether or not a selection was made — so launching into an already-selected
+queue does not leave it primed to fire later.
+
+**Not on the Watching side.** The inbox and the channel destinations keep
+their own selection, which starts empty, because there is no equivalent of
+"the one you came here about": a sweep's findings are all equally new.
+
 **A shortcut this may unblock, noted rather than promised.**
 `video-record.md`'s status records that ⌘I was never bound in the Watching
 pane "because Get Info's shortcut would have to coexist with the queue's."
