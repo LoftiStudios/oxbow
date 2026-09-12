@@ -18,7 +18,7 @@
 
 ---
 
-*Paste a link, choose whether the chat comes along, and let it run — or hand
+*Paste a link, choose whether the chat comes along, and let it run—or hand
 Oxbow a channel and let it keep up with that channel for you. Your favorite
 streams end up on your Mac, ready for the flight, the commute, or anywhere the
 wifi gives up.*
@@ -36,14 +36,14 @@ bits, the spam, the one joke that ran into the ground. It comes along too,
 rendered beside the video in a single file, BTTV, FFZ, and 7TV emotes and all.
 
 **Channels it keeps up with.** Twitch deletes VODs, and not on a clock anyone
-can read — we measured seven channels and the oldest surviving archive ranged
+can read—we measured seven channels and the oldest surviving archive ranged
 from 43 days to over nine months, with the streamer's tier predicting nothing
 ([`docs/twitch-channel-api.md`](docs/twitch-channel-api.md) §6). What is
 certain is that a stream you meant to save eventually goes, and there is no
 getting it back.
 
 So add a channel. New archives either queue themselves at the settings you
-chose when you added it, or wait in a list and tell you they arrived — Oxbow
+chose when you added it, or wait in a list and tell you they arrived—Oxbow
 asks which, because "download everything this person streams" and "tell me,
 I'll decide" are different relationships to have with a channel, and you can
 change your mind later.
@@ -67,7 +67,7 @@ six-hour job killed at 90% recovers in about twenty minutes, not eighty-eight.
 derived from the stream's own metadata and editable before the job starts.
 
 **A way in that isn't the app.** ⌘Space, "Download Twitch Video", paste the
-link, Return — the job is queued and Oxbow never comes to the front. It is a
+link, Return—the job is queued and Oxbow never comes to the front. It is a
 Shortcuts action as well, where `Repeat with Each` over a list of links makes
 it a batch intake. Anything you leave blank uses your saved settings rather
 than a factory default, so the action and the Settings window cannot disagree
@@ -96,12 +96,12 @@ edges—but every part of it runs end to end today.
    background; the composite is readable while it's still being written.
 6. **Or add a channel instead.** Same window, the `+` on the Watching pane.
    Oxbow checks it from then on and either queues what it finds or tells you
-   it is there — your choice when you add it, changeable afterwards.
+   it is there—your choice when you add it, changeable afterwards.
 
 ## Requirements
 
 - **macOS 26 or later.**
-- **Apple Silicon.** Oxbow is arm64 only — Intel Macs are not supported. See
+- **Apple Silicon.** Oxbow is arm64 only—Intel Macs are not supported. See
   "Scope trims for v1" in [`docs/architecture.md`](docs/architecture.md).
 
 ## Not affiliated with Twitch
@@ -110,12 +110,12 @@ Oxbow is an independent project with no affiliation with, endorsement by, or
 sponsorship from Twitch Interactive, Inc. Twitch and the Twitch logo are
 trademarks of Twitch Interactive, Inc., used here only to describe what the app
 does. Downloaded video and chat remain the property of their respective rights
-holders — please respect their copyright and Twitch's terms of service.
+holders—please respect their copyright and Twitch's terms of service.
 
 ## Building
 
-If you are only working on `OxbowKit` — the queue engine, argument builder,
-output parser, and persistence layer — you need Xcode and nothing else:
+If you are only working on `OxbowKit`—the queue engine, argument builder,
+output parser, and persistence layer—you need Xcode and nothing else:
 
 ```bash
 git clone https://github.com/LoftiStudios/oxbow.git
@@ -128,7 +128,7 @@ Building the **app bundle** needs more. Start with the submodule:
 **Clone with submodules.** `vendor/TwitchDownloader` is a git submodule pinned
 to an exact commit. A plain `git clone` leaves it empty and the build will fail
 confusingly. It points at a mirror of upstream rather than at
-`lay295/TwitchDownloader` directly — the mirror carries upstream's own history
+`lay295/TwitchDownloader` directly—the mirror carries upstream's own history
 unmodified plus tags that keep a pinned commit fetchable, and Oxbow adds no
 code to it. See "submodule pin policy" in [`docs/development.md`](docs/development.md).
 
@@ -143,7 +143,7 @@ git submodule update --init --recursive
 ```
 
 Then you need the [.NET 10 SDK](https://dotnet.microsoft.com/download)
-(`brew install --cask dotnet-sdk`) and Xcode. Build the bundled FFmpeg — an
+(`brew install --cask dotnet-sdk`) and Xcode. Build the bundled FFmpeg—an
 LGPL, arm64, hardware-encoding build we compile ourselves because every
 readily-available macOS binary is GPL:
 
@@ -160,21 +160,21 @@ maintainer can cut a distributable release.
 
 ## Contributing
 
-Contributions are welcome — see [`CONTRIBUTING.md`](CONTRIBUTING.md). Most
+Contributions are welcome—see [`CONTRIBUTING.md`](CONTRIBUTING.md). Most
 changes only need `swift test` and no .NET or FFmpeg toolchain at all.
 
 Architectural decisions and their rationale live in
 [`docs/architecture.md`](docs/architecture.md), including a "Do not suggest" list of
 things already considered and rejected.
 
-Security issues should be reported privately — see [`SECURITY.md`](SECURITY.md).
+Security issues should be reported privately—see [`SECURITY.md`](SECURITY.md).
 
 ## Licensing
 
 Oxbow is [MIT](LICENSE). It bundles two other things:
 
-- **TwitchDownloaderCLI** (MIT) — see `vendor/TwitchDownloader/LICENSE.txt`
-- **FFmpeg** (LGPL 2.1+) — unmodified, built by `scripts/build-ffmpeg.sh`,
+- **TwitchDownloaderCLI** (MIT)—see `vendor/TwitchDownloader/LICENSE.txt`
+- **FFmpeg** (LGPL 2.1+)—unmodified, built by `scripts/build-ffmpeg.sh`,
   which emits `COPYING.LGPLv2.1` and `FFMPEG-SOURCE.txt` recording the exact
   source and configure line so the binary can be reproduced.
 
