@@ -23,11 +23,16 @@ rather than a rendition name — renditions are named per video and some carry
 no resolution, so no name is stable across two videos — and why saving
 defaults is an explicit opt-in rather than last-used-wins.
 
-**Current state: shipping.** 0.4.0 is out, as a signed, notarized DMG built by
-`.github/workflows/release.yml` from a `v*` tag. The app downloads a VOD or
-clip, its chat, and a rendered chat video, and can composite the video and the
-chat column into a single file — all into names derived from the stream's own
-metadata, over a range trimmed on a timeline in the intake.
+**Current state: shipping. 0.5.0 is prepared but not tagged** — the version and
+the changelog are in place; the DMG is built by
+`.github/workflows/release.yml` from a `v*` tag, so nothing exists until one is
+pushed. 0.4.0 is what is out.
+
+The app downloads a VOD or clip, its chat, and a rendered chat video, and can
+composite the video and the chat column into a single file — all into names
+derived from the stream's own metadata, over a range trimmed on a timeline in
+the intake. It also watches channels, queues from Spotlight, and describes
+whatever is selected in a permanently open inspector.
 
 - **FFmpeg sourcing: resolved.** `./scripts/build-ffmpeg.sh` produces a verified
   LGPL 2.1+ arm64 binary. See `docs/ffmpeg.md`.
@@ -107,16 +112,21 @@ defaults, everything *after* switching to the app is nearly free, which left
 the switch as the whole remaining cost — and the App Intent above is what
 removes it, for anyone who reaches for ⌘Space instead of the Dock.
 
+**Channel watching shipped**, and with it the video record underneath it, the
+sidebar destinations that give a channel's history somewhere to live, and the
+inspector beside Get Info. That was the one item on this list that changed what
+the app *is* rather than how fast you reach it, so what remains is smaller by
+nature. `docs/design/channel-watching.md`, `channel-history.md`,
+`video-record.md` and `inspector.md` carry the reasoning.
+
 In rough order of delight per hour:
 
 1. **The live disk projection.** `docs/design/composite-rate-control.md` §6.1
    argues for it and `docs/design/disk-preflight.md` §9 records the two gaps it
    closes. The projection is already computed for the progress UI.
-2. **Channel watching.** VODs expire after 14 days, 60 for partners, and a
-   missed one is unrecoverable. It is the only proposal that changes what the
-   app is rather than how fast you reach it, and it needs its own design doc —
-   polling, an app that runs rather than being opened, and a posture question.
-   `automation.md` §10.4 records the framing.
+2. **Whether the inbox goes flat.** Deferred by the sidebar work rather than
+   decided: with channel identity in the sidebar, Watching may want to be
+   reverse-chronological across channels instead of grouped by them.
 
 **Drag-and-drop and the `oxbow://` scheme are not being built**, having sat at
 number 2 on this list for two releases. `automation.md` §10.1 and §10.2 carry
