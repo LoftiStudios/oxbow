@@ -161,14 +161,6 @@ extension ScreenshotFixture {
     directory != nil && ProcessInfo.processInfo.environment["OXBOW_FIXTURE_TRIM"] == "1"
   }
 
-  /// The job whose Job Info window should also be opened, if any.
-  static var infoJobID: UUID? {
-    guard directory != nil else { return nil }
-    guard let raw = ProcessInfo.processInfo.environment["OXBOW_FIXTURE_INFO_JOB"], !raw.isEmpty
-    else { return nil }
-    return UUID(uuidString: raw)
-  }
-
   /// Where the script is serving `fixture/thumbnail.jpg`, e.g.
   /// `http://127.0.0.1:8731`.
   static var thumbnailBase: URL? {
@@ -179,15 +171,26 @@ extension ScreenshotFixture {
   }
 
   /// The canned metadata `QueueController.fetchInfo` returns during a fixture
-  /// run, so the intake never reaches Twitch for a video that does not exist.
-  static var videoInfo: VideoInfo? {
+  /// run, so nothing reaches Twitch for a video that does not exist.
+  ///
+  /// **Keyed by id, with a fallback.** `videoinfo-<id>.json` answers for one
+  /// video and `videoinfo.json` for everything else. One canned answer for
+  /// every id was fine while the intake was the only surface asking, but the
+  /// inspector asks about the *selected job* — so a single answer put the
+  /// intake's video's title on a card next to a queue row naming a different
+  /// one. In a published screenshot that reads as a bug in the app rather
+  /// than a shortcut in the fixture.
+  static func videoInfo(for id: String) -> VideoInfo? {
     guard let directory else { return nil }
-    let url = directory.appending(path: "videoinfo.json")
-    guard
-      let data = try? Data(contentsOf: url),
-      let decoded = try? JSONDecoder().decode(ScreenshotVideoInfo.self, from: data)
-    else { return nil }
-    return decoded.resolved(thumbnailBase: thumbnailBase)
+    let candidates = ["videoinfo-\(id).json", "videoinfo.json"]
+    for name in candidates {
+      guard
+        let data = try? Data(contentsOf: directory.appending(path: name)),
+        let decoded = try? JSONDecoder().decode(ScreenshotVideoInfo.self, from: data)
+      else { continue }
+      return decoded.resolved(thumbnailBase: thumbnailBase)
+    }
+    return nil
   }
 }
 
@@ -201,17 +204,11 @@ extension ScreenshotFixture {
 struct ScreenshotIntakeOpener: View {
   @Environment(\.openWindow) private var openWindow
   let windowID: String
-  /// Job Info is a `WindowGroup(for: JobID.self)`, so it needs a value rather
-  /// than only a scene id — and one naming a job the fixture actually holds.
-  let infoWindowID: String
 
   var body: some View {
     Color.clear
       .frame(width: 0, height: 0)
       .onAppear {
-        if let job = ScreenshotFixture.infoJobID {
-          openWindow(id: infoWindowID, value: JobID(rawValue: job))
-        }
         guard ScreenshotFixture.link != nil else { return }
         openWindow(id: windowID)
         // Deliberately not activating the app.

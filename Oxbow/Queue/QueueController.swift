@@ -110,7 +110,7 @@ final class QueueController {
     // fixture payload would be a payload no helper produced, and a stamped
     // record claiming otherwise is worse than no record.
     #if DEBUG
-    if let canned = ScreenshotFixture.videoInfo {
+    if let canned = ScreenshotFixture.videoInfo(for: id) {
       return VideoInfoFetcher.Fetched(info: canned, payload: "")
     }
     #endif

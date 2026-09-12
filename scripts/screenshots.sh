@@ -29,12 +29,11 @@
 #   ./scripts/screenshots.sh             build if needed, capture, write to docs/
 #   ./scripts/screenshots.sh --no-build  reuse the existing Debug build
 #   ./scripts/screenshots.sh --keep      leave the app running to poke at
-#   ./scripts/screenshots.sh --size 900x560   window content size, in points
-#                                        (default 900x492 — what docs/ holds)
+#   ./scripts/screenshots.sh --size 1180x700  window content size, in points
+#                                        (default 1180x660 — what docs/ holds)
 #   ./scripts/screenshots.sh --no-shadow      transparent window edges, for a
 #                                        design tool that adds its own shadow
 #   ./scripts/screenshots.sh --trim           intake with Trim expanded
-#   ./scripts/screenshots.sh --info           also capture the Job Info window
 #
 set -euo pipefail
 
@@ -47,7 +46,7 @@ KEEP=0
 # run whatever size the developer last left their real Oxbow window at, so the
 # screenshot would be a different shape on every machine. How much room sits
 # under the last row is a design call, so it is an input.
-SIZE="900x492"
+SIZE="1180x660"
 # Whether macOS draws its own window shadow into the capture's alpha.
 #
 # Keep it for compositing here: it is the real shadow, and the front window's
@@ -60,11 +59,6 @@ SHADOW=1
 # 0.68 to fit. Closed it fits at 0.76, so every glyph lands ~11% larger in an
 # image that is already downsampled hard wherever it is used.
 TRIM=0
-# Whether to also open and capture Job Info. Off by default: it is not in the
-# composite, and opening it races the intake for key-window status. Losing that
-# race is not subtle -- macOS draws a smaller shadow for a non-key window, and
-# the default button stops being accented -- but it is silent.
-INFO=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --no-build) BUILD=0; shift ;;
@@ -72,8 +66,7 @@ while [[ $# -gt 0 ]]; do
     --size)     SIZE="${2:?--size needs WIDTHxHEIGHT, e.g. 900x520}"; shift 2 ;;
     --no-shadow) SHADOW=0; shift ;;
     --trim)      TRIM=1; shift ;;
-    --info)      INFO=1; shift ;;
-    -h|--help)  sed -n '2,32p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help)  sed -n '2,31p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *)          echo "unknown option: $1" >&2; exit 2 ;;
   esac
 done
@@ -120,10 +113,11 @@ EXPAND=""
 [[ -f "$FIXTURE/expand.txt" ]] && EXPAND="$(cat "$FIXTURE/expand.txt")"
 LINK=""
 [[ -f "$FIXTURE/link.txt" ]] && LINK="$(cat "$FIXTURE/link.txt")"
-INFO_JOB=""
-[[ $INFO -eq 1 && -f "$FIXTURE/infojob.txt" ]] && INFO_JOB="$(cat "$FIXTURE/infojob.txt")"
-
-cp -f "$FIXTURE/videoinfo.json" "$STATE/" 2>/dev/null || true
+cp -f "$FIXTURE"/videoinfo*.json "$STATE/" 2>/dev/null || true
+# The watch list, so the sidebar has channels in it. Copied like queue.json
+# rather than read in place: the app rewrites this file whenever a watch
+# changes, and the checked-in fixture must not be what it rewrites.
+cp -f "$FIXTURE/watches.json" "$STATE/" 2>/dev/null || true
 
 # The intake's thumbnail has to arrive over HTTP. VideoCard.loadImage requires
 # an HTTPURLResponse with status 200, and a file:// URL produces a plain
@@ -147,7 +141,6 @@ OXBOW_FIXTURE_SIZE="$SIZE" \
 OXBOW_FIXTURE_LINK="$LINK" \
 OXBOW_FIXTURE_TRIM="$TRIM" \
 OXBOW_FIXTURE_THUMBS="http://127.0.0.1:$PORT" \
-OXBOW_FIXTURE_INFO_JOB="$INFO_JOB" \
   "$APP/Contents/MacOS/Oxbow" \
   -hasSavedDefaults NO \
   -intakeOptionsExpanded YES \
@@ -224,21 +217,17 @@ permission_help() {
 }
 
 mkdir -p "$OUT"
-# Let the titles settle before matching any of them. A WindowGroup(for:) window
-# carries the application name until its content sets a title, so capturing too
-# early can match Job Info as "Oxbow".
+# Let the titles settle before matching either of them. A window carries the
+# application name until its content sets a title, so capturing too early can
+# match the intake as "Oxbow".
 sleep 2
 echo "capturing…"
 capture "Oxbow" "$OUT/queue.png"
 capture "Add Download" "$OUT/intake.png"
-# Job Info's window title is the job's own title, so match the fixture's
-# mid-flight row rather than a fixed string.
-[[ $INFO -eq 1 ]] && capture "${EXPAND:0:24}" "$OUT/info.png"
 
 # Guard against the silent failure mode: without Screen Recording permission
 # screencapture writes a file, it is just empty or black.
 CHECK=("$OUT/queue.png" "$OUT/intake.png")
-[[ $INFO -eq 1 ]] && CHECK+=("$OUT/info.png")
 for f in "${CHECK[@]}"; do
   bytes=$(stat -f%z "$f" 2>/dev/null || echo 0)
   if [[ "$bytes" -lt 20000 ]]; then
@@ -248,19 +237,24 @@ done
 
 # ---------------------------------------------------------------- composite
 #
-# Geometry is derived, not hardcoded, so the layout survives a --size change or
-# a taller/shorter intake: the only fixed inputs are the margin, where the
-# queue's title bar sits, and how tall the intake should end up.
+# One window, centred. The hero used to place the queue at the left margin with
+# the intake sheet overlapping it on the right, which worked while the queue's
+# right edge held nothing but the ends of job titles. It does not any more: the
+# inspector lives there, permanently open, and the intake landed squarely on
+# top of it. Rather than shuffle the second window somewhere it fits less well,
+# the hero now shows the window that contains the whole app -- sidebar,
+# channels, queue and inspector. intake.png is still captured, for use on its
+# own wherever a second image is wanted.
 #
-# The shadow padding baked into each capture is what makes this arithmetic
-# necessary at all -- a placement positions the PNG, but the margin that matters
-# is to the window *body* inside it. The inset is derivable because both widths
-# are known: the queue's is whatever --size asked for, and the intake is a
-# fixed-width sheet whose height alone varies with its sections.
+# Geometry is derived, not hardcoded, so this survives a --size change. The
+# shadow padding baked into the capture is what makes the arithmetic necessary:
+# a placement positions the PNG, but the margin that matters is to the window
+# *body* inside it, and the inset is derivable because the body's width is
+# whatever --size asked for.
 BACKGROUND="$FIXTURE/desktop.png"
 if [[ -f "$BACKGROUND" ]]; then
   echo "compositing…"
-  PLACEMENTS=$(python3 - "$BACKGROUND" "$OUT/queue.png" "$OUT/intake.png" "${SIZE%%x*}" <<'PYEOF'
+  PLACEMENTS=$(python3 - "$BACKGROUND" "$OUT/queue.png" "${SIZE%%x*}" <<'PYEOF'
 import subprocess, sys
 
 def size(path):
@@ -274,28 +268,29 @@ def size(path):
                 values[key] = int(value)
     return values["pixelWidth"], values["pixelHeight"]
 
-background, queue, intake, size_width = sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4])
+background, queue, size_width = sys.argv[1], sys.argv[2], int(sys.argv[3])
 
-MARGIN = 74            # canvas px from a canvas edge to a window body
-QUEUE_BODY_TOP = 199   # where the queue's title bar sits
-INTAKE_BODY_TOP = 58
-INTAKE_BODY_HEIGHT = 1366  # what the intake shrinks to
-INTAKE_BODY_WIDTH = 1120   # the sheet is a fixed 560pt; only its height moves
+MARGIN = 74  # canvas px from a canvas edge to the window body
 
-canvas_w, _ = size(background)
-queue_w, _ = size(queue)
-intake_w, intake_h = size(intake)
+canvas_w, canvas_h = size(background)
+queue_w, queue_h = size(queue)
 
 # Half the difference between the capture and the window inside it.
-queue_inset = (queue_w - size_width * 2) / 2
-intake_inset = (intake_w - INTAKE_BODY_WIDTH) / 2
-intake_scale = INTAKE_BODY_HEIGHT / (intake_h - 2 * intake_inset)
+inset = (queue_w - size_width * 2) / 2
+body_w, body_h = queue_w - 2 * inset, queue_h - 2 * inset
 
-print(f"{queue}:{MARGIN - queue_inset:.0f}:{QUEUE_BODY_TOP - queue_inset:.0f}:1.0")
-# Right-aligned to the same margin the queue keeps on the left.
-right_edge = canvas_w - MARGIN
-intake_x = right_edge - INTAKE_BODY_WIDTH * intake_scale - intake_inset * intake_scale
-print(f"{intake}:{intake_x:.0f}:{INTAKE_BODY_TOP - intake_inset * intake_scale:.0f}:{intake_scale:.4f}")
+# Scale to the tighter of the two margins, and never up past 1:1 -- an
+# upscaled capture is a blurry one, and a window smaller than the canvas is
+# better shown small than stretched.
+scale = min(1.0,
+            (canvas_h - 2 * MARGIN) / body_h,
+            (canvas_w - 2 * MARGIN) / body_w)
+
+# Centred on the body, not on the capture -- they share a centre, since the
+# shadow padding is symmetric, but saying so keeps this true if it stops being.
+x = (canvas_w - queue_w * scale) / 2
+y = (canvas_h - queue_h * scale) / 2
+print(f"{queue}:{x:.0f}:{y:.0f}:{scale:.4f}")
 PYEOF
 )
   # shellcheck disable=SC2086
