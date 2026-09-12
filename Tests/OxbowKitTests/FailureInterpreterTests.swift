@@ -73,10 +73,61 @@ struct FailureInterpreterTests {
   }
 
   /// The most common real-world failure for a Twitch downloader.
+  ///
+  /// **This fixture is synthetic and that mattered.** `vod_manifest_restricted`
+  /// is what `usher` answers a direct manifest request — which Oxbow never
+  /// makes — so this test passed for months while the case it exists to cover
+  /// never matched in production. `recognisesTheCLIsOwnSubscriberOnlyWording`
+  /// below is the measured one. Kept because a future path that does read the
+  /// manifest itself would produce this text.
   @Test func recognisesSubscriberOnlyVods() throws {
     let stderr = "Unhandled exception. System.Exception: vod_manifest_restricted"
     let failure = try #require(interpret(.exited(134), stderr, artifactExists: false))
     #expect(failure.summary == "This is a subscriber-only VOD.")
+  }
+
+  /// Captured verbatim from one of 84 real failures on `middleditch`,
+  /// 2026-09-10, helper 1.56.5 — the channel `docs/twitch-channel-api.md`
+  /// §9.3 was itself measured against.
+  ///
+  /// The CLI swallows the manifest's 403 and rethrows its own wording from
+  /// `GetQualityPlaylist()`, so none of the Twitch-side error codes ever reach
+  /// this function. Before this matched, every one of those 84 summarised
+  /// through the unknown-error fallback, `AutoDownloadPolicy
+  /// .isContentRestricted` counted zero, and a watch with automatic
+  /// downloading on attempted the entire channel instead of stopping at three.
+  ///
+  /// Note the exit status: SIGABRT, not a nonzero exit. Upstream's `Main`
+  /// returns void and an unhandled exception aborts, which is exactly what
+  /// this type's own header says about exit codes corroborating rather than
+  /// deciding.
+  @Test func recognisesTheCLIsOwnSubscriberOnlyWording() throws {
+    let stderr = """
+      Unhandled exception. System.AggregateException: One or more errors occurred. \
+      (Insufficient access to VOD, OAuth may be required.)
+       ---> System.NullReferenceException: Insufficient access to VOD, OAuth may be required.
+         at TwitchDownloaderCore.VideoDownloader.GetQualityPlaylist()
+         at TwitchDownloaderCore.VideoDownloader.DownloadAsyncImpl(FileInfo outputFileInfo, FileStream outputFs, CancellationToken cancellationToken)
+         at TwitchDownloaderCore.VideoDownloader.DownloadAsync(CancellationToken cancellationToken)
+         --- End of inner exception stack trace ---
+         at TwitchDownloaderCLI.Program.Main(String[] args)
+      """
+    let failure = try #require(interpret(.signalled(SIGABRT), stderr, artifactExists: false))
+    #expect(failure.summary == FailureInterpreter.subscriberOnlySummary)
+  }
+
+  /// The half that makes the demotion work: the summary is not merely
+  /// readable, it is the exact string `AutoDownloadPolicy` counts.
+  ///
+  /// Asserted against the constant *and* against the fallback it used to take,
+  /// because "produces a sensible sentence" was already true of the broken
+  /// behaviour — that is precisely why nobody noticed.
+  @Test func theCLIsWordingIsNotLeftToTheUnknownErrorFallback() throws {
+    let stderr =
+      "---> System.NullReferenceException: Insufficient access to VOD, OAuth may be required."
+    let failure = try #require(interpret(.signalled(SIGABRT), stderr, artifactExists: false))
+    #expect(failure.summary != "Insufficient access to VOD, OAuth may be required.")
+    #expect(failure.summary == FailureInterpreter.subscriberOnlySummary)
   }
 
   @Test func fallsBackToTheExtractedSentenceForUnknownErrors() throws {

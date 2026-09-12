@@ -1588,9 +1588,9 @@ struct WatchingModelTests {
 
 
   /// §5.2: an archive Twitch has dropped, with nothing on disk, is a
-  /// headstone — counted but held back, so a channel watched for a year does
-  /// not become mostly gravestones.
-  @Test func anExpiredArchiveIsHeldBackAndCounted() throws {
+  /// headstone — held back from the inbox, so a channel watched for a year
+  /// does not become mostly gravestones, but kept in the record.
+  @Test func anExpiredArchiveIsHeldBackFromTheInboxButKeptInTheRecord() throws {
     let store = temporaryStore()
     try store.save([watch("ninja")])
     let records = temporaryRecordStore()
@@ -1606,13 +1606,19 @@ struct WatchingModelTests {
     // The sweep lists something else entirely, so "gone" is not live.
     model.apply([.init(login: "ninja", displayName: "Ninja", outcome: .found([archive("1")]))])
 
-    #expect(model.sections[0].rows.map(\.id) == ["1"], "the headstone stays out of the default view")
-    #expect(model.sections[0].hiddenCount == 1)
+    #expect(model.sections[0].rows.map(\.id) == ["1"], "the headstone stays out of the inbox")
+    #expect(model.sections[0].allRows.map(\.id).sorted() == ["1", "gone"],
+            "but the channel's own record keeps it")
   }
 
-  /// And revealing brings it back, saying plainly that Twitch no longer has
-  /// it rather than offering a download that cannot succeed.
-  @Test func revealingShowsTheHeldBackRowsAsExpired() throws {
+  /// And the channel's destination says plainly that Twitch no longer has it,
+  /// rather than offering a download that cannot succeed.
+  ///
+  /// **This used to be reached by revealing a fold in the inbox.** The fold is
+  /// gone (`docs/design/watching-navigation.md` §6) — the rows it hid now have
+  /// a destination of their own — but the thing it was protecting is not:
+  /// wherever a headstone is shown, it must never be `.available`.
+  @Test func theRecordCarriesTheHeadstoneMarkedExpired() throws {
     let store = temporaryStore()
     try store.save([watch("ninja")])
     let records = temporaryRecordStore()
@@ -1627,15 +1633,86 @@ struct WatchingModelTests {
       fileAnswer: { _ in .absent })
     model.apply([.init(login: "ninja", displayName: "Ninja", outcome: .found([archive("1")]))])
 
-    model.toggleHidden(for: "ninja")
-
-    #expect(model.sections[0].rows.map(\.id).sorted() == ["1", "gone"])
-    let headstone = try #require(model.sections[0].rows.first { $0.id == "gone" })
+    #expect(model.sections[0].allRows.map(\.id).sorted() == ["1", "gone"])
+    let headstone = try #require(model.sections[0].allRows.first { $0.id == "gone" })
     #expect(headstone.state == .expired, "never .available — Twitch cannot serve it")
     #expect(!headstone.state.isFetchable, "so the row must offer no Add")
 
-    model.toggleHidden(for: "ninja")
-    #expect(model.sections[0].rows.map(\.id) == ["1"], "and hiding puts it back")
+    #expect(model.sections[0].rows.map(\.id) == ["1"], "and the inbox still holds it back")
+  }
+
+  // MARK: - The unfiltered record a channel's own destination shows
+
+  /// `docs/design/watching-navigation.md` §7: "the inbox's rows are a subset
+  /// of the destination's, with the difference being precisely the rows
+  /// `belongsInTheDefaultView` rejects."
+  ///
+  /// Asserted as a property rather than against a fixed expected list, so it
+  /// keeps holding as row states are added — which is the whole reason the two
+  /// lists come from one `resolved` pass and one predicate rather than from
+  /// two separate walks.
+  @Test func theInboxRowsAreASubsetOfAllRows() throws {
+    let store = temporaryStore()
+    try store.save([watch("ninja", seen: ["already-seen"])])
+    let records = temporaryRecordStore()
+    defer { try? FileManager.default.removeItem(at: records.fileURL.deletingLastPathComponent()) }
+    var library = VideoLibrary()
+    library.record(VideoRecord(id: "gone", login: "ninja", title: "an old stream",
+                               publishedAt: Date(timeIntervalSince1970: 0)))
+    try records.save(library)
+
+    let model = WatchingModel(
+      store: store, videoRecordStore: records, openIntake: { _, _ in },
+      fileAnswer: { _ in .absent })
+    // One genuinely new archive, and one the watch has already seen. Plus the
+    // headstone from the record above, which the sweep no longer lists.
+    model.apply([.init(login: "ninja", displayName: "Ninja",
+                       outcome: .found([archive("1"), archive("already-seen")]))])
+
+    let section = try #require(model.sections.first)
+    let shown = Set(section.rows.map(\.id))
+    let all = Set(section.allRows.map(\.id))
+
+    #expect(shown == ["1"], "only the unseen, still-listed archive is inbox material")
+    #expect(shown.isSubset(of: all))
+    #expect(all.count > shown.count, "the fixture must actually hide something")
+    #expect(all.subtracting(shown) == ["already-seen", "gone"],
+            "and what it adds is exactly what belongsInTheDefaultView rejects")
+  }
+
+  /// Newest first, the order the sweep already returns and the one a channel
+  /// page reads in. Both lists are sorted by one function so they cannot order
+  /// a row differently.
+  @Test func allRowsAreNewestFirst() throws {
+    func dated(_ id: String, daysAgo: Int) -> ChannelArchive {
+      ChannelArchive(
+        id: id, title: "Stream \(id)", duration: .seconds(3600),
+        publishedAt: Date(timeIntervalSince1970: 1_700_000_000
+          - Double(daysAgo) * 86_400),
+        status: .recorded, thumbnailURL: nil)
+    }
+
+    let store = temporaryStore()
+    try store.save([watch("ninja", seen: ["middle"])])
+    let records = temporaryRecordStore()
+    defer { try? FileManager.default.removeItem(at: records.fileURL.deletingLastPathComponent()) }
+
+    let model = WatchingModel(
+      store: store, videoRecordStore: records, openIntake: { _, _ in },
+      fileAnswer: { _ in .absent })
+    // Deliberately handed to the model out of order, and with the hidden one
+    // in the middle, so a sort that only happened to hold for the shown list
+    // would show up here.
+    model.apply([.init(login: "ninja", displayName: "Ninja", outcome: .found([
+      dated("middle", daysAgo: 5),
+      dated("oldest", daysAgo: 30),
+      dated("newest", daysAgo: 1),
+    ]))])
+
+    let section = try #require(model.sections.first)
+    #expect(section.allRows.map(\.id) == ["newest", "middle", "oldest"])
+    let dates = section.allRows.map(\.archive.publishedAt)
+    #expect(dates == dates.sorted(by: >))
   }
 
 }

@@ -123,12 +123,35 @@ struct VideoRecordTests {
     #expect(VideoRecord(id: "1", login: "wheelyf").remembered() == nil)
   }
 
-  /// Display names live on a `Watch`; a record holds only a login, and a
-  /// hand-pasted video belongs to no watch. The login is what it can honestly
-  /// offer.
-  @Test("the streamer falls back to the login")
+  /// The fallback, for a record written before `displayName` existed or by a
+  /// path that never learned one. The login is what it can honestly offer.
+  @Test("the streamer falls back to the login when no display name was kept")
   func rememberedUsesTheLogin() {
     #expect(submitted.remembered()?.streamer == "wheelyf")
+  }
+
+  /// **And prefers the display name when there is one.**
+  ///
+  /// `video-record.md` §3.4: a display name and a login are two different
+  /// strings and neither follows from the other. Without this the remembered
+  /// card read `seecatplay` where the live one read `SeeCatPlay` — a visible
+  /// difference between a card the record drew and the same card drawn from
+  /// Twitch, which §4.1 says must not exist.
+  @Test("the streamer prefers the stored display name")
+  func rememberedPrefersTheDisplayName() {
+    var record = submitted
+    record.displayName = "WheelyF"
+    #expect(record.remembered()?.streamer == "WheelyF")
+  }
+
+  /// Additive like every other field: a writer that never learned the display
+  /// name must not erase one another writer did.
+  @Test("merging keeps a display name the incoming record lacks")
+  func mergingKeepsTheDisplayName() {
+    var kept = submitted
+    kept.displayName = "WheelyF"
+    let incoming = VideoRecord(id: kept.id, deliveredPath: "/x.mp4")
+    #expect(kept.merging(incoming).displayName == "WheelyF")
   }
 
 }

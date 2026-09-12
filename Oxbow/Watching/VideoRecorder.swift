@@ -59,6 +59,7 @@ enum VideoRecorder {
     library.record(VideoRecord(
       id: id,
       login: fetched.info.login,
+      displayName: fetched.info.streamer,
       title: fetched.info.title,
       durationSeconds: Int(fetched.info.duration.components.seconds),
       publishedAt: fetched.info.createdAt,

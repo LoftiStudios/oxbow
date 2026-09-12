@@ -113,6 +113,7 @@ struct OxbowApp: App {
           QueueView(
             content: content, updates: updates, watching: watching, poller: poller,
             canAddChannel: watchStore != nil, imageStore: imageStore,
+            videoRecordStore: videoRecordStore,
             pendingIntake: $pendingIntake,
             pendingChannelEdit: $pendingChannelEdit)
         } else {

@@ -436,6 +436,30 @@ the opposite direction: notice that a channel's *failures* share
 three rather than after nine hundred. That is a design decision, recorded here
 rather than made here.
 
+**That approximation was built and did not work, for a reason this section
+caused.** `AutoDownloadPolicy.isContentRestricted` implemented it at a
+threshold of three — matching on `vod_manifest_restricted`, the string
+measured *above*. But the 403 above was measured with a direct `curl` at
+`usher`, and Oxbow never makes that request. The CLI swallows the 403 inside
+`VideoDownloader.GetQualityPlaylist()` and rethrows its own wording:
+
+```
+System.NullReferenceException: Insufficient access to VOD, OAuth may be required.
+   at TwitchDownloaderCore.VideoDownloader.GetQualityPlaylist()
+```
+
+Measured 2026-09-10, helper 1.56.5, across 84 real failures on this same
+channel: not one of them contained either string this section named, so the
+count stayed at zero and a watch with automatic downloading on attempted the
+whole channel rather than stopping at three. Fixed in `FailureInterpreter` by
+matching the CLI's wording as well.
+
+**The general shape of the mistake is worth more than the fix.** This document
+measures *Twitch*, correctly. What the app sees is *the CLI's account of
+Twitch*, and the two are different strings for the same event. Anything here
+that a matcher is going to be written against needs to be measured at the
+boundary the matcher actually reads.
+
 ---
 
 ## 10. What this means for dropping the CLI
