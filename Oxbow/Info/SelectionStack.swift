@@ -2,134 +2,85 @@ import AppKit
 import OxbowKit
 import SwiftUI
 
-/// The selected downloads' thumbnails, fanned like Mail's multi-message
-/// selection.
-///
-/// `docs/design/inspector.md` §5.1. It does the work a count alone cannot: it
-/// says *these*, with their artwork, so a mis-selection is visible before you
-/// act on it.
-///
-/// **The order is the caller's and it matters.** `MultiSelection.cards` is
-/// built in *arrival* order — oldest first, so the newest lands on top — and
-/// capped by dropping the oldest. This view must not sort, reverse, or
-/// otherwise have an opinion; it only draws depth from position.
-///
-/// **A nil `url` draws a tile, not a gap.** A job whose video has no record or
-/// no thumbnail holds its place, so the pile's height keeps agreeing with what
-/// is selected rather than quietly understating it.
+/// Arrival order, oldest first. Only four depths are visible; older selections
+/// stay directly behind the fourth card so they can leave from that position.
 struct SelectionStack: View {
-  /// Oldest first, newest last — the last one is on top. Already capped at
-  /// four by `InspectorSubject.stack`, which drops the *oldest* to make room.
-  /// Not re-capped here: two places deciding how many fit is two places to
-  /// disagree.
   let cards: [StackCard]
   let store: ImageStore?
 
-  /// How far each deeper card slides and turns.
-  ///
-  /// **Rotated as well as offset**, which is the difference between a fan and
-  /// a stepped column: a pile of photographs tossed down, not a spreadsheet.
-  /// Small angles — past about five degrees per card the deepest one reads as
-  /// broken rather than casual.
   private static let slide: CGFloat = 5
   private static let drop: CGFloat = 2
   private static let turn: Double = -3
-
-  /// Where a card comes in from, and how hard it is leaning when it does.
-  ///
-  /// **A real journey, not a nudge.** An earlier version parted the cards by
-  /// their resting offsets — five points each — which is a motion you have to
-  /// already be looking at to notice. Mail throws the whole message in from
-  /// the side, and the distance is most of what sells it.
   private static let entry: CGFloat = 150
-  private static let entryTurn: Double = -10
-
-  /// The one animation everything here uses — the deal, an addition, a
-  /// removal, and the survivors sliding back a place as the pile deepens.
   private static let settle = Animation.spring(response: 0.38, dampingFraction: 0.8)
 
-  /// The cards actually on screen, which trails `cards` during the opening
-  /// deal and matches it thereafter.
-  ///
-  /// **One mechanism for every motion.** The deal, an addition and a removal
-  /// are all just this array changing, so they all animate through the same
-  /// transition and cannot disagree. The previous version drove the deal with
-  /// a separate `dealt` flag and a per-card `.animation(_:value:)`, which
-  /// overrode the container's animation for every card whose `dealt` had not
-  /// changed — so survivors snapped to their new depth while one card moved.
-  @State private var visible: [StackCard] = []
+  /// Keep departing cards mounted until their motion finishes. Layer numbers
+  /// never change as neighbours leave, including during rapid reselection.
+  private struct Tile: Identifiable {
+    var card: StackCard
+    var id: JobID { card.id }
+    var layer: Double
+    var depth: Int
+    var away = true
+    var departing = false
+    var castsShadow = true
+  }
 
-  /// How far back in the pile a card sits. **The last one is on top.**
-  ///
-  /// Cards land on top of each other as they arrive, so the newest is
-  /// frontmost — a pile being built, not a hand being fanned.
-  private func depth(of index: Int) -> Int { visible.count - 1 - index }
+  @State private var tiles: [Tile] = []
+  @State private var nextLayer: Double = 1
 
   var body: some View {
     ZStack {
-      ForEach(Array(visible.enumerated()), id: \.element.id) { index, card in
-        let back = depth(of: index)
-        StackTile(url: card.url, store: store)
-          .rotationEffect(.degrees(Double(back) * Self.turn), anchor: .bottomTrailing)
-          .offset(x: CGFloat(back) * -Self.slide, y: CGFloat(back) * Self.drop)
-          // **Explicit, and load-bearing during a transition.** A `ZStack`
-          // draws a `ForEach` in order, but a view being inserted or removed
-          // is composited outside that order — so without this the card flying
-          // in could land *behind* the pile, which reads as the bottom
-          // thumbnail animating rather than the new one.
-          .zIndex(Double(index))
-          // **In from the side always; out two different ways.**
-          //
-          // A card leaves for one of two reasons, and they do not look alike.
-          // Deselecting dismisses a card you can see, so it flies out the way
-          // it came in — the undo of selecting it. Being *pushed off the
-          // bottom* by a newer arrival is not a dismissal at all: that card is
-          // at the back of the pile, largely hidden, and the motion worth
-          // watching is the new one landing on top. Flying it out sideways
-          // made the eye follow the wrong card entirely.
-          //
-          // Told apart by position rather than by cause, which needs no extra
-          // state: the card pushed off is always the deepest one, and the
-          // deepest card is the one you can least see. It fades whatever sent
-          // it away — including a deselect, where flying a mostly-occluded
-          // card out from behind the others would look stranger than a fade.
-          //
-          // The last card standing is the front one, so it flies.
-          .transition(.asymmetric(
-            insertion: .offset(x: Self.entry).combined(with: .opacity),
-            removal: index == 0 && visible.count > 1
-              ? .opacity
-              : .offset(x: Self.entry).combined(with: .opacity)))
+      ForEach(tiles) { tile in
+        StackTile(url: tile.card.url, store: store, castsShadow: tile.castsShadow)
+          .rotationEffect(.degrees(Double(tile.depth) * Self.turn), anchor: .bottomTrailing)
+          .offset(
+            x: CGFloat(tile.depth) * -Self.slide + (tile.away ? Self.entry : 0),
+            y: CGFloat(tile.depth) * Self.drop)
+          .opacity(tile.away ? 0 : 1)
+          .zIndex(tile.layer)
       }
     }
-    // The first sleep is what makes the opening animate at all: state set in
-    // the same pass as the first render is coalesced with it, so SwiftUI sees
-    // no change.
-    //
-    // **`withAnimation` around the mutation, not `.animation(value:)` on the
-    // container.** That is the whole reason nothing arrived: an implicit
-    // container animation reliably animates a child's *properties*, but it is
-    // not a dependable way to drive a child's insertion `transition`. So the
-    // survivors' depth change animated — every existing card slides further
-    // back and rotates more when one is added, the deepest one travelling
-    // furthest — while the new card had no transaction to transition in on,
-    // and simply appeared.
-    //
-    // That is what "animating the back of the stack out of the view" was: the
-    // pile settling backwards was the only motion running.
-    .task {
-      try? await Task.sleep(for: .milliseconds(16))
-      withAnimation(Self.settle) { visible = cards }
+    .task(id: cards) {
+      // Mount newcomers off to the side first. Animating properties of an
+      // existing tile also works inside Form, where insertion transitions can
+      // be coalesced with the row's update.
+      for (index, card) in cards.enumerated() {
+        if let existing = tiles.firstIndex(where: { $0.id == card.id }) {
+          tiles[existing].card = card
+          if tiles[existing].departing {
+            tiles[existing].layer = nextLayer
+            nextLayer += 1
+          }
+        } else {
+          tiles.append(Tile(
+            card: card, layer: nextLayer, depth: min(cards.count - 1 - index, 3)))
+          nextLayer += 1
+        }
+      }
+      do { try await Task.sleep(for: .milliseconds(16)) } catch { return }
+      withAnimation(Self.settle) {
+        for index in tiles.indices {
+          if let position = cards.firstIndex(where: { $0.id == tiles[index].id }) {
+            tiles[index].depth = min(cards.count - 1 - position, 3)
+            tiles[index].departing = false
+            tiles[index].away = false
+            tiles[index].castsShadow = cards.count - 1 - position < 4
+          } else {
+            // Preserve the old depth, even for a card behind the visible four.
+            tiles[index].departing = true
+            tiles[index].away = true
+            tiles[index].castsShadow = true
+          }
+        }
+      }
+      // A changed selection cancels this cleanup. The next update retains
+      // ongoing departures and can reverse one if it was selected again.
+      do { try await Task.sleep(for: .milliseconds(700)) } catch { return }
+      tiles.removeAll { $0.away }
     }
-    .onChange(of: cards) { _, now in
-      withAnimation(Self.settle) { visible = now }
-    }
-    // Room for the rotated corners of the deepest card, which otherwise clip
-    // against the section's edge. Exactly enough for the deepest card's own
-    // offset, so the fan's left edge lines up with the text beneath it.
-    .padding(.leading, CGFloat(max(visible.count - 1, 0)) * Self.slide)
-    .padding(.bottom, CGFloat(max(visible.count - 1, 0)) * Self.drop + 8)
-    // One image of "the things you picked", not four separate controls.
+    .padding(.leading, CGFloat(min(max(cards.count - 1, 0), 3)) * Self.slide)
+    .padding(.bottom, CGFloat(min(max(cards.count - 1, 0), 3)) * Self.drop + 8)
     .accessibilityElement(children: .ignore)
     .accessibilityLabel("Thumbnails of the selected downloads")
   }
@@ -146,6 +97,7 @@ struct SelectionStack: View {
 private struct StackTile: View {
   let url: URL?
   let store: ImageStore?
+  var castsShadow = true
 
   @State private var image: NSImage?
 
@@ -176,6 +128,7 @@ private struct StackTile: View {
     // inspector rather than pinning itself to one column width.
     .aspectRatio(16.0 / 9.0, contentMode: .fit)
     .frame(maxWidth: .infinity)
+    .background(.background)
     .clipShape(RoundedRectangle(cornerRadius: 6))
     // **Stroke and shadow both, and both are doing work.** Twitch frames are
     // photographic and frequently near-black at the edges, so without the
@@ -184,7 +137,7 @@ private struct StackTile: View {
     // leans the same way the fan does, so each card's shadow falls on the one
     // behind it.
     .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(.separator))
-    .shadow(color: .black.opacity(0.5), radius: 6, x: -2, y: 4)
+    .shadow(color: .black.opacity(castsShadow ? 0.5 : 0), radius: 6, x: -2, y: 4)
     .task(id: url) {
       image = nil
       guard let url, let store else { return }

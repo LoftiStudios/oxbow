@@ -192,7 +192,10 @@ with their artwork, so a mis-selection is visible before you act on it.
 
 - **Capped at four**, with the count beneath carrying the true number. A fan
   of forty is a smear.
-- **Ordered by arrival, newest on top, and capped by dropping the oldest.**
+- **Ordered by arrival, newest on top, with four visible depths.**
+  Older cards stay directly behind the fourth card at its exact offset and
+  angle. They remain available to animate out when deselected, and move into
+  the fan when a newer card is removed.
   This section first said *queue* order, for a good reason — `selection` is a
   `Set<JobID>` and a `Set` has none, so a stack rendered straight from one
   would reshuffle every rebuild — but it drew the wrong conclusion from it.

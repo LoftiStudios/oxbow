@@ -41,17 +41,32 @@ struct InspectorPane: View {
 
   @Environment(\.colorScheme) private var colorScheme
 
+  private var isMultiple: Bool {
+    if case .many = subject { return true }
+    return false
+  }
+
   var body: some View {
-    Group {
+    ZStack(alignment: .top) {
       switch subject {
       case .nothing:
         empty
+          .transition(.opacity)
+          .zIndex(0)
       case .one(let target):
         single(target)
+          .transition(.opacity)
+          .zIndex(1)
       case .many(let many):
         multiple(many)
+          .transition(.opacity)
+          .zIndex(2)
       }
     }
+    // Keep the outgoing pane underneath while the new one fades in. Key this
+    // only to crossing the single/stack boundary: count and progress updates
+    // should not fade the whole inspector or override the cards' own spring.
+    .animation(.easeInOut(duration: 0.22), value: isMultiple)
     // §8: the window's floor is 660pt and this lands comfortable use near
     // 1000. Collapsible, and its width is remembered.
     .inspectorColumnWidth(min: 260, ideal: 300, max: 420)

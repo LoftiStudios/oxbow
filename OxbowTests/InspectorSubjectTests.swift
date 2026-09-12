@@ -268,8 +268,8 @@ struct InspectorSubjectTests {
   /// **Selecting the bottom row and extending upward**, which is the case that
   /// exposed the old rule. Queue order put the same card on top every time and
   /// dropped the first-selected one outright once five were picked; arrival
-  /// order puts whatever you just added on top and drops the oldest.
-  @Test func theNewestFourArriveOnTopWithTheOldestDropped() throws {
+  /// order puts whatever you just added on top and retains the hidden cards.
+  @Test func allArrivalsAreRetainedWithTheNewestOnTop() throws {
     let jobs = (1...5).map { videoJob("J\($0)", videoID: "\($0)") }
     let lib = library((1...5).map { withThumbnail("\($0)", "https://x/\($0).jpg") })
     // Picked 5 first, then 4, 3, 2, 1 — the order ⇧↑ produces from the bottom.
@@ -281,10 +281,9 @@ struct InspectorSubjectTests {
     else { Issue.record("expected .many"); return }
 
     #expect(m.count == 5, "the count keeps telling the truth")
-    #expect(m.cards.count == 4, "four visible")
-    // Oldest first, so the last is on top: job 5 was picked first and is the
-    // one dropped; job 1 was picked last and faces you.
-    #expect(m.cards.map(\.id) == [jobs[3].id, jobs[2].id, jobs[1].id, jobs[0].id])
+    #expect(m.cards.count == 5, "hidden cards remain available for removal animation")
+    // Oldest first, including the hidden job 5; job 1 faces you.
+    #expect(m.cards.map(\.id) == arrivals)
     #expect(m.cards.last?.url?.absoluteString == "https://x/1.jpg")
   }
 
