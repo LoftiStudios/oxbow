@@ -14,9 +14,37 @@ there as part of the release commit. The build number is not tracked here — it
 is the repository's commit count, stamped into the bundle at build time by
 `scripts/stamp-version.sh`.
 
-## [Unreleased]
+## [0.5.0] - 2026-09-11
+
+Two releases ago Oxbow was a window you opened to fetch a video. This one is
+about what happens when you are not looking at it: a channel is watched rather
+than remembered, a link queues from Spotlight without the app coming forward,
+and the window itself says what it is showing you without being asked.
 
 ### Added
+
+- **The window says what it is showing you.** Watched channels are sidebar
+  destinations now, under Watching, so a channel's whole record has somewhere
+  to live that is not a hundred rows unfolding under the one you were reading —
+  Watching stays the inbox of what is new, each channel gets a pane of its own,
+  and the badge on the parent is the sum of its children by construction rather
+  than a second count that can disagree.
+
+  Beside them is an inspector: a trailing pane describing whatever is selected,
+  one download or fifty, a queued job or a channel's archive. It is not a
+  replacement for Get Info — that window answers "keep this in front of me",
+  and this answers "what am I looking at" — and the card at the top of both is
+  literally the same component, so the two cannot drift into describing a video
+  differently. `docs/design/inspector.md` has the reasoning, including what
+  deliberately stayed in the window.
+
+  The inspector has no toggle. It opens with the window, at its full width, and
+  there is no button or shortcut that takes it away: the question it answers is
+  not one that stops being asked, and a control whose only job is to remove the
+  answer is one people press by accident. The queue selects the running job
+  when it loads so the pane opens with something in it. The cost is width — the
+  window's minimum is now 920pt, and on a laptop that is a real ask which
+  cannot be paid back by closing anything.
 
 - **Oxbow watches a Twitch channel and keeps what it finds.** Paste a channel,
   choose what it should download at, and Oxbow polls it — queueing new archives
