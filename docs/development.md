@@ -475,6 +475,19 @@ with. The pieces:
   second Oxbow beside whatever you already have open, and matching on the name
   captured the developer's real queue — silently, since the image looked
   perfectly correct.
+- `scripts/screenshots/fixture/watches.json` is the watch list, written whole
+  by `make-fixture.py` rather than transformed from a real one: a `Watch` has no
+  Swift-Codable exotica to get wrong by hand. Two of its three channels are the
+  streamers the queue is full of, because a sidebar naming channels nobody in
+  the queue is watching reads as two screenshots stitched together. The poller
+  does **not** run on a fixture launch — same reasoning as `runsWork: false`
+  above, since a sweep would spend the capture failing to reach Twitch for three
+  logins that do not exist.
+- `ScreenshotFixture.videoInfo(for:)` answers per video id —
+  `videoinfo-<id>.json` first, `videoinfo.json` otherwise. One canned answer for
+  every id was enough while the intake was the only surface asking; the
+  inspector asks about the *selected job*, so a single answer put one video's
+  title on a card beside a row naming another.
 
 It needs Screen Recording permission for your terminal; without it
 `screencapture` writes a blank file rather than failing, so the script checks
