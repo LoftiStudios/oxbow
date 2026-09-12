@@ -73,14 +73,6 @@ struct QueueView: View {
   /// nil the same way rather than showing a blank pane.
   @State private var sidebarSelection: SidebarItem? = .queue
 
-  /// Whether the trailing inspector is open.
-  ///
-  /// **One flag for every destination, not one each.** A control that
-  /// remembers a different answer depending on where you are standing is one
-  /// you cannot predict — `docs/design/inspector.md` §7, which is §6's
-  /// argument about the content applied to the chrome.
-  @State private var isInspectorOpen = false
-
   /// The selected archive, shared by the inbox and every channel destination.
   ///
   /// **One piece of state, not one per destination** (`inspector.md` §3.2).
@@ -395,7 +387,11 @@ WatchingView(
       library = videoRecordStore.flatMap { try? $0.load() } ?? VideoLibrary()
     }
     .onChange(of: selection) { _, now in rememberArrivals(now) }
-    .inspector(isPresented: $isInspectorOpen) {
+    // **Always open, and there is no control that closes it** —
+    // `docs/design/inspector.md` §7. A constant binding rather than state
+    // with no writer: the flag would read as something a control could still
+    // flip, and nothing flips it.
+    .inspector(isPresented: .constant(true)) {
       InspectorPane(
         subject: InspectorSubject.resolve(
           destination: sidebarSelection,
@@ -414,9 +410,13 @@ WatchingView(
     // sidebar at all. The +180 is the sidebar's ideal column width (set
     // above), added on top rather than carved out of the 480, so the detail
     // pane keeps roughly its designed minimum even if the split view ever
-    // shrinks the sidebar down to its own 150pt floor. Height is untouched:
-    // a sidebar costs no height.
-    .frame(minWidth: 480 + 180, minHeight: 320)
+    // shrinks the sidebar down to its own 150pt floor. The +260 is the
+    // inspector's own floor, and it is in here because the inspector is
+    // permanent now: with nothing able to close it, a window narrower than
+    // the three columns' minimums is a window whose detail pane gets
+    // squeezed rather than one whose inspector is away. Height is untouched:
+    // neither a sidebar nor an inspector costs height.
+    .frame(minWidth: 480 + 180 + 260, minHeight: 320)
     .toolbar {
       // Two different buttons behind the same placement, switched on which
       // pane is showing — never both, and never neither. `Add Download`
@@ -477,22 +477,8 @@ WatchingView(
         }
       }
 
-      // **Outside the branch above**: the inspector belongs to the window,
-      // not to one pane, so unlike Refresh / Add Channel / Add Download it is
-      // present wherever you are standing.
-      //
-      // ⌥⌘I, never ⌘I. ⌘I is Get Info and opens the window it always has —
-      // the two answer different questions (`inspector.md` §2) and the
-      // shortcuts have to say so.
-      ToolbarItem(placement: .primaryAction) {
-        Button {
-          isInspectorOpen.toggle()
-        } label: {
-          Label("Inspector", systemImage: "sidebar.trailing")
-        }
-        .keyboardShortcut("i", modifiers: [.command, .option])
-        .help("Show or hide details for what is selected (⌥⌘I)")
-      }
+      // **No inspector button, and no ⌥⌘I.** The pane is always open, so a
+      // toggle would have nothing to toggle — `inspector.md` §7.
     }
     // Clicking a "new archives are waiting" notification lands here — see
     // `WatchingReveal` for why that click cannot simply set state on

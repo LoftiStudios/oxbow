@@ -15,7 +15,7 @@ import OxbowKit
 /// identical on both surfaces and the sections beneath are each pane's own.
 /// The full step breakdown and the delivered-files list stay in the window —
 /// that is what keeps it worth opening rather than a wider inspector. §11
-/// rejects a compact card variant outright: if this reads badly at 300pt, the
+/// rejects a compact card variant outright: if this reads badly at 420pt, the
 /// fix belongs in `VideoCard`.
 struct InspectorPane: View {
   let subject: InspectorSubject
@@ -67,9 +67,13 @@ struct InspectorPane: View {
     // only to crossing the single/stack boundary: count and progress updates
     // should not fade the whole inspector or override the cards' own spring.
     .animation(.easeInOut(duration: 0.22), value: isMultiple)
-    // §8: the window's floor is 660pt and this lands comfortable use near
-    // 1000. Collapsible, and its width is remembered.
-    .inspectorColumnWidth(min: 260, ideal: 300, max: 420)
+    // §8: opens at the widest column it allows, which is what the cards and
+    // the selection stack were drawn for — 300 was a compromise with a pane
+    // people were expected to close, and nothing closes this one. The floor
+    // stays 260 so a narrow window can still be dragged down to it; the
+    // ceiling and the ideal are the same number so "open" means "wide".
+    // The window's own floor (`QueueView`) now carries this 260.
+    .inspectorColumnWidth(min: 260, ideal: 420, max: 420)
   }
 
   /// §6: a placeholder, deliberately **not** the channel card or queue totals.
@@ -91,7 +95,7 @@ struct InspectorPane: View {
       Form {
           // **Identical to the window's**, from the same loader.
           // `video-record.md` §4.1's "one component", and `inspector.md` §11
-          // rejects a compact variant outright: if this reads badly at 300pt
+          // rejects a compact variant outright: if this reads badly at 420pt
           // the fix belongs in `VideoCard`, not in a second card here.
           //
           // The card draws its own title, streamer and date line, which is why
@@ -315,13 +319,18 @@ struct InspectorPane: View {
 
 }
 
+// 420 everywhere below but one: that is the width the pane opens at and no
+// longer closes from, so it is the width worth judging. The exception is
+// deliberately at the 260 floor — someone can still drag down to it.
 #Preview("Nothing selected") {
   InspectorPane(subject: .nothing, controller: nil)
-    .frame(width: 300, height: 420)
+    .frame(width: 420, height: 420)
 }
 
 // The state that broke: four statuses at once, which laid across the value
 // column gave each a quarter of a narrow column and hyphenated every word.
+// Kept at the column's floor rather than raised with the others — the bug it
+// remembers is a narrow-column bug, and 420 would stop reproducing it.
 #Preview("Several selected, four statuses") {
   InspectorPane(
     subject: .many(MultiSelection(
@@ -329,7 +338,7 @@ struct InspectorPane: View {
       estimatedBytes: 4_200_000_000,
       cards: [], channels: ["LeighXP", "WheelyF", "lilbadsnacks"])),
     controller: nil)
-    .frame(width: 320, height: 460)
+    .frame(width: 260, height: 460)
 }
 
 #Preview("Several selected, priced") {
@@ -337,7 +346,7 @@ struct InspectorPane: View {
     subject: .many(MultiSelection(
       count: 5, queued: 3, failed: 2, estimatedBytes: 12_400_000_000)),
     controller: nil)
-    .frame(width: 300, height: 420)
+    .frame(width: 420, height: 420)
 }
 
 // §5.3's other half: one of these could not be priced, so the size line is
@@ -346,7 +355,7 @@ struct InspectorPane: View {
   InspectorPane(
     subject: .many(MultiSelection(count: 5, queued: 3, failed: 2)),
     controller: nil)
-    .frame(width: 300, height: 420)
+    .frame(width: 420, height: 420)
 }
 
 // `video-record.md` §4.3: a video nothing has downloaded still has a card.
@@ -354,5 +363,5 @@ struct InspectorPane: View {
 // with, which is also what an expired video looks like.
 #Preview("One selected, not downloaded") {
   InspectorPane(subject: .one(.video("2844787557")), controller: nil)
-    .frame(width: 300, height: 420)
+    .frame(width: 420, height: 420)
 }
