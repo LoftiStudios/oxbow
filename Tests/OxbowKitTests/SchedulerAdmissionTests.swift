@@ -53,7 +53,6 @@ struct SchedulerAdmissionTests {
     #expect(Scheduler.admissible(jobs: jobs, running: []) == [Build.stepID(2)])
   }
 
-  /// The headline scenario from the design discussion.
   @Test func aFailedChatDownloadDoesNotStopAnIndependentVideoDownload() {
     let chatFailed = Build.network(2, .failed(StepFailure(kind: .noArtifact, summary: "x")))
     let jobs = [Build.job(1,

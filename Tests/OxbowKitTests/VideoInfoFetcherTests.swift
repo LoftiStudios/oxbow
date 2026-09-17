@@ -2,24 +2,13 @@ import Foundation
 import Testing
 @testable import OxbowKit
 
-/// A helper double for `VideoInfoFetcher` that captures the `Launch` it was
-/// given and replays a chosen stdout through the **real** `StatusLineParser`.
-///
-/// Routing through the real parser — rather than calling `onOutput` with
-/// hand-built `.log`/`.ffmpeg` cases directly — is deliberate: the fixture's
-/// leading `[STATUS] - Fetching Video Info [1/1]` line really does classify
-/// as `.status`, and every JSON/m3u8 line after it really does classify as
-/// `.log` (nothing in `info --format Raw`'s body matches a known preamble).
-/// A fetcher that only listened to `.status`, or that dropped anything after
-/// the first line, fails against this fake exactly as it would against a
-/// real helper.
+/// Replay stdout through the real parser so status banners and JSON/playlist logs are
+/// classified as in production. Captures the invocation for wiring assertions.
 private actor FakeInfoHelper: HelperProcessing {
   enum Behaviour: Sendable {
     case succeeds(stdout: String)
     case fails(exitCode: Int32, stderr: String)
-    /// Blocks inside `run` until `cancel()` arrives, then reports as killed —
-    /// what a real `info` invocation does, since it observes nothing about
-    /// the task awaiting it.
+    /// Waits for explicit cancellation, like the real subprocess.
     case hangsUntilCancelled
   }
 
@@ -55,10 +44,7 @@ private actor FakeInfoHelper: HelperProcessing {
       return RunResult(status: .exited(0), standardError: "")
 
     case .fails(let exitCode, let stderr):
-      // A helper that dies still leaves a fully-formed, parseable payload on
-      // stdout impossible in practice, but this fake sends none at all — the
-      // point is to prove the exit status is checked on its own, not only
-      // inferred from whether parsing succeeded.
+      // No payload; verify abnormal exit independently of parsing.
       return RunResult(status: .exited(exitCode), standardError: stderr)
     }
   }
@@ -83,19 +69,13 @@ struct VideoInfoFetcherTests {
 
     let info = try await VideoInfoFetcher.fetch(id: "2412345678", helper: helperPath, process: fake)
 
-    // Values pinned to the captured fixture (see VideoInfoTests), not just
-    // "non-nil" — a fetcher that fed the parser an empty or wrong string
-    // (e.g. only the `.status` banner) would fail these.
+    // Pin captured values so wrong-line forwarding cannot pass.
     #expect(info.streamer == "LeighXP")
     #expect(info.qualities.map(\.name) == ["1080p60", "720p60", "480p30", "360p30", "160p30"])
   }
 
-  /// The clip payload is one JSON object with **no trailing newline** — the
-  /// CLI's `HandleClipRaw` serializes and stops — so the whole thing only ever
-  /// reaches the parser through `StatusLineParser.finish()`. A fetcher that
-  /// listened to `consume` alone would see the `[STATUS]` banner and nothing
-  /// else, which is why this goes through the real parser rather than calling
-  /// `VideoInfo.parse` on the fixture directly.
+  /// Clip JSON has no final newline and reaches consumers only through parser finish. Exercise
+  /// the real incremental parser to catch a missing flush.
   @Test func parsesTheRealClipInfoFromTheFixture() async throws {
     let stdout = String(decoding: try Fixture.bytes("info-clip-raw.stdout"), as: UTF8.self)
     #expect(!stdout.hasSuffix("\n"))
@@ -123,9 +103,7 @@ struct VideoInfoFetcherTests {
   }
 
   @Test func throwsWhenTheOutputDoesNotParse() async throws {
-    // Exits cleanly, but nothing here is JSON: proves the failure is about
-    // parseability, distinct from (and not just a rename of) the non-zero
-    // exit case above.
+    // Clean exit with non-JSON output isolates parse failure.
     let fake = FakeInfoHelper(.succeeds(stdout: "[STATUS] - Fetching Video Info [1/1]\nnot json\n"))
 
     await #expect {
@@ -136,10 +114,7 @@ struct VideoInfoFetcherTests {
     }
   }
 
-  /// The snippet must contain something specific to *this* failure, not just
-  /// be non-empty — a wrong implementation that attached a fixed placeholder
-  /// string (e.g. `"unparseable"`) would satisfy an empty-string check but
-  /// give a debugger nothing to work from.
+  /// Require failure-specific snippet content, not just a nonempty placeholder.
   @Test func unparseableOutputErrorCarriesARecognizableSnippet() async throws {
     let fake = FakeInfoHelper(
       .succeeds(stdout: "[STATUS] - Fetching Video Info [1/1]\ndefinitely-not-json-2946\n"))
@@ -152,9 +127,7 @@ struct VideoInfoFetcherTests {
     }
   }
 
-  /// Pins the snippet's bound. Feeds output far larger than the limit and
-  /// asserts the payload stays within it — so a future edit that drops the
-  /// truncation can't silently let an unbounded payload back into the error.
+  /// Oversized output must remain bounded in diagnostics.
   @Test func unparseableOutputSnippetStaysWithinItsBound() async throws {
     let huge = String(repeating: "z", count: VideoInfoFetcher.snippetLimit * 20)
     let fake = FakeInfoHelper(.succeeds(stdout: huge))
@@ -169,20 +142,15 @@ struct VideoInfoFetcherTests {
     }
   }
 
-  /// Intake refetches on every keystroke and SwiftUI cancels the fetch it
-  /// supersedes — but `HelperProcess.run` blocks on `waitpid` and observes
-  /// nothing about the task awaiting it. Without an explicit cancellation
-  /// handler, each superseded paste left a real `info` subprocess talking to
-  /// Twitch until it finished, its result thrown away.
+  /// Task cancellation must reach the subprocess; otherwise superseded metadata fetches keep
+  /// talking to Twitch.
   @Test func cancellingTheFetchSignalsTheHelper() async throws {
     let fake = FakeInfoHelper(.hangsUntilCancelled)
     let task = Task {
       try await VideoInfoFetcher.fetch(id: "123", helper: helperPath, process: fake)
     }
 
-    // The helper must actually be running before the cancellation is
-    // meaningful; cancelling a task that has not reached `run` yet would pass
-    // against an implementation that never signals at all.
+    // Wait until the helper runs so cancellation cannot pass without signalling it.
     await Self.waitUntil("the helper is running") { await fake.isRunning }
     task.cancel()
 
@@ -190,9 +158,7 @@ struct VideoInfoFetcherTests {
     #expect(await fake.wasCancelled)
   }
 
-  /// And the caller sees a cancellation, not a helper failure — the sheet
-  /// turns `.helperFailed` into "Oxbow could not read that video's details",
-  /// which is the wrong thing to say to someone who simply kept typing.
+  /// Report cancellation rather than a metadata failure while the user is typing.
   @Test func aCancelledFetchThrowsCancellationNotAHelperFailure() async throws {
     let fake = FakeInfoHelper(.hangsUntilCancelled)
     let task = Task {
@@ -235,8 +201,7 @@ struct VideoInfoFetcherTests {
     #expect(launch.executable == helperPath)
   }
 
-  /// The payload comes back beside the parsed info, byte for byte, because a
-  /// later parser has to read the parts `VideoInfo.parse` ignores.
+  /// Retain the parsed payload lines for future metadata readers.
   @Test("fetchDetailed returns the raw payload alongside the info")
   func detailedCarriesThePayload() async throws {
     let payload = """
@@ -256,8 +221,7 @@ struct VideoInfoFetcherTests {
 
     #expect(fetched.info.login == "wheelyf")
     #expect(fetched.payload == payload)
-    // The moments line survives even though nothing parses it — that is the
-    // entire point of keeping the payload.
+    // Keep moments despite no current consumer.
     #expect(fetched.payload.contains("moments"))
   }
 

@@ -9,9 +9,7 @@ public struct VideoRequest: Codable, Sendable, Equatable {
   public var quality: String
   public var trimStart: Duration?
   public var trimEnd: Duration?
-  /// `nil` means the user does not want this file — it stays in the job
-  /// workspace and is discarded with it. A composite job sets this, because
-  /// the composite replaces its inputs rather than accompanying them.
+  /// Nil keeps the file in the workspace as an intermediate, discarded with the job.
   public var destination: URL?
 
   public init(
@@ -32,9 +30,7 @@ public struct VideoRequest: Codable, Sendable, Equatable {
 public struct ClipRequest: Codable, Sendable, Equatable {
   public var clipSlug: String
   public var quality: String
-  /// `nil` means the user does not want this file — it stays in the job
-  /// workspace and is discarded with it. A composite job sets this, because
-  /// the composite replaces its inputs rather than accompanying them.
+  /// Nil keeps the file in the workspace as an intermediate, discarded with the job.
   public var destination: URL?
 
   public init(clipSlug: String, quality: String, destination: URL? = nil) {
@@ -45,18 +41,13 @@ public struct ClipRequest: Codable, Sendable, Equatable {
 }
 
 public struct ChatRequest: Codable, Sendable, Equatable {
-  /// A VOD id or a clip slug — upstream's `chatdownload --id` documents
-  /// itself as taking "a VOD or clip" and accepts either into this same
-  /// parameter (design doc §8). The field predates clip support; a rename
-  /// is a wider change than the task that added it made.
+  /// A VOD ID or clip slug; `chatdownload --id` accepts either.
   public var videoID: String
   public var trimStart: Duration?
   public var trimEnd: Duration?
   public var format: ChatFormat
   public var isEmbeddingImages: Bool
-  /// `nil` means the user does not want to keep the chat file, so it stays in
-  /// the job workspace and is discarded with it. This is the queue half of the
-  /// open question in the design spec, §10.
+  /// Nil keeps chat in the workspace as an intermediate, discarded with the job.
   public var destination: URL?
 
   public init(
@@ -76,11 +67,8 @@ public struct ChatRequest: Codable, Sendable, Equatable {
   }
 }
 
-/// Joins the composite's pieces into the file the user asked for.
-///
-/// Always present, even when there is exactly one piece — a job that never
-/// failed still runs it, and concatenating one input is cheap. Keeping it
-/// unconditional means there is one delivery path rather than two.
+/// Joins composite pieces for delivery. Runs even for one piece so all composites share the
+/// same delivery path.
 public struct AssembleRequest: Codable, Sendable, Equatable {
   public var destination: URL
 
@@ -96,10 +84,8 @@ public struct RenderRequest: Codable, Sendable, Equatable {
   public var fontSize: Double
   public var font: String
   public var backgroundColor: String
-  /// Inert on its own — the CLI documents `--alt-background-color` as
-  /// requiring `--alternate-backgrounds` to have any visible effect. Keep
-  /// `hasAlternateBackgrounds` wired to this whenever the form exposes either
-  /// (Task 9), or the user gets a colour well that silently does nothing.
+  /// Requires `hasAlternateBackgrounds`; the CLI ignores this color unless alternate
+  /// backgrounds are enabled.
   public var alternateBackgroundColor: String
   public var hasAlternateBackgrounds: Bool
   public var messageColor: String
@@ -110,9 +96,7 @@ public struct RenderRequest: Codable, Sendable, Equatable {
   /// See docs/ffmpeg.md, section 3.
   public var bitrateMbps: Int
   public var isSharpened: Bool
-  /// `nil` means the user does not want this file — it stays in the job
-  /// workspace and is discarded with it. A composite job sets this, because
-  /// the composite replaces its inputs rather than accompanying them.
+  /// Nil keeps the file in the workspace as an intermediate, discarded with the job.
   public var destination: URL?
 
   public init(

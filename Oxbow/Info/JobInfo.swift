@@ -1,20 +1,8 @@
 import Foundation
 import OxbowKit
 
-/// Everything a finished, running or cancelled job can still say about how it
-/// was set up, read back out of the job itself.
-///
-/// **Nothing new is stored for this.** `Step.kind` carries the whole
-/// `VideoRequest` / `ClipRequest` / `ChatRequest` / `RenderRequest` that
-/// produced it, and those are `Codable` and live in the persisted queue — so
-/// every setting of every job survives a relaunch already, including all
-/// twenty render options. Get Info is a reading of what is there, not a second
-/// copy of it, which is what keeps the two from ever disagreeing.
-///
-/// `nonisolated`: the target defaults new declarations to `@MainActor`, but
-/// this is a pure derivation from a value with no UI dependency, and
-/// `OxbowTests` (which has no actor default of its own) calls it
-/// synchronously.
+/// Derives display values from persisted step requests. `nonisolated` allows synchronous use
+/// outside the app's default main actor.
 nonisolated struct JobInfo {
   let job: Job
 
@@ -22,7 +10,6 @@ nonisolated struct JobInfo {
     self.job = job
   }
 
-  /// One line of the window: what it is, and what it was set to.
   struct Setting: Identifiable, Equatable {
     var label: String
     var value: String
@@ -53,19 +40,13 @@ nonisolated struct JobInfo {
 
   // MARK: - Where it came from
 
-  /// The address this job was created from, rebuilt.
-  ///
-  /// The queue never stored the link the user pasted, only the id inside the
-  /// request — so this reconstructs it, which is what makes the answer
-  /// something you can paste back into a browser rather than a bare number.
+  /// Reconstruct the source URL from the request's stored identifier.
   var sourceURL: URL? {
     if let video { return URL(string: "https://www.twitch.tv/videos/\(video.videoID)") }
     if let clip { return URL(string: "https://clips.twitch.tv/\(clip.clipSlug)") }
 
-    // A render-only job has no media step at all, so the chat request's id is
-    // the only record of what it was rendering. All-digits means a VOD — the
-    // same test upstream's `InfoHandler` branches on to decide which of two
-    // completely different payloads to fetch.
+    // Fall back to the chat request when there is no media step. Upstream treats all-digit
+    // identifiers as VODs.
     guard let identifier = chat?.videoID, !identifier.isEmpty else { return nil }
     let isVOD = identifier.allSatisfy(\.isNumber)
     return URL(string: isVOD
@@ -80,8 +61,7 @@ nonisolated struct JobInfo {
 
   // MARK: - Settings
 
-  /// An empty quality is not a missing value — it is the choice that means
-  /// "let the CLI pick source" (design §6) — so it reads as one.
+  /// An empty quality asks the CLI to select source.
   var quality: String {
     let chosen = video?.quality ?? clip?.quality
     guard let chosen, !chosen.isEmpty else { return "Best available" }
@@ -100,12 +80,7 @@ nonisolated struct JobInfo {
     }
   }
 
-  /// What this job was asked to deliver.
-  ///
-  /// A step with no destination was downloaded or rendered only to feed a
-  /// later step and then discarded (`JobTemplate.renderInput`, and the same
-  /// pattern for a composite's video and render inputs), so it is not an
-  /// output — listing it would promise a file that never arrived.
+  /// Only steps with destinations deliver outputs; intermediate artifacts are excluded.
   var outputs: [String] {
     var outputs: [String] = []
     if let video, video.destination != nil { outputs.append("Video") }
@@ -124,14 +99,8 @@ nonisolated struct JobInfo {
     destinations.first?.deletingLastPathComponent()
   }
 
-  /// Only the files that actually landed — `Job.deliveredFiles`, the one
-  /// definition of "delivered" shared with `QueueActions` (Show in Finder
-  /// reads the same property). `Step.artifact` alone is not enough: it is
-  /// set the moment a step succeeds, whatever its destination — including a
-  /// step that only feeds a later one, like a composite job's video, chat,
-  /// and render inputs, whose `artifact` still points inside the job
-  /// workspace even once `.done` (`JobTemplate.makeJob`). `Job.deliveredFiles`
-  /// is what excludes those rather than trusting they are already gone.
+  /// Uses Job.deliveredFiles to exclude workspace intermediates, even when their steps are
+  /// done.
   var deliveredFiles: [URL] { job.deliveredFiles }
 
   private var destinations: [URL] {
@@ -149,21 +118,9 @@ nonisolated struct JobInfo {
 
   // MARK: - Render settings
 
-  /// The one thing about a composite worth reporting back: the chat column's
-  /// size and rate. Everything else the old render form exposed — font,
-  /// colours, emotes, outline, bitrate — is now a fixed decision the app
-  /// makes, not something the user chose, so there is nothing honest left to
-  /// say about it (see `IntakeModel.composedTemplate()`: intake no longer has
-  /// a form for any of it). The bitrate in particular would be actively
-  /// wrong to show here — `render.bitrateMbps` is the *intermediate's*, the
-  /// one immediately re-encoded away, not the bitrate of the file the user
-  /// actually got.
-  ///
-  /// Empty without both a render step and a composite step. A render step
-  /// alone is reachable only through the library, never through intake, and
-  /// in that case there is no video to relate its dimensions to — showing
-  /// fixed defaults with nothing to explain them is worse than no section,
-  /// which is the rule this property already lived by and still does.
+  /// Report the composite chat column's dimensions and rate. Render bitrate describes the
+  /// intermediate, not the delivered file. Omit the section without both render and composite
+  /// steps.
   var renderSettings: [Setting] {
     guard let render, composite != nil else { return [] }
     return [
@@ -175,11 +132,8 @@ nonisolated struct JobInfo {
 
   // MARK: - Formatting
 
-  /// `1:30` under an hour, `1:12:30` over it — the shape a video player uses,
-  /// rather than a leading `0:` nobody reads.
+  /// Player-style timecode: m:ss below an hour, h:mm:ss above.
   private static func timecode(_ duration: Duration) -> String {
-    // The one definition lives in `VideoLength`; this stays as a local name
-    // so the call sites below read the way they always have.
     VideoLength.timecode(duration)
   }
 

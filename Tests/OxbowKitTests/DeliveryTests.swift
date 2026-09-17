@@ -38,19 +38,14 @@ struct DeliveryTests {
     #expect(moves.attempts == [URL(filePath: "/downloads/out (2).mp4")])
   }
 
-  /// The gap between choosing a free name and moving into it belongs to
-  /// whatever else is writing to the user's Downloads folder. Losing that
-  /// race must cost a second attempt, not a failed job after a two-hour
-  /// download.
+  /// A destination race must retry naming rather than fail an otherwise completed download.
   @Test func triesAgainWhenTheChosenNameIsTakenBetweenTheCheckAndTheMove() throws {
     let moves = Moves()
     let contested = URL(filePath: "/downloads/out (2).mp4")
 
     let landed = try Delivery.moveWithoutReplacing(
       file, to: destination,
-      // `contested` becomes taken only once something has tried to move
-      // into it — which is exactly the ordering the race has: free when
-      // chosen, occupied by the time the move lands.
+      // The candidate becomes occupied only when the move is attempted.
       exists: { $0 == self.destination || moves.attempts.contains($0) },
       move: { _, to in
         moves.attempts.append(to)

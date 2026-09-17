@@ -5,9 +5,7 @@ import Testing
 @Suite("Step decoding")
 struct StepDecodingTests {
 
-  /// Mirrors `Step`'s pre-array shape so the fixture is generated rather than
-  /// hand-written — hand-writing it means hand-writing StepKind's synthesised
-  /// encoding, which is exactly the thing that would drift.
+  /// Generate the legacy Step shape rather than hand-writing nested synthesized encodings.
   private struct LegacyStep: Encodable {
     let id: StepID
     let kind: StepKind

@@ -1,22 +1,11 @@
 import Foundation
 
-/// The queue's rules, as pure functions.
-///
-/// Nothing here performs I/O, reads a clock, or touches a process. That is
-/// deliberate: it makes every scheduling rule a table-driven unit test rather
-/// than something you can only observe by running real downloads.
+/// Pure scheduling rules, independent of I/O, clocks, and processes.
 public enum Scheduler {
 
-  /// Which queued steps may start, given what is already running.
-  ///
-  /// Three rules, applied in order:
-  ///   1. Eligible — status is `.queued` and any dependency is `.done`.
-  ///   2. Capacity — at most one running step per resource class. This cap is
-  ///      load-bearing outside the scheduler: it is what bounds concurrent
-  ///      `HelperProcess.run` calls, each of which pins three *blocking*
-  ///      syscalls on the cooperative thread pool. Read `HelperProcess`'s note
-  ///      on thread pinning before relaxing it.
-  ///   3. Order — oldest job first, then step order within the job.
+  /// Admit queued steps with every dependency done, at most one per resource class, oldest job
+  /// then step order. This also bounds helper concurrency; each invocation uses three dedicated
+  /// blocking threads.
   public static func admissible(jobs: [Job], running: Set<StepID>) -> [StepID] {
     var statusByID: [StepID: StepStatus] = [:]
     for job in jobs {
@@ -70,9 +59,8 @@ public enum Scheduler {
     blockDependents(of: id, inJobAt: location.job, in: &jobs)
   }
 
-  /// Requeues a failed or cancelled step and releases whatever it was blocking.
-  /// Successful siblings are untouched — that is the point of retry in place.
-  /// Only acts on `.failed` or `.cancelled` steps; other statuses are no-ops.
+  /// Retries failed/cancelled steps and releases blocked dependents. Preserves successful
+  /// siblings; other statuses are no-ops.
   public static func retry(_ id: StepID, in jobs: inout [Job]) {
     guard let location = locate(id, in: jobs) else { return }
     switch jobs[location.job].steps[location.step].status {
@@ -85,26 +73,12 @@ public enum Scheduler {
     }
   }
 
-  /// Retries every unfinished step of a job — the counterpart to
-  /// `cancel(job:)`, and the only correct shape for retry at the job level.
-  ///
-  /// **Why not just retry the representative step.** `cancel(job:)` settles
-  /// *every* unfinished step as `.cancelled`, so retrying one of them would
-  /// requeue that step and leave its siblings cancelled: the job would run its
-  /// first step, then sit there reading as cancelled with nothing left able to
-  /// move it. A failed job is different — its dependents are `.blocked`, and
-  /// retrying the failure unblocks them — but one call has to be right for
-  /// both, so it retries them all.
-  ///
-  /// Nothing here re-runs a step that succeeded. There is no resume anywhere
-  /// in this stack, so a retried step starts from scratch; re-downloading a
-  /// finished 3GB VOD because the chat render after it failed would be a very
-  /// expensive way to express that.
+  /// Retries all failed/cancelled steps while preserving successful ones. Retrying only a
+  /// representative step would leave the other independently cancelled siblings unable to run.
   public static func retry(job id: JobID, in jobs: inout [Job]) {
     guard let index = jobs.firstIndex(where: { $0.id == id }) else { return }
 
-    // Collected first, then retried: `retry(_:in:)` unblocks dependents as it
-    // goes, so the statuses this reads would otherwise change underneath it.
+    // Collect IDs before retry mutates dependent statuses.
     let retryable = jobs[index].steps.compactMap { step -> StepID? in
       switch step.status {
       case .failed, .cancelled: step.id
@@ -176,17 +150,8 @@ public enum Scheduler {
       var next: Set<StepID> = []
       for stepIndex in jobs[jobIndex].steps.indices {
         let step = jobs[jobIndex].steps[stepIndex]
-        // unblockDependents(): releasing to `.queued` here is provisional, not
-        // a claim the step can run now — `admissible()` re-checks every
-        // parent is actually `.done` before ever launching it, so this can
-        // never admit a step against a missing artifact. What this guard
-        // against is a *display* wrong: a parent this retry did not touch
-        // and that is still `.failed`/`.cancelled`/`.blocked` needs its own
-        // retry, so the child must stay `.blocked` rather than read as
-        // "about to run" while still waiting on it. Requiring literal
-        // `.done` here instead would never release anything — this same
-        // call runs the instant a parent is retried, while that parent is
-        // still `.queued` or `.running`, not yet `.done`.
+        // Unblock only when no parent still needs its own retry. Queued/running parents are
+        // allowed here; `admissible` still requires all parents done before launch.
         guard step.dependsOn.contains(where: { frontier.contains($0) }) else { continue }
         guard step.status == .blocked else { continue }
         guard step.dependsOn.allSatisfy({ id in

@@ -2,24 +2,17 @@ import Foundation
 
 /// What can go wrong asking Twitch for a channel's archives.
 public enum ChannelFeedError: Error, Equatable, Sendable {
-  /// `data.user` was null. Twitch answers 200 with a null user for a login
-  /// that does not exist, so this is a normal answer rather than a failure —
-  /// but it is not an empty list, and must not be shown as one.
+  /// Twitch returns HTTP 200 with a null user for an unknown login. Distinct from an empty
+  /// archive list.
   case noSuchChannel
-  /// The anti-automation challenge. Only reachable if a query ever carries
-  /// `after:`, which none of ours does; kept distinct so that if it ever
-  /// fires it is diagnosable rather than arriving as a parse failure.
+  /// Anti-automation challenge, observed with pagination. Kept distinct for diagnosis.
   case integrityChallenge
   case server(status: Int)
-  /// The response held no video list we could read. Carries a bounded
-  /// snippet for the same reason `VideoInfoFetchError` does: the payload's
-  /// shape is not a stable contract, and a bare case name gives whoever
-  /// debugs a format drift nothing to go on.
+  /// Unreadable video list, with a bounded response snippet to diagnose upstream format
+  /// changes.
   case malformedPayload(snippet: String)
-  /// The request never reached Twitch at all — offline, DNS, TLS. Distinct
-  /// from `.server(status:)`, which blames Twitch for the user's wifi, and
-  /// from `.malformedPayload`, which would blame Twitch for a response that
-  /// never arrived.
+  /// Transport failure (offline, DNS, TLS), distinct from a server response or malformed
+  /// payload.
   case unreachable(String)
 }
 
@@ -35,63 +28,31 @@ extension ChannelFeedError: LocalizedError {
   }
 }
 
-/// Lists a channel's archived broadcasts.
-///
-/// **One page, never paginated.** `docs/twitch-channel-api.md` §4 measured
-/// `after:` failing an anti-automation integrity challenge, which this
-/// project does not attempt to defeat. §5 measured that it does not need to:
-/// `first:` caps at 100 and one page reaches back months on every channel
-/// sampled.
-///
-/// The transport is injected rather than reached for, exactly as
-/// `UpdateCheck` does it, so every test runs against a stub and the suite
-/// never touches the network.
+/// Fetches one page of archives using an injected transport. Pagination triggers an integrity
+/// challenge; the 100-item maximum covered months in measured channels. See
+/// `docs/twitch-channel-api.md` §§4–5.
 public struct ChannelFeed: Sendable {
 
   public typealias Fetch = @Sendable (URLRequest) async throws -> (Data, HTTPURLResponse)
 
-  /// Twitch's own public web client identifier, embedded in twitch.tv's
-  /// JavaScript and used by every tool in this space including the CLI this
-  /// app bundles. **Not a credential and not ours** — it authenticates
-  /// nothing and identifies no user.
+  /// Twitch's public web-client identifier, not a user credential.
   public static let publicClientID = "kimne78kx3ncx6brgo4mv6wki5h1ko"
 
   public static let defaultEndpoint = URL(string: "https://gql.twitch.tv/gql")!
 
-  /// How much of an unreadable payload `.malformedPayload` keeps, in bytes
-  /// of the raw response — truncated before UTF-8 decoding, not after, so a
-  /// runaway response cannot balloon the intermediate string either. Not
-  /// private: the test pins it.
+  /// Maximum error-snippet bytes, applied before UTF-8 decoding to bound allocation.
   static let snippetLimit = 280
 
   /// The largest page the server will serve, stated by the server itself:
   /// "argument 'first' value must be between 1 and 100."
   public static let maximumLimit = 100
 
-  /// The avatar size asked of `profileImageURL`.
-  ///
-  /// **A member of a fixed set, not a number derived from a layout.**
-  /// `docs/twitch-channel-api.md` §9.2 measures it: the field accepts any
-  /// width and builds a CDN filename by interpolation, so an unserved size
-  /// comes back as a perfectly ordinary URL that 404s at fetch time. The CDN
-  /// serves 28, 50, 70, 150, 300 and 600 — 100, 200, 400 and 1200 do not
-  /// exist. 300 covers a 150pt avatar at 2x at about 150 KB; 600 is the next
-  /// rung up and nearly 550 KB.
+  /// Use a served avatar size: 28, 50, 70, 150, 300, or 600. Arbitrary widths produce
+  /// valid-looking URLs that 404. See `docs/twitch-channel-api.md` §9.2.
   public static let avatarWidth = 300
 
-  /// The category box art's size, in the 3:4 shape Twitch's own art uses.
-  ///
-  /// **Unlike `avatarWidth`, this one is not a member of a fixed set.** The
-  /// box-art CDN resizes on demand — 52x72, 144x192, 188x250, 285x380 and
-  /// 300x400 all served when probed, including sizes Twitch's own site never
-  /// asks for. So this is chosen for the view (a 48pt-wide row thumbnail at
-  /// 2x, with room to spare) rather than picked off a list, and changing it
-  /// does not risk the silent 404 `docs/twitch-channel-api.md` §9.2
-  /// describes for avatars.
-  ///
-  /// Asked for *with* arguments, for the reason §8 gives about
-  /// `previewThumbnailURL`: bare, it answers with a literal
-  /// `{width}x{height}` in the URL.
+  /// Box art resizes on demand, unlike avatars. Supply dimensions explicitly or Twitch returns
+  /// literal `{width}x{height}` placeholders.
   public static let categoryArtWidth = 144
   public static let categoryArtHeight = 192
 
@@ -103,12 +64,8 @@ public struct ChannelFeed: Sendable {
     self.endpoint = endpoint
   }
 
-  /// The `login` parameter is interpolated unescaped into a GraphQL query
-  /// string. An invalid login containing quote characters would break out of
-  /// the string literal and rewrite the query. Callers must ensure logins
-  /// conform to Twitch's own login alphabet; `Watch.normalisedLogin(_:)`
-  /// enforces this contract, and callers should route logins through it
-  /// rather than constructing their own.
+  /// Validate with `Watch.normalisedLogin(_:)` before calling: login is interpolated unescaped
+  /// into GraphQL.
   public func archives(forLogin login: String, limit: Int = maximumLimit)
     async throws -> [ChannelArchive]
   {
@@ -119,20 +76,8 @@ public struct ChannelFeed: Sendable {
     return try Self.decode(data)
   }
 
-  /// The channel's own metadata: the name cased however its owner set it —
-  /// `"Ninja"` where `login` is `"ninja"` — and its avatar.
-  ///
-  /// **Its own request, not a field folded into `archives(forLogin:
-  /// limit:)`.** That query is also `WatchPoll.sweep`'s injected fetch
-  /// closure's signature, wired through `WatchPoller`; widening it would
-  /// ripple into both and would put an avatar fetch on every poll of every
-  /// channel, forever, for two values that change about never. A poll
-  /// already has the display name from the stored `Watch`. This round trip
-  /// is paid only when a channel is added.
-  ///
-  /// `login` carries the same safety contract as `archives(forLogin:
-  /// limit:)`: it is interpolated unescaped into the query body, so route it
-  /// through `Watch.normalisedLogin(_:)` first.
+  /// Fetches display name and avatar when adding a channel, separately from recurring archive
+  /// polls. Validate login with `Watch.normalisedLogin(_:)` before interpolation.
   public func profile(forLogin login: String) async throws -> ChannelProfile {
     let (data, response) = try await fetch(request(query: Self.profileQuery(login: login)))
     guard response.statusCode == 200 else {
@@ -150,15 +95,8 @@ public struct ChannelFeed: Sendable {
     return request
   }
 
-  /// **`previewThumbnailURL` takes arguments and must be given them.** Asked
-  /// for bare it returns a URL containing a literal `{width}x{height}`, which
-  /// `StreamThumbnail.rewritten(_:)` cannot match — so a bare request would
-  /// flow an unusable URL straight through into a 404
-  /// (`docs/twitch-channel-api.md` §8). 320x180 matches what the intake
-  /// already fetches and rewrites.
-  ///
-  /// `login` must conform to Twitch's login alphabet; see
-  /// `archives(forLogin:limit:)` for the full safety contract.
+  /// Request explicit thumbnail dimensions; a bare field returns unusable `{width}x{height}`
+  /// placeholders. Login must satisfy `archives(forLogin:limit:)`'s validation contract.
   static func query(login: String, limit: Int) -> String {
     let bounded = min(max(limit, 1), maximumLimit)
     return """
@@ -179,11 +117,8 @@ public struct ChannelFeed: Sendable {
     """
   }
 
-  /// The `data.user` object, having already ruled out the shared failure
-  /// modes both queries in this file can hit: an unparseable body, an
-  /// integrity challenge, and an explicit null user for an unknown login.
-  /// Shared so `decode(_:)` and `decodeProfile(_:)` cannot drift on how
-  /// either is recognised.
+  /// Shared extraction of `data.user`, distinguishing malformed responses, integrity
+  /// challenges, and unknown logins.
   private static func user(from data: Data) throws -> [String: Any] {
     guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
       throw ChannelFeedError.malformedPayload(snippet: snippet(data))
@@ -214,8 +149,7 @@ public struct ChannelFeed: Sendable {
     guard let displayName = user["displayName"] as? String else {
       throw ChannelFeedError.malformedPayload(snippet: snippet(data))
     }
-    // A missing avatar is a channel without one, not a broken payload, so it
-    // degrades to nil rather than failing the whole call.
+    // A missing avatar is optional, not a failed profile.
     let avatar = (user["profileImageURL"] as? String).flatMap(URL.init(string:))
     return ChannelProfile(displayName: displayName, avatarURL: avatar)
   }
@@ -249,26 +183,17 @@ public struct ChannelFeed: Sendable {
           .flatMap(URL.init(string:)))
     }
 
-    // `docs/design/channel-watching.md` §7: "a parse that fails degrades the
-    // watch to a visible error rather than to an empty list that looks like
-    // 'no new videos'." A renamed field or a timestamp format
-    // `ISO8601DateFormatter()` no longer accepts would make every closure
-    // above return nil, and `compactMap` would silently swallow every one of
-    // them — indistinguishable here from a channel with nothing new, and
-    // catastrophic combined with `Watch.seeded(withScope: .onlyNew, from:
-    // [])`, which trusts an empty result to mean "nothing to seed against".
-    // An empty `edges` is not a parse failure and must still succeed.
+    // Nonempty edges with no decodable archives indicate format drift, not an empty channel.
+    // Silently returning [] would make “Only new” seed against an invalid result. Genuinely
+    // empty edges remain valid.
     guard edges.isEmpty || archives.count == edges.count else {
       throw ChannelFeedError.malformedPayload(snippet: snippet(data))
     }
     return archives
   }
 
-  /// Truncates `data` to `snippetLimit` bytes before any string conversion,
-  /// so a runaway response cannot balloon the intermediate allocation any
-  /// more than it can balloon the error string itself — then leaves the same
-  /// visible marker `VideoInfoFetchError` does, so the snippet is never
-  /// mistaken for the whole payload.
+  /// Bound raw bytes before decoding and mark truncation so the snippet cannot be mistaken for
+  /// the full response.
   private static func snippet(_ data: Data) -> String {
     guard data.count > snippetLimit else {
       return String(decoding: data, as: UTF8.self)

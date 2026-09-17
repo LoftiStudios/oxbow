@@ -25,9 +25,7 @@ struct UpdateModelTests {
 
   private struct Offline: Error {}
 
-  /// In memory, never `UserDefaults(suiteName:)`. A named suite makes
-  /// cfprefsd write a real file into `~/Library/Preferences` that nothing
-  /// removes — this suite alone had left over 1,700 of them behind.
+  /// Use in-memory preferences; named UserDefaults suites leave files on disk.
   private func defaults() -> InMemoryPreferenceStore {
     InMemoryPreferenceStore()
   }
@@ -72,8 +70,7 @@ struct UpdateModelTests {
     #expect(await stub.calls == 1)
   }
 
-  /// Silence is the whole point of the automatic path: launching with the
-  /// wi-fi off must not paint anything.
+  /// Automatic check failures remain silent.
   @Test func automaticCheckStaysSilentWhenItFails() async throws {
     let stub = Stub(.failure(Offline()))
     let model = model(defaults: defaults(), stub: stub)
@@ -154,9 +151,7 @@ struct UpdateModelTests {
     #expect(second.state == .idle)
   }
 
-  /// The menu item ignores a previous dismissal. Pressing it is a fresh,
-  /// explicit question, and answering "up to date" while a newer release sits
-  /// on the releases page would be a lie the user has no way to see through.
+  /// Manual checks must ignore a previous dismissal and report the available release.
   @Test func manualCheckIgnoresAPreviousDismissal() async throws {
     let defaults = defaults()
     let first = model(defaults: defaults, stub: Stub(.success(try available("0.3.0"))))

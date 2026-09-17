@@ -9,10 +9,7 @@ struct AddChannelModelTests {
 
   // MARK: - 1. The login is always normalised, never used raw
 
-  /// A URL, a bare login and mixed case must all reach the fetch as the same
-  /// normalised string — never `loginText` itself, which is what an attacker
-  /// or a fat-fingered paste would put straight into the GraphQL query body
-  /// (`ChannelFeed.query(login:limit:)`'s own doc comment).
+  /// Normalize before passing the login into GraphQL.
   @Test func aURLABareLoginAndMixedCaseAllNormaliseBeforeTheFetch() async {
     var received: [String] = []
     let model = makeModel(fetch: { login in
@@ -28,8 +25,7 @@ struct AddChannelModelTests {
     #expect(received == ["ninja", "ninja", "ninja"])
   }
 
-  /// This is the safety boundary itself: a login that fails to normalise must
-  /// never reach `fetch` at all, whatever `look()` is asked to do with it.
+  /// Invalid logins must never reach fetch.
   @Test func aNonTwitchHostPunctuationAndAnEmptyStringAreRefused() async {
     var fetchCount = 0
     let model = makeModel(fetch: { _ in
@@ -57,10 +53,7 @@ struct AddChannelModelTests {
 
   // MARK: - 2. Settings freeze at init
 
-  /// Proves the freeze §3.2 requires: a store mutated *after* init must not
-  /// change a model already open. Every field differs from both its factory
-  /// default and the fixture's own defaults, so a model that silently kept a
-  /// live reference to `preferences` could not pass this by accident.
+  /// Use distinct stored, factory, and edited values to detect a live preference reference.
   @Test func settingsSeedFromPreferencesAtInitAndThenFreeze() {
     let store = Self.store {
       $0.destination = URL(filePath: "/Volumes/Archive")
@@ -75,10 +68,7 @@ struct AddChannelModelTests {
     #expect(model.output == .video)
     #expect(model.chatSize == .large)
 
-    // Mutates the same backing store through a second `Preferences` value —
-    // standing in for Settings changing the defaults while this sheet is
-    // open, the same technique `IntakeModelTests` uses to prove its own
-    // freeze/reseed rules.
+    // Simulate Settings writing through a second value over the shared store.
     var mutator = store
     mutator.destination = URL(filePath: "/Volumes/Elsewhere")
     mutator.qualityCap = .p360
@@ -123,8 +113,7 @@ struct AddChannelModelTests {
 
   // MARK: - 4. canAdd
 
-  /// The positive control: without it every "disabled" test below would pass
-  /// just as well against a `canAdd` that is simply always false.
+  /// Positive control against a canAdd that always returns false.
   @Test func canAddIsTrueOnceALookupSettledWithAnArchiveAndTheLoginNormalised() async {
     let model = makeModel(fetch: { _ in .success([Self.archive("1")]) })
     model.loginText = "ninja"
@@ -159,9 +148,6 @@ struct AddChannelModelTests {
     #expect(!model.canAdd)
   }
 
-  /// `composeWatch()` guards on `let folder`, same as the login and the
-  /// lookup — this pins that third guard down on its own, since a `Watch
-  /// .Settings` cannot exist without a destination.
   @Test func canAddIsFalseWhenNoFolderIsSet() async {
     let model = makeModel(fetch: { _ in .success([Self.archive("1")]) })
     model.loginText = "ninja"
@@ -222,9 +208,7 @@ struct AddChannelModelTests {
 
   // MARK: - 6. Adding an already-watched channel replaces rather than duplicates
 
-  /// `WatchingModel` keys its sections on the login (`Section.id`) and marks
-  /// seen with `firstIndex(where:)` — a duplicate login would half-work in
-  /// ways that are hard to see, rather than failing loudly.
+  /// Duplicate logins would collide in section identity and seen-state updates.
   @Test func addingAnAlreadyWatchedChannelReplacesRatherThanDuplicates() async throws {
     let store = WatchStore(fileURL: Self.temporaryFile())
     defer { try? FileManager.default.removeItem(at: store.fileURL.deletingLastPathComponent()) }
@@ -244,14 +228,8 @@ struct AddChannelModelTests {
 
   // MARK: - 7a. add() refuses rather than overwriting on a read failure
 
-  /// The bug this guards: `try? store.load() ?? []` cannot tell "genuinely
-  /// empty" apart from "could not read it", and used to save a one-channel
-  /// list straight over whatever a transient read failure hid. `WatchStore
-  /// .load()` throws only when the file exists and could not be read as
-  /// data — every decode failure it can hit is recovered internally by
-  /// `setAside()` and never propagates — so a directory sitting where the
-  /// watch file belongs reproduces exactly that throw without touching
-  /// `WatchStore` itself.
+  /// A directory at the store path causes a read error. It must not be treated as an empty list
+  /// and overwritten by the add.
   @Test func addRefusesRatherThanOverwritingWhenTheWatchListCannotBeRead() async throws {
     let file = Self.temporaryFile()
     defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
@@ -277,9 +255,7 @@ struct AddChannelModelTests {
 
   // MARK: - 7b. look() is guarded against a superseded fetch
 
-  /// The bug this guards: a slower fetch for an earlier login landing after
-  /// a faster one for the current login would populate `lookup` — and so
-  /// whatever `add()` composes — with the wrong channel's archives.
+  /// An older, slower lookup must not replace the current channel's result.
   @Test func aSupersededLookupNeverOverwritesTheNewerOne() async {
     let gate = Gate()
     let model = makeModel(fetch: { login in
@@ -308,16 +284,8 @@ struct AddChannelModelTests {
 
   // MARK: - 7c. A settled lookup must not survive editing the login away from it
 
-  /// The bug this guards, distinct from 7b above: no second fetch is ever in
-  /// flight here. The user looks up `day9tv`, then edits the field to
-  /// `ninja` without pressing Look Up again — `generation` never advances,
-  /// because nothing asked `look()` to run. Without `lookupLogin` and
-  /// `displayedLookup`, `canAdd` (which only checks that a login normalises
-  /// and that *some* lookup loaded) would stay true, and `composeWatch()`
-  /// would build a watch for `ninja` seeded from `day9tv`'s archives —
-  /// under the default `.onlyNew` scope, that marks `day9tv`'s ids seen on
-  /// a `ninja` watch and leaves every one of `ninja`'s real archives
-  /// unseen, the exact inverse of what the scope caption promises.
+  /// Editing the login without another lookup must invalidate the old result; otherwise the new
+  /// watch receives the previous channel's seen IDs.
   @Test func editingTheLoginAfterALookupSettlesInvalidatesItRatherThanComposingFromTheOldOne() async throws {
     let store = WatchStore(fileURL: Self.temporaryFile())
     defer { try? FileManager.default.removeItem(at: store.fileURL.deletingLastPathComponent()) }
@@ -346,17 +314,8 @@ struct AddChannelModelTests {
 
   // MARK: - 9. reset() and reseedFromPreferences()
 
-  /// Mirrors `IntakeModelTests.resetReseedsFromTheStoreAndUnticksTheBox`:
-  /// every value mutated below differs from both what the store holds and
-  /// its factory default, so a `reset()` that merely left things in place,
-  /// or that reset to a hardcoded default instead of reading the store,
-  /// could not pass this by accident.
-  ///
-  /// The bug this guards: `AddChannelWindow` is a `Window`, not a
-  /// `WindowGroup`, so without a `reset()` called on close, reopening after
-  /// a successful add shows that same channel's form again — fully composed,
-  /// with Add still the default action. One stray ⏎ then replaces that
-  /// channel's watch with `seen` recomputed from the stale lookup.
+  /// Reset must read stored defaults and clear the reusable window's completed form. Fixture
+  /// values distinguish stored, factory, and edited state.
   @Test func resetClearsTheChannelsOwnStateAndReseedsStandingPreferencesFromTheStore() async {
     let preferences = Self.store {
       $0.destination = URL(filePath: "/Volumes/Archive")
@@ -394,13 +353,8 @@ struct AddChannelModelTests {
     #expect(model.folder == URL(filePath: "/Volumes/Archive"))
   }
 
-  /// The bug: Add Channel is one `Window` for the app's whole run, seeded
-  /// once at construction and re-seeded only by `reset()`, which fires once
-  /// per *close*. A Settings change made between a close and the next open —
-  /// the ordinary sequence, not an edge case — never reaches the model until
-  /// `reseedFromPreferences()` reads the store again on open. Also proves the
-  /// narrower half of the contract: unlike `reset()`, this must leave a
-  /// channel already typed and looked up alone.
+  /// Reopening reads Settings changes made while closed, while preserving any in-progress
+  /// lookup.
   @Test func reseedFromPreferencesPicksUpAStoreChangedSinceConstructionButLeavesTheChannelAlone() async {
     let preferences = Self.store {
       $0.destination = URL(filePath: "/Users/someone/Movies")
@@ -411,18 +365,14 @@ struct AddChannelModelTests {
     let model = makeModel(preferences: preferences, fetch: { _ in .success([Self.archive("1")]) })
     #expect(model.qualityCap == .best, "precondition: seeded at construction")
 
-    // Stands in for Settings writing to the same store while this window is
-    // closed — a second `Preferences` value over the same backing store, the
-    // same technique `IntakeModelTests` uses for the identical reason.
+    // Simulate Settings updating the shared store while the window is closed.
     var mutator = preferences
     mutator.qualityCap = .p480
     mutator.output = .video
     mutator.chatSize = .small
     mutator.destination = URL(filePath: "/Users/someone/Archive")
 
-    // In-progress state a real open can land on — the window does not
-    // always start from a close — which `reseedFromPreferences()` must not
-    // clobber the way `reset()` deliberately does.
+    // In-progress state must survive reseeding, unlike a full reset.
     model.loginText = "ninja"
     await model.look()
     model.scope = .allAvailable
@@ -440,9 +390,7 @@ struct AddChannelModelTests {
 
   // MARK: - 7. A failed lookup keeps its reason
 
-  /// The same distinction `WatchPollResult` draws between `.failed` and
-  /// `.found([])`: a failure must read as a visible error, never as a
-  /// channel with no archives.
+  /// Lookup failure must remain distinct from a channel with no archives.
   @Test func aFailedLookupKeepsItsReasonRatherThanReadingAsEmpty() async {
     let model = makeModel(fetch: { _ in .failure(.noSuchChannel) })
     model.loginText = "ninja"
@@ -462,11 +410,7 @@ struct AddChannelModelTests {
 
   // MARK: - 8. add() resolves the real display name, falling back on failure
 
-  /// The bug this guards: `composeWatch()` used to seed `displayName` with
-  /// the normalised (lowercased) login and nothing ever corrected it, so
-  /// `watches.json` — and the Watching sidebar reading it — would head the
-  /// channel "ninja" forever rather than "Ninja". `add()` now resolves the
-  /// real name once, right before persisting.
+  /// Persist Twitch's display name, not just the normalized login.
   @Test func addResolvesTheRealDisplayNameBeforePersisting() async throws {
     let store = WatchStore(fileURL: Self.temporaryFile())
     defer { try? FileManager.default.removeItem(at: store.fileURL.deletingLastPathComponent()) }
@@ -486,9 +430,7 @@ struct AddChannelModelTests {
     #expect(ninja.displayName == "Ninja")
   }
 
-  /// The positive control's failure twin: a missing display name is
-  /// cosmetic, not a reason to refuse the whole add, so it falls back to the
-  /// normalised login rather than blocking `add()`.
+  /// A failed display-name lookup falls back to login without blocking the add.
   @Test func aFailedDisplayNameLookupFallsBackToTheNormalisedLoginRatherThanBlockingAdd() async throws {
     let store = WatchStore(fileURL: Self.temporaryFile())
     defer { try? FileManager.default.removeItem(at: store.fileURL.deletingLastPathComponent()) }
@@ -510,16 +452,8 @@ struct AddChannelModelTests {
 
   // MARK: - 9a. A write landing during the display-name await is not lost
 
-  /// The bug: `add()` used to `store.load()`, then `await` the display-name
-  /// fetch — up to 15 seconds — and only then `store.save()` the copy it had
-  /// read before the await. `AddChannelWindow` is a non-modal `Window`, so
-  /// the Watching pane stays live and interactive the whole time; a write it
-  /// makes mid-await (Ignore, Add, or Stop Watching, all through
-  /// `WatchingModel`'s own `WatchStore`) would be silently clobbered by that
-  /// stale copy once the save finally ran. Moving the fetch before the load
-  /// closes the whole window: this pins it down by holding the fetch open
-  /// with a gate, writing through a second, independent `WatchStore` while
-  /// `add()` is suspended on it, and checking that write survives.
+  /// Hold the profile fetch open while a second store writes. Saving the add must load after
+  /// the await so that concurrent changes survive.
   @Test func aWriteLandingDuringTheDisplayNameAwaitIsNotClobbered() async throws {
     let store = WatchStore(fileURL: Self.temporaryFile())
     defer { try? FileManager.default.removeItem(at: store.fileURL.deletingLastPathComponent()) }
@@ -542,9 +476,7 @@ struct AddChannelModelTests {
     let addTask = Task { await model.add() }
     await waitUntil("the display-name fetch has started") { fetchStarted }
 
-    // Stands in for `WatchingModel.markSeen` (Ignore/Add) or `stopWatching`
-    // writing through their own `WatchStore` instance while this window's
-    // own `add()` is still suspended on the network.
+    // Simulate another watch-list writer during the suspended fetch.
     var concurrent = try store.load()
     concurrent[0] = concurrent[0].marking(["new-finding"])
     try store.save(concurrent)
@@ -563,11 +495,7 @@ struct AddChannelModelTests {
 
   // MARK: - 10. Editing seeds from the watch, never from Preferences
 
-  /// Requirement 1: a watch set to one thing six weeks ago has to reopen
-  /// showing exactly that, whatever today's global default is. Every field
-  /// set below differs from both the watch and the preferences it is seeded
-  /// against, so a `beginEditing` that accidentally read `preferences`
-  /// instead could not pass this by accident.
+  /// Distinct watch and preference values detect accidental reseeding from global defaults.
   @Test func beginEditingSeedsEveryFieldFromTheWatchNotFromPreferences() {
     let preferences = Self.store {
       $0.destination = URL(filePath: "/Volumes/Defaults")
@@ -594,10 +522,7 @@ struct AddChannelModelTests {
     #expect(model.downloadsAutomatically, "from the watch, not the false default")
   }
 
-  /// Requirement 3: scope only ever seeds a seen-set at creation, so it must
-  /// not even be composable while editing — there is nothing here that would
-  /// make it apply. `estimate` must likewise read nil: no lookup ever runs
-  /// while editing, so there is nothing to price and nothing is being taken.
+  /// Editing neither seeds scope nor performs a backfill lookup, so no estimate applies.
   @Test func editingHasNoEstimateSinceNothingIsBeingTaken() {
     let model = makeModel()
     model.beginEditing(Self.watch(login: "leighxp", seen: ["1"]))
@@ -608,10 +533,7 @@ struct AddChannelModelTests {
 
   // MARK: - 11. Saving an edit preserves seen, login and displayName
 
-  /// Requirement 4, and the riskiest one: an edit must not lose what the
-  /// watch has already seen. `add()` composes from `editingWatch` while
-  /// `isEditing`, never from a scope or a fresh lookup, so the seen-set
-  /// carried in below has to come back completely untouched.
+  /// Editing settings must preserve the watch's seen IDs.
   @Test func savingAnEditPreservesTheSeenSetLoginAndDisplayName() async throws {
     let store = WatchStore(fileURL: Self.temporaryFile())
     defer { try? FileManager.default.removeItem(at: store.fileURL.deletingLastPathComponent()) }
@@ -635,14 +557,8 @@ struct AddChannelModelTests {
     #expect(edited.settings.destinationPath == "/Users/someone/NewDestination")
   }
 
-  /// Finding 2: `beginEditing(_:)` opens a window between capturing
-  /// `editingWatch` and someone actually pressing Edit, and this stage added
-  /// two writers — `WatchPoller.markSubmitted` and `AutoDownloadObserver
-  /// .forget` — that can land in it with nobody touching anything. If a
-  /// sweep marks a fresh archive seen while this edit sits open, saving the
-  /// edit must not silently undo that mark by writing back the smaller
-  /// `seen` this window opened with — the exact "downloaded again,
-  /// unattended" outcome the design doc rules out.
+  /// A sweep may mark new IDs while the edit window is open; saving must retain those newer
+  /// marks.
   @Test func savingAnEditPicksUpASeenMarkAddedWhileTheWindowWasOpen() async throws {
     let store = WatchStore(fileURL: Self.temporaryFile())
     defer { try? FileManager.default.removeItem(at: store.fileURL.deletingLastPathComponent()) }
@@ -652,9 +568,7 @@ struct AddChannelModelTests {
     let model = makeModel(store: store)
     model.beginEditing(original)
 
-    // Stands in for `WatchPoller.markSubmitted`: a sweep queues archive "2"
-    // and marks it seen through a second `WatchStore` over the same file,
-    // while this edit window is still open.
+    // Simulate a sweep marking archive 2 while editing.
     var current = try store.load()
     current[0] = current[0].marking(["2"])
     try store.save(current)
@@ -668,10 +582,7 @@ struct AddChannelModelTests {
       "the sweep's mark must survive the edit, not be overwritten by the window's stale snapshot")
   }
 
-  /// The mirror of the test above: a failure un-marks an archive while this
-  /// edit window is open, and saving the edit must not silently re-mark it
-  /// seen from the stale snapshot — that would keep the failed archive out
-  /// of the inbox and let it expire, breaking §6.3's one promise.
+  /// A failure may unmark an archive while editing; saving must not restore the stale mark.
   @Test func savingAnEditPreservesAnUnmarkMadeWhileTheWindowWasOpen() async throws {
     let store = WatchStore(fileURL: Self.temporaryFile())
     defer { try? FileManager.default.removeItem(at: store.fileURL.deletingLastPathComponent()) }
@@ -681,9 +592,7 @@ struct AddChannelModelTests {
     let model = makeModel(store: store)
     model.beginEditing(original)
 
-    // Stands in for `AutoDownloadObserver.forget`: a job for archive "2"
-    // failed and it was returned to the inbox, while this edit window is
-    // still open.
+    // Simulate a failed download returning archive 2 to the inbox.
     var current = try store.load()
     current[0] = current[0].forgetting(["2"])
     try store.save(current)
@@ -697,10 +606,7 @@ struct AddChannelModelTests {
       "the failure's un-mark must survive the edit, not be reverted by the window's stale snapshot")
   }
 
-  /// Requirement 4 restated from the other side: everything about the
-  /// *other* watches in the file must survive an edit to one of them, the
-  /// same replace-not-clobber contract `add()` already keeps for a
-  /// brand-new channel.
+  /// Editing one watch must preserve the others.
   @Test func savingAnEditPreservesEveryOtherWatchedChannel() async throws {
     let store = WatchStore(fileURL: Self.temporaryFile())
     defer { try? FileManager.default.removeItem(at: store.fileURL.deletingLastPathComponent()) }
@@ -718,10 +624,7 @@ struct AddChannelModelTests {
     #expect(watches.contains { $0.login == "day9tv" })
   }
 
-  /// Requirement 4's other half, and the same class of bug already found
-  /// twice in this feature: an edit must refuse rather than save over a
-  /// watch list it could not read, exactly like `add()` already does for a
-  /// brand-new channel (`addRefusesRatherThanOverwritingWhenTheWatchListCannotBeRead`).
+  /// Refuse unreadable state rather than saving over it.
   @Test func savingAnEditRefusesRatherThanOverwritingWhenTheWatchListCannotBeRead() async throws {
     let file = Self.temporaryFile()
     defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
@@ -761,10 +664,7 @@ struct AddChannelModelTests {
 
   // MARK: - 13. reset() leaves editing mode
 
-  /// The bug this guards: `AddChannelWindow` is one long-lived `Window`, so
-  /// without clearing `editingWatch` on close, the ordinary Add Channel
-  /// toolbar button — opening the very same model — would find the window
-  /// still stuck showing Edit's UI for whichever channel was last edited.
+  /// Reset must leave the reusable window ready to add, not edit the previous channel.
   @Test func resetClearsEditingModeEntirely() {
     let model = makeModel()
     model.beginEditing(Self.watch(login: "leighxp", seen: ["1"]))
@@ -822,9 +722,7 @@ struct AddChannelModelTests {
       fetchProfile: fetchProfile)
   }
 
-  /// Lets a test hold a fetch open while it drives the model past it. The
-  /// same helper `IntakeModelTests` uses for its own generation regression
-  /// test.
+  /// Gate a fetch so tests can change model state while it is suspended.
   private actor Gate {
     private var isOpen = false
     private var continuation: CheckedContinuation<Void, Never>?

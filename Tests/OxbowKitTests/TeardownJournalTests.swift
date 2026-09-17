@@ -4,12 +4,8 @@ import Testing
 
 @testable import OxbowKit
 
-/// Direct tests for the branches `QueueEngineTests` cannot reach.
-///
-/// Compaction needs a 256 KB failure log, and the create-versus-append split
-/// needs the log to be absent and then present. Neither is reachable by
-/// driving an engine, which is why this logic went untested until it had a
-/// type of its own.
+/// Direct journal fixtures exercise large-log compaction and create/append failures without
+/// driving the engine.
 @Suite("TeardownJournal")
 struct TeardownJournalTests {
 
@@ -44,10 +40,7 @@ struct TeardownJournalTests {
     #expect(text.contains("first failure"), "log should carry the context; was: \(text)")
   }
 
-  /// The second entry must not truncate the first. This is the branch the
-  /// implementation's own comment warns about: `createFile(atPath:contents:)`
-  /// truncates, so falling through to it unconditionally would wipe the
-  /// history the file exists to keep.
+  /// Appending must not truncate earlier entries through `createFile`.
   @Test func recordAppendsRatherThanTruncating() throws {
     let workspace = makeWorkspace()
     defer { cleanUp(workspace) }
@@ -78,11 +71,8 @@ struct TeardownJournalTests {
       "an empty failure list must not create the log at all")
   }
 
-  /// Past `cap + cap/2`, the log is trimmed back to at most `cap`.
-  ///
-  /// Seeded directly rather than by repeated `record` calls: reaching 384 KB
-  /// through the real path would take thousands of entries, and the property
-  /// under test is the trimming, not how the bytes got there.
+  /// Seed above the hysteresis threshold directly to test compaction without thousands of
+  /// writes.
   @Test func anOversizedLogIsCompacted() throws {
     let workspace = makeWorkspace()
     defer { cleanUp(workspace) }
@@ -103,9 +93,7 @@ struct TeardownJournalTests {
     #expect(after <= cap, "compaction should bring the log back to at most \(cap); was \(after)")
   }
 
-  /// Compaction drops whole lines, never a byte offset — a byte cut would
-  /// leave a mangled first entry that reads as corruption rather than as
-  /// "the older history was trimmed".
+  /// Compaction must preserve whole lines.
   @Test func compactionCutsOnLineBoundaries() throws {
     let workspace = makeWorkspace()
     defer { cleanUp(workspace) }
@@ -119,12 +107,8 @@ struct TeardownJournalTests {
     journal.record([URL(filePath: "/tmp/trigger.mp4")], context: "triggers compaction")
 
     let text = contents(of: workspace)
-    // Every seeded line is identical, so the first surviving line looks the
-    // same (a whole "y"*63) whether or not compaction actually ran — that
-    // shape check alone can't tell a real trim from a no-op. The signal that
-    // distinguishes them is size: compaction must have brought the file back
-    // to at most `cap`, which only happens by dropping whole lines from the
-    // front.
+    // Identical lines make content checks insufficient; also require the compacted size to
+    // prove trimming occurred.
     #expect(
       text.utf8.count <= cap,
       "compaction should have fired and brought the log back to at most \(cap); was \(text.utf8.count)"
@@ -135,15 +119,8 @@ struct TeardownJournalTests {
       "the first surviving line must be whole, not a partial cut; was: \(first)")
   }
 
-  /// Past `cap` but short of the `cap + cap/2` hysteresis threshold,
-  /// compaction must not fire — it only fires once the log is meaningfully
-  /// over, not the instant the cap is crossed, so that a low-volume file is
-  /// not rewritten on every single append. Seeded at `cap + cap/4`, the
-  /// reviewer's suggested midpoint: comfortably past `cap` (so a fixture
-  /// that never approaches the cap couldn't accidentally pass this test
-  /// either way) and comfortably short of `cap + cap/2`, so the assertion
-  /// that the file is still larger than `cap` after `record` actually pins
-  /// the threshold rather than being true regardless of where it sits.
+  /// Seed at cap + cap/4, between cap and the compaction threshold, to prove hysteresis delays
+  /// rewriting.
   @Test func aLogUnderTheThresholdIsLeftAlone() throws {
     let workspace = makeWorkspace()
     defer { cleanUp(workspace) }
@@ -170,9 +147,7 @@ struct TeardownJournalTests {
       "compaction must not have fired: the file should still be larger than cap; was \(after)")
   }
 
-  /// `removeStep` names what it could not remove. `UF_IMMUTABLE` is what
-  /// forces a removal failure without root — the same technique
-  /// `QueueEngineTests` uses, minus the engine.
+  /// Use user-immutable flags to force real deletion failure without root.
   @Test func removeStepReportsAFileItCouldNotRemove() async throws {
     let workspace = makeWorkspace()
     defer { cleanUp(workspace) }
@@ -246,11 +221,8 @@ struct TeardownJournalTests {
 
   // MARK: - Spent inputs
 
-  /// A job wired the way `.assemble` finds one: a video and a chat render
-  /// whose bytes are dead once the pieces exist, alongside a chat transcript
-  /// and a composite piece that are not. Artifacts are written under the
-  /// job's own workspace, which is what `removeSpentInputs` requires before
-  /// it will touch anything.
+  /// Pre-assembly fixture with spent media/render and retained transcript/piece, all within the
+  /// workspace.
   private func assembleReadyJob(
     _ workspace: Workspace,
     videoArtifact: URL? = nil,
@@ -297,12 +269,7 @@ struct TeardownJournalTests {
     return url
   }
 
-  /// The re-fetched video and chat render are what `.assemble` makes dead,
-  /// and dropping them before it runs is what holds the recovery peak near a
-  /// normal run's — resume.md §5.
-  ///
-  /// Drop either `.downloadVideo` or `.renderChat` from the kind switch and
-  /// the matching assertion goes red.
+  /// Remove media/render before assembly to limit recovery peak disk use.
   @Test func spentInputsDropsTheVideoAndTheChatRender() throws {
     let workspace = makeWorkspace()
     defer { cleanUp(workspace) }
@@ -320,11 +287,8 @@ struct TeardownJournalTests {
             "the re-fetched chat render must be gone — resume.md §5")
   }
 
-  /// A clip is the video's counterpart for the other source kind, and it is
-  /// spent for exactly the same reason. Its own test rather than a third
-  /// assertion above, because a `.downloadClip` job has no `.downloadVideo`
-  /// step at all — asserting both in one fixture would mean wiring a job
-  /// that cannot exist.
+  /// Use a separate clip fixture because a real job does not contain both video and clip
+  /// sources.
   @Test func spentInputsDropsAClipTheSameWayItDropsAVideo() throws {
     let workspace = makeWorkspace()
     defer { cleanUp(workspace) }
@@ -343,15 +307,8 @@ struct TeardownJournalTests {
     #expect(!FileManager.default.fileExists(atPath: clip.path))
   }
 
-  /// The chat transcript and the composite's piece are **not** spent: the
-  /// piece is half the delivery, and the transcript is small enough that
-  /// nothing is bought by dropping it. Add either kind to the switch and
-  /// this goes red.
-  ///
-  /// The video assertion is the control. Without it a `removeSpentInputs`
-  /// that did nothing whatsoever — an empty body, an inverted guard — would
-  /// satisfy both survival claims, and this test would pass while catching
-  /// nothing.
+  /// Preserve transcript and pieces. Assert video deletion as a positive control against no-op
+  /// cleanup.
   @Test func spentInputsLeavesTheTranscriptAndTheCompositePiece() throws {
     let workspace = makeWorkspace()
     defer { cleanUp(workspace) }
@@ -372,15 +329,8 @@ struct TeardownJournalTests {
             "the composite's piece is half the delivery, not a spent input")
   }
 
-  /// Nothing outside the job's own workspace may be touched, however a
-  /// step's `artifact` came to point there. A delivered file that has
-  /// already been moved to the user's Movies folder is the realistic way
-  /// this happens, and deleting it would destroy the very thing the job
-  /// exists to produce.
-  ///
-  /// Delete the `contains(_:ofJob:)` filter and the first assertion goes
-  /// red. The second is the control: without it the same pass would be
-  /// reported by a `removeSpentInputs` that removed nothing at all.
+  /// Preserve delivered artifacts outside workspace. Also delete an internal control to rule
+  /// out no-op cleanup.
   @Test func spentInputsRefusesAPathOutsideTheJobWorkspace() throws {
     let workspace = makeWorkspace()
     defer { cleanUp(workspace) }
@@ -400,10 +350,7 @@ struct TeardownJournalTests {
             "control: the call must actually have removed something")
   }
 
-  /// A removal that fails has to end up somewhere it survives — the same
-  /// guarantee the three workspace teardowns get, and the reason this lives
-  /// on the journal rather than in the engine. `UF_IMMUTABLE` forces a real
-  /// `removeItem` failure rather than a simulated one.
+  /// User-immutable input forces a real removal failure that must be journaled.
   @Test func spentInputsJournalsWhatItCouldNotRemove() throws {
     let workspace = makeWorkspace()
     defer { cleanUp(workspace) }
@@ -425,10 +372,7 @@ struct TeardownJournalTests {
     #expect(text.contains("assemble"), "should say what spent it; was: \(text)")
   }
 
-  /// A job whose steps never produced an artifact — every `artifact` is nil —
-  /// must not be reported as a teardown failure. Otherwise every ordinary
-  /// assemble on a job with no clip step would leave a spurious entry in a
-  /// log read as an incident record.
+  /// Nil artifacts must not generate spurious cleanup failures.
   @Test func spentInputsRecordsNothingWhenThereIsNothingToDrop() throws {
     let workspace = makeWorkspace()
     defer { cleanUp(workspace) }

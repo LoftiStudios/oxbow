@@ -2,45 +2,15 @@ import AppKit
 import SwiftUI
 import OxbowKit
 
-/// A watched channel, as a card: a large avatar, its name, what it is frozen
-/// to download at (§3.2), a mark for automatic downloading when it is on, a
-/// notice when its downloads live on a volume that is not mounted, and — the
-/// only place either is offered — Edit and Stop Watching.
-///
-/// **Replaces `SectionHeader`.** `docs/design/channel-history.md` §2: a
-/// channel is a card with contents, not a line item in a list. This is that
-/// card's own header — `WatchingView` still lists the channel's rows below
-/// it — so a watched channel finally looks like a thing that has contents
-/// rather than a compact line above them.
-///
-/// **No confirmation dialog on Stop Watching.** Unlike removing a queued
-/// download, this destroys nothing: it edits `watches.json` alone, and
-/// every file a past download produced is untouched. A confirmation here
-/// would be warning about a loss that does not happen, so the wording
-/// carries that instead of a dialog — both the button's own label and its
-/// tooltip say plainly that downloaded files stay put.
-/// Edit and Stop Watching, defined once and rendered wherever a channel can be
-/// acted on: `ChannelCard`'s ‹…› button, its right-click, and — since channels
-/// became sidebar destinations — the sidebar row's right-click.
-///
-/// **Three render sites is the argument for this being a view, not against
-/// it.** Two copies of the pair were already two things to keep in step, and
-/// the first divergence would be a menu offering something another does not —
-/// or, worse, a Stop Watching that exists in one and not the other.
-///
-/// **The card keeps them even though the sidebar now has them too.** The ‹…›
-/// button was added specifically because both actions "lived only in the
-/// right-click until now, which the app's own author could not find"; removing
-/// it in favour of a different right-click would reproduce exactly that.
+/// Shared Edit and Stop Watching actions for card and sidebar menus. Keep the visible menu
+/// button for discoverability. Stopping a watch preserves delivered files and asks for no
+/// confirmation.
 struct ChannelActionsMenu: View {
   let displayName: String
   let onEdit: () -> Void
   let onStopWatching: () -> Void
 
   var body: some View {
-    // Above Stop Watching, matching how a Mac menu orders a reversible
-    // action before a destructive-adjacent one — this changes settings,
-    // that removes the channel entirely.
     Button {
       onEdit()
     } label: {
@@ -62,43 +32,17 @@ struct ChannelActionsMenu: View {
 struct ChannelCard: View {
   let section: WatchingModel.Section
   let imageStore: ImageStore?
-  /// Why this channel's automatic downloading is paused this sweep, or nil
-  /// when it is not — `demotions[section.login]` from the call site.
+  /// The current sweep's reason for pausing this channel's automatic downloads.
   let demotionReason: AutoDownloadPolicy.Reason?
   let onEdit: () -> Void
   let onStopWatching: () -> Void
 
-  /// The volume name to name in `disconnectedVolumeNotice`, or nil when no
-  /// row's file came back unverifiable.
-  ///
-  /// `docs/design/channel-history.md` §4.2: a disconnected volume is one
-  /// condition with two expressions, not two different facts. `ArchiveRow`
-  /// already says so per row — `.unverifiable`'s glyph carries the volume's
-  /// name in a hover tooltip — but a tooltip is not an honest place to put
-  /// "your library might be gone": it only reaches whoever happens to
-  /// hover, and someone skimming several watched channels never does. This
-  /// states the same condition once, plainly, at the level a whole
-  /// channel's rows share it, derived from those rows rather than asked for
-  /// separately. If somehow more than one volume is involved, this names
-  /// the first and does not invent a summary across them — that would be a
-  /// claim nothing here actually computed.
-  /// **Two sources, because the rows alone cannot see the whole condition.**
-  /// A row answers `unverifiable` only where this app recorded delivering a
-  /// file there. A download recognised solely by the path it would have taken
-  /// carries no claim that survives an unanswerable question, so on an
-  /// unmounted disk those rows quietly become offerable again and no row is
-  /// left saying anything is wrong — the channel would read as though nothing
-  /// had ever been downloaded. `Section.disconnectedDestination` asks the
-  /// destination directly and covers that gap, and manual channels besides,
-  /// which never get an `AutoDownloadPolicy` demotion at all.
+  /// Report the first disconnected volume from recorded-file rows or the destination probe.
+  /// Rows alone miss offline destinations with no recorded delivery claim.
   private var disconnectedVolume: String? {
     Self.disconnectedVolume(in: section.rows) ?? section.disconnectedDestination
   }
 
-  /// Pulled out of the computed property above so `ChannelCardTests` can
-  /// exercise it without building a whole `ChannelCard` — the same reason
-  /// `NotificationDecision` and `ArchiveRowState` are pure static functions
-  /// rather than instance members.
   static func disconnectedVolume(in rows: [WatchingModel.Row]) -> String? {
     for row in rows {
       if case .unverifiable(let volumeName) = row.state { return volumeName }
@@ -115,11 +59,6 @@ struct ChannelCard: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: 8) {
-      // Centred against the avatar rather than top-aligned, and the avatar
-      // sized so the two read as one block — the shape Music gives an album:
-      // art on the left, a strong title and a quiet metadata line beside it,
-      // vertically balanced. 88pt is the height of that text block plus a
-      // little, which is what the mockup drew.
       HStack(alignment: .center, spacing: 14) {
         ChannelAvatar(url: section.avatarURL, store: imageStore, size: 88)
         VStack(alignment: .leading, spacing: 2) {
@@ -127,20 +66,10 @@ struct ChannelCard: View {
             Text(section.displayName)
               .font(.title)
               .fontWeight(.semibold)
-            // Only shown when it is actually on: off is the default and the
-            // ordinary case, and marking every quiet channel "Manual" would
-            // be the loud thing `WatchingView`'s own doc comment already
-            // argues against for a "no new videos" row under every quiet
-            // section.
+            // Show the automatic mark only when enabled.
             if section.downloadsAutomatically {
               if let demotionReason {
-                // A different glyph and colour from the steady "on" state
-                // below, not just a different tooltip — this has to read at
-                // a glance, without hovering, as something other than the
-                // ordinary automatic-downloading mark (requirement: a
-                // demoted watch must be visibly distinguishable from one
-                // quietly working as intended, never only from a channel
-                // with nothing new).
+                // Distinguish paused downloads by icon and colour, not only tooltip.
                 Label("Downloads paused", systemImage: "bolt.slash.fill")
                   .labelStyle(.iconOnly)
                   .foregroundStyle(.orange)
@@ -149,12 +78,6 @@ struct ChannelCard: View {
                 Label("Downloads automatically", systemImage: "bolt.fill")
                   .labelStyle(.iconOnly)
                   .foregroundStyle(.blue)
-                  // Present tense and true: automatic downloading is real
-                  // now — findings this channel turns up queue on their own,
-                  // without Add, as long as the destination stays reachable
-                  // and the disk stays above the floor set in Settings. The
-                  // demoted branch above is what covers the moment either of
-                  // those stops holding.
                   .help("""
                     Set to download automatically. New archives from this \
                     channel are queued and downloaded on their own, without \
@@ -165,20 +88,12 @@ struct ChannelCard: View {
             Spacer(minLength: 0)
           }
           if !section.settingsSummary.isEmpty {
-            // One quiet line under a strong one, the way "Alternative · 2026
-            // · Lossless" sits under an album's title: this is reference
-            // material, not something to read every time.
             Text(section.settingsSummary)
               .font(.subheadline)
               .foregroundStyle(.secondary)
           }
         }
-        // **The visible route to Edit and Stop Watching.** Both lived only
-        // in the right-click until now, which the app's own author could not
-        // find — a per-item menu button is what a Mac uses for actions that
-        // matter but are not the primary one, and it costs a control's
-        // width. The right-click is kept: this adds a way in, it does not
-        // move one.
+        // Keep a visible route to actions also offered by right-click.
         Menu {
           actions
         } label: {
@@ -199,19 +114,11 @@ struct ChannelCard: View {
     .contextMenu { actions }
   }
 
-  /// Visually distinct from the demotion mark above (and from
-  /// `WatchingView.DemotionRow`), on purpose. Those are about *future*
-  /// downloads pausing — a policy choice that resolves itself the moment
-  /// the destination or the disk does. This is about downloads that already
-  /// happened, whose whereabouts Oxbow currently cannot vouch for at all. A
-  /// person has to be able to tell "will this download" apart from "do I
-  /// still have this," so the notice gets its own icon and its own sentence
-  /// rather than borrowing the paused-bolt's colour or shape.
+  /// Separate unavailable existing files from paused future downloads with a distinct icon and
+  /// message.
   private func disconnectedVolumeNotice(_ volume: String) -> some View {
     Label {
-      // The paused half is added only for a channel that downloads
-      // automatically — a manual one has nothing paused to speak of, and
-      // saying so would invent a policy it does not have.
+      // Mention paused downloading only for automatic watches.
       Text(section.downloadsAutomatically
         ? "\(volume) is disconnected. Oxbow can't tell whether downloads on it are still there, and new ones are paused until it's back."
         : "\(volume) is disconnected. Oxbow can't tell whether downloads on it are still there.")
@@ -281,9 +188,6 @@ struct ChannelCard: View {
   .frame(width: 480, height: 220)
 }
 
-// New: `disconnectedVolume` reads the same fact `ArchiveRow`'s `.unverifiable`
-// badge shows per row (§4.2) and states it plainly at the channel level,
-// rather than only in a tooltip a person has to find.
 #Preview("Disconnected volume") {
   List {
     Section {
@@ -307,13 +211,7 @@ struct ChannelCard: View {
   .frame(width: 480, height: 260)
 }
 
-/// Fixtures for the previews above.
-///
-/// Not `WatchingView`'s or `ArchiveRow`'s: each file that previews against
-/// `Date()` keeps its own fixtures rather than sharing one anchored to a
-/// fixed instant, for the reason `WatchingViewPreviewData` already explains
-/// at length — this card never threads a `now` down either, so its own
-/// fixture anchors to the real clock the same way.
+/// Use current-date fixtures because this card does not inject now into its children.
 private enum ChannelCardPreviewData {
   static let avatarURL = URL(string: "https://static-cdn.jtvnw.net/preview.jpg")!
 

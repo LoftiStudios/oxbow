@@ -42,9 +42,7 @@ struct TwitchLinkTests {
   }
 
   @Test func rejectsABareTokenContainingADot() {
-    // A domain typed without a scheme (no "/" or ":") falls into the bare-
-    // token branch too. Slugs are alphanumeric words with no dot, so a
-    // dotted token is someone's mistyped host, not a clip slug.
+    // A dotted bare token is a mistyped host, not an alphanumeric clip slug.
     #expect(TwitchLink.parse("evil-twitch.tv") == nil)
   }
 

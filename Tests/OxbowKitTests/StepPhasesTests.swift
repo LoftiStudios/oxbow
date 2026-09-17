@@ -47,9 +47,7 @@ struct StepPhasesTests {
       == ["Fetching Images", "Rendering Video"])
   }
 
-  /// `ChatDownloader` only emits "Downloading Embed Images" when it was asked
-  /// to embed them, so a bar with a fixed fourth segment would leave a gap
-  /// that never fills on every chat download that does not.
+  /// Only include the embed-images phase when requested.
   @Test func aChatDownloadGainsAnImagePhaseOnlyWhenEmbeddingImages() {
     #expect(StepPhases.expected(for: chat())?.phases.map(\.cliName)
       == ["Downloading", "Backfilling Commenter Info", "Writing Output File"])
@@ -66,10 +64,8 @@ struct StepPhasesTests {
     #expect(phases?.index(matching: progress("Verifying Parts", index: 3, total: 4)) == 2)
   }
 
-  /// The case this whole approach exists for. The renderer announces
-  /// `Fetching Images [1/2]` and then drops the counter entirely for
-  /// `Rendering Video` — which is the phase that takes all the time — so a bar
-  /// driven off the counter alone would stall on segment one and never move.
+  /// Renderer drops its counter during Rendering Video; phase names must still advance
+  /// progress.
   @Test func placesARenderersSecondPhaseEvenThoughTheCounterIsGone() {
     let phases = StepPhases.expected(for: render)
     #expect(phases?.index(matching: progress("Rendering Video")) == 1)
@@ -83,18 +79,13 @@ struct StepPhasesTests {
     #expect(phases?.index(matching: progress("Writing Output File")) == 2)
   }
 
-  /// Upstream could restyle a phase name at any time. When that happens the
-  /// counter is the fallback, so a bar degrades to "we know where we are but
-  /// not what it is called" rather than to nothing.
+  /// Unknown names fall back to valid counters.
   @Test func fallsBackToTheCounterWhenTheNameIsUnrecognised() {
     let phases = StepPhases.expected(for: video())
     #expect(phases?.index(matching: progress("Reticulating Splines", index: 3, total: 4)) == 2)
   }
 
-  /// But only when the counter agrees about how many phases there are.
-  /// `TsMerger` emits its own `[1/2]` sequence with a "Verifying Parts" name
-  /// that also appears in the four-phase video flow; a mismatched total means
-  /// we are not looking at the sequence we think we are.
+  /// Reject mismatched totals from nested helper phase sequences.
   @Test func refusesTheCounterWhenItDisagreesAboutTheNumberOfPhases() {
     let phases = StepPhases.expected(for: video())
     #expect(phases?.index(matching: progress("Reticulating Splines", index: 1, total: 2)) == nil)
@@ -106,12 +97,8 @@ struct StepPhasesTests {
 
   // MARK: - Against the real captured output
 
-  /// Replays a real captured run through the parser and asserts every status
-  /// line it produces lands somewhere.
-  ///
-  /// This is the test that earns the hardcoded phase names: it fails the day
-  /// upstream renames one and the fixtures are recaptured, which is exactly
-  /// when a segmented bar would otherwise start silently stalling.
+  /// Replay captured output to pin phase names; recaptured upstream changes must remain
+  /// placeable.
   @Test(arguments: [
     ("videodownload-success.stdout", 4),
     ("chatdownload-success.stdout", 3),
@@ -146,9 +133,7 @@ struct StepPhasesTests {
     }
   }
 
-  /// The renderer's captured run, which the arguments above cannot cover
-  /// because its second phase carries no counter and its first is the only one
-  /// that does.
+  /// Render fixture covers its counterless second phase.
   @Test func everyPhaseInACapturedRenderIsRecognised() throws {
     let phases = try #require(StepPhases.expected(for: render))
 

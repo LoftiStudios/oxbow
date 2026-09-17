@@ -1,17 +1,8 @@
 import CoreGraphics
 import Foundation
 
-/// The arithmetic behind the trim timeline: where its ticks and labels go, and
-/// how far a drag has to move to change anything.
-///
-/// Pure and `nonisolated` on purpose. Every rule the ruler obeys lives here and
-/// is tested directly, so `TrimTimeline` can be a dumb rendering of it — the
-/// same split `IntakeModel` and `IntakeWindow` already use.
-///
-/// **The tick count is fixed, not derived from the duration.** 72 subdivisions
-/// divides by 3 (majors) and by 18 (labels), so every label sits exactly on a
-/// major tick with no rounding and no special case. A count computed from the
-/// duration would buy nothing and would make that guarantee conditional.
+/// Timeline tick, label, and drag arithmetic. Fixed 72 subdivisions align every label with a
+/// major tick without rounding.
 nonisolated struct TimelineScale: Equatable {
   static let subdivisions = 72
   static let majorEvery = 3
@@ -26,11 +17,7 @@ nonisolated struct TimelineScale: Equatable {
   let duration: Duration
   let width: CGFloat
 
-  /// Both are zero at least once before geometry is measured, and the
-  /// projection methods below divide by `totalSeconds`. Guarding on the
-  /// seconds rather than on `duration` itself is deliberate: `totalSeconds`
-  /// truncates, so a sub-second duration would pass a `duration > .zero`
-  /// check and reach that division as a zero.
+  /// Guard truncated totalSeconds, not Duration: sub-second durations otherwise divide by zero.
   var isDrawable: Bool { width > 0 && totalSeconds > 0 }
 
   var totalSeconds: Double { Double(duration.components.seconds) }
@@ -52,8 +39,7 @@ nonisolated struct TimelineScale: Equatable {
     width * CGFloat(step) / CGFloat(Self.subdivisions)
   }
 
-  /// Rounded up to one of these rather than to the raw time-per-point, so a
-  /// drag produces `00:10:00` and not `00:09:47`.
+  /// Round drag increments to familiar time units.
   static let niceUnits = [1, 2, 5, 10, 15, 30, 60, 120, 300, 600]
 
   var dragUnitSeconds: Int {
@@ -70,20 +56,13 @@ nonisolated struct TimelineScale: Equatable {
     return width * CGFloat(seconds / totalSeconds)
   }
 
-  /// Already rounded, so no caller has to remember to. Clamped rather than
-  /// extrapolated: a drag can leave the track, and a time past the end of the
-  /// video reaches the CLI as an argument that fails minutes into a download.
+  /// Return a snapped time clamped to the video's bounds, even when a drag leaves the track.
   func time(atX x: CGFloat) -> Duration {
     guard isDrawable else { return .zero }
     return snapped(min(max(Double(x / width), 0), 1) * totalSeconds)
   }
 
-  /// The stop nearest `seconds`, where the stops are every `dragUnit` **plus
-  /// the true end of the video**. That last stop is not decoration: without it
-  /// the snap rounds down and the final partial unit cannot be reached at all
-  /// — a 3:17:43 VOD on a 30s unit stops at 03:17:30, under a label that
-  /// correctly reads 03:17:43. So the last stop sits closer to its neighbour
-  /// than a full unit, the same asymmetry the endpoint labels have.
+  /// Include the true endpoint as a snap stop so the final partial drag unit remains reachable.
   func snapped(_ seconds: Double) -> Duration {
     let unit = Double(dragUnitSeconds)
     let grid = min(max((seconds / unit).rounded() * unit, 0), totalSeconds)
@@ -91,9 +70,8 @@ nonisolated struct TimelineScale: Equatable {
     return duration
   }
 
-  /// 11pt Monaco renders eight characters at exactly this width, measured
-  /// rather than guessed. Every fitting decision below depends on it, and on
-  /// `format` always producing eight characters.
+  /// Measured width of eight characters in 11pt Monaco; keep consistent with label font and
+  /// format.
   static let labelWidth: CGFloat = 52.81
   static let minLabelGap: CGFloat = 8
 
@@ -115,18 +93,15 @@ nonisolated struct TimelineScale: Equatable {
     }
   }
 
-  /// The endpoints exact, everything between them snapped to the drag unit.
-  /// Snapping the endpoints too would invent runtime the video does not have:
-  /// a 3:17:43 VOD on a 30s unit rounds to 03:17:45.
+  /// Keep endpoints exact; snap only interior labels.
   private func time(atStep step: Int) -> Duration {
     if step == 0 { return .zero }
     if step == Self.subdivisions { return duration }
     return snapped(totalSeconds * Double(step) / Double(Self.subdivisions))
   }
 
-  /// Five, or a subset of the same five. Never four: 72/3 = 24 is a major but
-  /// not a label position, so four labels would sit on ticks that are not the
-  /// tall ones and the ruler would restructure itself as the window resizes.
+  /// Drop labels from the same five positions when narrowing, preserving alignment with major
+  /// ticks.
   private var labelSteps: [Int] {
     let five = Array(stride(from: 0, through: Self.subdivisions, by: Self.labelEvery))
     if fits(five.count) { return five }

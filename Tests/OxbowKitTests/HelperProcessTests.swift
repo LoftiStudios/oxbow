@@ -5,11 +5,8 @@ import Testing
 @Suite("HelperProcess", .serialized)
 struct HelperProcessTests {
 
-  /// Writes an executable shell fixture into its own temp directory.
-  ///
-  /// - Important: the caller owns that directory. Pair every call with
-  ///   `defer { remove(launch) }`, or the suite strews one directory per test
-  ///   through the temp dir on every run.
+  /// Creates an executable fixture. Caller must pair it with `defer { remove(launch) }` to
+  /// remove its directory.
   private func script(_ body: String, dialect: OutputDialect = .helper) throws -> Launch {
     let directory = URL(filePath: NSTemporaryDirectory())
       .appending(path: "oxbow-helper-\(UUID().uuidString)")
@@ -68,20 +65,9 @@ struct HelperProcessTests {
     #expect(result.status == .signalled(SIGTERM) || result.status == .signalled(SIGKILL))
   }
 
-  /// Regression guard for cooperative-pool starvation, found via CI on
-  /// 2026-08-24: on a 3-core runner, `cancel()` — an actor job that needs a
-  /// cooperative-pool thread to even begin — could not run until the child's
-  /// `sleep 300` expired, because every pool thread was pinned by another
-  /// run's blocking `read`/`waitpid` syscalls. The blocking work must live on
-  /// dedicated threads so that no amount of concurrent runs can starve the
-  /// pool.
-  ///
-  /// Spawns more concurrent runs than the machine has cores. If any blocking
-  /// syscall runs on the cooperative pool, the pool saturates regardless of
-  /// core count and the cancellations cannot be delivered until the fixtures
-  /// exit on their own (~15s) — failing both the status and the elapsed-time
-  /// expectations. Bounded: the fixtures exit by themselves, so the broken
-  /// case fails loudly instead of wedging.
+  /// Run more helpers than cores to detect cooperative-pool blocking that starves cancellation.
+  /// Fixtures self-exit after about 15 seconds so a regression fails timing/status assertions
+  /// instead of hanging indefinitely.
   @Test func cancellationIsDeliveredWhileEveryCoreRunsABlockedHelper() async throws {
     let width = ProcessInfo.processInfo.activeProcessorCount + 2
     var launches: [Launch] = []
@@ -97,9 +83,8 @@ struct HelperProcessTests {
         group.addTask { try await process.run(launch) { _ in } }
       }
       try await Task.sleep(for: .milliseconds(500))
-      // Concurrently: `cancel()` holds a 2s SIGTERM grace period, so awaiting
-      // them one at a time would take 2s x width and the fixtures would exit
-      // on their own before the later cancels ever arrived.
+      // Cancel concurrently; serial two-second grace periods would let later fixtures exit
+      // naturally.
       await withTaskGroup(of: Void.self) { cancels in
         for process in processes { cancels.addTask { await process.cancel() } }
       }
@@ -115,9 +100,7 @@ struct HelperProcessTests {
     #expect(elapsed < .seconds(10), "cancellations were starved until the fixtures exited on their own")
   }
 
-  /// An instance cancelled before `run` must not spawn anything at all.
-  /// Spawning and then immediately killing still starts a real CLI process,
-  /// which reaches the network before it dies.
+  /// Pre-cancelled helpers must never spawn, even briefly.
   @Test func cancellingBeforeRunNeverStartsTheProcess() async throws {
     let launch = try script(#"touch "$(dirname "$0")/ran""#)
     defer { remove(launch) }
@@ -133,24 +116,9 @@ struct HelperProcessTests {
       "a cancelled instance must not have run the helper")
   }
 
-  /// Regression guard for concurrent draining. A fixture that writes well
-  /// past the 16–64 KB pipe buffer to stderr, while also writing status
-  /// lines to stdout, cannot complete unless both streams are drained at
-  /// the same time: if stderr is drained only after stdout reaches EOF (or
-  /// vice versa), the writer on the undrained side blocks in `write(2)`
-  /// forever, the process never exits, and `run` never returns. Every
-  /// fixture elsewhere in this file writes only a few dozen bytes, so none
-  /// of them would catch a regression in `run`'s own await ordering — this
-  /// one is sized specifically to.
-  ///
-  /// Bounded by a 30s deadline raced against `run`. Reproducing the
-  /// sequential-draining bug during review hung this exact test
-  /// indefinitely (25s+, required a manual kill) — a wedged CI job that
-  /// never produces a red result is worse than a clean failure, so a
-  /// regression here must fail loudly instead of hanging. If the deadline
-  /// wins, `process.cancel()` also kills the fixture's `yes`/`head` pair,
-  /// which otherwise survive the hang (confirmed via `ps` during that same
-  /// reproduction).
+  /// Write beyond pipe capacity to prove both streams drain concurrently. A 30-second deadline
+  /// cancels the whole fixture group so sequential-drain regressions fail rather than hang or
+  /// leak children.
   @Test func drainsLargeStderrConcurrentlyWithStdout() async throws {
     let launch = try script(#"""
       (yes x | head -c 100000 1>&2) &
@@ -199,21 +167,9 @@ struct HelperProcessTests {
     }
   }
 
-  /// Regression guard for incrementality: `streamsParsedProgressWhileRunning`
-  /// only inspects output after `run` has already returned, so it cannot
-  /// tell "parsed as it arrived" apart from "read everything, then parsed
-  /// it all at the end". This test can, by making the fixture's own
-  /// progress depend on the callback having already fired: the fixture
-  /// emits one status line, then polls for a sentinel file that only this
-  /// test's `onOutput` closure creates — so the sentinel can only appear if
-  /// the line was parsed and delivered while the process was still
-  /// running.
-  ///
-  /// The fixture's poll loop is itself bounded (100 x 50ms = ~5s), so if
-  /// output is only parsed after exit — meaning the sentinel is created too
-  /// late to matter — the fixture still exits on its own and nothing is
-  /// left running. The elapsed-time assertion below fails loudly on that
-  /// slow path instead of the test wedging.
+  /// The fixture waits for a sentinel created by its output callback, proving delivery occurs
+  /// before exit. A bounded five-second poll makes deferred parsing fail timing checks without
+  /// hanging.
   @Test func deliversOutputWhileTheProcessIsStillRunning() async throws {
     let launch = try script(#"""
       DIR="$(dirname "$0")"
@@ -260,9 +216,7 @@ struct HelperProcessTests {
     #expect(progress.fraction == 0.5)
   }
 
-  /// The same bytes under the helper dialect are unrecognised text, which the
-  /// CLI parser deliberately keeps rather than drops. If this ever reports a
-  /// status line, the dialect is being ignored.
+  /// The same bytes are plain text under the CLI dialect, verifying parser selection.
   @Test func theHelperDialectDoesNotParseFFmpegProgress() async throws {
     let launch = try script(#"printf 'out_time_us=5000000\nprogress=continue\n'"#)
     defer { remove(launch) }

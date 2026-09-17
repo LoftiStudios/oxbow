@@ -6,10 +6,8 @@ public struct Job: Identifiable, Codable, Sendable, Equatable {
   public var title: String
   /// Ordered. Index order is execution order.
   public var steps: [Step]
-  /// Whether the user was told a file already sat at this job's destination
-  /// and chose to replace it. See `JobTemplate.replacesExistingFile` for why
-  /// the decision is carried rather than re-derived, and `QueueEngine.move`
-  /// for what each value does at delivery.
+  /// Explicit replacement permission captured at intake; see
+  /// `JobTemplate.replacesExistingFile`.
   public let replacesExistingFile: Bool
 
   public init(
@@ -26,11 +24,8 @@ public struct Job: Identifiable, Codable, Sendable, Equatable {
     self.replacesExistingFile = replacesExistingFile
   }
 
-  /// Derived, never stored. A stored summary can drift from the steps it
-  /// summarises, and drift is what makes a queue feel haunted.
-  ///
-  /// Precedence is deliberate: running beats failed beats cancelled, so a job
-  /// still doing work never reads as finished.
+  /// Derived status with running > failed > cancelled precedence; active work must not appear
+  /// finished.
   public var status: JobStatus {
     if steps.contains(where: { $0.status == .running }) { return .running }
     if steps.contains(where: {
@@ -42,28 +37,13 @@ public struct Job: Identifiable, Codable, Sendable, Equatable {
     return .queued
   }
 
-  /// The files this job actually delivered — one entry per step whose kind
-  /// carries a real destination and that has succeeded, in step order.
-  ///
-  /// The single definition both the app layer's "what does Show in Finder
-  /// reveal" and "what did Get Info list as delivered" answer from, so the
-  /// two can never compute it two different ways. See
-  /// `Step.deliveredArtifact` for what excludes a job workspace intermediate
-  /// even once its step is `.done`.
+  /// Delivered artifacts from successful destination-bearing steps, in step order. Shared by
+  /// Get Info and Finder actions; excludes workspace intermediates.
   public var deliveredFiles: [URL] {
     steps.compactMap(\.deliveredArtifact)
   }
 
-  /// Which video or clip this job is for, or nil if it downloads no media.
-  ///
-  /// **Only the media step answers.** A `.video` job seeds its
-  /// `ChatRequest.videoID` with the same id (see `JobTemplate.renderInput`),
-  /// so reading whichever step happens to carry a `videoID` would look
-  /// correct on a VOD and be wrong everywhere else: a clip job's chat step
-  /// carries the *slug* in that field, and a chatless job's carries `""`.
-  ///
-  /// Derived rather than stored, for the reason `status` is: a stored copy
-  /// can drift from the steps it summarises.
+  /// Derive media identity from the video/clip step only, not chat request fields.
   public var mediaIdentifier: String? {
     for step in steps {
       switch step.kind {
@@ -81,13 +61,8 @@ extension Job {
     case id, created, title, steps, replacesExistingFile
   }
 
-  /// `replacesExistingFile` did not exist until 2026-08-30. A queue persisted
-  /// before then decodes here rather than failing and stranding the user's
-  /// in-flight jobs, so no migration step is needed.
-  ///
-  /// Absent reads as `false`, which is the safe direction: an old job resumes
-  /// having authorized nothing, so delivery steps around whatever it finds
-  /// rather than assuming permission nobody gave.
+  /// Older queues default replacesExistingFile to false, preserving existing destination files
+  /// without a migration.
   public init(from decoder: any Decoder) throws {
     let container = try decoder.container(keyedBy: CodingKeys.self)
     self.init(

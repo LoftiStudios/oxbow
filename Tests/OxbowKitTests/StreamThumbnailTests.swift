@@ -7,9 +7,7 @@ import Testing
 @Suite("Stream thumbnail rewrite")
 struct StreamThumbnailTests {
 
-  /// The exact shape captured from the live CDN (VOD 2859050150,
-  /// 2026-09-01): `thumbN-320x180.jpg` rewrites to `thumbN-1280x720.jpg`,
-  /// nothing else in the URL changes.
+  /// Captured VOD URL shape; only the dimensions should change.
   @Test func rewritesAVodFrameToTheTargetSize() {
     let url = URL(string: """
       https://static-cdn.jtvnw.net/cf_vods/d2nvs31859zcd8/\
@@ -34,10 +32,7 @@ struct StreamThumbnailTests {
     }
   }
 
-  /// The defect this whole helper exists to avoid: a clip's thumbnail is
-  /// already full-size and shaped differently (`thumb-0000000000-WxH.jpg` —
-  /// a dash, not a digit, right after `thumb`). It must pass through
-  /// byte-for-byte, not get rewritten to a variant that may not exist.
+  /// Clip thumbnails have a dash after thumb and must remain unchanged.
   @Test func leavesAClipThumbnailUntouched() {
     let url = URL(string: """
       https://static-cdn.jtvnw.net/twitch-video-assets/\
@@ -48,8 +43,7 @@ struct StreamThumbnailTests {
     #expect(StreamThumbnail.rewritten(url) == url)
   }
 
-  /// A URL that does not look like either shape at all — the "matches
-  /// nothing" case the brief calls out by name.
+  /// Unrecognized URL shapes pass through unchanged.
   @Test func leavesAnUnrelatedURLUntouched() {
     let url = URL(string: "https://example.com/some/other/image.png")!
     #expect(StreamThumbnail.rewritten(url) == url)

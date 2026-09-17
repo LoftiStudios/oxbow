@@ -44,9 +44,7 @@ struct ChannelProfileDecodingTests {
     }
   }
 
-  /// `docs/twitch-channel-api.md` §9.2: the field accepts any width and
-  /// returns an interpolated URL, but the CDN serves only this set. A width
-  /// outside it is a 404 that looks like a successful request.
+  /// Avatar widths must come from the CDN's served set; arbitrary widths yield URLs that 404.
   @Test("the requested avatar width is one the CDN actually serves")
   func avatarWidthIsServable() {
     #expect([28, 50, 70, 150, 300, 600].contains(ChannelFeed.avatarWidth))

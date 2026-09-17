@@ -2,11 +2,8 @@ import Foundation
 import Testing
 @testable import OxbowKit
 
-/// A 70-minute composite on a Mac nobody is touching used to lose to Energy
-/// Saver: the work is a child process, and a child process is not something
-/// the idle timer counts. These assert the decision — that the engine claims
-/// the Mac exactly while it has work in flight, and gives it back afterwards
-/// — because `ProcessInfo.beginActivity` itself has no effect a test can see.
+/// Assert engine sleep-claim transitions through an injected sink; OS idle-sleep effects are
+/// not directly testable.
 @Suite("Sleep assertion", .serialized)
 struct SleepAssertionTests {
 
@@ -52,10 +49,7 @@ struct SleepAssertionTests {
       videoID: "1", quality: "", destination: root.appending(path: "out.mp4"))))
   }
 
-  /// Nothing enqueued, nothing claimed. Stated because the opposite — an
-  /// assertion taken at launch and held for the process's lifetime — is the
-  /// easy wrong implementation, and it would keep a Mac awake forever behind
-  /// an app someone left open.
+  /// An idle app must not hold a sleep assertion.
   @Test func claimsNothingWhileTheQueueIsEmpty() async throws {
     let (engine, root, sleep) = makeEngine(.succeeds)
     defer { cleanUp(root) }
@@ -66,7 +60,7 @@ struct SleepAssertionTests {
     #expect(!sleep.isActive)
   }
 
-  /// The whole point: held across a running job, released once it settles.
+  /// Hold while work runs and release when it settles.
   @Test func holdsTheMacAwakeForAJobAndReleasesItAfterwards() async throws {
     let (engine, root, sleep) = makeEngine(.succeeds)
     defer { cleanUp(root) }
@@ -80,9 +74,7 @@ struct SleepAssertionTests {
     await engine.flush()
   }
 
-  /// Released on the failure path too. A step that fails still clears
-  /// `running`, and an assertion that only came down on success would leak on
-  /// exactly the runs a user is most likely to walk away from.
+  /// Failures release the assertion too.
   @Test func releasesTheMacWhenAJobFails() async throws {
     let (engine, root, sleep) = makeEngine(.failsWithoutArtifact(stderr: "boom"))
     defer { cleanUp(root) }
@@ -96,9 +88,7 @@ struct SleepAssertionTests {
     await engine.flush()
   }
 
-  /// Cancelling is the path where a leak would be invisible: the user thinks
-  /// they stopped everything, the queue agrees, and the Mac quietly never
-  /// sleeps again.
+  /// Cancellation must release the assertion.
   @Test func releasesTheMacWhenARunningJobIsCancelled() async throws {
     let (engine, root, sleep) = makeEngine(.hangsUntilCancelled)
     defer { cleanUp(root) }
@@ -116,9 +106,7 @@ struct SleepAssertionTests {
     await engine.flush()
   }
 
-  /// Same for removal, which takes a different route out of `running` than
-  /// cancellation does — it drops the entries itself rather than waiting for
-  /// each kill to report back.
+  /// Removal clears running entries through a separate path and must also release.
   @Test func releasesTheMacWhenARunningJobIsRemoved() async throws {
     let (engine, root, sleep) = makeEngine(.hangsUntilCancelled)
     defer { cleanUp(root) }
@@ -134,11 +122,8 @@ struct SleepAssertionTests {
     await engine.flush()
   }
 
-  /// Quitting with work in flight. `shutDown` deliberately leaves the steps
-  /// `.running` in the saved queue so the reconciler can call them
-  /// interrupted at the next launch — so the status is exactly the wrong
-  /// thing to key the assertion on, and this proves it is keyed on the
-  /// process table instead.
+  /// Shutdown leaves persisted step status running but empties active processes; sleep claims
+  /// must follow the latter.
   @Test func releasesTheMacOnShutDown() async throws {
     let (engine, root, sleep) = makeEngine(.hangsUntilCancelled)
     defer { cleanUp(root) }
@@ -153,18 +138,9 @@ struct SleepAssertionTests {
     #expect(!sleep.isActive)
   }
 
-  /// Two steps of one job produce two claims, not one held across both: a
-  /// step's completion empties `running` before the next one is admitted, and
-  /// the `didSet` sees that intermediate state.
-  ///
-  /// **Recorded rather than fixed, because it cannot matter.** The gap is one
-  /// actor turn with no suspension in it — microseconds — and the shortest
-  /// idle-sleep Energy Saver will accept is a minute. Holding the assertion
-  /// across the seam would mean tracking admissible-but-unstarted work, and
-  /// that has a worse failure mode than this one: during `shutDown` nothing
-  /// further is admitted, so a queue-based reading would stay awake for work
-  /// that will never run. If this expectation ever fails because the flap is
-  /// gone, that is an improvement — update it.
+  /// Sequential steps briefly release/reacquire within one unsuspended actor turn. This
+  /// harmless gap keeps claims tied to running processes rather than work shutdown will never
+  /// admit.
   @Test func flapsBetweenTheStepsOfAMultiStepJobAndThatIsHarmless() async throws {
     let destination = URL(filePath: NSTemporaryDirectory())
       .appending(path: "render-\(UUID().uuidString).mp4")
@@ -188,9 +164,7 @@ struct SleepAssertionTests {
     await engine.flush()
   }
 
-  /// The real assertion, exercised for its idempotence contract: `didSet`
-  /// fires on every mutation of `running`, so `setActive` is handed long runs
-  /// of the same value and must not stack tokens or over-release one.
+  /// Repeated values must neither stack activity tokens nor over-release them.
   @Test func theRealAssertionIsIdempotentInBothDirections() {
     let assertion = SystemSleepAssertion()
 

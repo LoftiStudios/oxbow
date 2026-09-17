@@ -21,11 +21,7 @@ struct AutoDownloadPolicyTests {
 
   private let floor: Int64 = Preferences.factoryFreeSpaceFloor
 
-  /// What `decide()` itself now prices a set of findings at, via the same
-  /// `BackfillEstimate` arithmetic — so a test can pick an `availableBytes`
-  /// that is exactly, not approximately, enough for a given prefix, instead
-  /// of guessing at a margin generous enough to survive the batch bound
-  /// unrelated tests are not exercising.
+  /// Compute batch cost with the policy's estimator so tests can set exact capacity boundaries.
   private func cost(_ archives: [ChannelArchive]) -> Int64 {
     BackfillEstimate(archives: archives, cap: settings.qualityCap, output: settings.output).bytes
   }
@@ -42,8 +38,7 @@ struct AutoDownloadPolicyTests {
   // 2. Only isDownloadable archives are submitted.
   @Test("a recording live broadcast is skipped, even though it is a finding")
   func recordingIsSkipped() {
-    // Priced exactly enough for the one downloadable finding — the batch
-    // bound (finding 4) is not what this test is about.
+    // Supply enough space for the only downloadable finding.
     let decision = AutoDownloadPolicy.decide(
       watch: watch(), findings: [archive("1", status: .recording), archive("2")],
       availableBytes: floor + cost([archive("2")]), destinationExists: true, floor: floor)
@@ -60,11 +55,7 @@ struct AutoDownloadPolicyTests {
       needed: cost([archive("1")]), available: floor - 1, floor: floor)))
   }
 
-  /// The rule is "this download must not take the volume below the reserve",
-  /// and nothing else. There used to be an absolute gate in front of it that
-  /// refused whenever free space was under the floor, whatever the download
-  /// cost — so a few hundred megabytes was refused on the same terms as half
-  /// a terabyte. The gate is gone; this pins that only the real rule remains.
+  /// The reserve applies after subtracting download cost.
   @Test("a download that fits above the floor is submitted even on a nearly full volume")
   func aSmallDownloadFitsOnATightVolume() {
     let one = archive("1")
@@ -74,9 +65,7 @@ struct AutoDownloadPolicyTests {
     #expect(decision == .submit([one]))
   }
 
-  /// And one byte short of fitting still demotes rather than quietly
-  /// submitting nothing — `.submit([])` means "ran, found nothing", which is
-  /// not what happened.
+  /// Insufficient space must demote, not report an empty successful batch.
   @Test("one byte short of fitting demotes rather than submitting an empty batch")
   func oneByteShortDemotes() {
     let one = archive("1")
@@ -96,25 +85,17 @@ struct AutoDownloadPolicyTests {
     #expect(decision == .demoted(.destinationUnreachable(settings.destinationPath)))
   }
 
-  // 5. The floor is checked against the destination's volume — the caller's
-  // contract, documented, not independently testable from arguments alone
-  // beyond confirming availableBytes (whatever it is) is what gets compared.
+  // Caller supplies capacity for the destination volume.
   @Test("availableBytes, whatever volume it was resolved for, is what is compared to the floor")
   func availableBytesIsComparedDirectly() {
-    // Exactly enough left, after taking this one finding, to still sit at
-    // the floor — not below it. The entry gate above (`availableBytes >=
-    // floor`) and the batch bound below both key off the identical `>=`, so
-    // this pins both at once: the finding is neither refused outright nor
-    // trimmed away by the bound.
+    // Exactly meeting the reserve is allowed.
     let atFloor = AutoDownloadPolicy.decide(
       watch: watch(), findings: [archive("1")],
       availableBytes: floor + cost([archive("1")]), destinationExists: true, floor: floor)
     #expect(atFloor == .submit([archive("1")]))
   }
 
-  // 6. Demotion is per-sweep and per-watch: decide is pure and stateless, so
-  // calling it again with recovered arguments submits normally. There is no
-  // state to reset — this test demonstrates that directly.
+  // Recovered conditions allow a later sweep; demotion is not persisted policy state.
   @Test("a watch demoted on one call submits normally on the next once conditions recover")
   func demotionDoesNotPersistAcrossCalls() {
     let firstSweep = AutoDownloadPolicy.decide(
@@ -129,10 +110,7 @@ struct AutoDownloadPolicyTests {
     #expect(secondSweep == .submit([archive("1")]))
   }
 
-  // 9. The batch bound (finding 4): with room for two of three equally-sized
-  // findings, the third is left for a later sweep rather than run the volume
-  // below the floor. Order is preserved — the findings taken are a prefix,
-  // not whichever happen to fit.
+  // Take the fitting prefix in order and leave remaining findings for later.
   @Test("a sweep submits only as many findings as keep free space at or above the floor")
   func stopsSubmittingOnceTheRunningCostWouldBreachTheFloor() {
     let archives = [archive("1"), archive("2"), archive("3")]
@@ -147,9 +125,7 @@ struct AutoDownloadPolicyTests {
     #expect(decision == .submit([archive("1"), archive("2")]))
   }
 
-  // 10. The stopped-at finding is not silently dropped — it is simply not in
-  // this sweep's `.submit`, which is what leaves it as an ordinary finding
-  // for the next one to reconsider once space has changed.
+  // The first nonfitting finding remains eligible for a later sweep.
   @Test("a finding the batch bound stops at is excluded from submit, not queued anyway")
   func excludedFindingIsNotInTheSubmitSet() {
     let onlyOneFits = cost([archive("1")])
@@ -177,11 +153,7 @@ struct AutoDownloadPolicyTests {
     #expect(decision == .demoted(.destinationUnreachable(settings.destinationPath)))
   }
 
-  // Reason sentences are user-facing and worth pinning.
-  /// The cost has to be in there. Printed without it, the reserve was the
-  /// only figure on screen and read as the download's size — "below the
-  /// 250 GB floor" beside four short 360p videos looks like a claim that
-  /// those videos need 250 GB.
+  // Include download cost in the reason so reserve size cannot be mistaken for output size.
   @Test("belowFloor states the cost, the free space and the reserve")
   func belowFloorSentence() {
     let reason = AutoDownloadPolicy.Reason.belowFloor(
@@ -223,9 +195,7 @@ struct AutoDownloadPolicyTests {
         status: .failed(StepFailure(kind: .noArtifact, summary: "Something else went wrong.")))])
   }
 
-  /// Two is a coincidence — a channel can have a couple of subscriber-only
-  /// VODs among ordinary ones, and demoting the whole channel off those
-  /// would stop it fetching everything else it legitimately can.
+  /// Two restricted videos may be isolated exceptions; do not demote the whole channel yet.
   @Test("two subscriber-only failures are not enough to call the channel restricted")
   func twoIsNotEnough() {
     #expect(!AutoDownloadPolicy.isContentRestricted(
@@ -246,8 +216,7 @@ struct AutoDownloadPolicyTests {
       jobs: [restrictedJob("1"), otherFailedJob("2"), otherFailedJob("3")]))
   }
 
-  /// The demotion is the whole point: automatic downloading stops, and the
-  /// notify-only half carries on, which is what every other demotion does.
+  /// Demotion stops automatic downloading while findings remain visible.
   @Test("a restricted channel demotes rather than submitting")
   func restrictedChannelDemotes() {
     let decision = AutoDownloadPolicy.decide(
@@ -257,10 +226,7 @@ struct AutoDownloadPolicyTests {
     #expect(decision == .demoted(.contentRestricted))
   }
 
-  /// Restriction outranks the other two. It is the only one of the three that
-  /// will not fix itself, and it is the one that explains the failures already
-  /// on screen — a drive comes back, disk frees up, a membership does not
-  /// appear because Oxbow waited.
+  /// Content restriction takes precedence over transient disk or volume problems.
   @Test("restriction is reported ahead of a missing destination or a low disk")
   func restrictionOutranksTheOthers() {
     let bothWrong = AutoDownloadPolicy.decide(
@@ -275,10 +241,8 @@ struct AutoDownloadPolicyTests {
     #expect(sentence.contains("subscriber"))
   }
 
-  /// Only the unmounted-destination case is announced elsewhere, so only it
-  /// may be suppressed. A disk-space or subscriber-only demotion has no other
-  /// voice, and silencing one would leave a channel quietly not downloading
-  /// with nothing on screen saying why.
+  /// Suppress only the separately announced unmounted-volume case; other demotions need their
+  /// own explanation.
   @Test("only a missing destination counts as unreachable")
   func onlyTheDestinationCaseIsUnreachable() {
     #expect(AutoDownloadPolicy.Reason.destinationUnreachable("/Volumes/Storage")

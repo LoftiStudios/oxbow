@@ -1,12 +1,6 @@
 import SwiftUI
 
-/// The window's explanation strip: something is wrong, and the queue stays on
-/// screen anyway.
-///
-/// Deliberately not `ContentUnavailableView`, which replaces the content
-/// rather than sitting above it. Design §6 asks for a banner *and* a disabled
-/// `+`, so the toolbar and whatever the list would otherwise draw both have
-/// to remain visible behind the explanation.
+/// Show the error above the queue, preserving its toolbar and disabled Add control.
 struct QueueBanner: View {
   let title: String
   let message: String
@@ -21,8 +15,7 @@ struct QueueBanner: View {
         Text(message)
           .font(.callout)
           .foregroundStyle(.secondary)
-          // The messages name a command to run, so they must wrap rather
-          // than truncate — half a shell command helps nobody.
+          // Wrap messages so suggested commands remain complete.
           .fixedSize(horizontal: false, vertical: true)
           .textSelection(.enabled)
       }

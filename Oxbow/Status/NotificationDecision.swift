@@ -1,10 +1,7 @@
 import Foundation
 import OxbowKit
 
-/// Which jobs have just reached a terminal state, by diffing two snapshots.
-///
-/// `nonisolated` for the same reason as `QueueStatus`: pure, no UI
-/// dependency, called synchronously from `OxbowTests`.
+/// Pure snapshot diff identifying newly settled jobs.
 nonisolated enum NotificationDecision {
 
   enum Outcome: Equatable {
@@ -16,10 +13,8 @@ nonisolated enum NotificationDecision {
     let job: JobID
     let title: String
     let outcome: Outcome
-    /// What "Show in Finder" reveals. Carried in the event — and from there
-    /// into the notification's `userInfo` — rather than looked up when the
-    /// user clicks, so the action needs no access to queue state that may
-    /// have moved on by then.
+    /// Carry reveal URLs into notification userInfo so response handling needs no current queue
+    /// state.
     let files: [URL]
   }
 
@@ -28,13 +23,8 @@ nonisolated enum NotificationDecision {
     Dictionary(uniqueKeysWithValues: jobs.map { ($0.id, $0.status) })
   }
 
-  /// Jobs that have just settled.
-  ///
-  /// **A job absent from `previous` never fires.** That single rule delivers
-  /// three behaviours at once: the first snapshot after launch seeds silently
-  /// (spec §7.1), a newly enqueued job is not an event, and a removed job is
-  /// not an event either. There is deliberately no separate "have we seeded
-  /// yet" flag — a flag is a second thing that can be wrong.
+  /// Emit only transitions for jobs present in the previous snapshot. Startup, new jobs, and
+  /// removal do not notify.
   static func events(from previous: [JobID: JobStatus], to snapshot: [Job]) -> [Event] {
     snapshot.compactMap { job in
       guard let was = previous[job.id], was != job.status else { return nil }
@@ -47,10 +37,7 @@ nonisolated enum NotificationDecision {
         files = job.deliveredFiles
       case .failed:
         outcome = .failed
-        // `Job.deliveredFiles` gates per step, not per job: an earlier step
-        // can have delivered a file before a later one failed. A failed job
-        // reveals nothing, so this is dropped deliberately rather than
-        // inherited from whatever `deliveredFiles` happens to contain.
+        // Failed jobs reveal no files, even if an earlier step delivered one.
         files = []
       // Cancellation is the user's own doing, and queued/running are not
       // terminal.

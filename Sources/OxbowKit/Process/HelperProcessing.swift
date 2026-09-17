@@ -1,10 +1,6 @@
 import Foundation
 
-/// What the engine needs from a running helper.
-///
-/// A protocol solely so tests can substitute a fake and exercise the engine's
-/// logic without spawning processes. `HelperProcess` is the only real
-/// implementation.
+/// Helper interface injected into the engine for process-free tests.
 public protocol HelperProcessing: Sendable {
   func run(
     _ launch: Launch,

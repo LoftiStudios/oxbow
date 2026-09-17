@@ -3,35 +3,23 @@ import Foundation
 /// What the composite step's Finder-reveal item should show. See
 /// `QueueEngine.revealTarget(forJob:)` for how this is decided.
 public enum RevealTarget: Equatable, Sendable {
-  /// Select the pieces themselves where there are any; fall back to the
-  /// (always-created once the composite step starts) retention directory for
-  /// the gap between the step starting and its first fragment landing on
-  /// disk.
+  /// Reveal pieces when present, otherwise their directory before the first fragment lands.
   case retained(directory: URL, pieces: [URL])
-  /// The retention area is gone and the job delivered — reveal what it
-  /// actually produced instead of a directory that no longer exists.
+  /// After retention cleanup, reveal the delivered file.
   case delivered(URL)
 }
 
-/// Owns queue state and performs every side effect.
-///
-/// The scheduling rules live in `Scheduler` as pure functions, so this type is
-/// mostly plumbing: admit, launch, fold the result back in, repeat.
+/// Own queue state and side effects; Scheduler supplies pure admission and transition rules.
 public actor QueueEngine {
 
   public struct Configuration: Sendable {
     public var helperExecutable: URL
     public var ffmpegPath: URL
     public var workspace: Workspace
-    /// - Important: `store.fileURL` must **not** live under `workspace.root`.
-    ///   The queue is the app's own data; `workspace.root` is a cache
-    ///   directory that `start()` sweeps on every launch and that the OS is
-    ///   free to purge behind our back. A queue file nested inside it would
-    ///   be lost to either.
+    /// - Important: Keep the queue file outside disposable job workspaces swept at startup.
     public var store: QueueStore
     public var makeProcess: @Sendable () -> HelperProcessing
-    /// Keeps the Mac awake while any step is running. Defaulted, so the only
-    /// caller that passes one is a test substituting a spy.
+    /// Keep the Mac awake while steps run; injectable for tests.
     public var sleepAssertion: any SleepAsserting
 
     public init(
@@ -57,10 +45,8 @@ public actor QueueEngine {
     /// where it is, as an intermediate for a later step to consume.
     case notApplicable
     case moved(URL)
-    /// The destination write itself failed (full disk, unwritable volume,
-    /// permissions, …). This must never be treated the same as
-    /// `.notApplicable` — that would report a file that was never actually
-    /// saved as a successfully completed step.
+    /// Delivery failed. Never treat this as an intermediate with no destination or report the
+    /// step as successfully saved.
     case failed(String)
   }
 
@@ -77,17 +63,10 @@ public actor QueueEngine {
   private let contexts: StepContextBuilder
 
   private var jobs: [Job] = []
-  /// The live helper for each in-flight step, keyed by step. Only the helper
-  /// is kept: the unstructured `Task` that drives it is deliberately not
-  /// retained, because cancelling that task would not stop the child process
-  /// — `HelperProcessing.cancel()` is the only thing that does.
+  /// Track live helpers, not their driving Tasks: only HelperProcessing.cancel() stops child
+  /// processes.
   private var running: [StepID: HelperProcessing] = [:] {
-    // The single place the sleep assertion is decided. `running` is mutated
-    // from five sites — `launch`, `finish`, `remove(jobs:)`,
-    // `abandonAlreadyFinalizedStep` and `shutDown`'s aftermath — and five
-    // hand-placed calls would be five chances for the assertion to disagree
-    // with what is actually in flight. `setActive` is idempotent precisely so
-    // this can fire on every mutation.
+    // Derive the sleep assertion from running at every mutation; setActive is idempotent.
     didSet { configuration.sleepAssertion.setActive(!running.isEmpty) }
   }
   /// Last time `heartbeat` wrote a line for a step — see its doc comment.
@@ -98,9 +77,8 @@ public actor QueueEngine {
   /// a step running when the kill signals were sent. `finish` clears one out
   /// once the last such step actually stops. See `removeJobWorkspaceIfSettled`.
   private var jobsAwaitingWorkspaceRemoval: Set<JobID> = []
-  /// Set for good once `shutDown()` starts. From that moment the engine admits
-  /// nothing new and folds no outcome back in — see `shutDown()` for why the
-  /// results the kills produce must not be recorded.
+  /// Permanent shutdown flag: stop admission and ignore kill outcomes so persisted running
+  /// steps reconcile as interrupted.
   private var isShuttingDown = false
 
   public init(configuration: Configuration) {
@@ -124,17 +102,9 @@ public actor QueueEngine {
     running.isEmpty && Scheduler.admissible(jobs: jobs, running: []).isEmpty
   }
 
-  /// A method rather than a computed property: the `AsyncStream` builder
-  /// closure captures and mutates `observers`, which strict concurrency
-  /// rejects when it is expressed as a getter. `AsyncStream.makeStream()`
-  /// sidesteps that by handing back the continuation directly, so the
-  /// mutation happens in plain actor-isolated code instead of inside an
-  /// escaping closure.
-  ///
-  /// `.bufferingNewest(1)` rather than the unbounded default: every element
-  /// is a complete `[Job]`, and a render publishes one per status line —
-  /// ~400 of them. A consumer replaces its whole array from each snapshot, so
-  /// a superseded one carries no information and only costs memory.
+  /// makeStream provides the continuation for actor-isolated registration without an escaping
+  /// builder mutation. Buffer only the newest complete snapshot; superseded progress snapshots
+  /// carry no additional state.
   public func makeSnapshots() -> AsyncStream<[Job]> {
     let (stream, continuation) = AsyncStream<[Job]>.makeStream(bufferingPolicy: .bufferingNewest(1))
     let id = UUID()
@@ -146,27 +116,9 @@ public actor QueueEngine {
     return stream
   }
 
-  /// Sweeps the workspace, loads the queue, reconciles it, and starts work.
-  ///
-  /// The sweep is unconditional: nothing on disk can ever be resumed, so there
-  /// is no case to reason about and no way for a power loss to leak disk.
-  ///
-  /// - Parameter runsWork: when `false`, the store is loaded and published
-  ///   exactly as written and nothing else happens — no reconciliation, no
-  ///   orphan sweep, no `tick()`. The queue becomes something to look at
-  ///   rather than something being worked.
-  ///
-  ///   This exists for `scripts/screenshots.sh`, which launches the real app
-  ///   against a fabricated queue so the published screenshot need not contain
-  ///   a real streamer's name. Both of the things `start` normally does are
-  ///   wrong for that: `tick()` would genuinely try to download the invented
-  ///   video ids and settle every step as failed, and `Reconciler` would first
-  ///   demote any `running` step on the correct assumption that the app died
-  ///   mid-step. Between them a fixture could only ever depict a finished
-  ///   queue, which is the one state that shows none of the per-step progress
-  ///   the interface exists to present.
-  ///
-  ///   Defaulted, so the only caller that passes it is the one that means it.
+  /// Sweep scratch workspaces, load and reconcile the queue, then start work. `runsWork=false`
+  /// still sweeps scratch space but publishes saved jobs without reconciliation or scheduling.
+  /// Resume retention is handled separately.
   public func start(runsWork: Bool = true) async throws {
     configuration.workspace.removeAll()
 
@@ -174,8 +126,7 @@ public actor QueueEngine {
 
     guard runsWork else {
       jobs = loaded
-      // Explicitly, because nothing else will: `jobs` has no `didSet`, and
-      // every other path reaches observers by way of `tick()`.
+      // Fixture startup bypasses tick(), so publish explicitly.
       publish()
       return
     }
@@ -187,20 +138,9 @@ public actor QueueEngine {
     tick()
   }
 
-  /// Sweeps `resumeRoot` for a retention directory that names no job the
-  /// queue just loaded — the one way one can exist, since every path that
-  /// creates one (`prepareResume`, reached only from `makeContext` for a job
-  /// already in `jobs`) is tied to a real job id. A lost or corrupted queue
-  /// store is the only route to an orphan: without this, that directory
-  /// would be both unreachable (nothing in the UI names it) and unshowable
-  /// (`retainedBytes(forJob:)` needs a `JobID` nothing has any more) forever,
-  /// since `removeAll()` deliberately does not reach `resumeRoot`.
-  ///
-  /// **Not the same sweep as `removeAll()`.** That one is unconditional
-  /// because `jobs/` can never hold anything reusable; this one is
-  /// conditional on purpose — a cancelled job still in the queue keeps its
-  /// retained pieces (docs/design/resume.md §8), so only a directory whose
-  /// name matches *no* loaded job, whatever that job's status, is removed.
+  /// Remove retention directories only when no loaded job owns them, including after
+  /// queue-store loss. Unlike disposable workspaces, retained pieces for cancelled or failed
+  /// jobs must survive startup.
   private func removeOrphanedResumeDirectories() {
     let known = Set(jobs.map { $0.id.rawValue.uuidString })
     let resumeRoot = configuration.workspace.resumeRoot
@@ -216,12 +156,8 @@ public actor QueueEngine {
     }
   }
 
-  /// The tail of a step's captured helper output, or nil if it has none.
-  ///
-  /// Read through the engine rather than handing the UI a file path: the
-  /// workspace layout is the engine's business, and a step's log is deleted
-  /// with its job's workspace, so a URL handed out earlier could point at
-  /// nothing by the time a view got round to reading it.
+  /// Read the current log tail through the engine; workspace paths may disappear during
+  /// cleanup.
   public func log(for step: StepID, lines: Int = 200) async -> String? {
     guard let location = locate(step) else { return nil }
     let url = configuration.workspace.logFile(job: jobs[location.job].id, step: step)
@@ -253,12 +189,8 @@ public actor QueueEngine {
   }
 
   public func cancel(step id: StepID) async {
-    // Record the terminal status — and stop admitting or blocking on it —
-    // before awaiting the kill, not after. A real helper can take up to ~2s
-    // to actually die; `finish` may run for this step at any point during
-    // that window, and by the time it does, the status here must already be
-    // `.cancelled` so `finish` bails instead of overwriting it with
-    // `.failed(signalled(...))`.
+    // Mark cancelled before awaiting termination. finish() may arrive during the grace period
+    // and must not overwrite cancellation with a signal failure.
     Scheduler.cancel(id, in: &jobs)
     tick()
 
@@ -268,64 +200,37 @@ public actor QueueEngine {
   public func cancel(job id: JobID) async {
     guard let job = jobs.first(where: { $0.id == id }) else { return }
 
-    // Same reasoning as `cancel(step:)`: record every unfinished step as
-    // cancelled before awaiting any kill, so `finish` never races the status
-    // write for any of them.
+    // Set all unfinished steps cancelled before awaiting any helper termination.
     Scheduler.cancel(job: id, in: &jobs)
     tick()
 
     let processes = job.steps.compactMap { running[$0.id] }
 
-    // Concurrently, not one at a time: each `HelperProcess.cancel()` carries
-    // its own ~2s grace period, so cancelling a three-step job serially could
-    // take up to 6s instead of 2s.
+    // Cancel concurrently so grace periods overlap rather than accumulate.
     await withTaskGroup(of: Void.self) { group in
       for process in processes {
         group.addTask { await process.cancel() }
       }
     }
 
-    // A helper that ignored SIGTERM can still be alive (and writing) here —
-    // `removeJobWorkspaceIfSettled` only deletes once nothing is running.
+    // Delete only after all writers exit; a helper ignoring SIGTERM may still be alive here.
     removeJobWorkspaceIfSettled(id)
 
-    // Removal can clear a step's artifact, so republish and re-save rather
-    // than leaving observers and the queue file holding the pre-removal view.
+    // Cleanup can clear artifact references; publish and save the updated state.
     tick()
   }
 
-  /// Forgets these jobs entirely: out of the queue, out of the queue file, and
-  /// their workspaces off disk.
-  ///
-  /// **Running jobs are cancelled first, never merely dropped.** Removing the
-  /// row without signalling the helper would leave `TwitchDownloaderCLI` and
-  /// the FFmpeg it spawned alive, reparented to `launchd`, still writing into a
-  /// job workspace this call then deletes — the same orphaning that
-  /// `shutDown()` exists to prevent, reached by a different door. Whether to
-  /// warn the user before doing that is the UI's business; by the time a
-  /// removal arrives here the decision has been made.
-  ///
-  /// **What is never removed is the file the user asked for.** A delivered
-  /// artifact lives at a destination they chose, outside our workspace;
-  /// clearing a row is housekeeping on our own queue and nothing more.
-  ///
-  /// Takes a set because removal is a selection-shaped action — the UI's
-  /// Delete key acts on however many rows are selected, and doing that as N
-  /// separate calls would publish N snapshots and re-save N times.
+  /// Cancel running jobs before removing queue entries and workspaces. Preserve delivered
+  /// files. Batch selection removal into one publication and save; confirmation belongs to the
+  /// caller.
   public func remove(jobs ids: Set<JobID>) async {
-    // Dismissing a job is how a user reclaims retained pieces — retention is
-    // user-cleared for now, docs/design/resume.md §8 — so this runs
-    // unconditionally, ahead of the `doomed` lookup below, rather than only
-    // for a job still tracked here.
+    // Job removal reclaims retention even if its queue entry is already absent.
     for id in ids { journal.removeResumable(id) }
 
     let doomed = jobs.filter { ids.contains($0.id) }
     guard !doomed.isEmpty else { return }
 
-    // Cancel every one that is live before touching the queue, and
-    // concurrently: each `HelperProcess.cancel()` carries its own ~2s SIGTERM
-    // grace period, so serialising them would multiply the wait by the number
-    // of running steps removed.
+    // Cancel live helpers concurrently so their grace periods overlap.
     let processes = doomed.flatMap { job in job.steps.compactMap { running[$0.id] } }
     if !processes.isEmpty {
       for job in doomed { Scheduler.cancel(job: job.id, in: &self.jobs) }
@@ -336,13 +241,8 @@ public actor QueueEngine {
       }
     }
 
-    // Drop the `running` entries here rather than waiting for each cancelled
-    // helper's completion callback. That callback fires whenever the SIGTERM
-    // actually lands, and until it does the scheduler still counts the step
-    // against its resource class — so a removal could leave the next queued
-    // download unable to start, for a job that no longer exists. `completeStep`
-    // arriving later is harmless: it clears an already-absent key and then
-    // early-returns, because `locate` can no longer find the step.
+    // Clear running entries before scheduling replacements. Late completion callbacks safely
+    // return when their steps no longer exist.
     for job in doomed {
       for step in job.steps { running[step.id] = nil }
     }
@@ -350,37 +250,13 @@ public actor QueueEngine {
     self.jobs.removeAll { ids.contains($0.id) }
     for id in ids { journal.removeJob(id) }
 
-    // Publish and save, in that order, so observers and the queue file agree —
-    // and so a removal survives a quit that happens before the debounce fires.
     tick()
   }
 
-  /// Kills every in-flight helper, then writes final state. Call on app
-  /// termination and await it before letting the process exit.
-  ///
-  /// `flush()` alone is not enough to quit safely. `HelperProcessing.cancel()`
-  /// is the only thing that signals a helper's process group, so an app that
-  /// only flushed would exit leaving `TwitchDownloaderCLI` and the FFmpeg it
-  /// spawned running — reparented to `launchd`, still writing into a job
-  /// workspace that the next launch's `Workspace.removeAll()` sweep would then
-  /// delete out from under them.
-  ///
-  /// **In-flight steps stay `.running` in the saved queue.** They are not
-  /// marked `.cancelled`: the user did not cancel them, and `.cancelled` is a
-  /// status they can be retried out of but which claims an intent nobody had.
-  /// Leaving them `.running` is what lets `Reconciler` turn them into
-  /// `.failed(.interrupted)` at the next launch, which is the design's model
-  /// for interrupted work (docs/design/task-queue.md — interrupted work reuses
-  /// `.failed(.interrupted)` rather than earning its own case). That is also
-  /// why `isShuttingDown` has to suppress step completion: killing a helper
-  /// makes its `run` return `.signalled(SIGTERM)`, and folding that in would
-  /// persist "crashed" — and would race the final save for which of the two
-  /// statuses the queue file ends up holding.
-  ///
-  /// Cancelling concurrently is not an optimisation. Each
-  /// `HelperProcess.cancel()` carries its own ~2s SIGTERM grace period, so
-  /// signalling serially would add two seconds to the quit for every running
-  /// step. Concurrently, the whole quit is bounded by one grace period.
+  /// Await helper cancellation and final persistence before exiting. Preserve in-flight steps
+  /// as running so startup reconciles them to failed(interrupted), not user-cancelled or
+  /// crashed. Suppress completion outcomes during shutdown to avoid racing the final save.
+  /// Cancel helpers concurrently so grace periods overlap.
   public func shutDown() async {
     isShuttingDown = true
 
@@ -393,32 +269,16 @@ public actor QueueEngine {
 
     await flush()
 
-    // The one hand-placed release, and the only place `running` is a lie.
-    // Everywhere else the assertion rides `running`'s `didSet`, but shutdown
-    // deliberately leaves that dictionary populated: the entries are the kill
-    // handles, and their steps must stay `.running` in the saved queue for
-    // `Reconciler` to read as interrupted next launch. So the invariant the
-    // `didSet` maintains is one this path abandons on purpose, and the
-    // assertion has to be given back by hand.
-    //
-    // In the shipping app this is masked — the process exits moments later
-    // and the OS drops the activity with it — but that is luck rather than
-    // design, and it stops being true the first time anything calls
-    // `shutDown()` without then terminating.
+    // Release the assertion explicitly: shutdown intentionally retains running entries for
+    // interrupted-state persistence, so their didSet cannot release it.
     configuration.sleepAssertion.setActive(false)
   }
 
-  /// Writes any pending state immediately. Not the app-termination entry
-  /// point on its own — `shutDown()` is, and calls this last. Flushing
-  /// without killing the helpers first is what orphaned them.
+  /// Flush pending state immediately. Termination must call shutDown() to stop helpers first.
   public func flush() async {
-    // Loop rather than a single check-and-await: awaiting a task releases
-    // the actor, and a `tick()` landing in that window can install a fresh
-    // `saveTask` before this resumes. Clearing `saveTask` to nil *before*
-    // each await — not after — means a task installed during that window
-    // survives into the next loop iteration instead of being silently
-    // dropped uncancelled, where it would still fire ~500ms later and write
-    // an older snapshot than the "final" save below.
+    // Clear saveTask before awaiting it, then loop: actor reentrancy can install another save
+    // during the await. Clearing afterwards could discard a new task that later overwrites
+    // final state.
     while let pending = saveTask {
       saveTask = nil
       pending.cancel()
@@ -429,17 +289,16 @@ public actor QueueEngine {
 
   // MARK: - The single drive point
 
-  /// Admits what it can and launches it. EVERY mutation ends here, so there is
-  /// never a question of who was supposed to kick the queue.
+  /// Drive admission after mutations, then publish and schedule persistence.
   private func tick() {
-    // Nothing new may start once the quit is under way. The steps still in
-    // `running` are being killed, not waited on, so admitting against them
-    // would spawn a helper the app is about to walk out on.
+    // Do not launch new helpers while shutdown is cancelling existing ones.
     if !isShuttingDown {
       for id in Scheduler.admissible(jobs: jobs, running: Set(running.keys)) {
         launch(id)
       }
     }
+    // Publish before saving, in that order, so observers and the queue file agree —
+    // and so a removal survives a quit that happens before the debounce fires.
     publish()
     scheduleSave()
   }
@@ -449,11 +308,8 @@ public actor QueueEngine {
     let job = jobs[location.job]
     let step = job.steps[location.step]
 
-    // `tick()` iterates a snapshot from `Scheduler.admissible`. A synchronous
-    // failure below (`makeContext` throwing) re-enters `tick()` via
-    // `completeStep`, which can already have launched a later step from that
-    // same snapshot. This guard stops the outer loop from launching that
-    // step a second time when it gets there.
+    // Recheck queued status: synchronous launch failure can re-enter tick() and launch another
+    // step from the outer admission snapshot.
     guard step.status == .queued else { return }
 
     let context: StepContext
@@ -476,29 +332,19 @@ public actor QueueEngine {
       return
     }
 
-    // Immediately after the context is built, and so still before the child
-    // process exists: the re-fetched video and chat render are dead the
-    // moment assemble has its pieces and sidecar, and dropping them here
-    // rather than at job end is what holds the recovery peak at ~58 GB
-    // instead of ~84 on a six-hour job — resume.md §5.
-    //
-    // `launch` runs to its end without a suspension point, so every position
-    // in it is the same instant as far as the child is concerned; this one
-    // is chosen because it is where `StepContextBuilder.make` used to do it,
-    // which makes the move a move rather than a retiming.
+    // Remove source and render after assemble context succeeds, before spawning. Only pieces
+    // and sidecar remain needed; early cleanup bounds recovery disk usage
+    // (docs/design/resume.md §5).
     if case .assemble = step.kind {
       journal.removeSpentInputs(of: job)
     }
 
     jobs[location.job].steps[location.step].status = .running
 
-    // A fresh instance every launch: `HelperProcess` is documented single-use,
-    // its `isCancelled` flag never resets, so reusing one across steps would
-    // have every step after the first killed immediately.
+    // HelperProcess is single-use; its cancellation flag never resets.
     let process = configuration.makeProcess()
 
-    // A composite runs FFmpeg directly rather than the C# helper, so both the
-    // executable and the stdout dialect follow the step kind.
+    // Choose executable and output dialect for direct FFmpeg steps.
     let executable: URL
     let dialect: OutputDialect
     switch step.kind {
@@ -538,10 +384,8 @@ public actor QueueEngine {
       let result = try await process.run(launch) { [weak self] line in
         switch line {
         case .status(let progress):
-          // Status lines drive the progress bar and arrive by the hundreds.
-          // Writing every one to the log would bury the handful of lines
-          // that actually say what a step was doing when it stopped, so
-          // `heartbeat` throttles this to a periodic summary instead.
+          // Keep frequent status lines in progress state; heartbeat emits occasional log
+          // summaries.
           await self?.updateProgress(id, progress)
           await self?.heartbeat(id, progress, log: log)
         case .log(let level, let message):
@@ -553,17 +397,8 @@ public actor QueueEngine {
       await log?.close()
       finish(id, result: result, context: context)
     } catch {
-      // `process.run` never produced a `RunResult` at all — there is no exit
-      // status to interpret, so this reports the honest reason directly
-      // instead of routing a fabricated `.exited(-1)` through
-      // `FailureInterpreter`, which would surface as a meaningless
-      // "exited with code -1" to the user.
-      //
-      // Both of `finish`'s guards apply here too, for the same reasons: a
-      // quit must leave the step `.running` for the reconciler, and this is
-      // reached after an `await`, so a cancellation may already have
-      // finalized this step (e.g. `ProcessSpawner.spawn` failing while a
-      // `cancel(step:)` for it is in flight).
+      // A thrown run has no exit status; report its error directly. Apply the same shutdown and
+      // finalized-step guards as finish after the await.
       guard !isShuttingDown else { return }
       guard isStillRunning(id) else {
         abandonAlreadyFinalizedStep(id)
@@ -586,22 +421,13 @@ public actor QueueEngine {
   /// see `heartbeat` below.
   private static let heartbeatInterval: Duration = .seconds(15)
 
-  /// One line per `heartbeatInterval`, so a step that "feels stalled" has a
-  /// timestamped trail of what it actually reported — phase, fraction, and
-  /// (composite only) FFmpeg's own `speed=`, which is what tells "genuinely
-  /// slow" apart from "stuck" without reaching for Activity Monitor. Anything
-  /// finer than this belongs in the progress bar, not the transcript — see
-  /// the comment where this is called.
+  /// Log periodic phase, fraction, and encoding-speed summaries for diagnosing slow or stalled
+  /// work; finer updates remain in the progress UI.
   private func heartbeat(_ id: StepID, _ progress: StepProgress, log: StepLog?) async {
     guard let log else { return }
 
-    // No line for the *first* status update a step ever reports: that only
-    // says "it started," which the row already shows the instant it goes
-    // `.running`. Recording the sighting without logging it is what makes a
-    // step that finishes in under `heartbeatInterval` produce no heartbeat
-    // lines at all — preserving `statusLinesAreNotWrittenToTheLog` for the
-    // common case, while a step that runs long enough to feel stalled gets
-    // its periodic trail.
+    // Seed heartbeat timing without logging the first update, so short steps produce no
+    // heartbeat noise.
     let now = ContinuousClock.now
     guard let last = lastHeartbeatAt[id] else {
       lastHeartbeatAt[id] = now
@@ -622,32 +448,18 @@ public actor QueueEngine {
   }
 
   private func finish(_ id: StepID, result: RunResult, context: StepContext) {
-    // Checked first, ahead of everything: `shutDown()` signalled this helper,
-    // so `result` is our own kill reported back, not an outcome of the work.
-    // Recording it would persist `.failed(.signalled(SIGTERM))` — "crashed" —
-    // where the step must stay `.running` for `Reconciler` to read as
-    // `.failed(.interrupted)` at the next launch. See `shutDown()`.
-    //
-    // Returns bare rather than routing through `abandonAlreadyFinalizedStep`:
-    // the step is not finalized, and that path would clear `running[id]`,
-    // delete the step's directory, and `tick()` — none of which this wants.
+    // Shutdown-triggered exits must leave running state for startup reconciliation. Return
+    // without finalized-step cleanup or tick().
     guard !isShuttingDown else { return }
 
-    // Checked *before* any side-effecting work below (in particular, before
-    // `move`): cancelled (or otherwise finalized) while this was in flight,
-    // the cancellation path already recorded the terminal status and blocked
-    // dependents. Overwriting it here — or moving a file that finished
-    // writing only after the user cancelled it — would both be wrong, and
-    // checking only at the point of folding the outcome in (as `completeStep`
-    // does) would be too late: the move would already have happened.
+    // Check before delivery: cancellation may have finalized the step during run(), and a late
+    // artifact must not be moved or overwrite its status.
     guard isStillRunning(id) else {
       abandonAlreadyFinalizedStep(id)
       return
     }
 
     guard let location = locate(id) else {
-      // Can't actually happen given the check above just ran on this same
-      // actor turn with no intervening suspension, but keeps this total.
       running[id] = nil
       lastHeartbeatAt[id] = nil
       return
@@ -655,23 +467,12 @@ public actor QueueEngine {
     let job = jobs[location.job]
     let step = job.steps[location.step]
 
-    // Success is the artifact, not the exit code: the CLI's `Main` returns
-    // void, so nothing sets a meaningful exit status on its own.
+    // Require a usable artifact; helper exit status alone is insufficient.
     let produced = Self.isUsableArtifact(context.outputFile)
 
-    // "Exists and is non-empty" is the right criterion everywhere except a
-    // composite's piece, where it is not sufficient. A filter graph that
-    // yields nothing still writes `ftyp` and `moov`, so the file is neither
-    // missing nor zero-length — and `.assemble` would concatenate it as an
-    // empty segment and deliver a file truncated at the seam, with no error
-    // anywhere in the pipeline. That is exactly how the chat-seek defect in
-    // resume.md §12 stayed invisible: FFmpeg exited 0 and every existence
-    // check agreed.
-    //
-    // A piece declares its own sample count in each fragment's `trun`, so
-    // this is a box walk rather than a decode. Unreadable counts as frameless
-    // for the same reason `hasUsableSidecar` fails closed: a piece we cannot
-    // read is not one to hand to the concat demuxer.
+    // Composite pieces need samples, not just non-empty ftyp/moov headers. Check trun counts
+    // without decoding; unreadable or frameless pieces must not reach concat and silently
+    // truncate delivery.
     let framelessPiece: Bool
     if produced, case .composite = step.kind {
       framelessPiece = ((try? FragmentedMP4.index(of: context.outputFile))?.frameCount ?? 0) == 0
@@ -706,10 +507,7 @@ public actor QueueEngine {
       case .moved(let destination):
         outcome = .succeeded(artifact: destination)
       case .failed(let message):
-        // The step did its job — the artifact existed — but we failed to get
-        // it out to the user, so this must not read as success: nothing else
-        // would ever surface the problem, and `finish`'s own cleanup would
-        // otherwise delete the only copy of the file.
+        // A delivery failure is a step failure, even if the workspace artifact exists.
         outcome = .failed(StepFailure(
           kind: .moveFailed(message),
           summary: "Could not save the finished file.",
@@ -720,22 +518,14 @@ public actor QueueEngine {
     completeStep(id, outcome: outcome)
   }
 
-  /// True if this step is still `.running` — i.e. nothing has already
-  /// finalized it (a cancellation, most likely) while the caller was
-  /// suspended on an `await`. Every path that is about to complete a step,
-  /// or perform a side effect gated on the step still being in progress
-  /// (moving the finished file), must check this first.
+  /// Recheck running state after awaits before completing or performing delivery side effects.
   private func isStillRunning(_ id: StepID) -> Bool {
     guard let location = locate(id) else { return false }
     return jobs[location.job].steps[location.step].status == .running
   }
 
-  /// Tears down a step that turned out to already be finalized by the time
-  /// its completion reached the actor: clears `running[id]`, removes the
-  /// step's own workspace directory, releases a job-level cancel that may
-  /// have been waiting on it, and drives the queue forward. Never calls
-  /// `Scheduler.complete` — the status is already final and must not be
-  /// overwritten.
+  /// Clean up a late completion without replacing its already-final status, release pending job
+  /// cleanup, and drive the queue.
   private func abandonAlreadyFinalizedStep(_ id: StepID) {
     running[id] = nil
     lastHeartbeatAt[id] = nil
@@ -749,13 +539,8 @@ public actor QueueEngine {
     tick()
   }
 
-  /// The shared tail of every step completion: fold the outcome into `jobs`,
-  /// tear down the step's workspace, finish a job-level cancel that was
-  /// waiting on this step, and drive the queue forward.
-  ///
-  /// `running[id]` is always cleared here, on every path that reaches it —
-  /// including `finish`'s own early-return above — so `isIdle` can never
-  /// wedge on a step that finished, however it finished.
+  /// Fold completion into jobs, clear the live helper, clean step/workspace state, and drive
+  /// the queue.
   private func completeStep(_ id: StepID, outcome: StepOutcome) {
     running[id] = nil
     lastHeartbeatAt[id] = nil
@@ -805,15 +590,8 @@ public actor QueueEngine {
     return nil
   }
 
-  /// Removes a job's workspace once nothing belonging to it is still
-  /// `running`. A helper can outlive its kill signal by up to ~2s, so at the
-  /// moment `cancel(job:)`'s kills return there may still be a process
-  /// mid-write into this directory. If so, this defers by recording the job
-  /// in `jobsAwaitingWorkspaceRemoval`; `completeStep`/`finish` call back in
-  /// here the moment that last step actually clears `running`.
-  ///
-  /// Every exit other than the deferral resolves the pending entry, so it can
-  /// never be left behind to fire against a later, unrelated completion.
+  /// Defer workspace removal until all job helpers leave running; finish/completeStep retry
+  /// cleanup after the last writer stops. Clear the pending entry on every non-deferred exit.
   private func removeJobWorkspaceIfSettled(_ id: JobID) {
     guard let job = jobs.first(where: { $0.id == id }) else {
       jobsAwaitingWorkspaceRemoval.remove(id)
@@ -828,25 +606,9 @@ public actor QueueEngine {
     jobsAwaitingWorkspaceRemoval.remove(id)
   }
 
-  /// Deletes a job's workspace while preserving the invariant that **a step is
-  /// `.done` only if the artifact it records still exists**.
-  ///
-  /// `jobs/<id>/` holds `artifacts/`, the intermediates handed from one step to
-  /// the next, so deleting it can destroy a file an earlier `.done` step still
-  /// points at. Two cases, and only two:
-  ///
-  /// 1. The job is `.done`. It is finished and can never run again, so the
-  ///    intermediates are genuinely disposable — but the claims on them go in
-  ///    the same actor turn as the files, leaving no step pointing at
-  ///    something that is gone. Steps whose artifact was moved out to the
-  ///    user's chosen location keep theirs; those live outside the workspace.
-  ///    (`Reconciler` will not requeue a `.done` job's steps, so nothing
-  ///    resurrects what is dropped here.)
-  /// 2. The job is not finished — a cancel, most often. A later step may still
-  ///    be retried, and an earlier `.done` step's intermediate is exactly the
-  ///    input that retry needs, so the directory stays. One chat file per
-  ///    cancelled job is bounded, and `Workspace.removeAll()` sweeps it at the
-  ///    next launch anyway.
+  /// Remove workspaces only for completed jobs, clearing intermediate artifact references in
+  /// the same actor turn. Preserve delivered paths. Unfinished jobs keep successful
+  /// intermediates for retry until the next startup sweep.
   private func removeJobWorkspace(_ id: JobID) {
     guard let index = jobs.firstIndex(where: { $0.id == id }) else {
       journal.removeJob(id)
@@ -863,13 +625,8 @@ public actor QueueEngine {
       return
     }
 
-    // A retained piece (the composite step's own artifact) lives under
-    // `resumeDirectory`, not `jobDirectory` — `Workspace.contains` deliberately
-    // does not recognise it (see its doc comment: a retained piece outlives
-    // the job workspace by design), so the loop below cannot rely on
-    // `contains` alone to find it. Checked here, in the caller, rather than
-    // by widening `contains` itself, which would blur the one thing that
-    // doc comment exists to keep separate.
+    // Check retention separately from Workspace.contains, which intentionally covers only
+    // disposable job workspaces.
     var retained = configuration.workspace.resumeDirectory(id).standardizedFileURL.path
     if !retained.hasSuffix("/") { retained += "/" }
 
@@ -882,32 +639,14 @@ public actor QueueEngine {
     }
     journal.removeJob(id)
 
-    // Reached only on the genuinely-`.done` path above, never from the
-    // not-done branch that can return early to preserve a cancelled job's
-    // intermediates for a retry. A retained piece is exactly what that retry
-    // would continue from, so clearing it there would defeat resume before
-    // it ever got used. Delivered means done: the retained bytes have no
-    // further use. docs/design/resume.md §8.
-    //
-    // Comes after the claim-clearing loop above, in the same actor turn:
-    // the composite step's artifact is nilled there because it will be gone
-    // the instant this runs, not because the file happens to be gone yet.
-    // Reconciler will not get a second chance to notice — it short-circuits
-    // for a `.done` job — so nothing here may leave a step pointing at a
-    // piece this call is about to delete.
+    // Remove retention only after whole-job success, following artifact-claim clearing in the
+    // same actor turn. Cancelled jobs keep pieces for resume; Reconciler skips done jobs and
+    // cannot repair stale claims later.
     journal.removeResumable(id)
   }
 
-  /// Spec §1.5: a step succeeded iff its artifact exists **and is non-empty**.
-  ///
-  /// The exit code decides nothing — the CLI's `Main` returns void — so this
-  /// is the entire success criterion, and existence alone is not it: a helper
-  /// killed after opening its output file leaves a zero-byte file behind,
-  /// which `fileExists` reads as a finished download and happily moves to the
-  /// user's folder.
-  ///
-  /// `nonisolated` so `start()` can hand it to `Reconciler` as a plain
-  /// function.
+  /// Require an existing non-empty artifact; opening an output before cancellation can leave a
+  /// zero-byte file. Nonisolated for Reconciler's synchronous check.
   private nonisolated static func isUsableArtifact(_ url: URL) -> Bool {
     guard
       let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]),
@@ -917,60 +656,26 @@ public actor QueueEngine {
     return size > 0
   }
 
-  /// Bytes held in the retention area for a job.
-  ///
-  /// Surfaced on the row because retention is user-cleared: the space is
-  /// reclaimed by dismissing the job, and a user who cannot see the cost will
-  /// never connect the two. docs/design/resume.md §8.
+  /// Retained bytes reclaimed by dismissing the job; see docs/design/resume.md §8.
   public func retainedBytes(forJob id: JobID) -> Int {
     ledger.retainedBytes(forJob: id)
   }
 
-  /// Where the composite step's own Finder-reveal item points, and what to
-  /// select there. docs/design/fragmented-output.md §6.
-  ///
-  /// Always the retention area, never the job workspace: the workspace also
-  /// holds the downloaded video, the chat JSON, and the chat render, and
-  /// revealing those alongside the composite's own working file is the bug
-  /// this affordance exists to avoid. `directory` is `resumeDirectory(id)`
-  /// itself, `prepareResume` creates it the moment the composite step starts,
-  /// so it exists for every case the caller's enablement rule (§6: the combine
-  /// has started) would ever call this for — used as the fallback selection
-  /// when `pieces` is empty, e.g. the gap between the step starting and its
-  /// first fragment landing on disk.
+  /// Return composite retention pieces and their directory, never the disposable job workspace.
+  /// The directory is the reveal fallback before any piece exists.
   public func retainedFileURLs(forJob id: JobID) -> (directory: URL, pieces: [URL]) {
     ledger.retainedFileURLs(forJob: id)
   }
 
-  /// What the composite step's Finder-reveal item should show right now, in
-  /// the order these are tried:
-  ///
-  /// 1. The retention area is still on disk — the ordinary case whenever a
-  ///    composite has started and the job has not yet fully delivered
-  ///    (`.retained`, exactly what `retainedFileURLs` already returns).
-  /// 2. It is gone precisely *because* the job delivered — `removeJobWorkspace`
-  ///    deletes it the moment the job reaches `.done` (docs/design/resume.md
-  ///    §8) — so the useful answer is the file it actually delivered, the
-  ///    `.assemble` step's own artifact, not a directory that no longer
-  ///    exists (`.delivered`).
-  /// 3. Neither: the composite has not started yet. There is nothing to
-  ///    reveal, and the caller (`StepRow`) disables the item rather than
-  ///    inventing something to select.
-  ///
-  /// One definition rather than two, because a caller checking whether the
-  /// item should be enabled and the click that actually reveals something
-  /// must never disagree about what "there is something here" means.
+  /// Reveal existing retention first, otherwise an existing delivered assemble artifact,
+  /// otherwise nil. Shared by menu enablement and activation.
   public func revealTarget(forJob id: JobID) -> RevealTarget? {
     let (directory, pieces) = retainedFileURLs(forJob: id)
     if !pieces.isEmpty || FileManager.default.fileExists(atPath: directory.path) {
       return .retained(directory: directory, pieces: pieces)
     }
-    // Pinned to the `.assemble` step specifically, not `job.deliveredFiles.first`
-    // — today the two coincide only because the intake gives media, chat and
-    // render steps no destination of their own and step order puts them
-    // ahead of assemble in a composite job. The day a composite job also
-    // delivers, say, its chat JSON, `.first` would silently start pointing
-    // this row's "Show in Finder" at the wrong file.
+    // Use assemble's artifact, not the first delivered file, which could be a separately
+    // delivered chat file.
     guard
       let job = jobs.first(where: { $0.id == id }),
       let assemble = job.steps.first(where: {
@@ -978,53 +683,21 @@ public actor QueueEngine {
         return false
       }),
       let delivered = assemble.deliveredArtifact,
-      // Rule 1 above checks the retention directory still exists before
-      // trusting it; this rule owes the delivered file the same check —
-      // moved or deleted after delivery, `assemble.artifact` still names it,
-      // and without this the item would stay enabled pointing at nothing,
-      // the defect `e61278f` fixed on the retention branch surviving here.
+      // Recheck existence because delivered files can be moved or deleted.
       FileManager.default.fileExists(atPath: delivered.path)
     else { return nil }
     return .delivered(delivered)
   }
 
-  /// Builds a step's `StepContext` — see `StepContextBuilder.make(job:step:)`.
-  ///
-  /// `nonisolated` so the twelve test call sites in `QueueEngineTests` and
-  /// `ResumeEndToEndTests` can build a context without hopping onto the
-  /// actor. `launch` needs it *synchronous*, which is `make`'s own property,
-  /// not a consequence of this.
+  /// Synchronous context construction, callable without actor hopping; see
+  /// StepContextBuilder.make.
   nonisolated func makeContext(job: Job, step: Step) throws -> StepContext {
     try contexts.make(job: job, step: step)
   }
 
-  /// Moves a finished step's output to its final destination.
-  ///
-  /// Distinguishes "this kind has no destination, keep it as an intermediate"
-  /// from "the move itself failed" — collapsing those (e.g. via `?? file`)
-  /// would report a move failure as success. `.failed` remains the only way
-  /// `nil` can mean a problem, so the two cases must stay distinguishable.
-  /// The destination itself is `StepKind.deliveryDestination` — see its doc
-  /// comment for why `.composite` counts as having none despite
-  /// `CompositeRequest` carrying its own `destination` field.
-  ///
-  /// `replacingExisting` is the user's answer to the intake sheet's warning,
-  /// not a fact about the disk. It is the only thing that can authorize
-  /// destroying a file:
-  ///
-  /// - `true` — they were shown that something was already there and chose
-  ///   to replace it, so an occupied destination is overwritten in place.
-  /// - `false` — nobody agreed to anything. A file may still have appeared
-  ///   at the destination during the download, and destroying it would be a
-  ///   loss the user was never given a chance to refuse, so delivery steps
-  ///   aside to the next free name (`OutputNaming.availableURL`) instead.
-  ///   The stepped URL is what the step reports as its artifact, so Get Info
-  ///   and Show in Finder name the file that actually exists.
-  ///
-  /// The `false` branch uses `moveItem`, which *fails* rather than replaces
-  /// when its destination is occupied — so the check and the move cannot
-  /// disagree about a file that appears between them, and the retry simply
-  /// steps again.
+  /// Deliver through StepKind.deliveryDestination; distinguish no destination from a failed
+  /// move. Only replacingExisting authorizes overwrite. Otherwise use an available name and
+  /// retry moveItem collisions without replacing, returning the actual delivered path.
   private func move(
     _ file: URL,
     toDestinationFor kind: StepKind,

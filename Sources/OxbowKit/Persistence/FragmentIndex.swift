@@ -14,13 +14,8 @@ public struct FragmentIndex: Sendable, Equatable {
   }
 }
 
-/// Reads the complete prefix of a fragmented MP4 without a subprocess.
-///
-/// Resume needs two numbers from a possibly-torn file: where to cut, and how
-/// many frames survived. Both are in the container — `trun` declares a
-/// fragment's sample count — so this is parsing rather than decoding. The
-/// composite writes its pieces video-only, so there is exactly one track and
-/// no per-track bookkeeping is needed.
+/// Reads the complete prefix and declared frame count of a possibly torn fragmented MP4.
+/// Composite pieces are video-only, so no per-track bookkeeping is needed.
 public enum FragmentedMP4 {
 
   /// A `moof` announces a fragment; the `mdat` after it holds the samples.
@@ -84,22 +79,9 @@ public enum FragmentedMP4 {
     return index
   }
 
-  /// Whether `url` has a complete top-level `moov` box.
-  ///
-  /// An encoder writes `moov` last, after every sample — that is exactly
-  /// why an ordinary (non-fragmented) MP4 is not crash-safe: a process
-  /// killed mid-write never reaches it, and nothing after the fact can
-  /// rebuild it without re-encoding. This is the cheap, no-decode way to
-  /// tell "finished writing" from "interrupted", used for the composite's
-  /// audio sidecar, which — unlike a piece — has none of the fragmentation
-  /// that makes a partial write recoverable. See docs/design/resume.md §4.
-  ///
-  /// **Only means "finished writing" for a non-fragmented file like the
-  /// sidecar.** A `+empty_moov` piece places `moov` at the very head, before
-  /// any sample data, by design (`fragmented-output.md` §3) — so this would
-  /// read `true` on a piece that is still being written and torn mid-fragment.
-  /// This type's other half, `index(of:)`, is what pieces are checked with;
-  /// do not call this one on a fragmented file.
+  /// Checks for a complete top-level `moov`, indicating a finished non-fragmented sidecar. Do
+  /// not use for fragmented pieces: `+empty_moov` writes it before samples. Use `index(of:)`
+  /// for those.
   public static func hasCompleteMoov(at url: URL) throws -> Bool {
     let handle = try FileHandle(forReadingFrom: url)
     defer { try? handle.close() }
@@ -129,26 +111,9 @@ public enum FragmentedMP4 {
     return false
   }
 
-  /// How long the movie is, from `moov` → `mvhd`, or `nil` if that cannot be
-  /// read.
-  ///
-  /// Exists so a resumed composite can tell whether its chat render is long
-  /// enough to seek into. Seeking a render past its own end yields zero
-  /// frames, `hstack` has no last frame to repeat, and the piece comes out
-  /// empty while FFmpeg still exits 0 — see docs/design/resume.md §12. The
-  /// clamp needs a duration, and we bundle no `ffprobe` to ask for one, so
-  /// this reads it the same no-decode way the rest of this type works.
-  ///
-  /// **`nil` is not zero.** A caller clamping a seek must be able to tell
-  /// "this render is N seconds long" from "I could not find out": the first
-  /// says clamp, the second says leave the seek alone and let the existing
-  /// behaviour stand. Returning zero for an unreadable header would clamp
-  /// every resume to the very start of the chat.
-  ///
-  /// Reads the *movie* header, not a track's. A composite's inputs are
-  /// single-track for this purpose and `mvhd` is the one duration that is
-  /// always present at a fixed place; walking `trak` → `mdia` → `mdhd` would
-  /// buy per-track precision this has no use for.
+  /// Reads movie duration from `moov` → `mvhd` without decoding. Used to clamp chat seeks:
+  /// seeking beyond its end can produce an empty composite with exit 0. Nil means unreadable,
+  /// not zero; callers must not clamp unknown durations to the start.
   public static func duration(of url: URL) throws -> Duration? {
     let handle = try FileHandle(forReadingFrom: url)
     defer { try? handle.close() }
@@ -161,11 +126,8 @@ public enum FragmentedMP4 {
     try handle.seek(toOffset: UInt64(mvhd.start))
     guard let version = try handle.read(upToCount: 1)?.first else { return nil }
 
-    // version 0 writes 32-bit creation/modification times, version 1 writes
-    // 64-bit ones. Timescale is always 32-bit; duration follows it and
-    // matches the version's width. Reading one layout as the other does not
-    // fail — it returns a plausible, wrong number — so the version byte is
-    // load-bearing, not a formality.
+    // Version 0 uses 32-bit times/duration; version 1 uses 64-bit values. Timescale stays
+    // 32-bit. Choosing the wrong layout yields plausible but incorrect durations.
     let timesWidth = version == 1 ? 16 : 8
     try handle.seek(toOffset: UInt64(mvhd.start + 4 + timesWidth))
 
@@ -213,14 +175,8 @@ public enum FragmentedMP4 {
     return nil
   }
 
-  /// The 64-bit `largesize` that follows a box header declaring `size == 1`.
-  /// `Int(exactly:)`, not a bare `Int(...)`: a `largesize` past `Int.max`
-  /// would otherwise trap, and a trap is not something the `try?` at every
-  /// call site of `index(of:)`/`hasCompleteMoov` can catch — same class of
-  /// bug as the `FileHandle.write` crash fixed earlier on this branch. A
-  /// `largesize` this codebase will never actually see in a legitimate file
-  /// just reads as "not a valid box" instead, the same as any other
-  /// malformed header.
+  /// Reads 64-bit `largesize` when box size is 1. Use `Int(exactly:)` so oversized malformed
+  /// headers return nil rather than trap beyond the reach of `try?`.
   private static func largesize(handle: FileHandle) throws -> Int? {
     guard let ext = try handle.read(upToCount: 8), ext.count == 8 else { return nil }
     let raw = ext.reduce(UInt64(0)) { $0 << 8 | UInt64($1) }

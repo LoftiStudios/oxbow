@@ -37,8 +37,7 @@ struct ImageStoreTests {
     #expect(counter.calls == 1)
   }
 
-  /// The whole point of the stage: the archive expired, the CDN 404s, and
-  /// the row still renders because the bytes are on disk.
+  /// Stored images remain available after CDN expiry.
   @Test("a stored image survives the fetch failing afterwards")
   func storedImageOutlivesItsSource() async {
     let directory = temporaryDirectory()
@@ -75,10 +74,7 @@ struct ImageStoreTests {
     #expect(counter.calls == 2, "the second call must try again, not read a stored failure")
   }
 
-  /// Twitch's thumbnail URLs share a filename and differ deep in the path,
-  /// so naming by `lastPathComponent` would collide every archive in a
-  /// channel onto one image. The name must also be filesystem-safe: a raw
-  /// URL carries slashes and colons.
+  /// Hash full URLs because different archives share the same thumbnail filename.
   @Test("filenames are distinct and contain no path separators")
   func filenamesAreSafeAndDistinct() {
     let a = ImageStore.filename(for: URL(string: "https://cdn.example.com/aaa/thumb.jpg")!)
@@ -88,14 +84,7 @@ struct ImageStoreTests {
     #expect(!a.contains(":"))
   }
 
-  /// The extension is what makes a stored image previewable in Finder — Quick
-  /// Look reads the extension, not the bytes, so a hash with no extension is a
-  /// file nobody can glance at while debugging.
-  ///
-  /// **Measured against the author's own store, 2026-09-09**: of 145 cached
-  /// URLs, 109 ended `.jpg`, 25 `.png` and 11 `.jpeg`. A flat `.jpg` would
-  /// therefore mislabel 36 of them — so the extension comes from the source
-  /// URL rather than being assumed.
+  /// Preserve JPEG/PNG extensions for inspection instead of mislabelling every image `.jpg`.
   @Test("the extension comes from the source URL")
   func extensionFollowsTheSource() {
     #expect(ImageStore.filename(for: URL(string: "https://cdn.example.com/a/thumb.jpg")!)
@@ -114,10 +103,7 @@ struct ImageStoreTests {
       .hasSuffix(".jpg"))
   }
 
-  /// **Allow-listed, not sanitised**, for the reason `PayloadStore` gives about
-  /// identifiers: this builds a filename out of text that arrived over the
-  /// network, so anything unrecognised becomes the default rather than being
-  /// cleaned up into something that merely looks safe.
+  /// Unknown extensions use the default rather than sanitizing network text into filenames.
   @Test("an unrecognised extension falls back rather than being trusted")
   func unknownExtensionFallsBack() {
     for path in ["thumb.php", "thumb.", "thumb", "thumb.exe"] {
@@ -148,10 +134,7 @@ struct ImageStoreTests {
     #expect(a.hasSuffix(".jpg") && b.hasSuffix(".jpg"))
   }
 
-  /// Nothing is ever evicted — a thumbnail is about 15 KB and Twitch serves
-  /// at most 100 archives per channel, so a capacity cap would guard an
-  /// event that does not happen. This pins that: writing a third image does
-  /// not remove the first.
+  /// New images must not automatically evict older history images.
   @Test("writing more images never removes an earlier one")
   func nothingIsEvicted() async {
     let directory = temporaryDirectory()

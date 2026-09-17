@@ -3,15 +3,7 @@ import Testing
 import OxbowKit
 @testable import Oxbow
 
-/// `WatchPoller.unseenFindings` — the guard that replaced `WatchPoll.sweep`'s
-/// own seen-filter once the sweep started handing over every archive a
-/// channel has, seen or not. Not a general `WatchPollerTests` suite, for the
-/// same reason `WatchPollerFailedJobFilterTests` is not: the rest of
-/// `WatchPoller` is timing and wiring over `QueueHost`'s singleton, verified
-/// by hand per `docs/design/channel-watching.md` §9.1. This one function is
-/// pure and was pulled out specifically so the single line standing between
-/// the rename and Oxbow re-downloading a person's entire archive history
-/// could be pinned without a store, a clock, or an engine.
+/// Tests the unseen filter used by unattended submissions now that sweeps return all archives.
 @Suite("WatchPoller filters findings by seen")
 struct WatchPollerUnseenFindingsTests {
 

@@ -31,10 +31,7 @@ struct NotificationDecisionTests {
 
   // MARK: - Seeding
 
-  /// Spec §7.1. `QueueEngine.start()` reconciles before publishing, so the
-  /// first snapshot after launch routinely contains freshly-failed jobs.
-  /// Without seeding, every launch after an interrupted run notifies about
-  /// something that happened yesterday.
+  /// Seed the initial snapshot silently so reconciled failures do not notify again at launch.
   @Test func theFirstSnapshotNotifiesNothing() {
     let snapshot = [
       job(alpha, [step(.failed(failure))]),
@@ -66,8 +63,7 @@ struct NotificationDecisionTests {
     #expect(events.first?.outcome == .failed)
   }
 
-  /// Telling someone the thing they just cancelled is cancelled is the app
-  /// talking to itself.
+  /// User cancellation does not need a notification.
   @Test func aCancelledJobIsSilent() {
     let events = NotificationDecision.events(
       from: [alpha: .running],
@@ -108,8 +104,7 @@ struct NotificationDecisionTests {
     #expect(failedAgain.count == 1)
   }
 
-  /// The mutant this kills: an implementation that fires on every status
-  /// change rather than only on terminal ones. Starting work is not news.
+  /// Nonterminal transitions must not notify.
   @Test func aJobStartingWorkNotifiesNothing() {
     let events = NotificationDecision.events(
       from: [alpha: .queued],
@@ -135,7 +130,7 @@ struct NotificationDecisionTests {
     #expect(events.first?.files == [delivered])
   }
 
-  /// A failed job delivered nothing, so the reveal action has no target.
+  /// Failure notifications must omit reveal targets.
   @Test func aFailedEventCarriesNoFiles() {
     let events = NotificationDecision.events(
       from: [alpha: .running],
@@ -143,10 +138,8 @@ struct NotificationDecisionTests {
     #expect(events.first?.files.isEmpty == true)
   }
 
-  /// The case that makes the contract real rather than coincidental: an
-  /// earlier step delivered a file, a later one failed. `Job.deliveredFiles`
-  /// still lists that file, because it gates on the step rather than the job
-  /// — so a `.failed` event must drop it deliberately, not by luck.
+  /// A failed job may have earlier delivered files; failure notifications must omit them
+  /// explicitly.
   @Test func aFailedEventCarriesNoFilesEvenWhenAnEarlierStepDelivered() {
     let delivered = URL(filePath: "/out/a.mp4")
     let events = NotificationDecision.events(

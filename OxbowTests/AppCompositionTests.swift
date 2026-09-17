@@ -50,17 +50,14 @@ struct AppCompositionTests {
       return
     }
 
-    // The whole point of deciding this in one place: both files are siblings
-    // in the support directory, not one of them off in the workspace cache
-    // that `QueueEngine.start()` sweeps on every launch.
+    // Persistent files must live outside the workspace swept at launch.
     let watchStoreURL = AppComposition.watchStoreURL(supportDirectory: support)
     #expect(watchStoreURL == configuration.store.fileURL.deletingLastPathComponent()
       .appending(path: "watches.json"))
     #expect(watchStoreURL.path == "\(support.path)/watches.json")
   }
 
-  /// One site decides where every piece of Oxbow's state on disk lives, for
-  /// the reason `watchStoreURL`'s doc comment gives.
+  /// Persistent state shares one support-directory resolver.
   @Test func videoRecordSitsBesideTheWatchList() {
     let support = URL(filePath: "/tmp/support")
 
@@ -74,17 +71,8 @@ struct AppCompositionTests {
 
   // MARK: - User session
 
-  /// The test bundle is hosted by the app, so running this suite launches
-  /// `OxbowApp` — and with it the launch-time update check, which made a live
-  /// GitHub request and wrote the developer's real `.standard` preferences on
-  /// every `xcodebuild test`, CI included. It passed unnoticed because the
-  /// automatic path swallows its own failures.
-  ///
-  /// Measured before the guard existed: with no tests running the key stayed
-  /// absent over 15s; one test run later it was there.
-  ///
-  /// This assertion holds only while the guard reads a variable XCTest really
-  /// sets — misspell the key and it silently becomes false.
+  /// Hosted tests launch the app. The test-environment guard must prevent live update checks
+  /// and writes to real preferences; this verifies the actual XCTest environment key.
   @Test func aTestHostIsNotAUserSession() {
     #expect(!AppComposition.isUserSession)
   }

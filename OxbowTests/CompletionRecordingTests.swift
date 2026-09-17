@@ -28,9 +28,7 @@ struct CompletionRecordingTests {
     #expect(library.watchStates["2844787557"] == .downloaded)
   }
 
-  /// A composite job delivers several files. The video is what the row is
-  /// about, so the first delivered file is the one recorded — and the rest are
-  /// still reachable from the job itself.
+  /// Record the first delivered file; additional outputs remain accessible through the job.
   @Test("the first delivered file is the one recorded")
   func firstFileWins() throws {
     let file = temporaryFile()
@@ -44,9 +42,6 @@ struct CompletionRecordingTests {
     #expect(try store.load().videos["1"]?.deliveredPath == "/a/video.mp4")
   }
 
-  /// `failed` counts as not-seen, so the archive becomes actionable again —
-  /// `WatchState.countsAsSeen` is what makes that true, and this is the write
-  /// that puts it in that state.
   @Test("a failed job records the failed state and no path")
   func failedRecordsNoPath() throws {
     let file = temporaryFile()

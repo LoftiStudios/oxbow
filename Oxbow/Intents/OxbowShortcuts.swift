@@ -1,13 +1,7 @@
 import AppIntents
 
-/// The phrases that reach the action without opening Shortcuts.
-///
-/// macOS 26 surfaces third-party App Intents in Spotlight automatically, and
-/// this is what names them there. It is the reason the intent was built: it
-/// reaches everyone with ⌘Space, where Shortcuts reaches the few people who
-/// open Shortcuts.
-///
-/// `.applicationName` is required in every phrase.
+/// Shortcut phrases also surface the intent in Spotlight. Every phrase must include
+/// applicationName.
 struct OxbowShortcuts: AppShortcutsProvider {
   static var appShortcuts: [AppShortcut] {
     AppShortcut(

@@ -3,12 +3,7 @@ import Testing
 import OxbowKit
 @testable import Oxbow
 
-/// `InspectorSubject.resolve` — the whole behavioural surface of the
-/// inspector, exercised without building a view.
-///
-/// `docs/design/inspector.md` §3.3. A `static` over plain values for the same
-/// reason `WatchingModel.listings(from:)` and `ChannelCard
-/// .disconnectedVolume(in:)` are: no store, no sweep, no window.
+/// Tests inspector selection resolution over plain values without constructing a view.
 @MainActor
 @Suite("Inspector subject")
 struct InspectorSubjectTests {
@@ -90,9 +85,7 @@ struct InspectorSubjectTests {
     #expect(many.cancelled == 0)
   }
 
-  /// **The estimate is not attempted yet, and absent is the honest answer.**
-  /// Slice D fills it; §5.3 forbids a partial sum, so nil here is the same
-  /// value it will carry whenever a selection cannot be fully priced.
+  /// An unpriceable selection must report no estimate, never a partial sum.
   @Test func theEstimateIsAbsentUntilItCanBeComputed() {
     let a = videoJob("A", videoID: "1")
     let b = videoJob("B", videoID: "2")
@@ -124,8 +117,7 @@ struct InspectorSubjectTests {
       failure: nil, settingsSummary: "", downloadsAutomatically: false)
   }
 
-  /// An archive id *is* a video id — `video-record.md` §3.1's "join key to
-  /// everything", and the reason this whole design is cheap.
+  /// Archive IDs directly identify video records.
   @Test func theInboxResolvesToItsSelectedArchive() {
     let s = section("leighxp", rows: ["abc"], allRows: ["abc", "old"])
     #expect(InspectorSubject.resolve(
@@ -142,9 +134,8 @@ struct InspectorSubjectTests {
       sections: [s], library: VideoLibrary(), jobs: []) == .one(.video("old")))
   }
 
-  /// §3.2: one piece of state resolved against whatever is showing. Selecting
-  /// in LeighXP and switching to AvaBamby is not an error and needs no reset
-  /// step — the id simply matches nothing there.
+  /// Switching channels resolves selection against the new rows; stale IDs need no explicit
+  /// reset.
   @Test func aSelectionFromAnotherChannelResolvesToNothing() {
     let leigh = section("leighxp", rows: ["abc"], allRows: ["abc"])
     let ava = section("avabamby", rows: ["zzz"], allRows: ["zzz"])
@@ -174,17 +165,7 @@ struct InspectorSubjectTests {
     }
   }
 
-  /// **A nil destination is the queue, because the window shows the queue.**
-  ///
-  /// `QueueView`'s detail switch renders `queue` for `case .none` — a `List`
-  /// reports "nothing selected" as nil, most visibly when someone
-  /// command-clicks the current sidebar row off. The inspector has to agree
-  /// with the pane a person is actually looking at; resolving to `.nothing`
-  /// there would blank the pane while a selected queue row sat beside it.
-  ///
-  /// This replaces a weaker assertion written before the Watching branches
-  /// existed, when nil was simply lumped in with "not the queue".
-  // MARK: - Pricing a multi-selection (§5.3)
+  /// Nil sidebar destination renders the queue, so the inspector must resolve against it too.
 
   private let sd = StreamQuality(name: "360p30", resolution: "640x360",
                                  bitsPerSecond: 1_000_000)
@@ -215,13 +196,11 @@ struct InspectorSubjectTests {
     let b = videoJob("B", videoID: "2")
     let m = try #require(many([a, b], library([priceable("1"), priceable("2")])))
     let bytes = try #require(m.estimatedBytes)
-    // An hour at 1 Mbps is ~450 MB; two of them, and nothing is free.
+    // Each one-hour, 1 Mbps job costs approximately 450 MB.
     #expect(bytes > 0)
   }
 
-  /// **§5.3, and the one that must not regress into a partial sum.**
-  /// Mutation-check it: "incomplete" is not "smaller", and a test can appear
-  /// to cover this while passing against a total that silently dropped a job.
+  /// An incomplete estimate must be nil, not a smaller partial total.
   @Test func oneJobWithNoRecordOmitsTheEstimateEntirely() throws {
     let a = videoJob("A", videoID: "1")
     let b = videoJob("B", videoID: "2")
@@ -243,9 +222,7 @@ struct InspectorSubjectTests {
     #expect(m.estimatedBytes == nil)
   }
 
-  /// The job names a rendition the record has never heard of, so there is no
-  /// bitrate to price it at. Guessing a nominal one is exactly what §5.3
-  /// forbids — the figure is one people act on.
+  /// Unknown rendition means no bitrate estimate; do not invent one.
   @Test func aQualityTheRecordDoesNotCarryIsUnpriceable() throws {
     let a = videoJob("A", videoID: "1")
     let b = videoJob("B", videoID: "2")
@@ -265,10 +242,7 @@ struct InspectorSubjectTests {
                 qualities: [sd], thumbnailURLs: [URL(string: url)!])
   }
 
-  /// **Selecting the bottom row and extending upward**, which is the case that
-  /// exposed the old rule. Queue order put the same card on top every time and
-  /// dropped the first-selected one outright once five were picked; arrival
-  /// order puts whatever you just added on top and retains the hidden cards.
+  /// Upward selection must put newly selected cards on top and retain earlier hidden cards.
   @Test func allArrivalsAreRetainedWithTheNewestOnTop() throws {
     let jobs = (1...5).map { videoJob("J\($0)", videoID: "\($0)") }
     let lib = library((1...5).map { withThumbnail("\($0)", "https://x/\($0).jpg") })
@@ -320,8 +294,7 @@ struct InspectorSubjectTests {
   }
 
 
-  /// The line under the count, and the reason `VideoRecord.displayName`
-  /// exists: before it this would have read "leighxp, wheelyf".
+  /// Channel labels prefer stored display names over logins.
   @Test func theChannelsAreDisplayNamesInQueueOrderWithoutRepeats() throws {
     let jobs = (1...4).map { videoJob("J\($0)", videoID: "\($0)") }
     let lib = library([
@@ -337,11 +310,7 @@ struct InspectorSubjectTests {
     #expect(m.channels == ["LeighXP", "WheelyF", "AvaBamby"])
   }
 
-  /// **A record with no display name falls back to its login, never to
-  /// nothing.** Observed naming two of three channels because the third was
-  /// never watched and so never backfilled — a line listing the channels that
-  /// silently drops one is the same partial-answer mistake `estimatedBytes`
-  /// refuses.
+  /// Missing display names fall back to login without dropping a selected channel.
   @Test func aChannelWithNoRememberedNameFallsBackToItsLogin() throws {
     let a = videoJob("A", videoID: "1")
     let b = videoJob("B", videoID: "2")

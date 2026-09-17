@@ -3,11 +3,7 @@ import Foundation
 import Observation
 import OxbowKit
 
-/// Owns the engine and republishes its snapshots for SwiftUI.
-///
-/// The engine is an actor, deliberately off the main actor, in a library
-/// with no UI dependency — `makeSnapshots()` exists so that observation is
-/// somebody else's job. This is that somebody.
+/// Republish QueueEngine snapshots on the main actor for SwiftUI.
 @MainActor
 @Observable
 final class QueueController {
@@ -16,21 +12,15 @@ final class QueueController {
   /// Set when `start()` fails. The queue is unusable; the UI says why.
   private(set) var startFailure: String?
 
-  /// Called with every snapshot the engine publishes, after `jobs` is
-  /// updated. The Dock and Notification Center read from here rather than
-  /// opening a second subscription to the engine, so what they show and what
-  /// the window shows can never come from different snapshots.
+  /// Notify Dock and notification observers after updating jobs, using the same snapshot as the
+  /// window.
   var onSnapshot: (([Job]) -> Void)?
 
-  /// Called when a job is admitted to the queue. Distinct from "a snapshot
-  /// containing a new job", which is also what launch looks like — see
-  /// `docs/design/status.md` §7.2 for why the notifier needs the difference.
+  /// Signal a new enqueue separately from startup snapshots containing restored jobs.
   var onEnqueue: (() -> Void)?
 
   private let engine: QueueEngine
-  /// Threaded through from `AppComposition` via `configuration`, rather than
-  /// re-derived here, so there is exactly one place that resolves the
-  /// bundle's `Contents/MacOS/helper/TwitchDownloaderCLI` path.
+  /// Use the helper path resolved by AppComposition.
   private let helperExecutable: URL
   private let makeProcess: @Sendable () -> HelperProcessing
   private var observation: Task<Void, Never>?
@@ -42,12 +32,8 @@ final class QueueController {
   }
 
   func start() async {
-    // Ordering here doesn't matter for correctness: `makeSnapshots()`
-    // registers the observer's continuation and yields the current `jobs`
-    // in the same actor turn (see QueueEngine.makeSnapshots), so whichever
-    // of these two calls reaches the engine first, the observer's first
-    // element is always a complete, up-to-date snapshot - never a partial
-    // or stale one it would need to have raced `start()` to avoid.
+    // makeSnapshots registers and yields current state in one actor turn, so it need not race
+    // startup.
     observation = Task { [engine] in
       for await snapshot in await engine.makeSnapshots() {
         jobs = snapshot
@@ -55,8 +41,7 @@ final class QueueController {
       }
     }
 
-    // A screenshot run loads the fixture and looks at it; it must not try to
-    // download the invented video ids in it. See `ScreenshotFixture`.
+    // Load screenshot fixtures without running their fictional jobs.
     #if DEBUG
     let runsWork = ScreenshotFixture.directory == nil
     #else
@@ -70,45 +55,20 @@ final class QueueController {
     }
   }
 
-  /// Forwards to `QueueEngine.shutDown()`. Call on app termination: it kills
-  /// the running helpers before the app exits — otherwise they outlive it as
-  /// orphans — and writes the pending debounced save.
+  /// On termination, cancel helpers and flush the pending save before exiting.
   func shutDown() async { await engine.shutDown() }
 
-  /// Runs the helper's `info` verb directly, outside the queue: this
-  /// produces no artifact, is not a step, and must never appear in `jobs`
-  /// (design doc §3). Intake calls it once per pasted link, before any job
-  /// exists, to derive a filename and offer a quality picker.
-  ///
-  /// Everything this does is `fetchInfoDetailed`'s, minus the payload: one
-  /// path rather than two that can drift. The two used to be separate calls
-  /// into `VideoInfoFetcher` with their own copy of the screenshot
-  /// short-circuit, which is two places to remember when either changes.
+  /// Fetch metadata outside the queue, sharing fetchInfoDetailed's path without returning the
+  /// raw payload.
   func fetchInfo(for id: String) async throws -> VideoInfo {
     try await fetchInfoDetailed(for: id).info
   }
 
-  /// The same `info` run, keeping everything the helper said rather than only
-  /// the fields `VideoInfo.parse` reads.
-  ///
-  /// **Nothing new is fetched here.** Every submission already runs this — it
-  /// is how a watch's frozen quality cap gets resolved against the renditions
-  /// a particular video actually offers — and until now the unparsed
-  /// remainder was thrown away at the end of every one of them. A backfill of
-  /// twenty ran twenty `info` subprocesses and discarded twenty payloads. So
-  /// this costs no subprocess, no request and no time; it only stops
-  /// discarding what one already paid for (`docs/design/video-record.md`
-  /// §3.3).
-  ///
-  /// **Reading this is not recording it.** Intake calls this on every
-  /// debounced keystroke, so the write that keeps a payload happens at
-  /// submission and nowhere else — see `IntentSubmission.submit`.
+  /// Return parsed metadata and the raw payload from one info run. Fetching does not persist
+  /// anything; record only after submission.
   func fetchInfoDetailed(for id: String) async throws -> VideoInfoFetcher.Fetched {
-    // A screenshot run has no real video behind its link, and the helper is
-    // not necessarily even embedded in the Debug build the harness uses. The
-    // canned answer carries an empty payload rather than an invented one: a
-    // fixture payload would be a payload no helper produced, and a stamped
-    // record claiming otherwise is worse than no record.
+    // Fixture metadata has no real helper payload; return an empty payload rather than
+    // fabricate one.
     #if DEBUG
     if let canned = ScreenshotFixture.videoInfo(for: id) {
       return VideoInfoFetcher.Fetched(info: canned, payload: "")
@@ -118,38 +78,22 @@ final class QueueController {
       id: id, helper: helperExecutable, process: makeProcess())
   }
 
-  /// Enqueues an already-composed template. Intake now builds the whole
-  /// `JobTemplate` — parsing the link, resolving destinations per output,
-  /// and wiring the toggles — so the controller no longer parses URLs or
-  /// constructs requests itself.
-  ///
-  /// `async`, awaiting the engine, rather than spawning an untracked `Task`:
-  /// intake dismisses its sheet on the strength of this call, and a
-  /// fire-and-forget enqueue cannot tell the caller whether the job landed.
-  /// The failure it invites is the worst kind — the sheet closes, nothing
-  /// appears in the queue, and nothing says why. Returning only once the
-  /// engine holds the job makes "it is queued" a fact the sheet can act on.
+  /// Await engine admission before returning so intake can safely dismiss. Intake owns template
+  /// construction.
   func enqueue(_ template: JobTemplate, title: String) async {
     await engine.enqueue(template, title: title)
-    // After the await, deliberately: same reason this method is `async` at
-    // all — a caller must never be told about a job that did not land.
     onEnqueue?()
   }
 
   /// The tail of a step's captured helper output, for the detail disclosure.
   func log(for step: StepID) async -> String? { await engine.log(for: step) }
 
-  /// Bytes held in a job's retention area, for the failed-row disclosure.
-  /// Retention is user-cleared (docs/design/resume.md §8), so the row reads
-  /// this on demand rather than carrying it in `Job` — it is a filesystem
-  /// fact, not queue state, and stale for exactly as long as a snapshot is.
+  /// Measure job retention on demand; it is user-cleared filesystem state rather than a
+  /// snapshot field.
   func retainedBytes(for job: JobID) async -> Int { await engine.retainedBytes(forJob: job) }
 
-  /// What the composite step's Finder-reveal item should currently show —
-  /// retained pieces, the file the job delivered once those pieces are gone,
-  /// or nothing. `StepRow` reads this to decide whether the item is enabled;
-  /// `revealRetainedFiles` reads it again, fresh, to decide what to select.
-  /// See `QueueEngine.revealTarget(forJob:)`.
+  /// Return retained pieces, a delivered file, or nothing. Check once for menu state and again
+  /// on activation to avoid stale reveal targets.
   func revealTarget(for job: JobID) async -> RevealTarget? {
     await engine.revealTarget(forJob: job)
   }
@@ -164,16 +108,11 @@ final class QueueController {
     case .delivered(let file):
       NSWorkspace.shared.activateFileViewerSelecting([file])
     case nil:
-      // The item is disabled in exactly this case, so a click can only
-      // reach here through a stale state read; do nothing rather than open
-      // a Finder window on nothing.
       break
     }
   }
 
-  /// Forgets these jobs: out of the queue, off disk, helpers killed first if
-  /// any were running. Delivered files are never touched — see
-  /// `QueueEngine.remove(jobs:)`.
+  /// Remove queue state and workspace files after stopping helpers. Preserve delivered files.
   func remove(jobs ids: Set<JobID>) async { await engine.remove(jobs: ids) }
 
   func cancel(job id: JobID) async { await engine.cancel(job: id) }

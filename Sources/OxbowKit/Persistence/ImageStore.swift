@@ -1,36 +1,9 @@
 import CryptoKit
 import Foundation
 
-/// Keeps fetched images on disk so they outlive the URL they came from.
-///
-/// **This exists because Twitch's images disappear.** An archive's
-/// `previewThumbnailURL` stops resolving when the archive expires, and
-/// `docs/design/channel-history.md` keeps a row for that archive
-/// indefinitely. Without a durable copy every historical row would be a grey
-/// rectangle, and a cold launch with the network down would be a grey page.
-///
-/// **A store, not a cache, and the distinction is the whole design.** It
-/// never evicts. A thumbnail measures about 15 KB and an avatar about
-/// 150 KB, and Twitch serves at most 100 archives per channel, so a channel
-/// streaming three times a week for five years accumulates roughly 12 MB.
-/// Any capacity cap worth setting would never fire — a mechanism guarding an
-/// event that does not happen, and therefore never exercised. Images are
-/// owned instead: when a channel's history goes away, its images go with it.
-/// That deletion is never this type's decision — it only offers `purge(
-/// keeping:)`, and whatever owns the history says which images survive.
-///
-/// `URLCache` was the obvious alternative and is the wrong tool: it honours
-/// `Cache-Control` and may be purged by the system whenever it likes, so a
-/// feature whose entire requirement is "these bytes outlive their source"
-/// cannot be built on it.
-///
-/// An `actor` rather than a `@MainActor` type: this does file and network
-/// I/O, and the pane will ask for a screenful of images at once.
-///
-/// **Nothing here is authoritative.** Every byte is re-derivable from the
-/// network while the source still exists, so every failure path answers nil
-/// and lets the caller show a placeholder. A store that threw would make
-/// callers handle errors about decoration.
+/// Durable image storage for history after Twitch URLs expire. Never evicts automatically; the
+/// history owner supplies the keep-set to `purge(keeping:)`. Actor isolation keeps file/network
+/// work off the main actor. Failures return nil for placeholder display.
 public actor ImageStore {
 
   private let directory: URL
@@ -41,9 +14,7 @@ public actor ImageStore {
     self.fetch = fetch
   }
 
-  /// The real one. Ephemeral session for the same reason `WatchPoller.live`
-  /// uses one: this keeps its own durable copy, so letting `URLCache` keep a
-  /// second would be duplicated storage answering the same question.
+  /// Uses an ephemeral session to avoid duplicating this store in URLCache.
   public static func live(directory: URL) -> ImageStore {
     let configuration = URLSessionConfiguration.ephemeral
     configuration.timeoutIntervalForRequest = 15
@@ -65,28 +36,15 @@ public actor ImageStore {
 
     guard let fetched = try? await fetch(url) else { return nil }
 
-    // Written only on success. A zero-byte file left behind by a failure
-    // would read as a hit forever after, storing the failure permanently.
+    // Cache only successful bytes; an empty failure file would become a permanent hit.
     try? FileManager.default.createDirectory(
       at: directory, withIntermediateDirectories: true)
     try? fetched.write(to: file, options: .atomic)
     return fetched
   }
 
-  /// Deletes every stored image whose URL is not in `keeping`.
-  ///
-  /// **The eviction rule this store was written to wait for.** It never evicts
-  /// on its own — a thumbnail is about 15 KB against VODs measured in
-  /// gigabytes, so any capacity cap worth setting would never fire. Images are
-  /// owned instead, and this is how the owner disowns them
-  /// (`docs/design/video-record.md` §3.6).
-  ///
-  /// Keyed by filename rather than by URL, because the filename is all the
-  /// directory knows: the SHA-256 is one-way, so the keep-set is hashed
-  /// forward and compared, never the stored names reversed.
-  ///
-  /// Silent on every failure, like the rest of this type. A file that will not
-  /// delete costs 15 KB.
+  /// Deletes images outside the owner's keep-set. Hash URLs forward to compare stored
+  /// filenames; deletion failures are nonfatal.
   public func purge(keeping: Set<URL>) {
     let survivors = Set(keeping.map(Self.filename(for:)))
     guard let stored = try? FileManager.default.contentsOfDirectory(
@@ -97,41 +55,19 @@ public actor ImageStore {
     }
   }
 
-  /// A filesystem-safe, collision-resistant name for a URL: `<sha256>.<ext>`.
-  ///
-  /// SHA-256 of the whole absolute string, not the last path component:
-  /// Twitch's thumbnail URLs differ deep in the path and share their
-  /// filename, so naming by `lastPathComponent` would make every archive in
-  /// a channel collide onto one image.
+  /// Hashes the whole URL: Twitch thumbnails share filenames across different paths. Preserves
+  /// an allowed extension for inspection.
   nonisolated static func filename(for url: URL) -> String {
     let digest = SHA256.hash(data: Data(url.absoluteString.utf8))
     let hash = digest.map { String(format: "%02x", $0) }.joined()
     return "\(hash).\(fileExtension(of: url))"
   }
 
-  /// Image types worth naming, and the only ones this will write.
-  ///
-  /// **An allow-list rather than a cleanup**, for the reason `PayloadStore`
-  /// gives about identifiers: this is text that arrived over the network on its
-  /// way into a filename, and anything unrecognised becomes the default instead
-  /// of being scrubbed into something that merely looks safe.
+  /// Allowed filename extensions; unknown network-supplied values use the default.
   private static let namedExtensions: Set<String> = ["jpg", "jpeg", "png", "gif", "webp"]
 
-  /// The extension to store `url`'s bytes under.
-  ///
-  /// **Why an extension at all.** Quick Look and Finder decide what a file is
-  /// from its extension, not its bytes, so a bare hash is a stored image nobody
-  /// can glance at — which is exactly what someone debugging this store wants
-  /// to do.
-  ///
-  /// **Why it is read rather than assumed.** Measured against the author's own
-  /// store on 2026-09-09: of 145 cached URLs, 109 ended `.jpg`, 25 `.png` and
-  /// 11 `.jpeg`. Twitch serves more than one type, so a flat `.jpg` would
-  /// mislabel a quarter of them.
-  ///
-  /// `pathExtension` reads the path alone, so a thumbnail URL's sizing query
-  /// never reaches the name. Lower-cased so one image cannot land twice under
-  /// two spellings of its own extension.
+  /// Preserves the URL's image extension for Finder/Quick Look. Twitch serves JPEG and PNG; a
+  /// fixed `.jpg` would mislabel files. Query parameters are excluded.
   nonisolated static func fileExtension(of url: URL) -> String {
     let candidate = url.pathExtension.lowercased()
     return namedExtensions.contains(candidate) ? candidate : "jpg"

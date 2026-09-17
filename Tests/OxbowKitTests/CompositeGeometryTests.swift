@@ -41,20 +41,9 @@ struct CompositeGeometryTests {
     #expect(geometry.outputWidth.isMultiple(of: 2))
   }
 
-  /// Twitch's metadata dimensions are not always the decoded stream's: h264
-  /// 4:2:0 cannot carry an odd coded width or height, so an odd value in
-  /// metadata is a rounding artifact, never a real frame. A real download of
-  /// `480p30-Portrait` — whose clip-API metadata claims `480x853` — decodes
-  /// as `480x852`. `CompositeGeometry.init?` rounds every metadata dimension
-  /// down to even as its first step, before deriving anything from it, so
-  /// the chat render's height agrees with what the video actually decodes
-  /// to — the mismatch `hstack` otherwise refuses outright (§2: exit 234, a
-  /// 0-byte output).
-  ///
-  /// `853x480` (landscape 480p from the clip API) and `480x853` (the
-  /// portrait rendition) each round down on the odd axis only; `640x360` and
-  /// `1146x646` are already even on both axes and pass through unchanged,
-  /// covering the minimum-width clamp and the plain case respectively.
+  /// Round odd metadata dimensions down to match measured decoding (480x853 → 480x852). Test
+  /// both orientations and already-even dimensions so chat height remains compatible with
+  /// `hstack`.
   @Test(arguments: [
     ("1920x1080", 1920, 1080, 360, 2280, 1080),
     ("1280x720", 1280, 720, 240, 1520, 720),
@@ -106,11 +95,6 @@ struct CompositeGeometryTests {
     #expect(tiny.chatWidth == 160)
   }
 
-  // The composite-bitrate tests lived here and are gone with the derivation
-  // they covered — `.composite` now asks the encoder for a quality rather than
-  // computing a rate. The argv is pinned by
-  // `ArgumentBuilderTests.compositeTargetsQualityRatherThanABitrate`, and the
-  // measurements are in `docs/design/composite-quality.md`.
 
   // MARK: - Chat font size
 
@@ -134,11 +118,7 @@ struct CompositeGeometryTests {
     #expect(geometry.fontSize(for: size) == expected)
   }
 
-  /// Never below a legible size, even for an absurdly narrow column.
-  /// `CompositeGeometry.init?` itself never produces one that narrow — it
-  /// clamps to `minimumChatWidth` — so this mutates `chatWidth` directly
-  /// afterwards to exercise `fontSize(for:)`'s own floor independently of
-  /// that clamp, in case the two ever drift apart.
+  /// Mutate chat width below the geometry clamp to test the font-size floor independently.
   @Test func neverReturnsAFontSizeBelowOne() throws {
     var geometry = try #require(CompositeGeometry(quality: quality("x", "1920x1080")))
     geometry.chatWidth = 1

@@ -5,12 +5,7 @@ import Testing
 @Suite("Process spawning", .serialized)
 struct SpawnTests {
 
-  /// Writes an executable shell script into a fresh temp directory.
-  /// Writes an executable shell fixture into its own temp directory.
-  ///
-  /// - Important: the caller owns that directory. Pair every call with
-  ///   `defer { try? FileManager.default.removeItem(at: directory) }`, or the
-  ///   suite strews one directory per test through the temp dir on every run.
+  /// Creates a temporary executable fixture; callers must remove its directory in defer.
   private func script(_ body: String) throws -> (url: URL, directory: URL) {
     let directory = URL(filePath: NSTemporaryDirectory())
       .appending(path: "oxbow-spawn-\(UUID().uuidString)")
@@ -23,19 +18,8 @@ struct SpawnTests {
 
   private func isAlive(_ pid: pid_t) -> Bool { kill(pid, 0) == 0 }
 
-  /// Regression guard for a hang that looked like the helper's fault and was
-  /// entirely ours.
-  ///
-  /// Signal masks are inherited across `posix_spawn`. CoreCLR learns that a
-  /// child of its own has exited only via SIGCHLD, so a helper spawned with
-  /// SIGCHLD blocked waits forever on the FFmpeg it launches: the FFmpeg runs,
-  /// finishes, exits, and sits as an unreaped zombie while the helper blocks in
-  /// `WaitForExit()`. Observed as a download that reached "Finalizing Video
-  /// 100%", wrote a complete and valid file, and then never exited — with a
-  /// `<defunct>` child underneath it.
-  ///
-  /// Blocks SIGCHLD in the parent deliberately, because inheriting a clean mask
-  /// from a clean parent proves nothing.
+  /// Block SIGCHLD in the parent to prove spawn resets inherited masks. Otherwise CoreCLR can
+  /// hang forever waiting for its exited FFmpeg child.
   @Test func spawnedChildrenDoNotInheritABlockedSignalMask() throws {
     var blocked = sigset_t()
     sigemptyset(&blocked)
@@ -44,9 +28,7 @@ struct SpawnTests {
     pthread_sigmask(SIG_BLOCK, &blocked, &previous)
     defer { pthread_sigmask(SIG_SETMASK, &previous, nil) }
 
-    // python3 ships with macOS, and `pthread_sigmask(SIG_BLOCK, [])` returns
-    // the current mask without changing it — the only readable view of an
-    // inherited mask available to a shell fixture.
+    // Use Python's `pthread_sigmask` to inspect the inherited mask without changing it.
     let (url, directory) = try script(
       #"exec /usr/bin/env python3 -c 'import signal; print(sorted(signal.pthread_sigmask(signal.SIG_BLOCK, [])))'"#)
     defer { try? FileManager.default.removeItem(at: directory) }
@@ -78,18 +60,8 @@ struct SpawnTests {
     #expect(ProcessSpawner.wait(spawned.pid) == .signalled(SIGKILL))
   }
 
-  /// THE test. A helper that spawns a grandchild must not leave it running when
-  /// we cancel — that is the orphaned-FFmpeg bug, made automatic.
-  ///
-  /// The fixture must spawn exactly two processes — the shell and the
-  /// backgrounded sleep — so every process in the group is known to and
-  /// asserted on by the test. `wait` is a shell builtin and forks nothing, so
-  /// waiting on the backgrounded sleep (rather than the shell running a
-  /// second `sleep 300` in its own foreground) keeps the group at exactly
-  /// {shell, grandchild}. A shell running its own separate foreground sleep
-  /// would be a third, untracked process that the group kill might not
-  /// reliably reach before the test's assertions run — passing the test
-  /// while still leaking a process.
+  /// Track exactly shell and background sleep. Builtin `wait` avoids introducing an untracked
+  /// third process that could leak despite passing assertions.
   @Test func killingTheGroupAlsoKillsGrandchildren() throws {
     let (url, directory) = try script("""
       sleep 300 &
@@ -100,11 +72,7 @@ struct SpawnTests {
     defer { try? FileManager.default.removeItem(at: directory) }
     let spawned = try ProcessSpawner.spawn(executable: url, arguments: [], workingDirectory: directory)
 
-    // First line of stdout is the grandchild's pid. availableData returns
-    // immediately (possibly empty) rather than blocking, so an un-bounded
-    // loop here would busy-spin forever if the fixture died before printing
-    // anything — wedging CI instead of failing the test. Cap it with a
-    // deadline and fail explicitly on expiry.
+    // Bound the wait for the grandchild PID so a failed fixture cannot hang the suite.
     var buffer = Data()
     let deadline = Date().addingTimeInterval(5)
     while !buffer.contains(UInt8(ascii: "\n")) {
@@ -145,9 +113,7 @@ struct SpawnTests {
     }
   }
 
-  /// Finding 2: pid 0 means "my own process group" to `kill`, which for the
-  /// host app would mean signalling Oxbow itself and everything launched
-  /// alongside it. This must be refused rather than forwarded.
+  /// Reject PID zero, which would signal our own process group.
   @Test func signalOnPidZeroIsANoOp() throws {
     let (url, directory) = try script("sleep 300")
     defer { try? FileManager.default.removeItem(at: directory) }
@@ -163,11 +129,7 @@ struct SpawnTests {
     #expect(isAlive(spawned.pid), "signal(toGroupOf: 0) must not touch any real process group")
   }
 
-  /// Finding 3 regression test. macOS pipe buffers are 16 KB (growing to
-  /// 64 KB); a child that writes more than that to a stream nobody is
-  /// draining blocks in write(2) and never exits. This locks in that
-  /// draining stdout and stderr concurrently avoids the deadlock — the
-  /// pattern Task 11 already uses via two detached tasks.
+  /// Write beyond pipe capacity to verify concurrent draining avoids child deadlock.
   @Test func drainingStdoutAndStderrConcurrentlyAvoidsDeadlock() async throws {
     let (url, directory) = try script("""
       yes x | head -c 100000 1>&2

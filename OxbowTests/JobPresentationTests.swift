@@ -55,10 +55,7 @@ struct JobPresentationTests {
 
   // MARK: - Tones
 
-  /// A queued step is not a warning. Nothing is wrong with it and nothing is
-  /// asked of the user — it is simply waiting its turn, which in an expanded
-  /// composite job is three or four rows at once. Orange there reads as a
-  /// list of problems.
+  /// Queued steps use a neutral tone because they require no intervention.
   @Test func aQueuedStepIsPendingRatherThanAWarning() {
     #expect(JobPresentation.icon(for: StepStatus.queued).tone == .pending)
   }
@@ -67,9 +64,7 @@ struct JobPresentationTests {
     #expect(JobPresentation.icon(for: JobStatus.queued).tone == .pending)
   }
 
-  /// The distinction the second grey exists for: a queued step is going to
-  /// run, a blocked or cancelled one never will. Collapsing them onto one
-  /// tone would leave the glyph as the only thing saying so.
+  /// Distinguish queued work from blocked/cancelled steps that cannot currently run.
   @Test func stepsThatWillNeverRunAreInertRatherThanPending() {
     #expect(JobPresentation.icon(for: StepStatus.blocked).tone == .neutral)
     #expect(JobPresentation.icon(for: StepStatus.cancelled).tone == .neutral)

@@ -1,9 +1,6 @@
 import Foundation
 
-/// Which text protocol a launched process speaks on stdout.
-///
-/// An enum rather than an injected parser: it keeps `Launch` `Sendable`
-/// without a capture, and it keeps the choice table-driven in tests.
+/// Selects the stdout parser while keeping `Launch` Sendable without captured closures.
 public enum OutputDialect: Sendable, Equatable {
   /// TwitchDownloaderCLI's `[STATUS]` / `[INFO]` / `<FFMPEG>` lines.
   case helper

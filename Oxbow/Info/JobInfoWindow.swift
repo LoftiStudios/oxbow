@@ -2,47 +2,19 @@ import AppKit
 import SwiftUI
 import OxbowKit
 
-/// Get Info for one download: what it was set to, what it is doing, and what
-/// it produced.
-///
-/// **Read-only, and shaped like reading rather than like a disabled form.**
-/// It keeps Add Download's sections, labels and order so the two are
-/// recognisably the same window, but every value is text. A screen of greyed
-/// controls says "broken"; the same information as text says "this is what
-/// happened", which is the actual question Get Info answers.
-///
-/// Live, not a snapshot: it reads the job back out of the controller on every
-/// change, so opening it on a running download shows the progress moving and
-/// the steps completing rather than a frozen picture of the moment you asked.
+/// Read-only download details, updated from the live queue rather than captured when the window
+/// opens.
 struct JobInfoWindow: View {
   let target: InfoTarget
   let controller: QueueController
 
-  /// Where an expired video's metadata comes from once Twitch has stopped
-  /// answering for it. Optional for the same reason `imageStore` is on the
-  /// watching surfaces: `OxbowApp` builds it only once a support directory
-  /// resolves, and never under `xcodebuild test`.
+  /// Stored metadata fallback; omitted without a support directory or during hosted tests.
   let record: VideoRecordStore?
 
-  /// Where the metadata fetch has got to.
-  ///
-  /// `VideoInfoLoad`, shared with `InspectorPane` — see that type. The states
-  /// and the order they are attempted in are unchanged by the extraction;
-  /// they simply live somewhere both surfaces can reach.
   @State private var metadata: VideoInfoLoad = .loading
 
-  /// The download this window can talk about, when the queue still holds one.
-  ///
-  /// **Nil is an ordinary state now, not an error.** Keyed by video, this
-  /// window is asked about archives nobody has downloaded and about downloads
-  /// whose jobs have been cleared away; in both cases there is still a video
-  /// to describe. Only the job-keyed case treats a missing job as something
-  /// gone wrong, because there the job *was* the subject.
-  ///
-  /// One media id can name several jobs — a retry after a delete leaves the
-  /// old one behind — so this picks the one a person is actually waiting on,
-  /// in the same order `ArchiveRowState` reads them: still running, then
-  /// finished, then whatever is left.
+  /// A video can have no queue job. For multiple matching jobs, use ArchiveRowState's
+  /// preference: unfinished, finished, then the remainder.
   private var job: Job? {
     switch target {
     case .job(let id):
@@ -66,14 +38,8 @@ struct JobInfoWindow: View {
       if let job {
         content(for: job, info: JobInfo(job: job))
       } else if case .video = target {
-        // A video with no download behind it — a watched archive nobody has
-        // fetched, or one whose job has been cleared out of the queue. There
-        // is still a video to describe, which is the whole reason this window
-        // stopped being keyed by the job.
         videoOnlyContent
       } else {
-        // The job was removed while its window was open. Saying so beats an
-        // empty window, and beats closing itself out from under the user.
         ContentUnavailableView(
           "Download removed", systemImage: "tray",
           description: Text("This download is no longer in the queue."))
@@ -92,12 +58,7 @@ struct JobInfoWindow: View {
     return nil
   }
 
-  /// Everything this window can say about a video nothing has downloaded.
-  ///
-  /// Deliberately the same card, in the same place, as the job case above —
-  /// a video should not look like a different kind of thing depending on
-  /// whether a download happened to exist for it. What is missing is only the
-  /// sections that describe a download, because there is no download.
+  /// Use the same video card when no job exists; omit download-specific sections.
   private var videoOnlyContent: some View {
     Form {
       Section {
@@ -129,9 +90,7 @@ struct JobInfoWindow: View {
     VStack(spacing: 0) {
       Form {
         Section {
-          // Always drawn, never conditional: the fetch is a network round trip
-          // and a card that appeared when it returned would jump the window by
-          // its own height at an unpredictable moment.
+          // Reserve the card's space while fetching to prevent a layout jump.
           switch metadata {
           case .loading: VideoCard(.loading)
           case .loaded(let info): VideoCard(info: info)
@@ -139,8 +98,6 @@ struct JobInfoWindow: View {
           }
           if let source = info.sourceURL {
             LabeledContent("Link") {
-              // Selectable, because the reason to look at a link is usually to
-              // take it somewhere else.
               Text(source.absoluteString)
                 .textSelection(.enabled)
                 .lineLimit(1)
@@ -191,12 +148,7 @@ struct JobInfoWindow: View {
     }
   }
 
-  /// Re-fetches the video's metadata for the thumbnail and title.
-  ///
-  /// Not stored on the job: the queue keeps what a download *was told to do*,
-  /// not what Twitch said about it, and adding a cached copy would be a second
-  /// source of truth that goes stale. The fetch is the same one intake makes,
-  /// and failing it costs only the thumbnail.
+  /// Fetch current metadata with the shared loader and its recorded-data fallback.
   private func loadMetadata() async {
     metadata = await VideoInfoLoad.resolve(
       identifier: videoIdentifier, controller: controller, record: record)
@@ -204,19 +156,8 @@ struct JobInfoWindow: View {
 
 }
 
-/// The job's status, drawn the way the queue draws it: the same symbol and
-/// the same tone, not a second vocabulary for the same five states. A window
-/// opened from a row should agree with the row it was opened from — at a
-/// glance, before the word is read.
-///
-/// The word stays. The icon is the glanceable half and the word is the exact
-/// one, and this row is the only place in the app that has room for both.
-/// It is also what keeps the row legible to VoiceOver, which is why the image
-/// is hidden from it here for the same reason it is in `JobRow`.
-/// **Internal, not private: `InspectorPane` renders the same row.** The two
-/// surfaces must not develop separate vocabularies for the same five states —
-/// a status that reads "Done" in one place and "Finished" in another is the
-/// drift this whole design keeps refusing.
+/// Shared status label for Get Info and the inspector, using the queue's symbol and tone. Hide
+/// the redundant image from VoiceOver.
 struct JobStatusValue: View {
   let status: JobStatus
 
@@ -261,8 +202,6 @@ private struct StepInfoRow: View {
 
       VStack(alignment: .leading, spacing: 4) {
         StepDetail(step: step)
-        // The helper's own output, which the queue row no longer carries.
-        // This is the window it was always really for.
         if showsLog {
           StepLogDisclosure(step: step, log: log, failure: failure)
         }
@@ -271,9 +210,7 @@ private struct StepInfoRow: View {
     }
   }
 
-  /// A finished step has no log to show: its workspace, log included, goes
-  /// with it when the job succeeds. Offering an empty disclosure would be a
-  /// control that can only ever say it has nothing.
+  /// Successful job cleanup removes logs with the workspace; do not offer an empty disclosure.
   private var showsLog: Bool {
     if case .failed = step.status { return true }
     return step.status == .running
@@ -315,9 +252,6 @@ private struct StepInfoRow: View {
   .frame(width: 460, height: 520)
 }
 
-/// Every status the row can show, in one place: the five colours and glyphs
-/// are the whole point of the row, and each is otherwise reachable only by
-/// getting a real download into that state.
 #Preview("Status row - every state") {
   Form {
     Section {
@@ -334,8 +268,7 @@ private struct StepInfoRow: View {
 }
 
 enum JobInfoPreviewData {
-  /// A composite job: a render step feeding a composite, the only shape
-  /// `renderSettings` now has anything to say about (see `JobInfo.swift`).
+  /// A composite fixture includes both steps required by renderSettings.
   static let rendered = Job(
     id: JobID(rawValue: UUID()), created: .now, title: "LeighXP - indie horror",
     steps: [

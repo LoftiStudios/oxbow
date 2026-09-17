@@ -31,18 +31,14 @@ struct WatchPollPolicyTests {
 
   @Test("a last-polled date in the future is due, not disabled until time catches up")
   func futureDateIsDue() {
-    // A clock that ran backwards — a timezone change, a corrected NTP sync, a
-    // restored backup — must not leave polling switched off for however long
-    // the discrepancy is. UpdatePolicy carries the same guard.
+    // Clock rollback must not disable polling until the stored date catches up.
     #expect(WatchPollPolicy.shouldPoll(now: now, lastPolled: now.addingTimeInterval(3600)))
   }
 
   @Test("the interval is well under the shortest measured retention window")
   func intervalIsFarInsideTheExpiryClock() {
-    // docs/twitch-channel-api.md section 6 measured the shortest surviving
-    // archive window at 43 days — 1,032 hours. Six hours, the bound this
-    // asserts, is two orders of magnitude inside that; this pins that the
-    // interval never drifts into the same order as the thing it is racing.
+    // Bound polling far below the archive retention windows measured in `twitch-channel-api.md`
+    // §6.
     #expect(WatchPollPolicy.interval <= 6 * 3600)
   }
 }

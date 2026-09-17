@@ -34,9 +34,7 @@ struct JobInfoTests {
 
   // MARK: - Where it came from
 
-  /// Get Info has to answer "which video is this?" and the queue never stored
-  /// the link — only the id inside the request. Rebuilding the address is what
-  /// makes the answer something you can paste back into a browser.
+  /// Reconstruct source URLs from request IDs because the original pasted link is not stored.
   @Test func rebuildsTheSourceURLOfAVODFromItsID() {
     let info = JobInfo(job: job(step(.downloadVideo(videoRequest()))))
     #expect(info.sourceURL?.absoluteString == "https://www.twitch.tv/videos/2844548319")
@@ -53,9 +51,7 @@ struct JobInfoTests {
         == "https://clips.twitch.tv/TangibleGiantPancakeKappa")
   }
 
-  /// A render-only job has no media step at all, so the only record of what it
-  /// was rendering is the chat request's id. All-digits means a VOD — the same
-  /// test upstream's `InfoHandler` branches on.
+  /// Render-only jobs identify their source through chat; numeric IDs denote VODs.
   @Test func fallsBackToTheChatRequestsIDWhenThereIsNoMediaStep() {
     let chat = ChatRequest(videoID: "2844548319", format: .json)
     let info = JobInfo(job: job(step(.downloadChat(chat))))
@@ -101,9 +97,7 @@ struct JobInfoTests {
     #expect(info.trim == "From 1:30")
   }
 
-  /// Which outputs were asked for is the first thing Get Info should say, and
-  /// the chat format is part of the answer — a JSON chat and an HTML one are
-  /// not the same request.
+  /// Requested outputs include the chat format.
   @Test func listsTheOutputsThatWereRequested() {
     let subject = job(
       step(.downloadVideo(videoRequest())),
@@ -115,9 +109,7 @@ struct JobInfoTests {
     #expect(JobInfo(job: subject).outputs == ["Video", "Chat (HTML)", "Rendered chat"])
   }
 
-  /// A chat step with no destination was downloaded only to be rendered and
-  /// then discarded (`JobTemplate.renderInput`). Listing it as an output would
-  /// promise a file that was never delivered.
+  /// Chat without a destination is an intermediate, not a delivered output.
   @Test func omitsAChatFileThatWasOnlyRenderInput() {
     let subject = job(
       step(.downloadChat(ChatRequest(videoID: "1", format: .json, destination: nil))),
@@ -126,11 +118,7 @@ struct JobInfoTests {
     #expect(JobInfo(job: subject).outputs == ["Rendered chat"])
   }
 
-  /// A composite job's video, chat, and render steps are all intermediates —
-  /// none of them has a destination — so the one file that actually reaches
-  /// the user's folder is the composite. "Video" and "Rendered chat" are
-  /// exactly the intermediates that never do, and reporting either alongside
-  /// the composite would promise files the job never delivers.
+  /// A composite delivers only assembly output; its video, chat, and render are intermediates.
   @Test func reportsExactlyTheCompositeAsAnOutputOfACompositeJob() {
     let video = VideoRequest(videoID: "2844548319", quality: "1080p60", destination: nil)
     let subject = job(
@@ -151,9 +139,7 @@ struct JobInfoTests {
     #expect(info.destinationFolder?.path == Self.folder.path)
   }
 
-  /// Only steps that actually delivered something. `Step.artifact` is nil
-  /// until a step succeeds, and `Reconciler` clears it again for anything
-  /// still inside our own workspace.
+  /// Only completed outputs with delivery destinations belong here.
   @Test func listsOnlyTheFilesThatWereActuallyDelivered() {
     let delivered = Self.folder.appending(path: "a.mp4")
     let subject = job(
@@ -163,13 +149,8 @@ struct JobInfoTests {
     #expect(JobInfo(job: subject).deliveredFiles == [delivered])
   }
 
-  /// Retention only ever persists on a job that is *not* `.done`
-  /// (docs/design/resume.md §8), so `Reconciler`'s workspace-membership
-  /// check never gets a second look at a failed or cancelled composite job —
-  /// it short-circuits on `.done`. A piece therefore can still be sitting on
-  /// a claimed `.composite` step here, pointing into `Workspace.resumeRoot`,
-  /// which is deliberately *outside* the workspace. Pieces are never
-  /// delivered (§7); only `.assemble`'s output is.
+  /// Retained pieces can survive failed/cancelled jobs outside the workspace, but are not
+  /// delivered files. Only assembly output is delivered.
   @Test func excludesARetainedPieceEvenWhenTheCompositeStepStillClaimsOne() {
     let piece = URL(filePath: "/Caches/studio.lofti.Oxbow/resume/abc/piece-0.mp4")
     let composite = CompositeRequest(
@@ -187,10 +168,7 @@ struct JobInfoTests {
 
   // MARK: - Render settings
 
-  /// The only thing left to report about a composite's render step: the chat
-  /// column it actually produced. Everything the old render form exposed —
-  /// font, colours, emotes, bitrate — is now a fixed decision nobody made, so
-  /// there is nothing honest left to say about any of it.
+  /// Report composite chat geometry, not fixed renderer defaults the user never chose.
   @Test func reportsTheChatColumnGeometryOfAComposite() {
     let render = RenderRequest(width: 420, height: 800, framerate: 30, destination: nil)
     let composite = CompositeRequest(
@@ -201,10 +179,7 @@ struct JobInfoTests {
     #expect(rows == [JobInfo.Setting(label: "Chat column", value: "420 × 800 at 30 fps")])
   }
 
-  /// A render step with no composite is reachable only through the library —
-  /// intake never asks for one alone — and in that case there is no video to
-  /// relate the render's dimensions to. Showing them anyway would be exactly
-  /// the "defaults nobody chose" this property exists to avoid.
+  /// A standalone library render has no video-relative chat geometry to report.
   @Test func hasNoRenderSettingsWithoutACompositeStep() {
     let request = RenderRequest(destination: Self.folder.appending(path: "r.mp4"))
     let info = JobInfo(job: job(step(.renderChat(request))))

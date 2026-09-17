@@ -1,13 +1,7 @@
 import Foundation
 
-/// Incrementally recovers lines from the helper's output stream.
-///
-/// This is the ONLY type that knows the CLI's text protocol.
-///
-/// The CLI delimits progress updates with `\r` and does not check whether
-/// stdout is a terminal, so a real chat render emits 401 updates inside four
-/// `\n`-delimited lines. Splitting on `\n` alone produces a frozen progress
-/// bar that jumps to 100% at the end. See the design spec, section 1.1.
+/// Incremental CLI line parser. Split on carriage returns as well as newlines: progress updates
+/// use `\r` even when stdout is not a terminal.
 public struct StatusLineParser: Sendable {
   private var buffer: [UInt8] = []
 
@@ -72,12 +66,8 @@ public struct StatusLineParser: Sendable {
     return .log(level: .info, message: text)
   }
 
-  /// Parses the four status shapes the CLI emits. See the design spec, §1.2.
-  ///
-  /// Parsed right-to-left: the trailing counter or times group is stripped
-  /// first, then the percentage, and the remainder is the phase. Doing it in
-  /// this order is what stops a digit inside a phase name being read as a
-  /// percentage.
+  /// Parses status right-to-left: trailing counters/times, then percentage, then phase. This
+  /// prevents digits in phase names from being read as percentages.
   static func parseProgress(_ text: String) -> StepProgress {
     var remainder = Substring(text)
     var progress = StepProgress()

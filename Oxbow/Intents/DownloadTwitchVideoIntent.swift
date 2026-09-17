@@ -2,25 +2,15 @@ import AppIntents
 import Foundation
 import OxbowKit
 
-/// Everything the intent does to a model, with no `QueueHost` and no
-/// `AppIntents` result types in the way.
-///
-/// Split out so the sequencing below is testable. `perform()` cannot be: it
-/// reaches `QueueHost.shared`, which is the app's real engine.
+/// Testable intent submission sequence, separate from QueueHost and AppIntents result types.
 enum IntentSubmission {
 
-  /// What a submission did. Two outcomes, both successes.
-  ///
-  /// **A duplicate is not an error.** Throwing would stop a Shortcuts
-  /// `Repeat with Each` dead, so one already-queued link in a list of twelve
-  /// would kill the run — and "this VOD is queued" is true either way. The
-  /// caller gets a different sentence, not a failure.
+  /// Duplicates succeed so they do not abort Shortcuts Repeat with Each workflows.
   enum Outcome: Equatable {
     case queued(String)
     case alreadyQueued(String)
 
-    /// The action's return value. The base name in both cases, so a
-    /// following Shortcuts action can use the filename whichever happened.
+    /// Return the output base name for both new and existing jobs.
     var value: String {
       switch self {
       case .queued(let name), .alreadyQueued(let name): name
@@ -44,12 +34,7 @@ enum IntentSubmission {
     var notificationBody: String { value }
   }
 
-  /// A refusal, in one sentence, because Spotlight shows one line.
-  ///
-  /// `IntakeModel`'s own refusals were written for a form with room under it,
-  /// and two of them end by naming a control this action does not have —
-  /// "Choose \"Video\"" and "Pick another quality". Those become the
-  /// parameter names.
+  /// Single-line refusals for Spotlight, naming intent parameters rather than intake controls.
   enum Failure: Error, Equatable, CustomLocalizedStringResourceConvertible {
     case unrecognizedLink
     case unavailable(String)
@@ -67,45 +52,10 @@ enum IntentSubmission {
     }
   }
 
-  /// Applies the overrides, fetches, composes and enqueues. Returns the base
-  /// name the job's files will share.
-  ///
-  /// **The overrides go on before `load()`, and that ordering is load-bearing.**
-  /// `load()` reads `output` to decide whether resolution must skip a
-  /// rendition a composite cannot use (`settings.md` §3.4), and reads
-  /// `qualityCap` to pick the rendition at all. Applied afterwards, the
-  /// quality resolves against the wrong policy and `quality` ends up naming a
-  /// rendition nobody asked for.
-  ///
-  /// **Nothing here saves a preference.** `saveDefaultsIfRequested()` is
-  /// driven by the intake's checkbox, which this never sets. An override is a
-  /// decision about one run.
-  ///
-  /// **`recording` is what this submission's fetch gets written into.** Every
-  /// path into this function has already run the helper's `info` verb —
-  /// `model.load()` below — because that is how a quality cap resolves
-  /// against a particular video's renditions; until now the payload that came
-  /// back was discarded at the end of every one. Recording it at the fetch
-  /// instead would be far easier and would be wrong: `load()` fires on every
-  /// debounced keystroke in Add Download, so it would permanently record every
-  /// link a person pasted and thought better of
-  /// (`docs/design/video-record.md` §3.5). So the write happens after a
-  /// submission has actually succeeded, in `IntakeAdd.perform` — shared with
-  /// the intake window's own Add button, which reaches the same place by the
-  /// same rule.
-  ///
-  /// It defaults to `nil` — record nothing — rather than to the live stores,
-  /// because `OxbowTests` is hosted by the app and a defaulted live store
-  /// would make every test run write the developer's own `videos.json`.
-  ///
-  /// **`helperVersion` stamps the payload**, and defaults to the running
-  /// build's. It is legitimately nil in a build with no embedded helper (the
-  /// UI-only fast path CONTRIBUTING.md promises) — including every
-  /// `xcodebuild test` run, since `scripts/stamp-version.sh` is what puts it
-  /// in the plist — and `VideoRecorder` then writes the facts without a
-  /// payload rather than storing bytes no future parser could pick a dialect
-  /// for. That nil is why this is a parameter at all: a test asserting a
-  /// payload landed has to be able to supply a stamp.
+  /// Apply overrides before load(), which resolves quality using output and qualityCap.
+  /// Overrides affect only this run. IntakeAdd records after successful enqueue; nil recording
+  /// disables writes for tests. A nil helperVersion records facts without an unstamped raw
+  /// payload.
   @discardableResult
   static func submit(
     link: String,
@@ -123,19 +73,8 @@ enum IntentSubmission {
       throw Failure.unrecognizedLink
     }
 
-    // **Before the fetch, deliberately.** A duplicate should not cost a
-    // network round trip, and the identifier is available from the parsed
-    // link alone — `TwitchLink.parse` reduces a full URL and a bare id to
-    // the same string, so the guard compares the download, not the text.
-    //
-    // Only unfinished jobs count (`JobStatus.isUnfinished`): a failed or
-    // cancelled job must not block a fresh attempt, because the intent is
-    // the one surface with no queue window to retry from.
-    //
-    // The intake window deliberately has no equivalent guard. It shows you
-    // the queue, so a second copy is visible the moment you make it; from
-    // Spotlight nothing is on screen, which is how ten identical six-hour
-    // downloads get queued by someone who thought nothing had happened.
+    // Check normalized identifiers before fetching. Only unfinished jobs block duplicates;
+    // failed or cancelled jobs must remain retryable from the intent.
     if let existing = existingJobs.first(where: {
       $0.status.isUnfinished && $0.mediaIdentifier == target.identifier
     }) {
@@ -149,10 +88,8 @@ enum IntentSubmission {
 
     await model.load()
 
-    // Checked before `add()` so the reason is the specific one rather than
-    // `addFailure`'s generic "could not build that download". Both of these
-    // end in an instruction naming an intake control; reworded for the
-    // parameter that stands in for it here.
+    // Report specific validation errors before add(), using the corresponding intent parameter
+    // names.
     if let problem = model.chatProblem {
       throw Failure.refused(rewordForIntent(problem))
     }
@@ -160,18 +97,8 @@ enum IntentSubmission {
       throw Failure.refused(rewordForIntent(problem))
     }
 
-    // The disk-space warning is deliberately *not* consulted. In the window
-    // it is a warning with a remedy and Add stays enabled; refusing here a
-    // job the window would have allowed makes the two disagree, which is
-    // worse than a job that runs out of room in the way the window already
-    // permits (docs/design/automation.md §7).
-    // `IntakeAdd.perform` rather than `model.add()` directly, so that this
-    // path and the Add button in the intake window record on exactly the same
-    // terms — after the enqueue lands and never before it, which is what §3.5
-    // rules on. The window used to call `model.add()` itself and so recorded
-    // nothing at all; a hand-pasted download left no trace, which is the one
-    // case the record exists for.
-    //
+    // Keep disk space advisory, matching the window. Use IntakeAdd so both entry points record
+    // only after enqueue succeeds.
     guard await IntakeAdd.perform(
       model, recording: recording, helperVersion: helperVersion)
     else {
@@ -188,12 +115,7 @@ enum IntentSubmission {
   }
 }
 
-/// Queue a Twitch VOD or clip without opening Oxbow.
-///
-/// `openAppWhenRun = false`: the system launches the app in the background to
-/// run this, and no window comes up. Oxbow stays running afterwards because
-/// it has a queue to work — which is what the Dock badge and the completion
-/// notification from 0.4.0 are for.
+/// Queue a VOD or clip in the background; keep the app running to process its queue.
 struct DownloadTwitchVideoIntent: AppIntent {
   static let title: LocalizedStringResource = "Download Twitch Video"
   static let description = IntentDescription(
@@ -203,12 +125,9 @@ struct DownloadTwitchVideoIntent: AppIntent {
     """,
     categoryName: "Downloads")
 
-  /// No window. See the type's own comment.
   static let openAppWhenRun = false
 
-  /// `String`, not `URL`: `TwitchLink.parse` accepts a bare VOD id, a bare
-  /// clip slug and a scheme-less host, and a `URL` parameter would reject the
-  /// first two before Oxbow ever saw them.
+  /// Accept String so bare ids, clip slugs, and scheme-less links reach TwitchLink.parse.
   @Parameter(title: "Link")
   var link: String
 
@@ -221,29 +140,13 @@ struct DownloadTwitchVideoIntent: AppIntent {
   @Parameter(title: "Chat Text Size")
   var chatSize: ChatSize?
 
-  /// **`URL?`, not `IntentFile?` with `supportedContentTypes: [.folder]`.**
-  /// The brief called for `IntentFile`, but `IntentFile.data` (in the real
-  /// AppIntents.framework, checked directly against the macOS 26 SDK's
-  /// `.swiftinterface`) is a non-optional, eagerly-loaded `Data` — the type
-  /// represents file *content*, not a directory reference, and nothing about
-  /// it promises a folder round-trips to a usable URL for an app that isn't
-  /// sandboxed. `supportedContentTypes:` itself is only exposed on the
-  /// `IntentFile`-typed `@Parameter` overload. `URL` is a first-class,
-  /// natively-supported intent parameter type (`Foundation.URL:
-  /// AppIntents._IntentValue` in the same interface) with no content-type
-  /// machinery to fight, and Oxbow is not sandboxed, so there is no
-  /// security-scoped-bookmark reason to reach for `IntentFile` either — the
-  /// one thing that would have justified the heavier type. This is simpler
-  /// than the brief's form, not a workaround for one.
-  ///
-  /// **Unverified**: that Shortcuts renders a folder *picker* for a plain
-  /// `URL` parameter was reasoned from the SDK's interface and never driven
-  /// live (`automation.md` §3.1). Expected, not confirmed.
+  /// Use URL for a directory reference; IntentFile represents eagerly loaded file content.
+  /// Unverified: whether Shortcuts presents a folder picker for this parameter
+  /// (docs/design/automation.md §3.1).
   @Parameter(title: "Destination")
   var destination: URL?
 
-  /// Only `link` in the summary line, so Spotlight shows one field rather
-  /// than five. The four overrides collapse into "Show More".
+  /// Keep only link in the summary; overrides appear under Show More.
   static var parameterSummary: some ParameterSummary {
     Summary("Download \(\.$link)") {
       \.$quality
@@ -255,20 +158,13 @@ struct DownloadTwitchVideoIntent: AppIntent {
 
   @MainActor
   func perform() async throws -> some IntentResult & ReturnsValue<String> & ProvidesDialog {
-    // Bound once, deliberately, rather than switched on twice: `ready()`
-    // resolves the engine exactly once and caches the result, so a second
-    // call was never wrong — only harder to read, since it looks like two
-    // independent resolutions might disagree. Binding once removes the doubt.
     let content = await QueueHost.shared.ready()
     switch content {
     case .unavailable(let message):
       throw IntentSubmission.Failure.unavailable(message)
 
     case .ready(let controller):
-      // A fresh model per run, seeded from `Preferences` by this initializer.
-      // On a machine nobody has configured, that is best available, with
-      // chat, into ~/Downloads — the right answer, arranged by needing no
-      // code.
+      // Create a fresh model seeded from saved preferences for each run.
       let outcome = try await IntentSubmission.submit(
         link: link,
         quality: quality,
@@ -279,9 +175,8 @@ struct DownloadTwitchVideoIntent: AppIntent {
         into: IntakeModel(controller: controller),
         recording: QueueHost.shared.videoRecording)
 
-      // Notified from here rather than inside `submit`, which stays free of
-      // app surfaces so it can be tested without one. Intent-only: the
-      // window shows you the queue, so a banner there would be noise.
+      // Keep notifications outside the testable submission function. Only the intent needs
+      // them; the window shows the queue.
       QueueHost.shared.notifyIntentOutcome(outcome)
 
       return .result(value: outcome.value, dialog: "\(outcome.dialog)")

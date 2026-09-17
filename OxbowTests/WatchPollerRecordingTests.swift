@@ -23,9 +23,7 @@ struct WatchPollerRecordingTests {
       categoryArtURL: nil)
   }
 
-  /// Every archive a sweep sees is recorded, not just the unseen ones — the
-  /// record is what makes an expired video still render, and an archive
-  /// already downloaded is exactly the one worth keeping.
+  /// Record all returned archives, including already-seen ones, for retained history.
   @Test("a sweep records every archive it saw")
   func sweepRecordsEverything() throws {
     let file = temporaryFile()
@@ -42,17 +40,14 @@ struct WatchPollerRecordingTests {
     #expect(library.videos.keys.sorted() == ["1", "2"])
     #expect(library.videos["1"]?.title == "day 1")
     #expect(library.videos["1"]?.login == "wheelyf")
-    // A display name and a login are two different strings and neither
-    // follows from the other (`video-record.md` §3.4), so the sweep has to
-    // carry it rather than let a remembered card fall back to the login.
+    // Carry display name separately; it cannot be derived from login.
     #expect(library.videos["1"]?.displayName == "WheelyF")
     #expect(library.videos["1"]?.durationSeconds == 10203)
     #expect(library.videos["1"]?.categoryName == "ELDEN RING")
     #expect(library.videos["1"]?.lastSeenOnTwitch == Date(timeIntervalSince1970: 1_757_100_000))
   }
 
-  /// The whole point of the merge rule: a sweep after a submission must not
-  /// erase the qualities and payload stamp the submission recorded.
+  /// Sweeps must preserve submission-only facts.
   @Test("a sweep does not erase what a submission recorded")
   func sweepPreservesSubmissionFacts() throws {
     let file = temporaryFile()
@@ -113,28 +108,8 @@ struct WatchPollerRecordingTests {
     })
   }
 
-  /// The gap the reviewer found by inspection only: nothing pinned that a
-  /// **failed** sweep records nothing. This drives a real `WatchPoller
-  /// .refreshNow()` rather than calling `record(archives:forLogin:seenAt:
-  /// into:)` directly, because the guard being pinned lives one level up —
-  /// `sweep()`'s explicit `case .found(let archives) = result.outcome`
-  /// match. `WatchPollResult.archives` flattens a `.failed` outcome to `[]`,
-  /// so a version of `sweep()` that read `result.archives` instead of
-  /// matching on `result.outcome` would call `record(archives: [], ...)` for
-  /// a failure exactly as it does for a genuinely empty success — passing
-  /// `emptySweepIsNoOp()` above for the wrong reason.
-  ///
-  /// **Which this test does not in fact catch, and the honest reading is
-  /// worth more than the comforting one.** Seeding an existing record and
-  /// asserting it is byte-for-byte unchanged still passes against a `sweep()`
-  /// that reads `result.archives`: `record`'s own `guard !archives.isEmpty`
-  /// returns before `seenAt` is ever considered, so the record is untouched
-  /// either way. What this pins is the *outcome* — a failed sweep leaves the
-  /// record alone — not which of the two guards produced it. That is the
-  /// coupling both guards now carry a comment about; there is no test that
-  /// separates them, and a test that faked one by reaching past `record` into
-  /// `sweep()`'s internals would be pinning the implementation rather than
-  /// the promise.
+  /// A failed sweep must leave the record unchanged. This verifies the outcome, not which guard
+  /// prevents the write: both sweep's outcome check and record's empty-array guard produce it.
   @Test("a failed sweep records nothing and stamps no last-seen time")
   func failedSweepLeavesRecordUntouched() async throws {
     let file = temporaryFile()
@@ -163,8 +138,7 @@ struct WatchPollerRecordingTests {
     #expect(library.videos["1"]?.lastSeenOnTwitch == seenBefore)
   }
 
-  /// Nothing calls the migration until this does, and a watch whose archives
-  /// never migrate would be offered every one of them again.
+  /// Migration must run before legacy handled IDs can be offered again.
   @Test("migrating at launch turns a stored seen-set into skipped state")
   func migrationRunsAtLaunch() throws {
     let file = temporaryFile()

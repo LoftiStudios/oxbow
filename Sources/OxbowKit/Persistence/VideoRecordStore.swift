@@ -1,20 +1,7 @@
 import Foundation
 
-/// Reads and writes the video record.
-///
-/// **Structurally identical to `WatchStore` and `QueueStore`, deliberately**:
-/// same envelope, same version probe read separately from the body, same
-/// atomic replace, same set-aside recovery. A fourth idiom for "read a JSON
-/// file that might be from the future" is a fourth thing to get wrong.
-///
-/// **Its own file rather than a section of `watches.json`.** That file is
-/// small, hot and contended by three writers, and the ordering discipline
-/// between them has already produced eight bugs of one shape. This one is
-/// append-mostly (`docs/design/video-record.md` §3).
-///
-/// Dates are ISO-8601 in both directions rather than the encoder default. This
-/// file is meant to be readable by a person debugging it, and a reference-date
-/// double is not.
+/// Atomic, versioned video-record persistence with set-aside recovery, matching the other
+/// stores. Separate from the frequently updated watch list. Dates use readable ISO-8601.
 public struct VideoRecordStore: Sendable {
   private struct Envelope: Codable {
     static let currentVersion = 1
@@ -22,9 +9,7 @@ public struct VideoRecordStore: Sendable {
     var library: VideoLibrary
   }
 
-  /// Just enough of the envelope to read the schema version, for the reason
-  /// `WatchStore.VersionProbe` gives: a future file that changes the library's
-  /// shape must read as "wrong version" rather than as a decode failure.
+  /// Read the version without requiring a future library schema to decode.
   private struct VersionProbe: Decodable {
     var version: Int
   }
@@ -87,8 +72,7 @@ public struct VideoRecordStore: Sendable {
         try FileManager.default.moveItem(at: scratch, to: fileURL)
       }
     } catch {
-      // Never leave the scratch file behind: this is the app's persistent data
-      // directory, not a temp dir, so a leak accumulates forever.
+      // Always remove scratch files from persistent storage.
       try? FileManager.default.removeItem(at: scratch)
       throw error
     }

@@ -1,13 +1,7 @@
 import Foundation
 
-/// Incrementally recovers progress from `ffmpeg -progress pipe:1`.
-///
-/// The sibling of `StatusLineParser`, and pure the same way: no clock, no I/O.
-/// This is the ONLY type that knows FFmpeg's progress protocol.
-///
-/// FFmpeg emits repeating blocks of `key=value` lines terminated by
-/// `progress=continue`, with a final `progress=end`. It never reports a total
-/// duration, which is why one is supplied at init.
+/// Parses `ffmpeg -progress pipe:1` key-value blocks, completed by `progress=continue` or
+/// `progress=end`. Total duration is supplied because FFmpeg does not report it.
 public struct FFmpegProgressParser: Sendable {
   private let duration: Duration
   private var buffer: [UInt8] = []
@@ -56,19 +50,9 @@ public struct FFmpegProgressParser: Sendable {
   private func progress(isFinal: Bool) -> StepProgress {
     var result = StepProgress(phase: "Compositing")
 
-    // `out_time_us`, NOT `out_time_ms`: FFmpeg's `out_time_ms` is actually
-    // microseconds — both fields read 4983333 for 4.983 seconds. Verified
-    // 2026-08-25. Do not "fix" this.
-    //
-    // Known quirk on a resumed composite (docs/design/resume.md §4): FFmpeg
-    // reports `out_time_us` as the max across every output in the
-    // invocation, not just the piece. When a resume also rewrites the
-    // sidecar, that second output spans the whole content window while the
-    // piece spans only the tail, so this fraction can read close to or at 1
-    // before the encode is actually done. FFmpeg's own dts balancing bounds
-    // how far the lead runs, so it is a cosmetic tail effect on the number
-    // reported here, not a stalled or stuck job. Do not restructure progress
-    // reporting to fix it.
+    // Use `out_time_us`: despite its name, `out_time_ms` also contains microseconds. On resume,
+    // FFmpeg reports the maximum across piece and sidecar outputs, so rewriting full-length
+    // audio may briefly push progress ahead of the tail encode. See `docs/design/resume.md` §4.
     let total = Double(duration.components.seconds)
     let elapsed = fields["out_time_us"].flatMap(Double.init).map { $0 / 1_000_000 }
 
@@ -81,24 +65,18 @@ public struct FFmpegProgressParser: Sendable {
     // FFmpeg reports no total, so the ETA comes from its own reported rate.
     let speed = fields["speed"].flatMap { Double($0.dropLast()) }
 
-    // Reported unconditionally (including the degenerate `0.00x` FFmpeg
-    // emits on its first few blocks) so the UI can tell "genuinely slow" from
-    // "no data yet" apart from a stalled `remaining`.
+    // Report even zero speed to distinguish a slow encode from missing data.
     result.speed = speed
 
-    // `Int.init` rather than a lenient parse: FFmpeg writes `total_size=N/A`
-    // until the first packet is muxed, and that is the absence of a number
-    // rather than a zero. A zero would project a zero-byte output.
+    // `total_size=N/A` means unknown, not zero; zero would produce a zero-byte projection.
     result.bytesWritten = fields["total_size"].flatMap(Int.init)
 
-    // Early blocks report a degenerate speed (e.g. `0.00x`); dividing by it
-    // would give an infinite remaining time, so it is simply not reported.
+    // Do not derive ETA from an initial zero speed.
     if let elapsed, let speed, speed > 0, total > elapsed {
       result.remaining = .seconds((total - elapsed) / speed)
     }
 
-    // `elapsed` is deliberately never set: deriving it means reading a clock,
-    // which a pure parser does not get to do.
+    // Elapsed time requires a clock and is not set by this parser.
     return result
   }
 }

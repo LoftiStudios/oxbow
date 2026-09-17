@@ -5,10 +5,7 @@ import Testing
 @Suite("Update check")
 struct UpdateCheckTests {
 
-  /// Abridged from the shape `GET /repos/{owner}/{repo}/releases/latest`
-  /// documents. The unused keys are kept deliberately: decoding has to ignore
-  /// what it does not need, and a payload trimmed to only the two fields we
-  /// read would never prove that.
+  /// Keep unused response fields to prove decoding tolerates them.
   private func payload(
     tag: String,
     htmlURL: String = "https://github.com/LoftiStudios/oxbow/releases/tag/v0.3.0")
@@ -67,9 +64,7 @@ struct UpdateCheckTests {
     #expect(try await outcome(currentVersion: "0.2.1", body: payload(tag: "v0.2.1")) == .upToDate)
   }
 
-  /// A downgrade is never offered. This is not hypothetical: unpublishing a
-  /// release moves `/releases/latest` backwards, and anyone already on the
-  /// newer build would otherwise be invited to install an older one.
+  /// Unpublishing may move latest backwards; never offer a downgrade.
   @Test func neverOffersAnOlderReleaseThanTheOneRunning() async throws {
     #expect(try await outcome(currentVersion: "0.3.0", body: payload(tag: "v0.2.1")) == .upToDate)
   }
@@ -78,9 +73,7 @@ struct UpdateCheckTests {
     #expect(try await outcome(body: payload(tag: "nightly")) == .upToDate)
   }
 
-  /// A `CFBundleShortVersionString` that will not parse means a malformed
-  /// bundle. Staying quiet is the safe reading — the alternative is telling
-  /// every launch of a broken build that an update is available.
+  /// An unparseable local version must not invent an update.
   @Test func staysQuietWhenTheRunningVersionCannotBeParsed() async throws {
     #expect(try await outcome(currentVersion: "", body: payload(tag: "v9.9.9")) == .upToDate)
   }
@@ -95,9 +88,7 @@ struct UpdateCheckTests {
       == "https://api.github.com/repos/LoftiStudios/oxbow/releases/latest")
   }
 
-  /// api.github.com answers 403 to any request without a User-Agent. Without
-  /// this the check would fail in the field and pass in every test that used
-  /// a stubbed transport.
+  /// Assert User-Agent explicitly because a stub would not reproduce GitHub's rejection.
   @Test func identifiesItselfWithAUserAgent() async throws {
     let recorder = Recorder()
     _ = try await outcome(body: payload(tag: "v0.2.1"), recorder: recorder)
@@ -115,9 +106,7 @@ struct UpdateCheckTests {
 
   // MARK: - How it fails
 
-  /// Rate limiting (403) and a renamed repository (404) both land here. They
-  /// have to be distinguishable from "no update", because the manual check
-  /// reports failure and the automatic one swallows it.
+  /// HTTP failures remain distinct from a successful no-update result.
   @Test func reportsAnUnsuccessfulStatusRatherThanDecodingTheErrorBody() async {
     await #expect(throws: UpdateCheckError.server(status: 403)) {
       try await outcome(body: Data(#"{"message":"API rate limit exceeded"}"#.utf8), status: 403)
@@ -140,9 +129,7 @@ struct UpdateCheckTests {
 @Suite("Update check error")
 struct UpdateCheckErrorTests {
 
-  /// `localizedDescription` on a bare `Error` is the useless
-  /// "The operation couldn't be completed." — and this string is shown to a
-  /// user who pressed Check for Updates and deserves to know why it failed.
+  /// Manual checks must show a readable error description.
   @Test func namesTheRateLimitRatherThanItsNumber() {
     #expect(UpdateCheckError.server(status: 403).localizedDescription
       .localizedCaseInsensitiveContains("rate limit"))

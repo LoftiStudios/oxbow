@@ -4,8 +4,7 @@ import Testing
 @Suite("Download output")
 struct DownloadOutputTests {
 
-  /// Chat first and chat by default: it is the reason to reach for Oxbow
-  /// rather than any video-only downloader.
+  /// Pin chat-enabled default output.
   @Test func defaultsToVideoWithChat() {
     #expect(DownloadOutput.default == .videoWithChat)
     #expect(DownloadOutput.allCases.first == .videoWithChat)

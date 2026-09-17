@@ -3,22 +3,8 @@ import Testing
 import OxbowKit
 @testable import Oxbow
 
-/// `WatchPoller.excludingArchivesWithFailedJobs` — finding 1 of the final
-/// stage-3 review. Not a general `WatchPollerTests` suite: the rest of
-/// `WatchPoller` is timing and wiring over `QueueHost`'s singleton, and
-/// stays covered the way `docs/design/channel-watching.md` §9.1 already
-/// describes for that layer (verified by hand). This one function is pure
-/// and was pulled out specifically so this narrow, high-severity fix could
-/// be pinned without a store, a clock, or an engine.
-///
-/// **The bug this closes.** `AutoDownloadObserver.forget` un-marks a failed
-/// automatic download's archive from `seen` so a person can retry it
-/// deliberately. Without this filter, the very next sweep loads the watch
-/// fresh, sees the archive as unseen again, and resubmits it unattended —
-/// `IntentSubmission.submit`'s duplicate guard only blocks *unfinished*
-/// jobs, so the finished `.failed` job blocks nothing. It fails the same
-/// way, gets un-marked again, and the cycle repeats every poll interval for
-/// the archive's entire retention window.
+/// Exclude failed jobs from unattended resubmission. Unmarking returns them for manual retry;
+/// without this filter each sweep would retry the same failure indefinitely.
 @Suite("WatchPoller excludes archives with a failed job")
 struct WatchPollerFailedJobFilterTests {
 
@@ -54,10 +40,7 @@ struct WatchPollerFailedJobFilterTests {
     #expect(result.map(\.id) == ["1"])
   }
 
-  /// §6.3: a cancellation is a person saying no, not the app having tried
-  /// and lost, so it must not block a future unattended attempt the way a
-  /// real failure does — the identical distinction
-  /// `AutoDownloadObserver.mediaIdentifiersAlreadyAnswered` already draws.
+  /// Cancellation does not participate in the failed-job retry filter.
   @Test("a finding with only a cancelled job is still offered")
   func offersAFindingWithOnlyACancelledJob() {
     let jobs = [job([step(.cancelled, videoID: "1")])]

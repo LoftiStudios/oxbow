@@ -3,68 +3,32 @@ import Foundation
 import Testing
 @testable import OxbowKit
 
-/// Drives the resume mechanism against the real bundled binaries and a real
-/// VOD: hard-kill a composite mid-encode, simulate the launch sweep, retry,
-/// and check the delivered file frame-for-frame and timestamp-for-timestamp
-/// against a straight-through encode of the same range.
-///
-/// **Not part of the default `swift test` run.** It needs network (two short
-/// real downloads), real `h264_videotoolbox` encodes, and a few hundred MB of
-/// scratch disk — several minutes altogether. Gated behind an environment
-/// variable so the ordinary suite never pays for it:
-///
-/// ```
-/// OXBOW_RESUME_E2E=1 swift test --filter ResumeEndToEndTests
-/// ```
-///
-/// Requires `build/helper/TwitchDownloaderCLI` and `build/ffmpeg/ffmpeg` to
-/// already exist — `./scripts/build-ffmpeg.sh` and the `dotnet publish`
-/// command in `CLAUDE.md`.
-///
-/// This drives `QueueEngine.makeContext` and `ArgumentBuilder` directly —
-/// the same calls `QueueEngine.launch` makes — rather than the actor's own
-/// scheduler, so the interruption can be a genuine, precisely-timed
-/// `SIGKILL` (a crash, not `HelperProcess.cancel()`'s graceful `SIGTERM`)
-/// and so the delivered file can be inspected before anything sweeps it.
+/// Real-binary resume test: SIGKILL a composite, sweep scratch inputs, retry, then compare
+/// delivered frames and timestamps with a continuous encode. Run with `OXBOW_RESUME_E2E=1 swift
+/// test --filter ResumeEndToEndTests`; requires built helper/FFmpeg, network, several minutes,
+/// and scratch disk. Drives context/arguments directly to control hard-kill timing and inspect
+/// output before cleanup.
 @Suite(
   "Resume end-to-end",
   .enabled(if: ProcessInfo.processInfo.environment["OXBOW_RESUME_E2E"] == "1"),
   .serialized)
 struct ResumeEndToEndTests {
 
-  /// **Not** the VOD `docs/design/resume.md` and `docs/design/
-  /// fragmented-output.md` were originally spiked against (`1480816483`).
-  /// That VOD's channel has since gone — its `info` JSON now behaves the
-  /// same as every other VOD's (see `rawInfoOutput`'s comment), but its chat
-  /// additionally has no working streamer-badge data any more, and
-  /// `chatrender` throws (`ArgumentNullException` in
-  /// `TwitchHelper.GetChatBadgesData`, `vendor/TwitchDownloader` — read-only)
-  /// rather than degrading. A public VOD from a large, currently-live
-  /// channel doesn't have that problem. If this one is ever gone too, any
-  /// similarly long, currently-live VOD works — nothing below depends on
-  /// which one.
+  /// Use a VOD with working chat/badge metadata. If this expires, replace it with another
+  /// sufficiently long accessible VOD; assertions do not depend on its identity.
   private static let videoID = "2853736315"
 
-  /// 120s of real content: long enough for an ~11s composite (measured
-  /// during this test's own design) to interrupt meaningfully partway
-  /// through, short enough to keep two real downloads and three real
-  /// composite encodes to a few minutes and well under a GB.
+  /// Two minutes of content leaves enough encode time for interruption while bounding downloads
+  /// and scratch space.
   private static let trimStart = Duration.seconds(200)
   private static let trimEnd = Duration.seconds(320)
   private static let contentDuration = trimEnd - trimStart
 
-  /// The chat download's own trim window — deliberately much narrower than
-  /// the video's. It has nothing to do with resume or the video: chat and
-  /// video are composited by `hstack`, whose `eof_action=repeat` default
-  /// (compositing.md) holds the last chat frame for the rest of the video
-  /// regardless of how short the chat render is. Kept narrow specifically to
-  /// minimise exposure to the live Twitch flake `runWithRetry` documents —
-  /// fewer GQL pagination round trips, fewer chances to hit it.
+  /// Use a short chat window to limit flaky GQL pagination. `hstack` repeats its final frame
+  /// for the remaining video, also exercising resume beyond chat's end.
   private static let chatTrimEnd = trimStart + .seconds(5)
 
-  /// Kill the first attempt at 60% of its content, by encoded position, not
-  /// wall clock — robust to machine speed, and it leaves an unambiguous,
-  /// non-trivial tail for the second attempt to prove it is not redoing.
+  /// Kill at 60% encoded position rather than wall time to tolerate different machine speeds.
   private static let killFraction = 0.6
 
   private struct TestError: Error, CustomStringConvertible {
@@ -91,10 +55,7 @@ struct ResumeEndToEndTests {
 
   // MARK: - Process plumbing
 
-  /// Drains a pipe to EOF on its own thread, off the cooperative pool —
-  /// `Spawn`'s own doc comment: an undrained pipe can deadlock the child.
-  /// Mirrors `HelperProcess.run`'s technique exactly, reusing its
-  /// `BlockingThread` rather than re-inventing it.
+  /// Drain on a dedicated thread so pipe reads cannot block the cooperative pool.
   private func drain(_ handle: FileHandle) async -> Data {
     await BlockingThread.run("resume-e2e-drain") {
       var data = Data()
@@ -107,19 +68,9 @@ struct ResumeEndToEndTests {
     }
   }
 
-  /// Spawns `executable arguments` for real and runs it to completion,
-  /// draining both pipes concurrently. When `killAfterMicros` is set, watches
-  /// stdout for FFmpeg's `-progress pipe:1` `out_time_us` crossing that
-  /// position and fires `SIGKILL` on the whole process group the instant it
-  /// does — deliberately not `HelperProcess.cancel()`'s graceful `SIGTERM`,
-  /// so the survivor is genuinely torn mid-fragment rather than closed
-  /// cleanly (resume.md §2: "not a clean SIGTERM, which lets FFmpeg finalise
-  /// and is the easy case").
-  ///
-  /// Returns the exit status, the captured stderr (for a diagnostic on an
-  /// unexpected failure), and the `out_time_us` the kill actually fired at —
-  /// `nil` if `killAfterMicros` was never reached, which callers must treat
-  /// as a broken test setup, not a passing one.
+  /// Runs a real process with concurrent drains. Optionally SIGKILL its group when reported
+  /// `out_time_us` crosses the target, leaving torn output rather than graceful finalization.
+  /// Returns the actual kill position; nil means the interruption setup failed.
   @discardableResult
   private func spawnAndRun(
     executable: URL,
@@ -160,9 +111,7 @@ struct ResumeEndToEndTests {
     return (status, String(decoding: stderrBytes, as: UTF8.self), firedAt)
   }
 
-  /// `kind`'s real argv, run via `spawnAndRun`. `executable` is the helper
-  /// for the four CLI verbs and `ffmpeg` for `.composite`/`.assemble` —
-  /// callers pass whichever this step needs, matching `QueueEngine.launch`.
+  /// Build real step arguments and run the matching helper or FFmpeg executable.
   @discardableResult
   private func run(
     _ kind: StepKind, context: StepContext, executable: URL, killAfterMicros: Int? = nil
@@ -174,21 +123,9 @@ struct ResumeEndToEndTests {
       killAfterMicros: killAfterMicros)
   }
 
-  /// Twitch's GQL backend is intermittently inconsistent under the exact
-  /// requests this pinned helper sends — verified independently of the CLI
-  /// entirely, with plain `curl` against the identical query
-  /// `TwitchHelper.GetVideoInfo` uses: of five back-to-back requests for one
-  /// video's `owner`, two came back `null`; a `VideoCommentsByOffsetOrCursor`
-  /// pagination request occasionally answers with `data.video: null`
-  /// outright. Upstream (`vendor/TwitchDownloader` — read-only, see
-  /// CLAUDE.md) does not retry either case — `VideoDownloader.
-  /// DownloadAsyncImpl` throws `"Invalid VOD, deleted/expired VOD possibly?"`
-  /// and `ChatDownloader.DownloadSection` throws a bare
-  /// `NullReferenceException` — so retrying the whole subprocess here, in
-  /// the test's own harness, is the only accommodation available that does
-  /// not mean patching the vendored submodule. Nothing about this is
-  /// specific to resume, the sidecar, or anything this branch changes; it
-  /// reproduces with `curl` outside this repo entirely.
+  /// Retry whole helper runs for observed intermittent Twitch GQL null video/owner responses.
+  /// The pinned upstream helper does not retry these failures; keep this accommodation in the
+  /// test harness.
   private func runWithRetry(
     _ kind: StepKind, context: StepContext, executable: URL, label: String, attempts: Int = 12
   ) async throws {
@@ -204,11 +141,7 @@ struct ResumeEndToEndTests {
       }
       lastStatus = result.status
       lastStderr = result.stderr
-      // Backs off rather than hammering the same flaky endpoint at a fixed
-      // 1s cadence — a run of consecutive failures (observed: 8 in a row on
-      // one `videodownload` retry) reads like a short-lived, load-related
-      // dip rather than an even per-request coin flip, so giving it room to
-      // clear is worth more than a tight retry loop.
+      // Back off between consecutive transient failures.
       let backoff = min(attempt * 2, 15)
       print("\(label) attempt \(attempt)/\(attempts) failed (\(result.status)) — retrying in "
         + "\(backoff)s; see runWithRetry's doc comment.")
@@ -225,9 +158,8 @@ struct ResumeEndToEndTests {
     Double(duration.components.seconds) + Double(duration.components.attoseconds) / 1e18
   }
 
-  /// `ffmpeg -hide_banner -i <file> -an -f null -`, parsed for the final
-  /// `frame=` — the brief's own frame-count method (resume.md §2, task-11
-  /// brief step 4). Never `trim=start_frame` — resume.md §2.1.
+  /// Count frames from a full decode's final stats, never from frame-index trimming
+  /// (`resume.md` §2.1).
   private func frameCount(of file: URL, ffmpeg: URL) async throws -> Int {
     let result = try await spawnAndRun(
       executable: ffmpeg,
@@ -239,10 +171,7 @@ struct ResumeEndToEndTests {
     return try lastInt(matching: #"frame=\s*(\d+)"#, in: result.stderr)
   }
 
-  /// The final `time=` FFmpeg's default stats line reports for a decode —
-  /// used both as a completeness check (does it reach the end) and, compared
-  /// between an audio-only and a video-only decode of the same file, as a
-  /// sync check.
+  /// Final decode time checks completeness and audio/video duration agreement.
   private func finalTime(of file: URL, extraArgs: [String], ffmpeg: URL) async throws -> Double {
     let result = try await spawnAndRun(
       executable: ffmpeg,
@@ -267,25 +196,9 @@ struct ResumeEndToEndTests {
 
   // MARK: - Metadata (deliberately not `VideoInfoFetcher`, see `rawInfoOutput`)
 
-  /// Runs the helper's `info` verb and returns raw stdout — deliberately not
-  /// `VideoInfoFetcher.fetch`, which also decodes `owner` from the response.
-  /// As of this writing, the CLI's `info --format Raw` returns `owner: null`
-  /// for *every* VOD checked (this one, the one `videoID` used to name, and
-  /// others) — the query it sends for a single video's own metadata is
-  /// evidently not the one Twitch's GQL backend still answers with owner
-  /// data, independent of which video is asked about. That is a separate,
-  /// pre-existing gap in `VideoInfo.parse`'s non-optional `owner` field —
-  /// nothing to do with what this branch changes — so this test reads the
-  /// one thing it actually needs, the top quality's playlist entry, straight
-  /// out of the raw text instead of going through the parser that trips on
-  /// it. Uses `Process` directly rather than `spawnAndRun`/`ProcessSpawner`:
-  /// those exist for the SIGKILL-timing machinery the real steps below need,
-  /// which `info` does not, and `spawnAndRun` does not hand back its raw
-  /// stdout anyway (only the `out_time_us=` progress it watches for).
-  /// Retried for the same reason `runWithRetry` retries every other verb
-  /// below: `info` hits the same intermittently-inconsistent Twitch GQL
-  /// backend, and a bad response here can crash the helper outright rather
-  /// than merely return odd data.
+  /// Read raw info stdout directly for playlist qualities. Observed null owner responses fail
+  /// full `VideoInfo` decoding even when the playlist is usable. Retry transient helper
+  /// failures as for other live requests.
   private func rawInfoOutput(id: String, helper: URL, attempts: Int = 8) async throws -> String {
     var lastStatus: Int32 = -1
     for attempt in 1 ... attempts {
@@ -312,10 +225,7 @@ struct ResumeEndToEndTests {
     throw TestError("info fetch failed after \(attempts) attempts (exit \(lastStatus))")
   }
 
-  /// The first quality in the master playlist — the same selection
-  /// `VideoInfo.qualities.first` would make — read directly from the first
-  /// `#EXT-X-STREAM-INF:` line's attributes rather than through the full
-  /// parser `rawInfoOutput`'s doc comment explains avoiding.
+  /// Read the first playlist quality without requiring the full metadata envelope to decode.
   private func topStreamQuality(in output: String) throws -> StreamQuality {
     let lines = output.split(separator: "\n", omittingEmptySubsequences: false)
     guard let streamInfLine = lines.first(where: { $0.hasPrefix("#EXT-X-STREAM-INF:") })
@@ -355,11 +265,8 @@ struct ResumeEndToEndTests {
     return h * 3600 + m * 60 + s
   }
 
-  /// Dumps one frame from `file`, at `seconds`, as raw `yuv420p` — the only
-  /// way to compare frames against the bundled FFmpeg, which has neither
-  /// `psnr`/`ssim` nor a `png` encoder (resume.md §2.1). `crop` selects just
-  /// the video-width portion of a composite frame, which is wider than the
-  /// plain source it is being compared against.
+  /// Extract raw yuv420p because bundled FFmpeg has no PSNR/SSIM filters or PNG encoder. Crop
+  /// composites to video width for source comparison.
   private func extractRawFrame(
     from file: URL, atSeconds position: Double, crop: (width: Int, height: Int)?,
     ffmpeg: URL, to output: URL)
@@ -380,9 +287,8 @@ struct ResumeEndToEndTests {
     }
   }
 
-  /// Mean absolute difference over the luma plane only — the brief's own
-  /// method (task-11 brief step 4; resume.md §2 records the reference
-  /// numbers: low single digits at correct alignment, ~10+ one frame off).
+  /// Luma-only mean absolute difference; reference alignment measurements are in `resume.md`
+  /// §2.
   private func lumaMAD(_ a: URL, _ b: URL, width: Int, height: Int) throws -> Double {
     let dataA = try Data(contentsOf: a)
     let dataB = try Data(contentsOf: b)
@@ -427,11 +333,8 @@ struct ResumeEndToEndTests {
     let assembleStepID = StepID(rawValue: UUID())
     let created = Date()
 
-    // Real metadata, real network — exactly what intake does before a byte
-    // is downloaded, short of going through `VideoInfoFetcher` itself; see
-    // `rawInfoOutput`'s doc comment for why. The top playlist entry is what
-    // an empty (default) quality resolves to for a composite job
-    // (compositing.md §4).
+    // Use live playlist geometry; see `rawInfoOutput` for why this bypasses full metadata
+    // parsing.
     let infoOutput = try await rawInfoOutput(id: Self.videoID, helper: helper)
     let quality = try topStreamQuality(in: infoOutput)
     let geometry = try #require(
@@ -532,15 +435,8 @@ struct ResumeEndToEndTests {
 
     // MARK: The sidecar left behind by the hard kill is genuinely corrupt
 
-    // `audio.m4a` is written by the *same* FFmpeg invocation as piece 0, as a
-    // second, ordinary (non-fragmented) output — see `ArgumentBuilder`'s
-    // `.composite` case. Only the piece carries
-    // `-movflags +frag_keyframe+empty_moov+…`; the sidecar does not, so
-    // killing the process that is still writing it — exactly what just
-    // happened above, and exactly the scenario resume exists for — leaves it
-    // with no `moov` at all. This is the defect docs/design/resume.md §4
-    // records; what follows is whether the next composite attempt notices
-    // and repairs it.
+    // The killed invocation also wrote non-fragmented audio. Verify its incomplete sidecar is
+    // repaired on retry.
     let audioSidecar = workspace.resumeDirectory(jobID).appending(path: "audio.m4a")
     let corruptSize = try FileManager.default.attributesOfItem(atPath: audioSidecar.path)[.size] as? Int ?? -1
     let corruptBanner = try await streamBanner(of: audioSidecar, ffmpeg: ffmpeg)
@@ -599,10 +495,8 @@ struct ResumeEndToEndTests {
 
     // MARK: THE FIX — a resumed composite must notice the corrupt sidecar and rewrite it
 
-    // `resumeFrom` is non-nil here (this is a resume), so the old gate
-    // (`resumeFrom == nil`) would have skipped the sidecar entirely — the
-    // exact defect this branch fixes. The new gate is usability, computed by
-    // `StepContextBuilder.make` from the real file on disk above.
+    // A non-nil resume point must still allow sidecar rewriting when the existing file is
+    // unusable.
     #expect(
       !composite2Context.hasUsableSidecar,
       "the corrupt sidecar left by attempt 1 must not be reported usable to a resumed attempt")
@@ -623,15 +517,8 @@ struct ResumeEndToEndTests {
               "the third input must be un-seeked, or it would capture only the tail too")
     }
 
-    // The chat render is shorter than the video here — 5s against 120s —
-    // which is not an artefact of this test's narrow chat window but the
-    // ordinary case it stands in for: renders end at the last message, so a
-    // stream that goes quiet before it ends produces one. Seeking that render
-    // to the video's resume point lands past its end, yields zero frames, and
-    // `hstack` has no last frame to repeat — the composite then writes an
-    // empty piece and exits 0. `makeContext` clamps the chat's seek for
-    // exactly this case; without the clamp, piece 1 below comes out with one
-    // frame in it and the delivery is truncated at the seam. resume.md §12.
+    // Resume beyond the short chat render must clamp inside its end; otherwise the new piece
+    // may be empty despite exit 0.
     let renderLength = try #require(try FragmentedMP4.duration(of: render2))
     let chatSeek = try #require(composite2Context.chatResumeFrom)
     print("Chat render runs \(seconds(renderLength))s against \(totalContentSeconds)s of video; "
@@ -721,21 +608,8 @@ struct ResumeEndToEndTests {
     #expect(piece0Frames + piece1Frames == deliveredFrames,
             "the two pieces' frame counts must sum to the assembled file's")
 
-    // Not exact equality. Measured on a real run: delivered 3603 vs reference
-    // 3601 — 2 frames (0.055%), consistently on the resumed side. Chased
-    // down rather than waved away: decoding `video2` alone (no compositing)
-    // splits perfectly at the seek point — 2262 (0–76.4s) + 1310
-    // (76.4s–end) = 3572, the same as one continuous decode — so this is not
-    // a seek-accuracy bug (resume.md §2.1's own concern). The composite's
-    // CFR gap-fill (resume.md §2: "the source holds 5998 frames across 200s
-    // where the composite emits 6001") is computed from each piece's own
-    // `setpts=PTS-STARTPTS` zero point, independently — so splitting the
-    // timeline can shift where a fill decision lands relative to one
-    // continuous pass, the same way splitting a sum changes floating-point
-    // rounding. The seam MAD below is what actually rules out lost or
-    // duplicated *content*; this tolerance only accepts that a resumed
-    // delivery's total length is not bit-for-bit identical to a from-scratch
-    // encode, which resume.md does not currently say.
+    // Allow small frame-count differences from per-piece CFR padding (measured: 3603 versus
+    // 3601). The seam's luma comparison below checks content alignment independently.
     #expect(abs(deliveredFrames - referenceFrames) <= 3,
             Comment(rawValue: "delivered (\(deliveredFrames)) and reference (\(referenceFrames)) "
               + "frame counts diverged by more than the measured CFR-boundary tolerance"))
@@ -765,16 +639,8 @@ struct ResumeEndToEndTests {
             Comment(rawValue: "a one-frame offset must score measurably worse, or this "
               + "comparison has no discriminating power — resume.md §2.1"))
 
-    // MARK: Audio: completeness and sync, as an independent control on assemble's own mechanism
-    //
-    // The real sidecar is valid at this point (the fix above rewrote it), and
-    // is checked directly against the real `.assemble` step further down.
-    // This block is an independent control: it exercises the same concat +
-    // audio-mapping mechanism `.assemble` uses, but against a *freshly
-    // extracted* audio copy that never depended on the fix at all — so a
-    // failure below can be attributed to assemble's own approach rather than
-    // to whether the sidecar rewrite worked. Extracted from `video2` before
-    // assemble's `makeContext` call deletes it.
+    // MARK: - Audio completeness and sync using freshly extracted audio as an independent
+    // control on assembly
     let freshAudio = scratch.appending(path: "fresh_audio.m4a")
     let extractAudio = try await spawnAndRun(
       executable: ffmpeg,
@@ -823,11 +689,8 @@ struct ResumeEndToEndTests {
       videoArtifact: video2, chatArtifact: chat2, renderArtifact: render2, compositeArtifact: piece1)
     let assembleContext = try engine.makeContext(job: snapshot, step: snapshot.steps[4])
 
-    // Building the context destroys nothing; `QueueEngine.launch` drops the
-    // spent inputs separately, and this suite drives steps by hand rather
-    // than through `launch`, so it makes that call itself — resume.md §5
-    // step 5. The point of the ordering is that both happen before the
-    // ffmpeg invocation below, whether or not that invocation can succeed.
+    // This harness bypasses launch, so explicitly remove spent inputs after context
+    // construction and before FFmpeg starts.
     #expect(FileManager.default.fileExists(atPath: video2.path),
             "building the context must not delete anything")
     TeardownJournal(workspace: workspace).removeSpentInputs(of: snapshot)

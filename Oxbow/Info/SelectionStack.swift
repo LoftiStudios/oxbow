@@ -86,14 +86,8 @@ struct SelectionStack: View {
   }
 }
 
-/// One card in the fan.
-///
-/// Follows `ArchiveThumbnail`'s fetch exactly — including both guards, which
-/// are load-bearing rather than defensive: `.task(id:)` re-runs when the
-/// selection changes, and `ImageStore.data(for:)` does not check cancellation,
-/// so a stale fetch can land after the new task has already cleared the image
-/// and put another video's picture here. A wrong thumbnail is a wrong claim
-/// about what a download is.
+/// Guard stale image fetches as ArchiveThumbnail does: ImageStore.data(for:) does not check
+/// cancellation, so an old result may arrive after selection changes.
 private struct StackTile: View {
   let url: URL?
   let store: ImageStore?
@@ -114,28 +108,14 @@ private struct StackTile: View {
           }
       }
     }
-    // **The image swap gets its own, much shorter animation.** Without this
-    // it inherits whatever the fan is running — a 0.38s spring — so a
-    // thumbnail arriving mid-deal cross-fades on the spring's timing and the
-    // two motions compete for the same moment. A nearer `.animation` wins for
-    // this subtree, so the card can be flying in at spring speed while its
-    // picture simply appears.
-    //
-    // Keyed on `image != nil` because `NSImage` is not `Equatable`; the only
-    // transition worth animating here is empty-to-loaded anyway.
+    // Use a short image fade instead of inheriting the fan's spring. Key on image presence
+    // because NSImage is not Equatable.
     .animation(.easeOut(duration: 0.12), value: image != nil)
-    // Fills the width it is given and keeps 16:9, so the fan scales with the
-    // inspector rather than pinning itself to one column width.
     .aspectRatio(16.0 / 9.0, contentMode: .fit)
     .frame(maxWidth: .infinity)
     .background(.background)
     .clipShape(RoundedRectangle(cornerRadius: 6))
-    // **Stroke and shadow both, and both are doing work.** Twitch frames are
-    // photographic and frequently near-black at the edges, so without the
-    // stroke the overlap reads as one smeared image; without the shadow the
-    // cards read as flat cut-outs rather than a pile with depth. The offset
-    // leans the same way the fan does, so each card's shadow falls on the one
-    // behind it.
+    // A border separates dark image edges; the shadow shows depth between overlapping cards.
     .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(.separator))
     .shadow(color: .black.opacity(castsShadow ? 0.5 : 0), radius: 6, x: -2, y: 4)
     .task(id: url) {

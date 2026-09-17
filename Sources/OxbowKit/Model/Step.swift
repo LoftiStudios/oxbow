@@ -5,13 +5,8 @@ public struct Step: Identifiable, Codable, Sendable, Equatable {
   public let kind: StepKind
   public var status: StepStatus
   public var progress: StepProgress
-  /// The steps whose artifacts this one consumes, in the order the consuming
-  /// step expects them. **Order is the contract**: a composite's parents are
-  /// `[video, render]`, and `StepContext.inputArtifacts` preserves that order.
-  ///
-  /// Empty means no parent. Steps form a DAG rather than a forest — a
-  /// composite has two parents — but `JobTemplate` never builds a cycle, so
-  /// `Scheduler`'s fixed-point walks still terminate.
+  /// Artifact dependencies in consumer order; composite requires `[video, render]`. Empty means
+  /// no parent. `JobTemplate` produces an acyclic graph for the scheduler's fixed-point walks.
   public let dependsOn: [StepID]
   public var artifact: URL?
 
@@ -33,17 +28,8 @@ public struct Step: Identifiable, Codable, Sendable, Equatable {
 }
 
 extension Step {
-  /// This step's own delivered file, if it has one.
-  ///
-  /// `artifact` alone is not enough to answer that: it is set the moment a
-  /// step succeeds, whatever the step's destination — including a step
-  /// whose kind carries no destination at all, one that only feeds a later
-  /// step (a composite's video, chat, and render inputs, per
-  /// `JobTemplate.makeJob`). `QueueEngine.move` never moves such a step's
-  /// output anywhere, so its `artifact` still points inside the job
-  /// workspace even once it is `.done` — that was never delivered to the
-  /// user, and must not read as though it was. Gating on
-  /// `kind.deliveryDestination` is what tells the two apart.
+  /// The completed file delivered to the user. A done step may still be an intermediate, so
+  /// `artifact` alone is insufficient; require a delivery destination.
   public var deliveredArtifact: URL? {
     kind.deliveryDestination != nil ? artifact : nil
   }
@@ -54,9 +40,7 @@ extension Step {
     case id, kind, status, progress, dependsOn, artifact
   }
 
-  /// `dependsOn` was a single optional `StepID` until 2026-08-25. A queue
-  /// persisted before then decodes here rather than failing and stranding the
-  /// user's in-flight jobs, so no migration step is needed.
+  /// Accept legacy queues where `dependsOn` was one optional `StepID`.
   public init(from decoder: any Decoder) throws {
     let container = try decoder.container(keyedBy: CodingKeys.self)
     self.id = try container.decode(StepID.self, forKey: .id)

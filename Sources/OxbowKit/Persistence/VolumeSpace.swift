@@ -1,16 +1,7 @@
 import Foundation
 
-/// Reads how much room a volume has, and decides whether a job fits on it.
-///
-/// A struct of closures rather than direct `URLResourceValues` calls at each
-/// call site, so both consumers are testable without a real disk. Filling a
-/// volume to test a warning is not a test anybody runs twice, which in practice
-/// means it is not a test that gets run.
-///
-/// The arithmetic lives here and the estimate lives in `SpaceEstimate`, because
-/// the estimate is pure and this is not: keeping the I/O on one side of that
-/// line is what lets the intake recompute an estimate on every keystroke and
-/// touch the disk only when it has a reason to.
+/// Injected volume probes and fit checks. Keep disk I/O separate from `SpaceEstimate`'s pure
+/// arithmetic so intake can update estimates without probing on every keystroke.
 public struct VolumeSpace: Sendable {
 
   /// A volume that does not have room, and by how much.
@@ -42,29 +33,9 @@ public struct VolumeSpace: Sendable {
     self.volumeName = volumeName
   }
 
-  /// The volume this job does not fit on, or `nil` if it fits.
-  ///
-  /// - Parameters:
-  ///   - needingWorkspace: `SpaceEstimate.total`. Everything coexists in the
-  ///     workspace while the composite is being written.
-  ///   - delivered: `SpaceEstimate.delivered`. The one file that lands at the
-  ///     destination.
-  ///
-  /// **One volume is checked against `needingWorkspace` alone, not against
-  /// `needingWorkspace + delivered`.** `SpaceEstimate.total` already contains
-  /// the composite that gets delivered, and a same-volume `moveItem` is a
-  /// rename rather than a copy, so delivery costs nothing on top. Adding it
-  /// again would make every same-volume warning fire about a composite's worth
-  /// of bytes too early.
-  ///
-  /// Across volumes the two needs are independent and each side is checked
-  /// against its own: summing them would produce a number describing neither.
-  ///
-  /// **A failed read is not a shortfall.** Any of these values being
-  /// unavailable returns `nil` rather than a guess. A warning invented from a
-  /// failed probe is one the user cannot act on, and it would fire on exactly
-  /// the unusual arrangements — network shares, odd mounts — where it is least
-  /// likely to be right.
+  /// Returns a shortfall, or nil when none is found or a probe fails. `needingWorkspace` is
+  /// peak workspace use; `delivered` is final output size. On one volume, check only workspace
+  /// need because delivery is a rename. Across volumes, check each need independently.
   public func shortfall(
     needingWorkspace: Int64,
     delivered: Int64,
@@ -79,9 +50,7 @@ public struct VolumeSpace: Sendable {
       return check(needingWorkspace, at: workspace)
     }
 
-    // Workspace first only for determinism when both are short. Which one is
-    // named barely matters — the user has to clear one of them either way —
-    // but naming a different volume on each evaluation would read as a bug.
+    // Check workspace first for deterministic reporting when both volumes are short.
     return check(needingWorkspace, at: workspace) ?? check(delivered, at: destination)
   }
 
@@ -93,35 +62,9 @@ public struct VolumeSpace: Sendable {
       volumeName: volumeName(path) ?? path.lastPathComponent)
   }
 
-  /// Picks between the two capacity keys.
-  ///
-  /// **`volumeAvailableCapacityForImportantUsage` is preferred but cannot be
-  /// trusted alone, because on a network volume it answers zero.** Measured
-  /// on an SMB share with 8 TB free: `importantUsage` returned 0 bytes while
-  /// `volumeAvailableCapacity` returned 8035.90 GB. Not nil — zero — so
-  /// every `??` fallback in the codebase sailed straight past it and a NAS
-  /// destination read as a completely full disk. `AutoDownloadPolicy` then
-  /// demoted that channel on every sweep, permanently, and said "Only Zero
-  /// KB free" while doing it.
-  ///
-  /// Taking the larger of the two gets both cases right without having to
-  /// ask what kind of volume this is. On a local disk `importantUsage` is
-  /// the larger — it counts space the system will purge to satisfy an
-  /// important write, which is what actually happens when a download needs
-  /// room, and on a Mac carrying a large snapshot store the two differ by
-  /// tens of gigabytes. On a network volume the plain figure is the larger
-  /// by everything the share has.
-  ///
-  /// Returns nil only when neither key answers, which stays distinct from
-  /// "answered, and the number is zero" — a distinction this function exists
-  /// because something else lost.
-  ///
-  /// **`importantUsage` is optimistic about a local disk, and this keeps
-  /// that.** It counts purgeable space, so it reads higher than Finder does
-  /// — 125.40 GB against 57.33 GB on the machine measured above. That was
-  /// already the documented choice for the intake's warning and is not being
-  /// changed here, but it does mean a reserve set against this number is
-  /// protecting less than its label suggests.
+  /// Use the larger capacity reading: important-usage capacity includes purgeable space locally
+  /// but can report zero on SMB despite free space. Nil means neither probe answered. Local
+  /// estimates remain optimistic because purgeable bytes are included.
   static func betterCapacity(important: Int64?, plain: Int64?) -> Int64? {
     switch (important, plain) {
     case (nil, nil): return nil
@@ -150,14 +93,8 @@ public struct VolumeSpace: Sendable {
       return (try? existing.resourceValues(forKeys: [.volumeNameKey]))?.volumeName
     })
 
-  /// The nearest ancestor of `url` that exists, or `nil` if even the root does
-  /// not resolve.
-  ///
-  /// The workspace directory does not exist on a first launch, and the intake
-  /// asks about it anyway. `resourceValues` on a missing path throws rather
-  /// than answering about the volume the path *would* live on, so every live
-  /// read walks up until it finds something real — the answer is a property of
-  /// the volume, and every ancestor shares it.
+  /// Probe the nearest existing ancestor when the target directory does not yet exist, such as
+  /// on first launch.
   private static func nearestExisting(_ url: URL) -> URL? {
     var candidate = url.standardizedFileURL
     while !FileManager.default.fileExists(atPath: candidate.path) {

@@ -1,42 +1,19 @@
 import CoreGraphics
 import Foundation
 
-/// Dock tile geometry, as ratios of the tile's width.
-///
-/// The badge number is **measured from the platform's own `badgeLabel`**, not
-/// chosen — see `docs/design/status.md` §5.2 for the method and the numbers.
-/// Geometry is what makes a badge read as native; colour is where our meaning
-/// lives, and colour is the only axis on which we deliberately diverge.
-///
-/// Ratios rather than points because a tile's *displayed* size follows the
-/// user's Dock size preference. The drawing space does not — see
-/// `resolved(forTileWidth:)`.
+/// Tile-relative geometry; badge measurements match the system badge. See docs/design/status.md
+/// §5.2.
 nonisolated struct DockTileMetrics: Equatable {
 
   // MARK: Measured from the platform
 
-  /// The system badge is a circle that exactly fills the tile's top-right
-  /// corner: measured at 46px across in a 118px tile, with its centre 24.4pt
-  /// from the top edge and 24.4pt from the right — one radius from each, to
-  /// within half a point. So the badge is tangent to both edges, and this one
-  /// number describes it completely.
-  ///
-  /// 0.3906 is 50/128 — the measurement lands on a round number of points in
-  /// the tile's own 128pt space, which is a good sign it is the real value
-  /// rather than an artefact of the capture.
+  /// Measured system badge diameter: 50/128 of the tile, tangent to its top and right edges.
   let badgeDiameter: Double
 
   // MARK: Chosen by us
 
-  /// The bar's numbers are ours, not the platform's — chosen by looking,
-  /// then re-tuned once (§11).
-  ///
-  /// **They are relative to the tile, but they have to land inside the
-  /// *icon*, which is a smaller thing.** `applicationIconImage` carries its
-  /// own padding: the artwork occupies roughly the middle three-quarters of
-  /// the tile, spanning about 0.13...0.87. The first values put the bar at a
-  /// 0.13 bottom inset, which is exactly the icon's lower edge, so it drew
-  /// half on the artwork and half on transparent tile below it.
+  /// Place the bar inside the icon artwork, which occupies roughly 0.13...0.87 of the padded
+  /// tile.
   let barWidth: Double
   let barHeight: Double
   let barBottomInset: Double
@@ -54,19 +31,8 @@ nonisolated struct DockTileMetrics: Equatable {
     let barCornerRadius: CGFloat
   }
 
-  /// Points, for a square tile of the given width.
-  ///
-  /// **The icon is drawn into the full bounds, with no inset.** That is not an
-  /// oversight: `NSApp.applicationIconImage` carries its own padding, so
-  /// drawing it edge-to-edge reproduces the system's placement exactly. It was
-  /// verified rather than assumed — with the content view outlining its own
-  /// bounds, our icon body and the system's landed on identical columns
-  /// (`438...507` in a tile spanning `414...531`). An earlier note in the
-  /// design doc claimed we drew slightly too large; that was an artefact of
-  /// comparing crops from two captures, and is retracted in §2.3.
-  ///
-  /// The badge therefore overlaps the icon's corner, exactly as the
-  /// platform's own badge does on every app in the Dock.
+  /// Draw applicationIconImage edge-to-edge: it already includes system padding. The badge
+  /// overlaps its corner like the platform badge.
   func resolved(forTileWidth width: CGFloat) -> Resolved {
     let diameter = width * badgeDiameter
     // The top-right corner square. `NSView` is not flipped, so y grows upward.

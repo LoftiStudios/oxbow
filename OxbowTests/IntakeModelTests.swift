@@ -9,9 +9,6 @@ struct IntakeModelTests {
 
   // MARK: - Seeding
 
-  /// The rule survives the arrival of a preference store: a model whose
-  /// folder has been cleared still refuses to compose a job. Only the way a
-  /// model *gets* a folder changed.
   @Test func composingRefusesOnceTheFolderIsCleared() async {
     let model = await loadedModel()
     model.folder = nil
@@ -34,30 +31,15 @@ struct IntakeModelTests {
     #expect(model.isOptionsExpanded == false)
   }
 
-  /// Spec §2.2. Including the first run — an unticked box makes the same
-  /// promise every time, so nobody has to remember what state it was left in.
+  /// Unticked saving must preserve preferences, including on first run.
   @Test func theCheckboxIsUntickedOnAFreshStoreAndOnAConfiguredOne() {
     #expect(makeModel(preferences: Self.store()).wantsToSaveDefaults == false)
     #expect(makeModel(preferences: Self.store { $0.qualityCap = .p480 })
       .wantsToSaveDefaults == false)
   }
 
-  /// Every stored value here differs from both its factory default and the
-  /// value the model is mutated to below, so a `reset()` that hardcoded
-  /// factory constants — or one that simply left the mutations in place and
-  /// touched nothing — could not pass this by accident.
-  ///
-  /// **The destination is deliberately one that exists and is not the
-  /// factory `~/Downloads`.** An earlier version of this test used a missing
-  /// destination, which resolves to `~/Downloads` — indistinguishable from
-  /// what a `reset()` that hardcoded the factory constant, rather than
-  /// reading `preferences.destination`, would also produce. `/Volumes/Archive`
-  /// here is a value only a real read of the store can produce.
-  /// `destinationFellBack` and its own store-derived recomputation on
-  /// `reset()` are covered separately below, by
-  /// `resetRereadsDestinationFellBackFromTheStoreRatherThanKeepingInitsAnswer`
-  /// — a destination that is present throughout, as this one is, cannot
-  /// distinguish "recomputed on reset" from "never touched since init".
+  /// Use distinct stored, factory, and edited values. The stored destination exists and differs
+  /// from Downloads, so only a fresh preference read can produce the expected result.
   @Test func resetReseedsFromTheStoreAndUnticksTheBox() {
     var store = Preferences(
       store: InMemoryPreferenceStore(), homeDirectory: URL(filePath: "/Users/t"),
@@ -74,12 +56,8 @@ struct IntakeModelTests {
     model.qualityCap = .p1080
     model.folder = URL(filePath: "/Users/someone/Movies")
     model.wantsToSaveDefaults = true
-    // Not mutated here the way the fields above are: `isOptionsExpanded`
-    // writes straight through to `store` on every assignment (§2.5), so
-    // setting it here would overwrite the very value this test wants
-    // `reset()` to reseed from, rather than leaving something for `reset()`
-    // to overwrite. See `resetRereadsIsOptionsExpandedFromTheStore` below for
-    // the version of this that mutates the store instead of the model.
+    // Do not edit expansion here: it writes through to the store. Its separate reset test
+    // changes the store through another Preferences value.
 
     model.reset()
 
@@ -94,22 +72,8 @@ struct IntakeModelTests {
     #expect(model.wantsToSaveDefaults == false)
   }
 
-  /// Pins the one line in `reset()` nothing else in this file exercises
-  /// meaningfully: `destinationFellBack = preferences.storedDestinationIsMissing`.
-  /// Every other test either never reaches `reset()` with a destination that
-  /// changes, or (like the test above, before this one existed) uses a store
-  /// whose missing-ness never changes between construction and `reset()` — so
-  /// `destinationFellBack` starts and ends at the same value regardless of
-  /// whether `reset()` actually reads the store fresh or just leaves init's
-  /// answer sitting there. Deleting the line changes nothing observable
-  /// without this test.
-  ///
-  /// Here the store's destination is switched from present to missing
-  /// *between* construction and `reset()`, through a second `Preferences`
-  /// value over the same backing store — standing in for whatever else in the
-  /// app (Settings, a later task) might change the destination mid-session. A
-  /// stale, uncomputed `destinationFellBack` and a freshly recomputed one
-  /// give different answers here; only the real line makes this pass.
+  /// Change destination from present to missing after construction so reset must recompute the
+  /// fallback flag rather than preserve its initial value.
   @Test func resetRereadsDestinationFellBackFromTheStoreRatherThanKeepingInitsAnswer() {
     var store = Preferences(
       store: InMemoryPreferenceStore(), homeDirectory: URL(filePath: "/Users/t"),
@@ -141,11 +105,7 @@ struct IntakeModelTests {
 
   // MARK: - Reseeding on open
 
-  /// The bug: Add Download is one `Window` for the app's whole run, seeded
-  /// once at construction and re-seeded only by `reset()`, which fires once
-  /// per *close*. A Settings change made between a close and the next open —
-  /// the ordinary sequence, not an edge case — never reaches the model until
-  /// `reseedFromPreferences()` reads the store again on open.
+  /// Reopening must read Settings changes made after the previous close.
   @Test func reseedFromPreferencesPicksUpAStoreChangedSinceConstruction() {
     var store = Preferences(
       store: InMemoryPreferenceStore(), homeDirectory: URL(filePath: "/Users/t"),
@@ -159,11 +119,7 @@ struct IntakeModelTests {
     let model = makeModel(preferences: store)
     #expect(model.qualityCap == .best, "precondition: seeded at construction")
 
-    // Stands in for Settings writing to the same store while this window is
-    // closed — a second `Preferences` value over the same backing store, the
-    // same technique
-    // `resetRereadsDestinationFellBackFromTheStoreRatherThanKeeping-
-    // InitsAnswer` above uses for the identical reason.
+    // Simulate Settings updating the shared store while intake is closed.
     var mutator = store
     mutator.qualityCap = .p480
     mutator.output = .video
@@ -180,10 +136,7 @@ struct IntakeModelTests {
     #expect(model.isOptionsExpanded == false)
   }
 
-  /// `reseedFromPreferences()` is deliberately narrower than `reset()`: it
-  /// runs on *open*, where a link may already be typed or a fetch already
-  /// settled, and clobbering that would trade one bug for another. Every
-  /// field `reset()` clears is asserted here to survive untouched instead.
+  /// Reseeding on open must preserve in-progress input and metadata, unlike reset.
   @Test func reseedFromPreferencesLeavesTheInProgressVideoAlone() async {
     let model = await loadedModel()
     model.trimStartText = "00:01:00"
@@ -208,17 +161,8 @@ struct IntakeModelTests {
 
   // MARK: - Pending intake
 
-  /// `apply(_:)` is how a Watching finding reaches this form: `WatchingModel`
-  /// hands `IntakeWindow` the archive id and its channel's frozen settings,
-  /// and this is what turns those into the fields the rest of the model
-  /// reads. The seeded values below all differ from the pending ones, so a
-  /// version that silently kept whatever `Preferences` had seeded could not
-  /// pass this by accident.
-  ///
-  /// `fileExists` is stubbed to accept the pending destination, so this is
-  /// the "reachable" half of the fallback behaviour; see
-  /// `applyFallsBackToDownloadsWhenTheWatchDestinationIsUnreachable` below for
-  /// the other half, over the same pending intake.
+  /// Pending watch settings differ from global defaults. Stub the destination as reachable; the
+  /// next test covers fallback.
   @Test func applySetsTheLinkAndAllFourSettings() {
     let model = makeModel(
       preferences: Self.store {
@@ -248,18 +192,8 @@ struct IntakeModelTests {
     #expect(model.destinationFellBack == false)
   }
 
-  /// The finding this guards against: `Watch.Settings.destination` is an
-  /// unconditional `URL(filePath:)` with no existence check of its own, so
-  /// without one in `apply(_:)` itself, a channel configured to a since
-  /// unplugged volume would set `folder` to that dead path and
-  /// `QueueEngine.move` would recreate it on the boot volume instead of
-  /// falling back — see the doc comment on `apply(_:)` for the full chain.
-  ///
-  /// `fileExists` returns false for every path, so this cannot pass by
-  /// `apply(_:)` merely ignoring the watch's destination and reseeding from
-  /// `Preferences` instead: that store's own destination,
-  /// `/Users/someone/Downloads`, differs from the fallback asserted here,
-  /// `/Users/t/Downloads` — this model's injected `homeDirectory`.
+  /// An unplugged watch destination must fall back to the injected home, not recreate its path
+  /// on the boot volume. The preference store's different home detects accidental reseeding.
   @Test func applyFallsBackToDownloadsWhenTheWatchDestinationIsUnreachable() {
     let model = makeModel(
       preferences: Self.store {
@@ -282,17 +216,8 @@ struct IntakeModelTests {
     #expect(model.destinationFellBack)
   }
 
-  /// The ordering `IntentSubmission.submit` already depends on, for the same
-  /// reason (see that type's own comment): `load()` reads `qualityCap` to
-  /// pick a rendition, so whatever `apply(_:)` sets has to be in place
-  /// *before* `load()` runs — never after.
-  ///
-  /// Proven rather than merely asserted-on-paper: the model starts on a
-  /// `.best` cap, which `load()` alone resolves to "best available" (an empty
-  /// `quality`). Applying a `.p720` cap and *then* loading instead resolves
-  /// `quality` to the rendition that cap actually selects. A version of
-  /// `apply(_:)` that ran too late — or an `IntakeWindow` that called
-  /// `load()` before `apply(_:)` — would leave `quality` empty here instead.
+  /// Apply the cap before loading metadata: otherwise `.best` leaves quality empty instead of
+  /// selecting p720's rendition.
   @Test func appliedSettingsAreInPlaceBeforeLoadResolvesQuality() async {
     let model = makeModel(
       preferences: Self.store {
@@ -331,8 +256,7 @@ struct IntakeModelTests {
     #expect(model.quality == "720p60")
   }
 
-  /// Spec §3.3. The cap is first-class state, so a video that only offers
-  /// more than the cap cannot quietly raise the user's standing preference.
+  /// Resolving above the cap must not raise the standing preference.
   @Test func anUntouchedPickerLeavesTheCapExactlyAsSeeded() async {
     let model = makeModel(
       preferences: Self.store { $0.qualityCap = .p720 },
@@ -369,12 +293,8 @@ struct IntakeModelTests {
     #expect(model.savedQualityNote == nil)
   }
 
-  /// The footnote's other source of disagreement: an *untouched* picker
-  /// whose seeded cap resolved upward because nothing on this video sits at
-  /// or under its ceiling. `qualityCap` stays `.p720` — `load()` never
-  /// touches it — while `quality` reads `"1080p60"`. The note has to say
-  /// what a save would actually write (`.p720`), not `1080p60`'s own bucket
-  /// (`.p1080`), or it would describe a save that never happens.
+  /// When a cap resolves upward, the untouched picker still saves its seeded cap. The footnote
+  /// must describe that saved value.
   @Test func theFootnoteNamesTheCapAnUntouchedPickerWouldActuallySave() async {
     let model = makeModel(
       preferences: Self.store { $0.qualityCap = .p720 },
@@ -393,9 +313,7 @@ struct IntakeModelTests {
   @Test func aTickedBoxWritesEveryFieldOnSave() async {
     let store = Self.store()
     let model = await loadedModel(preferences: store)
-    // `.videoWithChat`, not `loadedModel`'s own `.video` — the chat text
-    // size picker this test wants to save from only exists on screen while
-    // chat is selected (§3.7's `withholdsChatSizeFromSave`).
+    // Enable chat so its text-size picker is visible and eligible to save.
     model.output = .videoWithChat
     model.selectQuality("720p60")
     model.chatSize = .large
@@ -420,12 +338,7 @@ struct IntakeModelTests {
     #expect(store.hasSavedDefaults == false)
   }
 
-  /// Spec §3.3's own worked example: cap `.p720` against a video offering
-  /// only `1080p60` resolves `quality` to `"1080p60"` (nothing at or under
-  /// the ceiling). Untouched, that must save the seeded `.p720`, not
-  /// `1080p60`'s own bucket — `anUntouchedPickerLeavesTheCapExactlyAsSeeded`
-  /// proves this of the model field; this proves it of what actually reaches
-  /// the store, which is the thing the checkbox promises.
+  /// An untouched p720 cap resolving to 1080p must still persist p720.
   @Test func anUntouchedPickerSavesTheSeededCapNotWhatItResolvedTo() async {
     let store = Self.store { $0.qualityCap = .p720 }
     let model = await loadedModel(
@@ -441,10 +354,7 @@ struct IntakeModelTests {
     #expect(store.qualityCap == .p720)
   }
 
-  /// §3.7's counterpart for an untouched picker: a video whose only
-  /// rendition carries no dimensions resolves `quality` to `""` (best
-  /// available). Saving that must not stomp a real seeded cap with `.best`
-  /// — there was never a pick to derive `.best` from, only an absent one.
+  /// Unknown dimensions resolving to best must not overwrite an untouched stored cap.
   @Test func anUntouchedPickerWithNoDimensionsLeavesTheSeededCapAlone() async {
     let store = Self.store { $0.qualityCap = .p720 }
     let model = await loadedModel(
@@ -460,17 +370,9 @@ struct IntakeModelTests {
     #expect(store.qualityCap == .p720)
   }
 
-  /// Spec §2.7's other branch: a metadata fetch that failed outright, not
-  /// just a clip whose broadcast expired. `.video` with a failed fetch is
-  /// legal (the id-derived fallback name), so switching to it is a
-  /// workaround for this video's missing details, not a preference — saving
-  /// it must not overwrite a stored `.videoWithChat` default.
-  ///
-  /// `chatSize` is withheld here too, but for the unrelated reason §3.7
-  /// documents for `withholdsChatSizeFromSave`: its own picker is hidden
-  /// once `output == .video`, workaround or not. `destination` is the field
-  /// that actually isolates "does withholding `output` touch anything else",
-  /// since nothing hides its control.
+  /// Video-only after metadata failure is a workaround, not a new output default. Chat size is
+  /// withheld separately because its control is hidden; destination isolates the
+  /// output-withholding rule.
   @Test func outputIsWithheldWhileMetadataFailed() async {
     let store = Self.store { $0.output = .videoWithChat }
     let model = makeModel(
@@ -501,9 +403,7 @@ struct IntakeModelTests {
       info: Self.info(qualities: [
         StreamQuality(name: "720p0-1", resolution: "", bitsPerSecond: 0),
       ]))
-    // `.videoWithChat` so the chat text size picker this test also wants to
-    // save from is actually on screen (`withholdsChatSizeFromSave`) —
-    // otherwise this would conflate two different withholding rules.
+    // Enable chat to keep its text-size save separate from hidden-control withholding.
     model.output = .videoWithChat
     model.selectQuality("720p0-1")
     model.chatSize = .small
@@ -515,13 +415,8 @@ struct IntakeModelTests {
     #expect(store.chatSize == .small)
   }
 
-  /// Spec §2.7. The trap this rule exists to disarm: one expired clip would
-  /// otherwise turn chat off for every future download, from a single tick.
-  /// Asserts the two fields that isolate "does withholding `output` touch
-  /// anything else" — `destination` and `qualityCap`, neither of which has a
-  /// control that output hides. `chatSize` is asserted separately below: it
-  /// is withheld here too, but for §3.7's unrelated reason (its own picker
-  /// disappears once `output == .video`), not because of this rule.
+  /// An expired clip's video-only workaround must not turn chat off globally. Destination and
+  /// cap remain saveable; hidden chat size follows its own rule.
   @Test func outputIsWithheldWhileChatIsUnavailable() async {
     let store = Self.store { $0.output = .videoWithChat }
     let model = await loadedModel(
@@ -543,9 +438,7 @@ struct IntakeModelTests {
     #expect(store.qualityCap == .p720)
   }
 
-  /// §3.7's shape, applied to `chatSize`: its picker only renders while
-  /// `output == .videoWithChat`, so once `.video` is selected the value on
-  /// screen is stale by construction and must not be written.
+  /// Do not save chat size while its picker is hidden.
   @Test func chatSizeIsWithheldWhileVideoOnlyIsSelected() async {
     let store = Self.store { $0.chatSize = .small }
     let model = await loadedModel(preferences: store)
@@ -585,15 +478,8 @@ struct IntakeModelTests {
     #expect(store.optionsPanelIsExpanded == false)
   }
 
-  /// The `reset()` counterpart to `resetRereadsDestinationFellBackFrom-
-  /// TheStoreRatherThanKeepingInitsAnswer` above, for the same reason: the
-  /// obvious way to test "reset() reseeds `isOptionsExpanded`" is to mutate
-  /// the model and then reset it, but `isOptionsExpanded` writes straight
-  /// through on every assignment (§2.5) — mutating the model *is* mutating
-  /// the store, so there is nothing left for `reset()` to overwrite. The
-  /// store has to change out from under the model instead, through a second
-  /// `Preferences` value over the same backing store, the way the destination
-  /// does in the test above.
+  /// Change expansion through a second Preferences value: editing the model writes through and
+  /// would leave reset nothing to restore.
   @Test func resetRereadsIsOptionsExpandedFromTheStore() async {
     let store = Self.store { $0.optionsPanelIsExpanded = true }
     let model = await loadedModel(preferences: store)
@@ -607,10 +493,7 @@ struct IntakeModelTests {
     #expect(model.isOptionsExpanded == false, "reset() must re-read the store, not keep init's answer")
   }
 
-  /// §2.5. Collapsing the panel is not a statement about downloads, so it
-  /// must not set the same flag a real save sets — otherwise the Settings
-  /// window would start claiming defaults nobody chose from one triangle
-  /// click.
+  /// Collapsing options must not mark download defaults as saved.
   @Test func collapsingThePanelDoesNotSetHasSavedDefaults() async {
     let store = Self.store()
     let model = await loadedModel(preferences: store)
@@ -641,11 +524,7 @@ struct IntakeModelTests {
     #expect(model.isOptionsExpanded)
   }
 
-  /// §2.5's "once", the other half: collapsing the panel is the payoff for
-  /// the *first* save, not a side effect the app repeats on every Add
-  /// afterward. A user who reopens the panel after configuring their
-  /// defaults, then adds another job with the box still ticked, must not
-  /// find it collapsed again out from under them.
+  /// Only the first save collapses options; later adds must preserve a panel the user reopened.
   @Test func aLaterSaveLeavesThePanelAlone() async {
     let store = Self.store()
     let model = await loadedModel(preferences: store)
@@ -661,9 +540,7 @@ struct IntakeModelTests {
     #expect(model.isOptionsExpanded, "a later save must not re-collapse a reopened panel")
   }
 
-  /// §2.7: both refusals force the panel open, whatever `isOptionsExpanded`
-  /// itself says — a closed panel would grey Add out with the explanation
-  /// sealed inside it.
+  /// Refusals force options open so the explanation cannot be hidden behind disabled Add.
   @Test func chatProblemForcesThePanelOpen() async {
     let model = await loadedModel(info: Self.info(hasDownloadableChat: false))
     model.output = .videoWithChat
@@ -686,13 +563,8 @@ struct IntakeModelTests {
     #expect(model.isOptionsEffectivelyExpanded)
   }
 
-  /// The transient half of §2.7: the forced expansion must never reach the
-  /// stored preference, or a clip whose broadcast Twitch has expired would
-  /// permanently reopen the drawer on every future launch — the store is read
-  /// through a fresh instance here for exactly the reason
-  /// `resetRereadsDestinationFellBackFromTheStoreRatherThanKeepingInitsAnswer`
-  /// does: `model.isOptionsExpanded` alone cannot prove the store was never
-  /// written to, only that the model's own copy of it looks right.
+  /// Forced expansion is transient; read through a fresh Preferences value to detect unintended
+  /// writes.
   @Test func theForcedExpansionNeverReachesTheStore() async {
     let store = Self.store { $0.optionsPanelIsExpanded = false }
     let model = await loadedModel(
@@ -704,8 +576,7 @@ struct IntakeModelTests {
     #expect(store.optionsPanelIsExpanded == false, "but the store never heard about it")
   }
 
-  /// The binding a `DisclosureGroup` actually reads and writes: its getter is
-  /// `isOptionsEffectivelyExpanded`.
+  /// The expansion binding reads effective visibility.
   @Test func theEffectiveBindingReadsTheForcedOpenValue() async {
     let model = await loadedModel(info: Self.info(hasDownloadableChat: false))
     model.output = .videoWithChat
@@ -714,16 +585,8 @@ struct IntakeModelTests {
     #expect(model.isOptionsEffectivelyExpandedBinding, "reads the forced-open value")
   }
 
-  /// Before this guard existed, the binding's setter wrote through to
-  /// `isOptionsExpanded` — and so to the store — unconditionally, even while
-  /// a refusal was forcing the panel open. That made a triangle tap while
-  /// `chatProblem` was showing a dead control with a permanent side effect:
-  /// the drawer visibly stays open either way (the getter above still
-  /// returns `true`), but the *stored* preference silently flipped underneath
-  /// it, for every future intake. `isOptionsExpanded` is seeded `true` here
-  /// specifically so an unguarded setter writing `false` would be a change
-  /// this test can catch — starting from `false` could not distinguish
-  /// "ignored" from "already false".
+  /// Seed expansion true so an unguarded false write is observable even while refusal keeps the
+  /// panel visibly open.
   @Test func theEffectiveBindingIgnoresWritesWhileForcedOpen() async {
     let model = await loadedModel(info: Self.info(hasDownloadableChat: false))
     model.output = .videoWithChat
@@ -735,10 +598,7 @@ struct IntakeModelTests {
     #expect(model.isOptionsExpanded, "the write was ignored, not merely a no-op value")
   }
 
-  /// The counterpart to the test above: once nothing is forcing the panel
-  /// open, the same setter writes through exactly as it did before that
-  /// guard existed — it only ever suppresses writes made *while* a refusal
-  /// is showing, never writes in general.
+  /// Without a refusal, the expansion setter must still persist changes.
   @Test func theEffectiveBindingWritesThroughOnceNothingForcesExpansion() async {
     let model = await loadedModel()
     #expect(model.chatProblem == nil, "precondition")
@@ -750,8 +610,7 @@ struct IntakeModelTests {
     #expect(model.isOptionsExpanded == false)
   }
 
-  /// §2.6. The collapsed header's whole reason to exist: a summary the user
-  /// can trust without opening the drawer.
+  /// Collapsed summary must reflect current output choices.
   @Test func optionsSummaryDescribesOutputQualityAndFolder() async {
     let model = await loadedModel()
     model.output = .video
@@ -770,10 +629,7 @@ struct IntakeModelTests {
     #expect(model.optionsSummary == "Video + chat · Best available · No folder")
   }
 
-  /// `optionsSummary` used to always say "Video + chat" /
-  /// "Video" — a clip's collapsed header disagreed with its own expanded
-  /// picker, which already said "Clip + chat" / "Clip" via `isClip`. Both
-  /// call sites now read the same `IntakeModel.isClip`.
+  /// Collapsed and expanded labels must agree on clip versus VOD.
   @Test func optionsSummaryNamesAClipRatherThanAVideo() async {
     let model = await loadedModel(link: Self.clipLink)
     model.output = .videoWithChat
@@ -796,9 +652,7 @@ struct IntakeModelTests {
 
   // MARK: - An occupied destination
 
-  /// The whole point: the warning is what turns a silent overwrite into a
-  /// choice. Nothing is blocked — re-downloading over a bad copy stays one
-  /// click — but the click is named for what it does.
+  /// A collision changes the action's wording without preventing an authorized replacement.
   @Test func reportsTheFileAlreadySittingAtTheDestination() async {
     let model = await loadedModel(fileExists: { _ in true })
     let expected = Self.folder.appending(path: model.outputBaseName + OutputSuffix.video)
@@ -833,10 +687,7 @@ struct IntakeModelTests {
     #expect(model.destinationCollision == nil)
   }
 
-  /// The engine may only destroy a file the user was warned about. This is
-  /// the one place that authorization is granted, and it is granted from the
-  /// same condition the sheet drew its warning from — so a job can never
-  /// carry permission for a warning nobody saw.
+  /// Replacement permission must come from the same condition that displays the warning.
   @Test func authorizesReplacementOnlyWhenTheWarningWasShown() async throws {
     let warned = await loadedModel(fileExists: { _ in true })
     #expect(try #require(warned.composedTemplate()).replacesExistingFile)
@@ -847,9 +698,7 @@ struct IntakeModelTests {
 
   // MARK: - Starting over
 
-  /// The bug this exists for: Add Download is one `Window` for the app's whole
-  /// run, so the model survives a close and the second open showed the first
-  /// link again.
+  /// The reusable window must not retain the previous link after close.
   @Test func resetClearsEverythingAboutTheVideoJustAdded() async {
     let model = await loadedModel()
     model.trimStartText = "00:01:00"
@@ -868,24 +717,14 @@ struct IntakeModelTests {
     #expect(!model.hasSettledMetadata)
   }
 
-  /// Chat is on by default: it is the output that distinguishes Oxbow, and a
-  /// user who wants only the video is one click from it. Pinned because every
-  /// other test in this file sets `output` explicitly, so nothing else here
-  /// would notice the default flipping back.
+  /// Other tests set output explicitly, so pin the initial chat-enabled default here.
   @Test func chatIsIncludedByDefault() {
     #expect(DownloadOutput.allCases.first == .videoWithChat, "and listed first")
     #expect(makeModel().output == .videoWithChat)
   }
 
-  /// A reset while a fetch is in flight must invalidate it, or the reply lands
-  /// in the emptied form and names the next download after the last one.
-  ///
-  /// The waiting matters: `reset()` empties `linkText`, so a `load()` that has
-  /// not yet reached its fetch returns at the `guard let target` instead and
-  /// the race never happens. Written without `waitForArrival` this test passes
-  /// with the `generation` bump deleted, which is to say it tests nothing.
-  /// `name` is the assertion that bites — `info` is nil either way once the
-  /// link is gone, because nothing describes a link that is not there.
+  /// Wait until fetching begins before reset; otherwise the target guard avoids the race.
+  /// Assert the name because `info` is nil after clearing the link even with a stale result.
   @Test func aFetchStillInFlightCannotSettleIntoAResetForm() async {
     let gate = AsyncGate()
     let model = IntakeModel(
@@ -949,20 +788,11 @@ struct IntakeModelTests {
 
   // MARK: - Not enough room
 
-  /// The figures every test below is calibrated against, for the default
-  /// fixture's one-hour VOD. Recomputing them by hand in each test would make
-  /// a constant change look like six unrelated failures.
-  ///
-  /// | job | source | intermediate | composite | total |
-  /// |---|---|---|---|---|
-  /// | 1080p60 + chat | 3.6 | 1.7 | 2.5 | **7.9 GB** |
-  /// | 720p60 + chat | 1.4 | 1.7 | 1.1 | **4.2 GB** |
-  /// | 1080p60 alone | 3.6 | — | — | **3.6 GB** |
+  /// One-hour fixture peaks: 1080p60 with chat ≈7.9 GB, 720p60 with chat ≈4.2 GB, and plain
+  /// 1080p60 ≈3.6 GB.
   private static let gigabyte: Int64 = 1_000_000_000
 
-  /// The whole contract, and the same one the collision warning carries:
-  /// advisory, never a gate. Two warnings in one panel where one blocks and
-  /// one does not would teach the user that neither can be trusted.
+  /// Space warnings are advisory, not submission gates.
   @Test func aSpaceWarningNeverBlocksAdd() async {
     let model = await loadedModel(volumeSpace: Self.volume(free: Self.gigabyte))
     model.output = .videoWithChat
@@ -971,9 +801,6 @@ struct IntakeModelTests {
     #expect(model.canAdd, "the warning must not gate Add")
   }
 
-  /// A machine with room says nothing at all. Stated because a warning that
-  /// fires when it need not is the failure mode that makes people stop
-  /// reading warnings.
   @Test func noSpaceWarningWhenThereIsRoom() async {
     let model = await loadedModel(volumeSpace: Self.volume(free: 100 * Self.gigabyte))
     model.output = .videoWithChat
@@ -981,9 +808,7 @@ struct IntakeModelTests {
     #expect(model.spaceWarning == nil)
   }
 
-  /// Before the video is known the duration is a placeholder, so any number
-  /// computed from it is fiction. Mirrors the same gate on
-  /// `destinationCollision`.
+  /// Do not estimate from placeholder duration before metadata arrives.
   @Test func noSpaceWarningBeforeMetadataSettles() {
     let model = makeModel(volumeSpace: Self.volume(free: 1))
     model.folder = Self.folder
@@ -1000,12 +825,7 @@ struct IntakeModelTests {
     #expect(model.spaceWarning == nil)
   }
 
-  /// The remedy is the point of the warning. "Insufficient disk space" tells
-  /// the user something they would discover anyway; naming a rendition that
-  /// fits turns it into one click of work.
-  ///
-  /// Six gigabytes sits between the 720p job (4.2) and the 1080p one (7.9),
-  /// so exactly one rendition is a real remedy.
+  /// Six GB fits the 4.2 GB 720p job but not the 7.9 GB 1080p job, isolating one useful remedy.
   @Test func theRemedyNamesALowerRenditionThatActuallyFits() async throws {
     let model = await loadedModel(volumeSpace: Self.volume(free: 6 * Self.gigabyte))
     model.output = .videoWithChat
@@ -1015,8 +835,7 @@ struct IntakeModelTests {
     #expect(remedy.needed < 6 * Self.gigabyte, "a remedy that also does not fit is not a remedy")
   }
 
-  /// Offering a remedy that also does not fit is worse than offering none: it
-  /// costs the user a click to learn nothing.
+  /// Only suggest a remedy that fits.
   @Test func noRemedyWhenEvenTheSmallestRenditionWouldNotFit() async {
     let model = await loadedModel(volumeSpace: Self.volume(free: Self.gigabyte))
     model.output = .videoWithChat
@@ -1025,10 +844,7 @@ struct IntakeModelTests {
     #expect(model.spaceWarning?.remedy == nil)
   }
 
-  /// A plain download estimates only its source, so a volume too small for the
-  /// composite can be fine without one. Asserts the warning tracks the output
-  /// toggle rather than the video — five gigabytes holds the 3.6 GB download
-  /// but not the 7.9 GB composite.
+  /// Five GB fits video alone but not its composite; the warning must track output choice.
   @Test func switchingToVideoOnlyRecomputesTheWarning() async {
     let model = await loadedModel(volumeSpace: Self.volume(free: 5 * Self.gigabyte))
 
@@ -1039,8 +855,7 @@ struct IntakeModelTests {
     #expect(model.spaceWarning == nil)
   }
 
-  /// Trimming is the other half of the same remedy. A user who only wants
-  /// twenty minutes of a six-hour VOD should not be warned about six hours.
+  /// Trimmed jobs must be priced for the selected span.
   @Test func trimmingTheRangeShrinksTheEstimate() async {
     let model = await loadedModel(volumeSpace: Self.volume(free: 5 * Self.gigabyte))
     model.output = .videoWithChat
@@ -1052,9 +867,7 @@ struct IntakeModelTests {
     #expect(model.spaceWarning == nil, "ten minutes of it does")
   }
 
-  /// An unreadable volume produces no warning rather than a false one. The
-  /// rule lives in `VolumeSpace`; this asserts the intake honours it instead
-  /// of treating "unknown" as "no room".
+  /// A failed capacity probe is unknown, not a shortfall.
   @Test func noSpaceWarningWhenTheVolumeCannotBeRead() async {
     let model = await loadedModel(volumeSpace: VolumeSpace(
       availableBytes: { _ in nil },
@@ -1105,24 +918,12 @@ struct IntakeModelTests {
     var templates: [(template: JobTemplate, title: String)] = []
   }
 
-  /// A store over its own `InMemoryPreferenceStore`, so a test never sees
-  /// another test's values and never touches disk or the real preferences
-  /// domain.
-  ///
-  /// **`static`, not an instance method.** It used to have to be an instance
-  /// method, to register each scratch `UserDefaults` suite it created with a
-  /// `deinit`-based janitor for cleanup — see the removed `SuiteJanitor` in
-  /// git history. `InMemoryPreferenceStore` has nothing to clean up, so
-  /// nothing here needs `self`, which is what lets `makeModel`/`loadedModel`
-  /// below call it directly from a default-parameter expression again.
+  /// Each test gets isolated in-memory preferences with no real-domain writes.
   private static func store(
     _ configure: (inout Preferences) -> Void = { _ in }) -> Preferences
   {
-    // `directoryExists` is stubbed true because these destinations are
-    // fictional. With the real FileManager predicate, `Preferences.destination`
-    // correctly decides /Volumes/Archive is missing and hands back
-    // ~/Downloads — and every seeding assertion below fails for a reason that
-    // has nothing to do with what it is testing.
+    // Treat fictional destinations as present so preference reads do not fall back based on the
+    // test machine.
     var store = Preferences(
       store: InMemoryPreferenceStore(),
       homeDirectory: URL(filePath: "/Users/t"),
@@ -1155,9 +956,7 @@ struct IntakeModelTests {
       preferences: preferences)
   }
 
-  /// One volume with a fixed amount of room. Defaulted to a terabyte
-  /// everywhere so no pre-existing test starts seeing a space warning it was
-  /// never written to expect.
+  /// Fixed volume capacity, defaulting to ample room for tests unrelated to disk warnings.
   private static func volume(free: Int64) -> VolumeSpace {
     VolumeSpace(
       availableBytes: { _ in free },
@@ -1165,11 +964,8 @@ struct IntakeModelTests {
       volumeName: { _ in "Macintosh HD" })
   }
 
-  /// A model with metadata settled, a folder chosen, and `.video` as its
-  /// output — the minimum state in which Add is legal. Video-only is set
-  /// explicitly rather than relied on: the sheet's default is
-  /// `.videoWithChat`, and a helper that silently followed it would turn
-  /// every test below into a composite test.
+  /// Ready-to-add video-only fixture. Set output explicitly so the chat-enabled app default
+  /// does not change unrelated tests.
   private func loadedModel(
     link: String = IntakeModelTests.videoLink,
     preferences: Preferences = store(),
@@ -1189,15 +985,8 @@ struct IntakeModelTests {
     return model
   }
 
-  /// A VOD with settled metadata offering exactly one quality, so a
-  /// composite's geometry is easy to predict. `quality` also becomes the
-  /// model's own selection when it is non-empty; left empty, the model keeps
-  /// its default of "best available" and the fixture still needs a rendition
-  /// on offer for `compositeQuality`'s fallback to resolve.
-  ///
-  /// Reuses `loadedModel` rather than inventing a second way to settle
-  /// metadata — the only difference is the single, resolution-bearing quality
-  /// a composite needs.
+  /// Composite fixture with one sized rendition. Empty quality exercises best-available
+  /// fallback.
   private func loaded(
     quality: String,
     resolution: String,
@@ -1245,9 +1034,7 @@ struct IntakeModelTests {
 
   // MARK: - Add's preconditions
 
-  /// The positive control for every "Add is disabled" test below. Without it
-  /// they would all pass just as well against a `canAdd` that is simply
-  /// always false.
+  /// Positive control against a `canAdd` that always returns false.
   @Test func addIsEnabledWithMetadataAFolderAndOneOutput() async {
     let model = await loadedModel()
     #expect(model.canAdd)
@@ -1279,9 +1066,7 @@ struct IntakeModelTests {
     #expect(!model.canAdd)
   }
 
-  /// Metadata belongs to the link it was fetched for. Pasting another one
-  /// must disable Add until that link's own fetch settles, or a job gets
-  /// composed for one video out of another's details.
+  /// Metadata from the previous link must not authorize a new link's submission.
   @Test func addIsDisabledAgainOnceTheLinkChanges() async {
     let model = await loadedModel()
     #expect(model.canAdd)
@@ -1299,19 +1084,14 @@ struct IntakeModelTests {
     #expect(model.name == "leighxp - 2026-08-23 - A Stream")
   }
 
-  /// `createdAt` is 04:30 UTC on the 24th; in Pacific that is the evening of
-  /// the 23rd, and the 23rd is the day both the streamer and the viewer think
-  /// it happened (design doc §4).
+  /// 04:30 UTC on the 24th is the evening of the 23rd in Pacific time.
   @Test func theNameUsesTheLocalDateRatherThanTheUTCOne() async {
     let model = await loadedModel()
     #expect(model.name.contains("2026-08-23"))
     #expect(!model.name.contains("2026-08-24"))
   }
 
-  /// The base name reserves room for the only suffix an output can take —
-  /// `".mp4"`, 4 bytes — whether the job produces a plain video or a
-  /// composite, since both share that same suffix (a composite replaces the
-  /// video it stacks rather than accompanying it).
+  /// Both plain and composite output reserve the four-byte `.mp4` suffix.
   @Test func aLongTitleLeavesRoomForTheOnlySuffix() async throws {
     let model = await loadedModel(info: Self.info(title: String(repeating: "a", count: 400)))
     #expect(model.name.utf8.count == 255 - 4, "reserved for \".mp4\"")
@@ -1321,12 +1101,8 @@ struct IntakeModelTests {
     #expect(name.utf8.count <= 255, "\(name) is \(name.utf8.count) bytes")
   }
 
-  /// The name field is the user's, and it is the seam the prefilled-name test
-  /// above cannot reach: that name arrives from `load()` already reserved, so
-  /// re-sanitizing it with any budget at all leaves it unchanged. A name the
-  /// user edited or pasted has had no reservation applied, and `outputBaseName`
-  /// is the only thing standing between it and a path over the filesystem's
-  /// 255-byte limit.
+  /// An edited name lacks the reservation already applied during metadata loading, so test the
+  /// final sanitization boundary separately.
   @Test func aLongEditedNameStillFitsInAFilename() async throws {
     let model = await loadedModel()
     model.name = String(repeating: "b", count: 250)
@@ -1336,9 +1112,7 @@ struct IntakeModelTests {
     #expect(name.utf8.count <= 255, "\(name.utf8.count) bytes: \(name)")
   }
 
-  /// The name field is the user's, and a user can type a `/`. Left alone it
-  /// would turn `appending(path:)` into a directory traversal rather than a
-  /// filename.
+  /// Slashes in user-supplied names must not become path components.
   @Test func anEditedNameIsSanitisedBeforeItBecomesAPath() async throws {
     let model = await loadedModel()
     model.name = "why/not: both"
@@ -1386,19 +1160,11 @@ struct IntakeModelTests {
     #expect(video.destination == nil)
     #expect(template.render?.destination == nil)
     #expect(template.chat?.destination == nil)
-    // Built here rather than left to `JobTemplate`'s implied chat request —
-    // seeding it from an empty id would produce a job that runs and
-    // downloads nothing.
+    // Explicitly seed chat with the media ID.
     #expect(template.chat?.videoID == Self.videoID)
   }
 
-  /// The composite's `duration` is its own field, not `framerate`'s neighbour
-  /// by coincidence — it has to be seeded from the video's own duration, not
-  /// left at some default that happens to compile.
-  ///
-  /// There is no bitrate to seed any more. `.composite` asks the encoder for a
-  /// quality and lets it choose the cost, so `CompositeRequest` carries no
-  /// rate at all — see `docs/design/composite-rate-control.md`.
+  /// Composite progress duration must come from the video or selected trim.
   @Test func theCompositeSeedsItsDurationFromTheChosenQuality() async throws {
     let model = await loaded(quality: "1080p60", resolution: "1920x1080", bitsPerSecond: 10_000_000)
     model.output = .videoWithChat
@@ -1421,8 +1187,7 @@ struct IntakeModelTests {
     #expect(template.chat?.videoID == clip.clipSlug)
   }
 
-  /// "Best available" leaves the resolution unknown, which is fatal when the
-  /// chat's height must equal the video's.
+  /// Best-available composite selection must still resolve known dimensions.
   @Test func compositingResolvesAnEmptyQualityToAConcreteOne() async throws {
     let model = await loaded(quality: "", resolution: "1920x1080")
     model.output = .videoWithChat
@@ -1444,13 +1209,8 @@ struct IntakeModelTests {
     #expect(video.quality.isEmpty)
   }
 
-  /// The bug this pins: a name upstream disambiguated with a trailing
-  /// `-<digits>` (`480p30-1`, `480p30-2`, …) does not resolve as `-q` at all —
-  /// verified against the real bundled helper, it silently falls back to the
-  /// highest rendition, exit code 0, no warning. `model.quality` keeps the
-  /// picker's exact name (it is matched against `qualities` by name, and the
-  /// picker's own tag), but the request that reaches the CLI must carry
-  /// `StreamQuality.commandLineValue` instead.
+  /// Pins current forwarding through `commandLineValue`. Its suffix stripping conflicts with
+  /// `docs/twitch-metadata.md` §5; see the flagged comment on that property.
   @Test func theVideoRequestPassesTheStrippedQualityNotThePickerName() async throws {
     let model = await loaded(quality: "480p30-1", resolution: "852x480")
     model.output = .video
@@ -1467,9 +1227,7 @@ struct IntakeModelTests {
     #expect(clip.quality == "480p30")
   }
 
-  /// The composite path resolves through `compositeQuality` rather than
-  /// `commandLineQuality`, but the same stripping has to happen before the
-  /// name reaches the media request.
+  /// The composite path must forward through the same CLI quality conversion.
   @Test func theCompositesMediaRequestPassesTheStrippedQualityNotThePickerName() async throws {
     let model = await loaded(quality: "1080p60-1", resolution: "1920x1080")
     model.output = .videoWithChat
@@ -1495,8 +1253,7 @@ struct IntakeModelTests {
     #expect(render.height == 1080)
     #expect(render.width == 360)
     #expect(render.framerate == 30)
-    // A transient input that is immediately re-encoded: 3 Mbps would put two
-    // generations of lossy H.264 over text on flat backgrounds.
+    // Pin the intermediate bitrate separately from composite quality targeting.
     #expect(render.bitrateMbps >= 12)
   }
 
@@ -1520,10 +1277,7 @@ struct IntakeModelTests {
     #expect(render.fontSize == expectedFontSize)
   }
 
-  /// `.video` has no render at all, so a chosen chat size — meaningless
-  /// without one — must not change what gets composed. `JobTemplate` is not
-  /// itself `Equatable` (its `Media` enum carries no such conformance), so
-  /// this compares the one part that could plausibly have drifted.
+  /// Video-only composition must ignore chat-size changes.
   @Test func chatSizeIsIgnoredWhenNoChatIsRequested() async throws {
     let model = await loaded(quality: "1080p60", resolution: "1920x1080")
     model.output = .video
@@ -1539,11 +1293,8 @@ struct IntakeModelTests {
     #expect(large.composite == nil)
   }
 
-  /// A clip's rendition list can carry a quality with no pixel dimensions —
-  /// `VideoInfo.clipResolution` has no filter for it, unlike a VOD's
-  /// `parseQualities`, which skips a variant with no `RESOLUTION` attribute
-  /// outright. When *none* of the clip's renditions parse, "best available"
-  /// has nothing to fall back to.
+  /// Unlike VOD playlist parsing, clip qualities may all lack usable dimensions, leaving no
+  /// composite fallback.
   @Test func compositingRefusesWhenNoRenditionCanBeComposited() async throws {
     let qualities = [StreamQuality(name: "720p0-1", resolution: "", bitsPerSecond: 0)]
     let model = await loadedModel(link: Self.clipLink, info: Self.info(qualities: qualities))
@@ -1553,10 +1304,8 @@ struct IntakeModelTests {
     #expect(!model.canAdd)
   }
 
-  /// A failed fetch still settles (`hasSettledMetadata` counts `.failed`),
-  /// but `info` — and so `qualities` and the composite's duration — stays
-  /// nil. A composite needs both, so it refuses rather than crash on a force
-  /// unwrap or compose a job with a guessed duration.
+  /// A settled metadata failure still lacks dimensions and duration; composite creation must
+  /// refuse it.
   @Test func compositingRefusesWithoutMetadata() async throws {
     let model = makeModel(failure: VideoInfoFetchError.unparseableOutput(snippet: "x"))
     model.linkText = Self.videoLink
@@ -1579,9 +1328,6 @@ struct IntakeModelTests {
     #expect(model.compositeProblem == nil)
   }
 
-  /// `.video` never makes a quality decision for compositing, so it can never
-  /// have a composite problem — even sitting on a quality that could not be
-  /// composited.
   @Test func compositeProblemIsNilForVideoOnly() async throws {
     let qualities = [StreamQuality(name: "720p0-1", resolution: "", bitsPerSecond: 0)]
     let model = await loadedModel(link: Self.clipLink, info: Self.info(qualities: qualities))
@@ -1590,10 +1336,8 @@ struct IntakeModelTests {
     #expect(model.compositeProblem == nil)
   }
 
-  /// The bug the review caught: `compositeQuality` honours an explicit pick
-  /// even when it cannot be composited (see its doc comment — silently
-  /// substituting a different rendition is worse), which used to mean Add
-  /// simply greyed out with nothing on screen explaining why.
+  /// An explicit unusable quality needs a visible explanation, not silent substitution or
+  /// unexplained disabled Add.
   @Test func choosingAnExplicitQualityWithNoDimensionsExplainsWhyAddIsDisabled() async throws {
     let qualities = [
       StreamQuality(name: "1080p60", resolution: "1920x1080", bitsPerSecond: 6_000_000),
@@ -1612,12 +1356,7 @@ struct IntakeModelTests {
     #expect(problem.contains("Pick another quality"), "says what to do, not just what's wrong")
   }
 
-  /// `480p30-Portrait` is a real rendition whose clip-API metadata claims
-  /// `480x853`, an odd height. The real decoded stream is `480x852` — h264
-  /// 4:2:0 cannot carry an odd coded dimension, so 853 is a rounding
-  /// artifact in Twitch's metadata, not a real frame.
-  /// `CompositeGeometry.init?` rounds it down to the true 852 rather than
-  /// refusing, so this composes rather than disabling Add.
+  /// Metadata's 480x853 rounds to the measured 480x852 stream, allowing composition.
   @Test func anOddHeightInMetadataComposesAtItsRoundedDownValue() async throws {
     let qualities = [
       StreamQuality(name: "480p30-Portrait", resolution: "480x853", bitsPerSecond: 1_000_000),
@@ -1633,16 +1372,8 @@ struct IntakeModelTests {
 
   // MARK: - Chat problem
 
-  /// A clip whose parent broadcast is gone. The chat step would abort the
-  /// helper on SIGABRT the moment it ran, and — because `JobTemplate.makeJob`
-  /// appends the chat step *first*, so the short download claims the network
-  /// slot — it would do so before the video download it was racing. The video
-  /// step has no `dependsOn`, so it would then download in full into a
-  /// workspace intermediate with no destination, and the composite, assemble
-  /// and render steps would all be blocked behind the failed chat. The user
-  /// would wait out an entire video download to receive no file at all.
-  ///
-  /// So this refuses up front rather than explaining afterwards.
+  /// Reject unavailable clip chat before enqueueing; otherwise media can download fully as an
+  /// intermediate while failed chat blocks delivery.
   @Test func aClipWhoseBroadcastIsGoneCannotBeAddedWithChat() async throws {
     let model = await loadedModel(
       link: Self.clipLink,
@@ -1659,9 +1390,7 @@ struct IntakeModelTests {
     #expect(!problem.contains("Invalid VOD"), "upstream's diagnostic must not reach the sheet")
   }
 
-  /// The whole point of refusing only the chat: the clip's *video* downloads
-  /// fine, so video-only must stay available and stay addable. A user who
-  /// picks it gets their clip.
+  /// Expired chat must not prevent video-only clip downloads.
   @Test func aClipWhoseBroadcastIsGoneCanStillBeAddedAsVideoOnly() async throws {
     let model = await loadedModel(
       link: Self.clipLink,
@@ -1679,8 +1408,7 @@ struct IntakeModelTests {
     #expect(model.chatProblem == nil)
   }
 
-  /// A VOD is the broadcast, so this can never fire for one. Guards against a
-  /// clip-only rule that quietly disables chat for every VOD in the app.
+  /// VOD chat has no parent-broadcast availability check.
   @Test func chatProblemIsNilForAVod() async throws {
     let model = await loaded(quality: "1080p60", resolution: "1920x1080")
     model.output = .videoWithChat
@@ -1715,11 +1443,7 @@ struct IntakeModelTests {
     #expect(model.estimatedBytes(for: quality) == 3_600_000_000)
   }
 
-  /// A trim narrows the estimate the same way it narrows the actual
-  /// download — the size shown must describe what will land on disk, not
-  /// the untrimmed VOD. `Self.info()` fixes the VOD at an hour with a
-  /// bitrate that makes the full estimate 3_600_000_000 bytes (above); a
-  /// 10-minute trim is a sixth of that.
+  /// A ten-minute trim is one sixth of the fixture's one-hour estimate.
   @Test func theSizeEstimateAccountsForATrimmedWindow() async throws {
     let model = await loadedModel()
     model.trimStartText = "0:00"
@@ -1734,9 +1458,7 @@ struct IntakeModelTests {
     #expect(model.estimatedBytes(for: quality) == nil)
   }
 
-  /// The pixel size is on the row because the name does not always imply it:
-  /// `480p30` is 852x480, not 854 or 640, and a clip's upstream-derived name
-  /// degenerates to things like `720p0`.
+  /// Show actual dimensions because rendition names do not uniquely imply them.
   @Test func aQualityRowNamesItsResolutionAndItsEstimate() async throws {
     let model = await loadedModel()
     let quality = try #require(model.qualities.first)
@@ -1748,10 +1470,8 @@ struct IntakeModelTests {
     #expect(label.contains("GB"), "3.6 GB, formatted for the reader")
   }
 
-  /// Older clips carry `bitrate: 0` for every rendition, so there is no
-  /// estimate to show — and then the resolution is the only thing telling one
-  /// row from the next. A zero is the absence of an estimate, not an estimate
-  /// of nothing, so it is left off rather than printed as "about Zero KB".
+  /// Zero bitrate on old clips means no estimate; keep resolution without displaying a
+  /// zero-byte size.
   @Test func aQualityRowWithNoBitrateNamesItsResolutionAndNoEstimate() async throws {
     let qualities = [StreamQuality(name: "720p0-1", resolution: "1280x720", bitsPerSecond: 0)]
     let model = await loadedModel(link: Self.clipLink, info: Self.info(qualities: qualities))
@@ -1760,9 +1480,7 @@ struct IntakeModelTests {
     #expect(model.label(for: quality) == "720p0-1 · 1280x720")
   }
 
-  /// A rendition Twitch described with neither pixel dimensions nor a usable
-  /// `quality` string: the row is the bare name rather than a dangling
-  /// separator.
+  /// Missing dimensions must leave no dangling separator.
   @Test func aQualityRowWithNoResolutionIsJustTheName() {
     let model = makeModel()
     let quality = StreamQuality(name: "audio_only", resolution: "", bitsPerSecond: 0)
@@ -1797,9 +1515,7 @@ struct IntakeModelTests {
     #expect(videoRequest(of: template) == nil)
   }
 
-  /// Trim text typed while a VOD was in the field must not leak into a clip's
-  /// job: clips have no trim, and its chat request would otherwise be
-  /// silently narrowed to a window the clip does not have.
+  /// VOD trim fields must not leak into clip requests.
   @Test func trimTextIsIgnoredEntirelyForAClip() async throws {
     let model = await loadedModel(link: Self.clipLink)
     model.output = .videoWithChat
@@ -1814,8 +1530,7 @@ struct IntakeModelTests {
 
   // MARK: - Trim
 
-  /// A trimmed video rendered against the whole VOD's chat is wrong output
-  /// that looks like a success, so both requests get the same window.
+  /// Media and implied chat must share the trim range.
   @Test func trimTimesReachBothTheVideoAndItsChat() async throws {
     let model = await loadedModel(info: Self.info(duration: .seconds(7200)))
     model.output = .videoWithChat
@@ -1829,11 +1544,8 @@ struct IntakeModelTests {
     #expect(template.chat?.trimEnd == .seconds(3723))
   }
 
-  /// The composite's own `duration` is what `FFmpegProgressParser` divides
-  /// by for every fraction and ETA it reports while the step runs. Left at
-  /// the full VOD's length on a trimmed job, a composite that only ever
-  /// encodes the trimmed window can never report more than a sliver of
-  /// progress, and its ETA counts down against footage it will never touch.
+  /// Composite progress must use trimmed duration, or its fraction and ETA include footage
+  /// never encoded.
   @Test func aTrimmedCompositesDurationIsTheTrimmedWindowNotTheWholeVOD() async throws {
     let model = await loaded(quality: "1080p60", resolution: "1920x1080", bitsPerSecond: 10_000_000)
     model.output = .videoWithChat
@@ -1883,9 +1595,7 @@ struct IntakeModelTests {
     #expect(model.canAdd)
   }
 
-  /// A start past the end of the video reaches the CLI as an argument that
-  /// fails minutes into a download, which is the exact failure `trimIsInvalid`
-  /// exists to get ahead of.
+  /// Reject starts beyond video duration before sending them to the helper.
   @Test func refusesATrimPastTheEndOfTheVideo() async {
     let model = await loadedModel(info: Self.info(duration: .seconds(2400)))
 
@@ -1917,9 +1627,7 @@ struct IntakeModelTests {
     #expect(Timecode.parse(" 1:30 ") == .seconds(90))
   }
 
-  /// Swift traps on integer overflow, so an over-long number in the trim
-  /// field used to take the whole app down — from a text field, with no
-  /// privileged input. Too big to be a time is invalid input like any other.
+  /// Overflowing timecode numbers are invalid input, not a trap.
   @Test func anOverflowingTimecodeIsRejectedRatherThanTrapping() async {
     #expect(Timecode.parse("999999999999999999:0") == nil, "overflows the x60")
     #expect(Timecode.parse("99999999999999999999999999") == nil, "too long for Int at all")
@@ -1945,10 +1653,7 @@ struct IntakeModelTests {
     #expect(Timecode.parse("１:３０") == nil, "full-width digits are not a timecode")
   }
 
-  /// Collapsing the section hides the controls and does nothing else. It used
-  /// to clear both fields, which was right for a checkbox and wrong for a
-  /// disclosure triangle — that reads as "hide the details", so reclaiming a
-  /// little window space silently destroyed the trim.
+  /// Collapsing trim hides controls without clearing the selection.
   @Test func collapsingTheTrimSectionKeepsTheTimes() {
     let model = IntakeModel(
       fetchInfo: { _ in throw CancellationError() }, enqueue: { _, _ in },
@@ -1964,9 +1669,7 @@ struct IntakeModelTests {
     #expect(model.trimEndText == "00:20:00")
   }
 
-  /// And it keeps applying it. A set trim that quietly stops counting because
-  /// a triangle is closed is hidden state; the collapsed row carries
-  /// `trimSummary` precisely so there is none.
+  /// Hidden trim still applies and remains described by the summary.
   @Test func aCollapsedTrimSectionStillTrims() {
     let model = IntakeModel(
       fetchInfo: { _ in throw CancellationError() }, enqueue: { _, _ in },
@@ -1998,7 +1701,6 @@ struct IntakeModelTests {
     #expect(model.trimSummary == nil)
   }
 
-  /// A clip has no trim at all, so it has nothing to say about one either.
   @Test func aClipNeverSummarisesATrim() {
     let model = IntakeModel(
       fetchInfo: { _ in throw CancellationError() }, enqueue: { _, _ in },
@@ -2008,9 +1710,7 @@ struct IntakeModelTests {
     #expect(model.trimSummary == nil)
   }
 
-  /// `reset()` empties the window when it closes (#39), and that includes
-  /// folding the section back up — a reopened window should look like a new
-  /// one, not like the last job half-configured.
+  /// Reset also collapses trim for a fresh intake.
   @Test func resettingTheWindowFoldsTheTrimSectionAway() {
     let model = IntakeModel(
       fetchInfo: { _ in throw CancellationError() }, enqueue: { _, _ in },
@@ -2025,12 +1725,8 @@ struct IntakeModelTests {
     #expect(model.trimStartText.isEmpty)
   }
 
-  /// A trim is scoped to the video it was drawn against more tightly than a
-  /// quality is: `trimIsInvalid` checks the window against `info.duration`, so
-  /// a trim carried over from a longer video does not get quietly ignored the
-  /// way a stale quality selection would — it gets rejected, leaving the
-  /// timeline dimmed and Add disabled over a video the trim was never drawn
-  /// against. Pasting a new link has to clear it, not just the quality.
+  /// Changing videos clears trim so the previous video's bounds cannot disable the new
+  /// submission.
   @Test func loadingADifferentVideoClearsAnyTrimFromTheLastOne() async {
     let long = Self.info(duration: .seconds(2400))
     let short = Self.info(duration: .seconds(300))
@@ -2055,11 +1751,8 @@ struct IntakeModelTests {
     #expect(model.trimEndText.isEmpty)
   }
 
-  /// A superseded fetch is not a failure. `.task(id:)` cancels the previous
-  /// fetch on every edit to the link, and `generation` cannot hide it — the
-  /// replacement has not necessarily incremented the counter by the time the
-  /// cancelled one unwinds. Reporting it would flash "Oxbow could not read
-  /// that video's details" at someone who is simply still typing.
+  /// Cancellation can arrive before a replacement increments generation; it must not flash a
+  /// metadata failure while typing.
   @Test func aCancelledFetchIsNotReportedAsAFailure() async {
     let model = makeModel(failure: CancellationError())
     model.linkText = Self.videoLink
@@ -2107,11 +1800,7 @@ struct IntakeModelTests {
     #expect(model.quality == "", "with no quality list, best available is the only honest choice")
   }
 
-  /// The default output is the one metadata failure takes away: a composite
-  /// has no rendition to size its chat column against and no duration to
-  /// time its encode. Refusing it silently would grey Add out on a freshly
-  /// opened sheet with nothing on screen saying why, so the refusal comes
-  /// with the sentence and with the output that still works.
+  /// Metadata failure must explain why composite output is unavailable and offer video-only.
   @Test func aMetadataFailureExplainsWhyChatIsUnavailable() async throws {
     let model = makeModel(
       failure: VideoInfoFetchError.helperFailed(status: .exited(1), standardError: "nope"))
@@ -2193,9 +1882,7 @@ struct IntakeModelTests {
     #expect(recorder.templates.first?.title == "leighxp - 2026-08-23 - A Stream")
   }
 
-  /// The hazard this path is shaped around: Add must never report success —
-  /// which is what dismisses the sheet — without a job to show for it. A
-  /// refusal enqueues nothing and says why.
+  /// Refused submission must not report success or dismiss the sheet.
   @Test func addRefusesAndExplainsRatherThanClosingOnNothing() async {
     let recorder = Recorder()
     let model = await loadedModel(recorder: recorder)

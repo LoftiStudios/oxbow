@@ -1,9 +1,7 @@
 import Foundation
 import OxbowKit
 
-/// A helper that reports progress, then either succeeds by writing its
-/// output file or blocks until cancelled. `HelperProcessing` is public
-/// precisely so tests can substitute one of these.
+/// Helper stub that reports progress, then writes an artifact or waits for cancellation.
 actor StubHelper: HelperProcessing {
   enum Behaviour: Sendable {
     case succeeds
@@ -13,10 +11,7 @@ actor StubHelper: HelperProcessing {
     case failsThenSucceeds(Attempts)
   }
 
-  /// Shared by every `StubHelper` one `makeProcess` closure hands out.
-  /// `QueueEngine` builds a fresh process per launch, so behaviour that
-  /// differs between the first run and the retry needs state outliving a
-  /// single instance.
+  /// Shared attempt state survives the engine creating a fresh helper for each retry.
   actor Attempts {
     private var count = 0
     func next() -> Int {

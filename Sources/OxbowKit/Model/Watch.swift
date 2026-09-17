@@ -1,20 +1,10 @@
 import Foundation
 
-/// A watched channel.
-///
-/// **The settings are frozen, not a live reference to `Preferences`.** An
-/// intake window re-reads the store at every open because it *has* an open
-/// moment to re-read at; a watch fires months later with nobody present, so
-/// freezing is the only predictable option. See
-/// `docs/design/channel-watching.md` §3.2, and `settings.md` §10.5 for the
-/// same reasoning applied to the window.
+/// A channel watch with frozen download settings; later changes to Preferences do not alter
+/// unattended downloads.
 public struct Watch: Equatable, Sendable, Codable {
 
-  /// What this channel downloads at, decided when it was added.
-  ///
-  /// The destination is a path rather than a `URL` because it is persisted:
-  /// `URL`'s `Codable` form carries more than a path and round-trips
-  /// inconsistently across its representations.
+  /// Settings captured when the watch was added. Persist destination as a path string.
   public struct Settings: Equatable, Sendable, Codable {
     public var destinationPath: String
     public var qualityCap: QualityCap
@@ -34,12 +24,7 @@ public struct Watch: Equatable, Sendable, Codable {
     public var destination: URL { URL(filePath: destinationPath) }
   }
 
-  /// How the seen-set is seeded when a channel is added.
-  ///
-  /// **Not stored.** Scope is not a mode the poller consults forever after —
-  /// it only decides what `seeded(withScope:from:)` puts in `seen` at the
-  /// moment of adding. After the first poll the two choices are
-  /// indistinguishable (`docs/design/channel-watching.md` §3.1).
+  /// Initial seeding choice, not an ongoing poll mode. Used only when the watch is added.
   public enum Scope: Equatable, Sendable {
     case onlyNew
     case allAvailable
@@ -48,24 +33,14 @@ public struct Watch: Equatable, Sendable, Codable {
   public var login: String
   public var displayName: String
 
-  /// Where this channel's avatar lives, captured when the channel was added.
-  ///
-  /// **Optional and defaulted, so a `watches.json` written before this field
-  /// existed still decodes** — a synthesized `Codable` reads a missing
-  /// optional as nil rather than throwing. A watch added earlier simply has
-  /// no avatar until it is edited; nothing re-fetches it on a poll, because
-  /// `ChannelFeed.profile(forLogin:)` is deliberately off the sweep's path.
+  /// Avatar captured when added. Optional for older persisted watches; polls do not refresh
+  /// channel profiles.
   public var avatarURL: URL?
   public var settings: Settings
   public var downloadsAutomatically: Bool
 
-  /// Archive ids this watch has acted on — queued, ignored, or seeded past.
-  ///
-  /// **Its own state, never derived from the queue.**
-  /// `IntentSubmission.submit` refuses duplicates only against *unfinished*
-  /// jobs, deliberately, and `QueueEngine.remove(jobs:)` can delete a job
-  /// outright. A watcher deriving from either would re-download what it has
-  /// already fetched (`docs/design/channel-watching.md` §4).
+  /// Legacy handled IDs, independent of the queue: completed or removed jobs must not become
+  /// eligible for automatic download again.
   public var seen: Set<String>
 
   public init(
@@ -80,33 +55,16 @@ public struct Watch: Equatable, Sendable, Codable {
     self.seen = seen
   }
 
-  /// First path segments that address something other than a channel.
-  /// `videos`, `directory`, `settings`, `popout`, `subscriptions`,
-  /// `downloads`, `clips`, `u` and `team` are all reserved routes on
-  /// twitch.tv — a URL that starts with one of them is not a channel URL,
-  /// and taking its first segment anyway hands back a route name dressed up
-  /// as a login (`https://twitch.tv/videos/2862926638` → `"videos"`).
+  /// Reserved Twitch routes that must not be interpreted as channel logins (e.g.
+  /// `/videos/123`).
   private static let reservedFirstPathSegments: Set<String> = [
     "videos", "directory", "settings", "popout", "subscriptions",
     "downloads", "clips", "u", "team",
   ]
 
-  /// Twitch logins are 4-25 characters of `[a-zA-Z0-9_]`. Anything else is
-  /// rejected rather than cleaned up.
-  ///
-  /// **This is a safety boundary, not a convenience.** The login is
-  /// interpolated into the GraphQL query body, so a string carrying a quote
-  /// or a brace would rewrite the query. Rejecting is the only correct
-  /// answer for that. Separately, this takes the same posture
-  /// `TwitchLink.parse` takes about *hosts* — an unrecognised or
-  /// case-varied host is rejected, not guessed at — but not the same
-  /// posture about *paths*: `TwitchLink.parse` matches a small set of known
-  /// path shapes and rejects everything else, where this only excludes
-  /// Twitch's reserved routes (`reservedFirstPathSegments`) and the
-  /// `clips.twitch.tv` host, and otherwise takes the first path segment as
-  /// a login. That asymmetry is deliberate — a channel URL's shape is not
-  /// as constrained as a video or clip URL's — but it means the two
-  /// parsers can still disagree on inputs neither list anticipates.
+  /// Accepts 4–25 ASCII letters, digits, or underscores. Reject invalid input: the login is
+  /// interpolated into GraphQL. For URLs, validate the host and exclude reserved routes, then
+  /// use the first path segment.
   public static func normalisedLogin(_ raw: String) -> String? {
     var text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
 
@@ -130,12 +88,8 @@ public struct Watch: Equatable, Sendable, Codable {
     return login
   }
 
-  /// A copy whose seen-set has been initialised for `scope`.
-  ///
-  /// Seeds from **every** listed archive, including one still recording: for
-  /// `onlyNew` the promise is that nothing already on the channel appears,
-  /// and a live broadcast skipped here would arrive as brand new the moment
-  /// it ended.
+  /// Seeds from every listed archive, including live broadcasts, so “Only new” cannot admit an
+  /// existing broadcast when it ends.
   public func seeded(withScope scope: Scope, from archives: [ChannelArchive]) -> Watch {
     switch scope {
     case .onlyNew: marking(archives.map(\.id))
@@ -143,12 +97,8 @@ public struct Watch: Equatable, Sendable, Codable {
     }
   }
 
-  /// Archives in `listing` this watch has not acted on.
-  ///
-  /// Deliberately does **not** filter on `isDownloadable`: a person may
-  /// reasonably be shown a live broadcast, clearly marked. Only the
-  /// unattended path filters (`docs/design/channel-watching.md` §5.2), and it
-  /// does so at the point of submission.
+  /// Unseen archives, including live broadcasts for display. The unattended submission path
+  /// filters downloadability.
   public func findings(in listing: [ChannelArchive]) -> [ChannelArchive] {
     listing.filter { !seen.contains($0.id) }
   }
@@ -159,27 +109,7 @@ public struct Watch: Equatable, Sendable, Codable {
     return copy
   }
 
-  /// The inverse of `marking(_:)`: a copy with `ids` removed from `seen`.
-  ///
-  /// **On its own this looks like dead API — `seen` only ever grows, by
-  /// design (§4 above).** It exists for exactly one caller: an automatic
-  /// download that fails has to return to the inbox as a finding, and that
-  /// cannot be expressed against a monotonic set — the archive is already in
-  /// `seen`, marked there the moment it was queued, and nothing about a
-  /// failure is a new archive to seed.
-  ///
-  /// The alternative was a fourth overlay set living alongside `dismissed`,
-  /// `latest` and `watches` in `WatchingModel` — one more piece of state
-  /// tracking what a persisted set already tracks, kept in sync by hand. A
-  /// design review of that exact shape found six bugs traceable to it, and
-  /// the fix (`docs/design/channel-watching.md` §4, and the commits that
-  /// made `watches` the model's spine instead of a stale poll snapshot)
-  /// deleted three of the compensations it had accumulated. Adding a fourth
-  /// overlay to cover the failure case would be repeating the mistake the
-  /// same afternoon it was fixed. A failure is a `seen` removal and nothing
-  /// else — `WatchingModel`'s existing reconciliation against `seen`
-  /// (`findings(in:)`) does the rest for free. See
-  /// `docs/design/channel-watching.md` §6.3.
+  /// Removes failed automatic downloads from seen IDs so they return to the inbox for retry.
   public func forgetting(_ ids: some Sequence<String>) -> Watch {
     var copy = self
     copy.seen.subtract(ids)

@@ -63,8 +63,7 @@ struct ModelTests {
     #expect(job([.running, .failed(StepFailure(kind: .noArtifact, summary: "x"))]).status == .running)
   }
 
-  /// Everything persisted must survive a round trip; the queue file depends on it.
-  /// This includes Duration values which are critical to the model.
+  /// Round-trip all persisted values, including Duration.
   @Test func jobRoundTripsThroughCodable() throws {
     let original = job([.queued, .done, .failed(StepFailure(kind: .exited(code: 134), summary: "boom"))])
     let data = try JSONEncoder().encode(original)
@@ -145,20 +144,14 @@ struct ModelTests {
     #expect(step(.downloadVideo(video), artifact: destination).deliveredArtifact == destination)
   }
 
-  /// A step that only feeds a later one (`JobTemplate.makeJob`'s implied
-  /// chat/render requests) carries `destination: nil` on its request, so
-  /// `QueueEngine.move` never moves its output anywhere — but it is still
-  /// `.done`, with `artifact` pointing at wherever it landed inside the job
-  /// workspace. That must never read as delivered.
+  /// Done intermediates with no destination are not delivered files.
   @Test func deliveredArtifactIsNilForAStepWithNoDestinationEvenWhenDone() {
     let chat = ChatRequest(videoID: "1", format: .json, destination: nil)
     let workspacePath = URL(filePath: "/Caches/studio.lofti.Oxbow/jobs/x/artifacts/chat.json")
     #expect(step(.downloadChat(chat), artifact: workspacePath).deliveredArtifact == nil)
   }
 
-  /// `.composite` always counts as having no destination, whatever
-  /// `CompositeRequest.destination` says — its own output is a retained
-  /// piece, not the delivered file (`StepKind.deliveryDestination`).
+  /// Composite output is a retained piece regardless of its request's destination.
   @Test func deliveredArtifactIsNilForACompositeStepEvenWithAnArtifact() {
     let piece = URL(filePath: "/Caches/studio.lofti.Oxbow/resume/abc/piece-0.mp4")
     let composite = CompositeRequest(
@@ -167,9 +160,7 @@ struct ModelTests {
     #expect(step(.composite(composite), artifact: piece).deliveredArtifact == nil)
   }
 
-  /// A job with several genuinely separate outputs — video, chat, and a
-  /// render, each with its own destination — delivers all of them, in step
-  /// order.
+  /// Separate requested outputs are delivered in step order.
   @Test func jobDeliveredFilesListsEveryStepThatActuallyDelivered() {
     let video = Self.folder.appending(path: "a.mp4")
     let chat = Self.folder.appending(path: "a - chat.json")
@@ -185,9 +176,7 @@ struct ModelTests {
     #expect(subject.deliveredFiles == [video, chat])
   }
 
-  /// The composite/assemble split: only the file `.assemble` produced counts
-  /// as delivered, even though the composite step's own `artifact` still
-  /// points at a retained piece.
+  /// Only assembly output is delivered, not its retained pieces.
   @Test func jobDeliveredFilesExcludesTheCompositesPieceButIncludesTheAssembledFile() {
     let piece = URL(filePath: "/Caches/studio.lofti.Oxbow/resume/abc/piece-0.mp4")
     let destination = Self.folder.appending(path: "out.mp4")

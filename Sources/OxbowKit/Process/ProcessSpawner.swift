@@ -3,11 +3,8 @@ import Foundation
 
 public enum ProcessSpawner {
 
-  /// Spawns `executable` in **its own process group**.
-  ///
-  /// The process group is the entire reason this exists rather than using
-  /// Foundation's `Process`, which places the child in ours — making
-  /// `kill(-pgid, …)` fatal to Oxbow itself.
+  /// Spawns a separate process group so cancellation can signal the helper and its children
+  /// without signalling Oxbow.
   public static func spawn(
     executable: URL,
     arguments: [String],
@@ -42,18 +39,8 @@ public enum ProcessSpawner {
     // pgroup 0 means "become your own group leader", so pgid == pid.
     posix_spawnattr_setpgroup(&attributes, 0)
 
-    // Reset the signal mask and dispositions in the child.
-    //
-    // Both are inherited across posix_spawn, and a blocked SIGCHLD is fatal
-    // to the helper in a way that looks like a hang: CoreCLR learns that a
-    // child of its own has exited only via SIGCHLD, so with it masked the
-    // helper's `Process.WaitForExit()` on the FFmpeg it spawns never returns.
-    // The FFmpeg does its work, exits, and sits as an unreaped zombie while
-    // the helper waits on it forever.
-    //
-    // Found exactly that way: a download reached "Finalizing Video 100%",
-    // produced a complete file, and then hung with a <defunct> child. Not
-    // theoretical, and not something the helper can defend itself against.
+    // Reset inherited signal masks and dispositions. Blocked SIGCHLD prevents CoreCLR from
+    // reaping FFmpeg, hanging `WaitForExit` after output is complete.
     var emptyMask = sigset_t()
     sigemptyset(&emptyMask)
     posix_spawnattr_setsigmask(&attributes, &emptyMask)
@@ -89,21 +76,9 @@ public enum ProcessSpawner {
       stderr: FileHandle(fileDescriptor: errPipe[0], closeOnDealloc: true))
   }
 
-  /// Signals the child's whole process group. A negative pid means "group",
-  /// and because we set pgroup 0 at spawn, the group id equals the child's
-  /// pid.
-  ///
-  /// `pid` is guarded to be greater than 1: `kill(-0, …)` signals *our own*
-  /// process group — every process launched alongside Oxbow, including
-  /// Oxbow itself — and `kill(-1, …)` signals every process we have
-  /// permission to signal. A zero-valued or default-initialised pid reaching
-  /// this function unguarded is exactly the catastrophe this file exists to
-  /// avoid, so both are refused as a no-op.
-  ///
-  /// Returns `0` on success, `-1` if `pid` was refused without attempting
-  /// the signal, or the `errno` set by `kill` on failure — e.g. `ESRCH` if
-  /// the group has already exited (benign), or `EPERM` if we lack
-  /// permission.
+  /// Signals the child's process group (`pgid == pid`). Refuse PIDs ≤1: zero signals our group
+  /// and -1 signals all permitted processes. Returns 0 on success, -1 for refused PID, or errno
+  /// from `kill`.
   @discardableResult
   public static func signal(_ signalNumber: Int32, toGroupOf pid: pid_t) -> Int32 {
     guard pid > 1 else { return -1 }
@@ -123,10 +98,7 @@ public enum ProcessSpawner {
     } while result == -1 && waitErrno == EINTR
 
     guard result != -1 else {
-      // Anything other than EINTR — ECHILD (already reaped), EINVAL, etc. —
-      // must not be reported as a clean exit. Doing so would silently
-      // invert the exited-vs-signalled distinction this type exists to
-      // preserve: a cancelled download would read back as a success.
+      // Retry EINTR only; other wait failures mean unknown status, never successful exit.
       return .waitFailed(errno: waitErrno)
     }
 

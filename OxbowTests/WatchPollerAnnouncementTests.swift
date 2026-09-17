@@ -3,10 +3,8 @@ import Testing
 import OxbowKit
 @testable import Oxbow
 
-/// The first tests `WatchPoller` has had. They cover the announcement wiring
-/// specifically — that a sweep hands `FindingAnnouncement`'s verdict to the
-/// notifier once, and carries its answer to the next sweep — not the
-/// submission path, which needs a `QueueHost` this cannot stand up.
+/// Tests announcement wiring and remembered announcements across sweeps, without exercising
+/// submission.
 @MainActor
 @Suite("Watch poller announcements")
 struct WatchPollerAnnouncementTests {
@@ -19,9 +17,7 @@ struct WatchPollerAnnouncementTests {
     return store
   }
 
-  /// `WatchPoller.init` requires a `videoRecordStore` — this suite is not
-  /// testing what a sweep records, so each test gets its own disposable file
-  /// rather than mentioning what goes through it.
+  /// Disposable record store unrelated to the behavior under test.
   private func temporaryVideoRecordFile() -> URL {
     URL.temporaryDirectory
       .appending(path: "poller-announcement-video-record-\(UUID().uuidString)")
@@ -75,9 +71,7 @@ struct WatchPollerAnnouncementTests {
     #expect(spy.messages.first?.body == "2 archives are waiting in Watching.")
   }
 
-  /// The nag guard, end to end rather than only in `FindingAnnouncement`:
-  /// the poller must actually carry the returned set forward, which a unit
-  /// test of the pure rule cannot check.
+  /// Verify the poller retains the announcement set between sweeps.
   @Test("a second sweep over the same findings says nothing")
   func doesNotRepeatItself() async throws {
     let spy = Spy()
@@ -125,11 +119,8 @@ struct WatchPollerAnnouncementTests {
     #expect(poller.results.isEmpty)
   }
 
-  /// `refreshNow()` is what the toolbar's Refresh calls, and what
-  /// `AddChannelWindow.onSaved` calls so a channel added with automatic
-  /// downloading does not sit inert until the next hourly sweep. It must
-  /// ignore `WatchPollPolicy`'s throttle — two calls a second apart both
-  /// have to reach the network.
+  /// Manual refresh bypasses the throttle, including the refresh immediately after adding a
+  /// channel.
   @Test("refreshNow bypasses the hourly throttle")
   func manualRefreshIgnoresTheThrottle() async throws {
     let spy = Spy()

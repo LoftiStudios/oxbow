@@ -1,17 +1,11 @@
 import Foundation
 
-/// What one channel's sweep produced.
-///
-/// **An outcome, not a list.** `docs/design/channel-watching.md` §7 requires
-/// that a parse failure degrade to a visible error rather than to an empty
-/// list that looks like "no new videos" — so a caller must be unable to
-/// confuse the two, which means the failure has to survive as far as the UI.
+/// A channel sweep's success or failure. Keep failures distinct from an empty archive list so
+/// the UI can report them.
 public struct WatchPollResult: Equatable, Sendable {
 
   public enum Outcome: Equatable, Sendable {
-    /// The sweep succeeded. The payload is everything the channel has —
-    /// seen or not — because filtering it down to "new" is a decision for
-    /// whichever consumer needs that view, not for the sweep that fetched it.
+    /// All returned archives; each consumer applies its own seen-state filter.
     case found([ChannelArchive])
     case failed(ChannelFeedError)
   }
@@ -26,12 +20,8 @@ public struct WatchPollResult: Equatable, Sendable {
     self.outcome = outcome
   }
 
-  /// Everything the channel returned, with a failure reading as none.
-  ///
-  /// A convenience for counting and rendering. It deliberately does **not**
-  /// replace `outcome` — anything deciding whether a channel is *healthy* must
-  /// read `outcome`, because this getter is exactly the flattening §7 forbids
-  /// as the only signal.
+  /// Archives for counting/rendering; returns none on failure. Use `outcome` to determine
+  /// channel health.
   public var archives: [ChannelArchive] {
     switch outcome {
     case .found(let archives): archives

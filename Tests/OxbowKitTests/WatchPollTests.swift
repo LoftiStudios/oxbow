@@ -18,12 +18,8 @@ struct WatchPollTests {
                    publishedAt: Date(timeIntervalSince1970: 0), status: status, thumbnailURL: nil)
   }
 
-  /// **The sweep no longer filters by `seen`, deliberately.** It used to,
-  /// and that deleted every downloaded archive on its way to the Watching
-  /// pane: everything that downloads an archive writes `seen`, so a
-  /// completed download vanished from the data and no rule downstream could
-  /// bring it back. The pane needs the whole list; the two consumers that
-  /// want findings-only filter for themselves.
+  /// Sweeps return seen archives too so downloaded history remains visible. Consumers needing
+  /// findings-only filter separately.
   @Test("returns every archive the channel has, including seen ones")
   func returnsEverythingIncludingSeen() async {
     let results = await WatchPoll.sweep([watch("ninja", seen: ["1"])]) { _ in
@@ -42,8 +38,7 @@ struct WatchPollTests {
 
   @Test("a failure is carried, not flattened into an empty list")
   func failureIsCarried() async {
-    // The whole point of section 7: a parse failure must be distinguishable
-    // from "no new videos", or a watch degrades silently into doing nothing.
+    // Failed parsing must remain distinct from an empty channel.
     let results = await WatchPoll.sweep([watch("ninja")]) { _ in
       .failure(.malformedPayload(snippet: "…"))
     }
@@ -71,10 +66,7 @@ struct WatchPollTests {
 
   @Test("a live broadcast is reported to a person, because a person may still choose it")
   func liveIsReported() async {
-    // Section 5.2 forbids anything UNATTENDED queueing a RECORDING. It does not
-    // hide it from a human. Stage 3 filters at the point of submission; this
-    // must not filter here, or the inbox silently omits a stream someone is
-    // watching right now.
+    // Show recording broadcasts; filter only at unattended submission.
     let results = await WatchPoll.sweep([watch("ninja")]) { _ in
       .success([self.archive("1", status: .recording)])
     }
@@ -94,9 +86,7 @@ struct WatchPollTests {
 
   @Test("the sweep does not mutate the watches it was given")
   func sweepIsReadOnly() async {
-    // Polling is read-only by design: the seen-set changes only when a person
-    // Adds or Ignores. A poll that marked findings seen would consume them
-    // before anyone saw them.
+    // Sweeping must not mark findings handled before any action.
     let original = watch("ninja", seen: ["1"])
     _ = await WatchPoll.sweep([original]) { _ in .success([self.archive("2")]) }
     #expect(original.seen == ["1"])

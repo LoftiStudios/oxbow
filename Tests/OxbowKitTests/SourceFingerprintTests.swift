@@ -35,10 +35,8 @@ struct SourceFingerprintTests {
     #expect(first.matches(second))
   }
 
-  /// Twitch mutes VOD sections for DMCA after the fact, which re-encodes
-  /// audio and changes the file. Half a video from before the mute and half
-  /// from after is exactly the failure nobody notices — so it refuses rather
-  /// than repairs. docs/design/resume.md §7.
+  /// Changed source bytes, such as after a Twitch mute, must reject resume across incompatible
+  /// downloads.
   @Test func refusesAChangedSource() throws {
     let before = try tempFile(bytes: 128)
     let after = try tempFile(bytes: 129)
