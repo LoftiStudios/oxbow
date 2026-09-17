@@ -269,8 +269,10 @@ has changed.**
    the CLI-against-itself runs in §8.1 are exactly this, and they found the two
    corrections that make the oracle trustworthy. What remains is packaging them
    as a script beside `bench-composite.sh`.
-3. Amend `development.md`'s "Do not suggest" entry and `cli-dependency.md` §9
-   with a pointer here, so the experiment is not argued against as a mistake.
+3. ~~Amend `development.md`'s "Do not suggest" entry and `cli-dependency.md` §9
+   with a pointer here, so the experiment is not argued against as a mistake.~~
+   **Done 2026-09-17.** Both now say this document is deliberate and
+   unapproved, and that `cli-dependency.md`'s decision is unchanged by it.
 4. Set the time budget (§10).
 
 ### Phase 1 — timeline and text
