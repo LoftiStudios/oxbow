@@ -1,6 +1,8 @@
 # Native chat render — design
 
-**Status:** draft 2026-09-17, for reading. **Not approved, not scheduled.** It
+**Status:** draft 2026-09-17, for reading. **Not approved, not scheduled.**
+Phase 0's first two items were measured the same day — §3.1 (what embedding
+costs) and §8.1 (whether the CLI can be trusted as a reference). It
 does not reverse [`cli-dependency.md`](cli-dependency.md) §9 on its own; it
 describes what the work would be if that decision is reopened, and how to stop
 partway without leaving anything behind.
@@ -76,11 +78,53 @@ renders.** Then the native renderer never touches the network. Its only
 dependency is a file format, and the provider churn stays inside the CLI's
 download step, where it already is.
 
-Unmeasured: how much `-E` grows the JSON on a heavy-chat VOD, and how much time
-it adds to the download. Measure both on `2856361990` before adopting.
-
 Not embedded, and therefore out of scope: avatars (`--avatars`, still untried
 per `cli-dependency.md` §7).
+
+### 3.1 What `-E` costs — measured 2026-09-17
+
+Against the bundled helper and the real VODs. `2856361990` is 7:37:20 of
+Just Chatting at ~418 messages/minute; `1480816483` is the 9-minute VOD the
+composite-performance numbers were taken on.
+
+| Input | Plain | With `-E` | Download, plain → `-E` |
+|---|---|---|---|
+| `1480816483`, 93 comments | 73 KB | 974 KB | 0.7s → 12s (cold) |
+| `2856361990` @ 2:30:00 +180s, 1,250 comments | 0.86 MB | 17.7 MB | 1.8s → 122s cold, 23s warm |
+| `2856361990` @ 2:30:00 +30min, 10,195 comments | 7.1 MB | 48.2 MB | 11s → 141s cold, 84s warm |
+| `2856361990` entire, 179,726 comments | 126 MB | **256 MB** | 153s → **784s cold, 355s warm** |
+
+Size tracks the number of *distinct* emotes, not the number of messages: the
+3-minute window embeds 98 third-party emotes (15.4 MB of its 17.7 MB), the
+whole VOD 710. The extra 130 MB on the full VOD is base64, so ~97 MB of image
+data.
+
+**The fetch is moved, not added.** Today's render step does the same fetching,
+because a plain JSON gives it nothing to work from. Same window, empty cache
+both times, production encoder:
+
+| Render | |
+|---|---|
+| plain JSON, CLI fetches while rendering (today) | **107s** |
+| embedded JSON, `--offline` | **23s** |
+
+So `-E`'s ~100s on the download buys ~84s back on the render, and the render
+stops depending on the network. What is genuinely new is the larger
+intermediate file.
+
+**Every job pays the cold price.** `StepContextBuilder` gives each step of each
+job a fresh `--temp-path` (`workspace.prepareStep(job:step:)`), and the CLI's
+emote cache lives inside it, so nothing is ever reused between jobs. A cache
+directory shared across jobs would roughly halve the embed cost (784s → 355s
+on the full VOD); see §10.
+
+**What the warm 355s is, since it is not the network and not serialisation.**
+Writing the 256 MB file takes 0.1s. With every emote already cached and zero
+downloads, the 30-minute window still spends **57s** loading 240 cached 7TV
+emotes, because `TwitchEmote`'s constructor decodes every frame of every
+animated emote into `SKBitmap`s (`TwitchObjects/TwitchEmote.cs:34`,
+`ExtractFrames`) — work the embedding path never uses, since it only base64s
+`ImageData`. Upstream candidate, §9.1.
 
 ### Out: exactly what `chatrender` produces today
 
@@ -197,6 +241,11 @@ ImageIO is expected to decode animated GIF and WebP. Also unverified.
 - **The default font.** `RenderRequest.font` defaults to `"Inter Embedded"`,
   which lives inside `TwitchDownloaderCore.dll`. Either bundle Inter (OFL) or
   change the default to the system font — an open question, §10.
+- **Colours for users who never set one** will not match the CLI, because the
+  CLI's own choice is not stable between runs (§8.1). 170 of 1,250 messages in
+  the reference window have `user_color: null`. Ours picks from the same
+  fifteen defaults with a *stable* hash, so a given user keeps one colour
+  forever — which is what upstream intends and fails to do.
 
 ### Out of scope
 
@@ -211,11 +260,15 @@ has changed.**
 
 ### Phase 0 — prerequisites, no renderer code
 
-1. Pass `-E` for rendering jobs; measure JSON size and download time (§3).
-   Worth doing even if the renderer is never built — it takes network fetching
-   out of the render step.
+1. Pass `-E` for rendering jobs, and `--offline` to the render. **Measured
+   2026-09-17, §3.1** — the cost is a bigger intermediate file, not extra
+   fetching, and the render gets 4.5x faster and stops needing the network.
+   Still a decision, not a conclusion: §10.
 2. Build the comparison harness (§8) against the CLI alone, so it is known to
-   work before there is anything to compare.
+   work before there is anything to compare. **Done 2026-09-17 in outline** —
+   the CLI-against-itself runs in §8.1 are exactly this, and they found the two
+   corrections that make the oracle trustworthy. What remains is packaging them
+   as a script beside `bench-composite.sh`.
 3. Amend `development.md`'s "Do not suggest" entry and `cli-dependency.md` §9
    with a pointer here, so the experiment is not argued against as a mistake.
 4. Set the time budget (§10).
@@ -306,11 +359,50 @@ the bundled helper, none in `ci.yml`:
    (the fifteen-message second in `2856361990` at 2:30:00) and across
    animated emotes. Judged by eye.
 
-Reference inputs: `2856361990` from 2:30:00 for 180s (1,253 messages, heavy),
+Reference inputs: `2856361990` from 2:30:00 for 180s (1,250 messages, heavy),
 and `1480816483` (the composite-performance job).
 
 Unit tests for `ChatTimeline` and `MessageLayout` run under `swift test` like
 the rest of `OxbowKit`, and need no helper.
+
+### 8.1 The oracle is sound, but only after two corrections — measured 2026-09-17
+
+Both were found by running the CLI against *itself*, before writing any Swift.
+Do that first whenever this harness is rebuilt.
+
+**A chat download is not reproducible.** Two downloads of the same window
+return the same 1,250 messages, but 4–8 pairs swap places. Those pairs share a
+`content_offset_seconds` **and** a `created_at` to the millisecond (two
+messages both at `2026-08-25T23:30:16.964Z`), and `CommentOffsetComparer`
+returns `1` for both orderings of such a pair — deliberately, with a comment
+that returning `0` would make the sorter drop one. Input order comes from
+parallel section downloads merged through a `HashSet`, so it varies. Twitch
+creates the tie; the CLI breaks it arbitrarily.
+
+Invisible on screen — two messages in the same millisecond swap — but it means
+**every comparison must render from one saved JSON**, never from two
+downloads.
+
+**A render is not reproducible at all until username colours are pinned.** Same
+JSON, rendered twice, losslessly (`-c:v ffv1 -pix_fmt bgra`), compared by
+per-frame hash: **5,322 of 5,400 frames differ**, mean RGB MSE 67.6. Every
+difference is a username colour. A comment with `user_color: null` is drawn in
+`DefaultUsernameColors[Math.Abs(display_name.GetHashCode()) % 15]`
+(`ChatRenderer.cs:1739`), and .NET randomises string hashes per process, so the
+same viewer gets a different colour in every render. Upstream candidate, §9.1.
+
+With every `null` colour replaced by a fixed value in the input JSON, on the
+same window:
+
+| Comparison | Frames differing of 5,400 |
+|---|---|
+| same JSON rendered twice, lossless | **0** |
+| embedded + `--offline` vs plain + online fetch | **0** |
+| `h264_videotoolbox` encoded twice, decoded frames | **0** (file bytes differ) |
+
+So: the harness pins colours in its fixtures, and layout, emotes, dispersion
+and timing are all exactly repeatable. The second row is the one that matters
+for §3 — embedding changes nothing about the output.
 
 ## 9. Risks and unknowns
 
@@ -319,7 +411,6 @@ All unverified unless stated.
 - **Core Text parity** for RTL, ZWJ and fallback — the premise that makes this
   smaller than it looks.
 - **Renderer throughput** — gates Phase 4 only; Phase 3 does not care.
-- **`-E` payload size** on heavy chat.
 - **Schema drift.** The chat JSON is upstream's format. It is versioned and has
   moved slowly (1.4.0), but a native renderer ties us to it for as long as
   the CLI downloads chat.
@@ -327,14 +418,43 @@ All unverified unless stated.
   comparison harness needs a VOD on each dispersion path.
 - **ImageIO** decoding animated WebP from 7TV.
 
+### 9.1 Upstream candidates found while measuring this
+
+Both are downstream-facing defects of the kind `twitch-downloader-cli-upstream-prs`
+already tracks, and both are independent of whether this experiment proceeds.
+
+1. **Username colours are not stable between runs.** `ChatRenderer.cs:1739`
+   indexes `DefaultUsernameColors` by `display_name.GetHashCode()`, which .NET
+   randomises per process. The intent is plainly a stable colour per viewer;
+   the effect is a different colour in every render, for 14% of messages in the
+   reference window. A non-randomised hash over the name fixes it. Strong
+   candidate: small, obviously a bug, and demonstrable with two renders of one
+   file.
+2. **`chatdownload -E` decodes every animated emote frame it embeds.**
+   `TwitchEmote`'s constructor runs `ExtractFrames` (`TwitchEmote.cs:34`),
+   while the embed path only needs `ImageData` for base64. Measured: 57s to
+   "load" 240 already-cached 7TV emotes with zero downloads. Weaker: the
+   constructor is shared with the render path, so the fix is a lazier
+   `TwitchEmote` rather than a one-liner, and it needs a measurement of the
+   render path to show nothing regresses.
+
 ## 10. Open questions
 
 1. **What is the time budget, and what happens when it runs out?** The whole
    design depends on actually stopping.
 2. **Bundle Inter, or switch the default to the system font?**
 3. **Is Phase 0's `-E` change worth shipping on its own**, regardless of
-   whether the renderer is built?
-4. **Does Phase 3 need a user-visible choice** during its one release, or is a
+   whether the renderer is built? §3.1 says it trades 130 MB of intermediate
+   file on a 7.5-hour VOD for a render that is 4.5x faster and offline. The
+   answer probably depends on 4.
+4. **Should the CLI's emote cache be shared across jobs?** Each step gets a
+   fresh temp directory today, so every job re-fetches every emote —
+   `-E` or not. Sharing one cache roughly halves the embed cost and would make
+   3 clearly worth it, but it is a new piece of long-lived state in the
+   workspace, with its own invalidation question (`cli-dependency.md` §3's
+   "Fix emote cache to use Id instead of Name" is upstream getting this
+   wrong).
+5. **Does Phase 3 need a user-visible choice** during its one release, or is a
    hidden default enough?
 
 ## 11. Not in scope
