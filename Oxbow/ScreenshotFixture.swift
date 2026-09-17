@@ -84,6 +84,9 @@ struct ScreenshotVideoInfo: Decodable {
   }
 }
 
+/// Deliberately not `nonisolated`, unlike the extensions on the other pure helpers: `videoInfo`
+/// below decodes `ScreenshotVideoInfo` and calls `resolved(thumbnailBase:)`, both main-actor
+/// isolated, so marking this extension nonisolated does not compile.
 extension ScreenshotFixture {
 
   /// The link the intake opens with, seeded as though it had been pasted.

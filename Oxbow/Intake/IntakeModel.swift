@@ -713,7 +713,8 @@ nonisolated enum OutputSuffix {
   }()
 }
 
-extension TwitchLink.Target {
+/// `nonisolated` to match `TwitchLink`: a pure mapping, callable from a synchronous test.
+nonisolated extension TwitchLink.Target {
   /// Both info and chatdownload accept a VOD id or clip slug as --id.
   var identifier: String {
     switch self {

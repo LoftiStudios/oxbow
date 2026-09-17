@@ -18,7 +18,12 @@ enum QueueMetrics {
 }
 
 /// Map view-independent status tones to SwiftUI colours.
-extension JobPresentation.Tone {
+///
+/// `nonisolated` to match `JobPresentation` itself: the mapping is a pure function of its
+/// arguments, and without this the extension inherits the app's default main-actor isolation
+/// while the enum does not — which leaves `OxbowTests` unable to call it from a synchronous
+/// test. `swift test` cannot catch that; it never builds this target.
+nonisolated extension JobPresentation.Tone {
   /// Use the SwiftUI colour scheme so pinned previews and rendered views match their progress
   /// bars; NSAppearance may differ.
   func color(for scheme: ColorScheme) -> Color {
