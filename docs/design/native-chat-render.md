@@ -126,6 +126,63 @@ animated emote into `SKBitmap`s (`TwitchObjects/TwitchEmote.cs:34`,
 `ExtractFrames`) — work the embedding path never uses, since it only base64s
 `ImageData`. Upstream candidate, §9.1.
 
+### 3.2 A shared emote cache — decided 2026-09-17: share it
+
+Each step of each job gets a fresh `--temp-path`, and the CLI's cache lives
+inside it, so every job re-downloads every emote whether or not `-E` is on. One
+cache directory outside the job workspace fixes that (784s → 355s on the full
+VOD, §3.1).
+
+**Channel-specific emotes do not collide, because nothing is keyed by name.**
+Measured by reading the cache the runs in §3.1 left behind:
+
+| Cache directory | File name | Key is |
+|---|---|---|
+| `stv/`, `bttv/`, `ffz/` | `01H2VES67R000E3JYQ365Y7TKY_2.webp` | the provider's own emote id — globally unique, so one file serves every channel using that emote |
+| `emotes/` | `emotesv2_be70202f…_2.png`, `120232_2.png` | the Twitch emote id, including channel sub emotes |
+| `badges/` | `0ff76959-0c05-4406-b18a-779fd6debdd6_2.png` | a UUID taken from the badge's image URL, so a channel's own subscriber badges are distinct files per tier |
+| `emojis/` | `1F469 200D 1F3EB.PNG` | the codepoints; extracted from the bundled DLL, identical for every job, 21 MB |
+| `bits/` | `Cheer1_2.gif` | **the cheer node id plus the bits tier** — see below |
+
+So a channel's custom 7TV set, its sub emotes and its subscriber badges are all
+addressed by ids the provider assigned. Two channels sharing an emote share one
+cached file, which is the saving; two channels with *different* emotes cannot
+land on the same name. Upstream has already been down the other road —
+`cli-dependency.md` §3 lists a "Fix emote cache to use Id instead of Name"
+commit — so this is a fixed bug, not a latent one.
+
+**The one soft spot is cheermotes.** `bits/` keys on `node.id + tier.bits`
+(`TwitchHelper.cs` ~1084). The global cheer group is `Cheer`, giving the
+`Cheer1_2.gif`, `Cheer100_2.gif` files we see; channel-custom groups come from
+`user.cheer.cheerGroups` and bring their own node ids. **Whether those ids are
+unique across channels is not verified here** — no custom cheermote appeared in
+the sample. If two channels ever shared one, the second would render the
+first's art.
+
+The cheap insurance, if that matters: leave `bits/` inside the per-job temp
+directory and share only the rest. It is 380 KB in the reference sample against
+27 MB of 7TV emotes, so excluding it costs essentially nothing. Recommended
+until somebody checks a channel with custom cheermotes.
+
+**Concurrent access is safe enough.** `Scheduler.admissible` allows one running
+step per resource class, so a download and a render can touch the cache at
+once. `GetImage` reads the cached file, decodes it, and on failure deletes it
+and refetches, catching `IOException` with the comment *"File being written to
+by parallel process? Maybe."* Writes are not atomic — no temp-file rename — so
+a reader can see a truncated file, and the decode check is what turns that into
+a re-download rather than a corrupt emote.
+
+**Two things a shared cache needs that a per-job one never did:** a size bound
+(27 MB per heavy channel, unbounded over time, and nothing ever evicts) and a
+decision about where it lives — inside the app's Application Support workspace,
+beside the job data it outlives. Neither is designed here.
+
+**What sharing does not help:** provider metadata. `emotes_{streamerId}.json.gz`
+is written per channel but read only when the provider's API *fails*, and only
+if under 48 hours old (`RefreshOrLoadProviderMetadata`). Every run still asks
+7TV, BTTV and FFZ for the channel's current emote list. Sharing the cache saves
+image downloads, not API calls.
+
 ### Out: exactly what `chatrender` produces today
 
 The composite's filter graph (`ArgumentBuilder`, `.composite`) takes input 1 as
@@ -468,13 +525,12 @@ already tracks, and both are independent of whether this experiment proceeds.
    whether the renderer is built? §3.1 says it trades 130 MB of intermediate
    file on a 7.5-hour VOD for a render that is 4.5x faster and offline. The
    answer probably depends on 4.
-4. **Should the CLI's emote cache be shared across jobs?** Each step gets a
-   fresh temp directory today, so every job re-fetches every emote —
-   `-E` or not. Sharing one cache roughly halves the embed cost and would make
-   3 clearly worth it, but it is a new piece of long-lived state in the
-   workspace, with its own invalidation question (`cli-dependency.md` §3's
-   "Fix emote cache to use Id instead of Name" is upstream getting this
-   wrong).
+4. ~~**Should the CLI's emote cache be shared across jobs?**~~ **Decided
+   2026-09-17: yes, share it** — §3.2, which also establishes that
+   channel-specific emotes and badges cannot collide because none of it is
+   keyed by name. What is still open is where it lives and what bounds its
+   size, and whether `bits/` stays per-job as insurance against the one key
+   that is not provably unique.
 5. **Does Phase 3 need a user-visible choice** during its one release, or is a
    hidden default enough?
 
