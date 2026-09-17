@@ -416,7 +416,15 @@ All unverified unless stated.
   the CLI downloads chat.
 - **The jitter fallback** will differ from the CLI's output (§4), so the
   comparison harness needs a VOD on each dispersion path.
-- **ImageIO** decoding animated WebP from 7TV.
+- ~~**ImageIO** decoding animated WebP from 7TV.~~ **Verified 2026-09-17:**
+  ImageIO read all 242 cached 7TV `.webp` emotes — 15,356 frames, up to 390 in
+  one emote — with zero failures, decoding and drawing them in 3.95s. Note that
+  `CGImageSourceCreateImageAtIndex` alone is lazy and returned in 0.6s; the
+  honest number comes from drawing each frame into a context.
+
+  Our own FFmpeg build, by contrast, decodes **zero** frames from these files.
+  So the renderer must use ImageIO for emotes, and any harness step that tries
+  to inspect emote files with `build/ffmpeg` will silently measure nothing.
 
 ### 9.1 Upstream candidates found while measuring this
 
@@ -432,11 +440,22 @@ already tracks, and both are independent of whether this experiment proceeds.
    file.
 2. **`chatdownload -E` decodes every animated emote frame it embeds.**
    `TwitchEmote`'s constructor runs `ExtractFrames` (`TwitchEmote.cs:34`),
-   while the embed path only needs `ImageData` for base64. Measured: 57s to
-   "load" 240 already-cached 7TV emotes with zero downloads. Weaker: the
-   constructor is shared with the render path, so the fix is a lazier
-   `TwitchEmote` rather than a one-liner, and it needs a measurement of the
-   render path to show nothing regresses.
+   decoding all frames into `SKBitmap`s. The embed loop
+   (`ChatDownloader.cs:561`) reads only `Id`, `ImageScale`, `ImageData`,
+   `Name`, `Width`, `Height`, `IsZeroWidth` — and `Width`/`Height` come from
+   `EmoteBitmaps[0].Info` when `Codec.Info` already carries them without
+   decoding a pixel. Measured: **57s** to "load" 240 already-cached 7TV emotes
+   with zero downloads.
+
+   For scale, the same 242 cached files decoded **and drawn** through ImageIO
+   — 15,356 frames, up to 390 per emote, 124 Mpx — take **3.95s** on this
+   machine (`decode2.swift`, §12). So the work is both unnecessary here and
+   roughly 14x slower than the platform decoder; the 57s also covers cache
+   reads and object construction, which were not measured apart.
+
+   Weaker than 1 as a PR: the constructor is shared with the render path, where
+   the frames *are* needed, so the fix is a lazier `TwitchEmote`, and it needs
+   a render-path measurement to show nothing regresses.
 
 ## 10. Open questions
 
@@ -464,3 +483,61 @@ already tracks, and both are independent of whether this experiment proceeds.
 - An in-app chat preview. `frame(at:)` makes it possible; this document does
   not build it.
 - Removing the .NET runtime from the bundle.
+
+## 12. Reproducing the measurements
+
+All of §3.1, §8.1 and §9.1 came from the bundled helper and `build/ffmpeg`, on
+this machine, 2026-09-17. Nothing here needs the app.
+
+```bash
+# embedded vs plain, and the download cost (§3.1). --temp-path is the emote
+# cache: reuse one to measure warm, use a fresh one to measure what a job pays.
+build/helper/TwitchDownloaderCLI chatdownload --banner=false --collision Overwrite \
+  --id 2856361990 -b 9000 -e 9180 -o chat.json --temp-path tmp        # plain
+build/helper/TwitchDownloaderCLI chatdownload --banner=false --collision Overwrite \
+  --id 2856361990 -b 9000 -e 9180 -o chat-E.json --temp-path tmp -E   # embedded
+```
+
+Pin the username colours before comparing anything, or 98% of frames differ for
+no reason (§8.1):
+
+```python
+import json
+d = json.load(open("chat-E.json"))
+for c in d["comments"]:
+    c["message"]["user_color"] = c["message"].get("user_color") or "#FF69B4"
+json.dump(d, open("fixed.json", "w"))
+```
+
+Render losslessly — `ffv1`, not `h264_videotoolbox` — so a frame difference is
+the renderer's and not the encoder's, and compare by decoded-frame hash:
+
+```bash
+build/helper/TwitchDownloaderCLI chatrender --banner=false --collision Overwrite \
+  -i fixed.json -o a.mkv --temp-path tA --ffmpeg-path build/ffmpeg/ffmpeg \
+  -w 342 -h 1026 --framerate 30 --font-size 15 -f "Inter Embedded" \
+  --background-color "#111111" --alt-background-color "#191919" \
+  --message-color "#ffffff" --outline-size 4 --dispersion --offline \
+  '--output-args=-c:v ffv1 -pix_fmt bgra "{save_path}"'
+
+build/ffmpeg/ffmpeg -v error -i a.mkv -f framemd5 - | grep -v '^#' | awk -F, '{print $6}' > a.md5
+paste -d' ' a.md5 b.md5 | awk '$1!=$2' | wc -l    # differing frames
+```
+
+`--offline` needs an empty `--temp-path` to prove anything: the CLI will
+happily read a provider list left behind by an earlier run.
+
+To see *what* differs rather than how much, stack the two frames and their
+difference (our FFmpeg has no PNG encoder — write PPM and convert):
+
+```bash
+build/ffmpeg/ffmpeg -v error -y -i a.mkv -i b.mkv -filter_complex \
+  "[0:v]select=eq(n\,3000),format=rgb24,split[a][a2];[1:v]select=eq(n\,3000),format=rgb24,split[b][b2];\
+   [a][b]blend=all_mode=difference,lutrgb=r=val*8:g=val*8:b=val*8[d];[a2][b2][d]hstack=inputs=3" \
+  -frames:v 1 -c:v ppm f.ppm && sips -s format png f.ppm --out f.png
+```
+
+The ImageIO figures in §9.1 come from a throwaway `swift decode2.swift <dir>`
+over `tmp/TwitchDownloader/stv`: `CGImageSourceCreateImageAtIndex` for every
+index, each frame drawn into a `CGContext` to force a real decode. Skipping the
+draw measures nothing, because `CGImage` creation is lazy.
