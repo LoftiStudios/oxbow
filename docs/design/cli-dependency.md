@@ -328,7 +328,11 @@ depending on a published binary.
 
 ### Consequent changes
 
-1. `architecture.md` §8 — correct the "median ~1 day" PR claim (§2 above).
+1. ~~`architecture.md` §8 — correct the "median ~1 day" PR claim (§2 above).~~
+   **Done 2026-09-17.** It had outlived the decision by three weeks, and in the
+   meantime the sentence did exactly the damage §2 predicted: a month of
+   ordinary upstream quiet read as a crisis, against a yardstick that was never
+   true. §8 now states the burst pattern instead.
 2. `development.md` — stop conflating `PublishTrimmed` with `PublishSingleFile`
    (§8 above).
 3. Try `--dispersion` and `--avatars` before touching anything structural (§7).
