@@ -3,7 +3,7 @@ import Observation
 import OxbowKit
 
 /// Add/edit watch state and validation with injected fetches. canAdd delegates to composition
-/// so UI eligibility matches what can be saved.
+/// so UI eligibility matches what can be saved. See docs/design/channel-watching.md §3.
 @MainActor
 @Observable
 final class AddChannelModel {

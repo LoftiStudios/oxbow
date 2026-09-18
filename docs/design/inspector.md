@@ -66,6 +66,8 @@ wraps it. `QueueView`'s banners span the whole window on purpose — "Downloads
 unavailable" is a fact about the app, not about the visible pane — so they
 stay above the inspector as they stay above everything else.
 
+In code: `InspectorPane`, attached in `QueueView`.
+
 ### 3.2 The selection has to be hoisted, and `focusedSceneValue` is not the way
 
 Three destinations, three selections, and two of them are private:
@@ -146,7 +148,8 @@ rows and archive rows could address one window. The inspector reuses it whole.
 three existing states — `loading`, `loaded`, `unavailable`. This is the one
 element that must not fork, and it is the element `video-record.md` §4.1
 already nominated: intake and Get Info "stay two windows sharing one
-component."
+component." Both panes also load it through `VideoInfoLoad`, so the card
+cannot fork at the fetch either.
 
 **The sections beneath it are each pane's own business.** That is the same
 §4.1 principle, not a departure from it — that section's whole point is that

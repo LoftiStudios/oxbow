@@ -2,7 +2,8 @@ import Foundation
 import OxbowKit
 
 /// Shared enqueue-and-record path for the intake and intents. Stores stay outside IntakeModel
-/// so per-keystroke metadata fetches cannot persist unsubmitted videos.
+/// so per-keystroke metadata fetches cannot persist unsubmitted videos. See
+/// docs/design/video-record.md §7.
 @MainActor
 enum IntakeAdd {
 

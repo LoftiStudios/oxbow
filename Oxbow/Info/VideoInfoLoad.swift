@@ -2,7 +2,7 @@ import Foundation
 import OxbowKit
 
 /// Shared metadata-loading state for Get Info and the inspector. Distinguish loading from
-/// unavailable so the card can keep its space in either case.
+/// unavailable so the card can keep its space in either case. See docs/design/inspector.md §4.
 enum VideoInfoLoad {
   case loading
   case loaded(VideoInfo)

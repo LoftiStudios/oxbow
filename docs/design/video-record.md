@@ -434,6 +434,10 @@ There is no pre-step to add and no cost to bury. **The capture is a write on a
 fetch that already happens**, at the one moment it is guaranteed to succeed —
 while the video is still live and about to be downloaded.
 
+In code, that write is `IntakeAdd.perform`. The intake window and
+`IntentSubmission` both call it, and archive submission reaches it through
+the latter, so there is one enqueue-and-record path, not three.
+
 | Trigger | Writes |
 |---------|--------|
 | Sweep finds archives | Rows for each: title, duration, publishedAt, category, thumbnail, `lastSeenOnTwitch`, `login`. Watch state `new`. |

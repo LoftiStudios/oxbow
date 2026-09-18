@@ -95,6 +95,8 @@ Paste a channel URL or login. Oxbow fetches the channel's archive list and
 shows what is there. Then three decisions, then Add. Structurally this is the
 intake window with a list where `VideoCard` has one video.
 
+In code: `AddChannelModel`, rendered by `AddChannelWindow`.
+
 ### 3.1 Scope is chosen, not assumed
 
 Two options, presented as a choice rather than decided for the user:
