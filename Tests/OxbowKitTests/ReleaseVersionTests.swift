@@ -12,18 +12,12 @@ struct ReleaseVersionTests {
     #expect(version.patch == 3)
   }
 
-  /// The two strings being compared come from different places and are spelled
-  /// differently: our git tags are `v0.2.1` (`.github/workflows/release.yml`
-  /// triggers on `v*`), while `MARKETING_VERSION` — and therefore
-  /// `CFBundleShortVersionString` — is a bare `0.2.1`. If the `v` did not come
-  /// off, every comparison would be between a parsed value and nil.
+  /// Compare prefixed release tags with bare marketing versions.
   @Test func stripsTheLeadingVThatOnlyTagsCarry() throws {
     #expect(try #require(ReleaseVersion("v0.2.1")) == #require(ReleaseVersion("0.2.1")))
   }
 
-  /// The reason this is a struct of three integers rather than a string
-  /// comparison: `"0.2.10" < "0.2.9"` lexicographically, which would strand
-  /// every user on .9 the moment a tenth patch shipped.
+  /// Numeric comparison must order patch 10 after patch 9.
   @Test func ordersPatchesNumericallyRatherThanLexicographically() throws {
     #expect(try #require(ReleaseVersion("0.2.9")) < #require(ReleaseVersion("0.2.10")))
   }
@@ -36,10 +30,7 @@ struct ReleaseVersionTests {
     #expect(try #require(ReleaseVersion("0.99.0")) < #require(ReleaseVersion("1.0.0")))
   }
 
-  /// Anything that is not exactly three numbers is refused rather than
-  /// guessed at. `UpdateCheck` turns a nil here into "no update", so a tag
-  /// nobody anticipated makes the banner stay away — never makes it appear
-  /// wrongly, and never crashes.
+  /// Reject malformed versions without crashing or inventing an update.
   @Test func refusesWhatItCannotParse() {
     #expect(ReleaseVersion("") == nil)
     #expect(ReleaseVersion("0.2") == nil)
@@ -50,9 +41,7 @@ struct ReleaseVersionTests {
     #expect(ReleaseVersion("0.-2.1") == nil)
   }
 
-  /// Prereleases are refused for the same reason, and it is not merely
-  /// defensive: `/releases/latest` already excludes them, so a `1.0.0-beta.1`
-  /// arriving here would mean something upstream of us had changed.
+  /// Prereleases remain unsupported, matching the latest-release endpoint.
   @Test func refusesAPrereleaseSuffix() {
     #expect(ReleaseVersion("1.0.0-beta.1") == nil)
   }

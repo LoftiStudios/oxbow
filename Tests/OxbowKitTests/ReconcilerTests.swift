@@ -9,7 +9,7 @@ struct ReconcilerTests {
     jobs[0].steps.first { $0.id == Build.stepID(n) }!.status
   }
 
-  /// Nothing resumes, so a step persisted as running died with the app.
+  /// Persisted running steps become interrupted; retry handles resumable output separately.
   @Test func runningStepsBecomeInterrupted() {
     let jobs = [Build.job(1, Build.network(1, .running))]
     let out = Reconciler.reconcile(jobs) { _ in true }
@@ -24,11 +24,8 @@ struct ReconcilerTests {
     #expect(status(out, 1) == .done)
   }
 
-  /// An intermediate that only ever lived in the job workspace is gone.
-  ///
-  /// The unfinished second step is load-bearing: a job whose every step is
-  /// `.done` is finished, and finished jobs are exempt from reconciliation
-  /// entirely — see `finishedJobsAreNeverRequeued`.
+  /// Keep the job unfinished so reconciliation examines its missing intermediate; all-done jobs
+  /// are exempt.
   @Test func doneStepsRequeueWhenTheirArtifactVanished() {
     var step = Build.network(1, .done)
     step.artifact = URL(filePath: "/tmp/gone/chat.json")
@@ -43,11 +40,7 @@ struct ReconcilerTests {
     #expect(status(out, 1) == .queued)
   }
 
-  /// Spec §5: a job that already reached `.done` is finished. Its
-  /// intermediates were deleted on purpose when it finished, so requeueing a
-  /// step of one would un-finish a job the user has been shown as complete and
-  /// re-download a file that is only discarded again — on every launch,
-  /// forever.
+  /// Completed jobs must not reopen because intentionally discarded intermediates are absent.
   @Test func finishedJobsAreNeverRequeued() {
     var chat = Build.network(1, .done)
     chat.artifact = URL(filePath: "/tmp/gone/chat.json")
@@ -61,9 +54,7 @@ struct ReconcilerTests {
     #expect(out[0].status == .done)
   }
 
-  /// The narrowness of that exception matters: a failed job is still
-  /// retryable, and the retry needs its input re-fetched rather than pointed
-  /// at a path that no longer exists.
+  /// Failed jobs remain retryable and must re-fetch missing inputs.
   @Test func failedJobsStillRequeueADoneStepWhoseArtifactVanished() {
     var chat = Build.network(1, .done)
     chat.artifact = URL(filePath: "/tmp/gone/chat.json")

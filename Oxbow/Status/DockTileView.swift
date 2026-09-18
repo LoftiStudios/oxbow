@@ -1,18 +1,8 @@
 import AppKit
 
-/// Draws a `QueueStatus` onto the dock tile.
-///
-/// **Setting `NSDockTile.contentView` replaces the icon**, so this view is
-/// responsible for drawing the icon too. `NSApp.applicationIconImage` returns
-/// the appearance-treated rendering — verified, see `docs/design/status.md`
-/// §2 — so Clear and Tinted survive being drawn by us. Do not substitute a
-/// bundled asset here; that is exactly the mistake §2.2 attributes to
-/// Transmission, and it is what makes its dock icon ignore the user's icon
-/// appearance setting while its Finder icon honours it.
-///
-/// **Never set `badgeLabel` while this view is installed.** The system draws
-/// that badge on top of the content view rather than instead of it, so the
-/// two would stack.
+/// A custom contentView replaces the icon, so redraw NSApp.applicationIconImage to retain
+/// system appearance treatment. Do not also set badgeLabel: the system would overlay a second
+/// badge.
 @MainActor
 final class DockTileView: NSView {
 
@@ -58,23 +48,19 @@ final class DockTileView: NSView {
       xRadius: layout.barCornerRadius,
       yRadius: layout.barCornerRadius)
 
-    // A dark rim under the track. The icon behind it is whatever appearance
-    // the user has chosen — up to and including Clear, which is translucent —
-    // so the track cannot rely on contrasting with a known background.
+    // A dark rim separates the track from arbitrary icon appearances, including Clear.
     NSColor.black.withAlphaComponent(0.35).setFill()
     track.fill()
 
     NSColor.white.withAlphaComponent(0.9).setFill()
     track.fill()
 
-    // `.indeterminate` is the track alone: working, no estimate. An absent
-    // bar would read as idle, which is a lie while a chat download runs.
+    // Indeterminate work shows the track alone; omitting it would imply idle.
     guard case .fraction(let value) = bar, value > 0 else { return }
 
     var filled = layout.barRect
     filled.size.width *= value
-    // Below one corner diameter a rounded rect degenerates into a lens; a
-    // plain rect reads better at the very start of a job.
+    // Use a rectangle below one corner diameter to avoid a lens-shaped fill.
     let fill = filled.width >= layout.barCornerRadius * 2
       ? NSBezierPath(
           roundedRect: filled,
@@ -88,29 +74,20 @@ final class DockTileView: NSView {
 
   // MARK: - Badge
 
-  /// Cap height as a fraction of the badge's diameter, measured from the
-  /// platform's own badge: an `8` stood 16px tall in a 46px disc (§5.2).
-  /// Divided by SF's cap-height ratio to get a point size.
+  /// Measured badge cap-height ratio: 16px in a 46px disc. Convert through the font's
+  /// cap-height ratio to get point size.
   private static let badgeCapHeightRatio = 0.348
   private static let capHeightOfSystemFont = 0.72
 
   private func draw(badge: QueueStatus.Badge?, in layout: DockTileMetrics.Resolved) {
     guard let badge else { return }
 
-    // Failure is the app's own warning glyph, not a disc with a mark in it.
-    //
-    // Two reasons. It is the same symbol the queue window puts on a failed row
-    // (`JobPresentation.icon(for:)`), in the same system red, so the Dock and
-    // the window say one thing rather than two dialects of it. And a shape
-    // that differs from the count's disc is legible before either is read: a
-    // circle answers "how many", a triangle says "something is wrong". Two
-    // states that differ only in colour would need looking at.
+    // Use the queue's warning triangle for failure, distinct in shape from a count badge.
     guard case .count(let n) = badge else {
       drawAlert(in: layout.badgeRect)
       return
     }
-    // A hairline ring, so a white disc still reads as a badge rather than as a
-    // hole when the icon behind it is pale — Tinted and Clear both allow that.
+    // A rim keeps a white badge visible on pale icon appearances.
     let circle = NSBezierPath(ovalIn: layout.badgeRect.insetBy(dx: 1, dy: 1))
     NSColor.white.setFill()
     circle.fill()
@@ -125,25 +102,15 @@ final class DockTileView: NSView {
       .font: font,
       .foregroundColor: NSColor.black])
 
-    // Centre on the cap height rather than the line box: a line box carries
-    // descender space digits never use, so centring on it sits the number
-    // visibly high in the disc.
+    // Centre digits by cap height, excluding unused descender space.
     let measured = string.size()
     string.draw(at: NSPoint(
       x: layout.badgeRect.midX - measured.width / 2,
       y: layout.badgeRect.midY - font.capHeight / 2 + font.descender))
   }
 
-  /// `exclamationmark.triangle.fill`, red with a white mark.
-  ///
-  /// **The palette's layer order is `[mark, triangle]`, not the reverse.**
-  /// Getting it backwards paints the triangle the same colour as whatever sits
-  /// behind it, and it vanishes leaving only a floating exclamation mark —
-  /// which looks like a deliberate design rather than a bug, so it is worth
-  /// stating.
-  ///
-  /// Inset and nudged off the corner because a triangle inscribed in a square
-  /// tangent to the tile's edge overruns it and gets clipped along the right.
+  /// Palette order is [mark, triangle]: white, then red. Inset the triangle to avoid clipping
+  /// at the tile edge.
   private func drawAlert(in rect: CGRect) {
     let box = rect
       .insetBy(dx: rect.width * 0.04, dy: rect.height * 0.04)

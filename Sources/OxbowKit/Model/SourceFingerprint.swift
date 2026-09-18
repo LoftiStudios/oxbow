@@ -1,16 +1,7 @@
 import Foundation
 
-/// What piece 0 remembers about the video it was composited from.
-///
-/// A resumed job re-downloads its inputs, and Twitch does not guarantee they
-/// come back the same: VOD sections are muted for DMCA after the fact,
-/// renditions get re-encoded, VODs get trimmed. Half a composite from before
-/// such a change and half from after produces a file with a discontinuity and
-/// no error anywhere. This is what makes that refuse loudly instead.
-///
-/// Byte length plus duration, because geometry drift already fails on its own
-/// — `hstack` refuses mismatched heights — so the case worth catching is
-/// same-geometry, different-content, and a mute changes the byte length.
+/// Byte length and duration recorded with the first composite piece. Rejects changed
+/// re-downloads that geometry checks alone would miss, such as a newly muted VOD.
 public struct SourceFingerprint: Codable, Sendable, Equatable {
   public var byteCount: Int
   public var duration: Duration

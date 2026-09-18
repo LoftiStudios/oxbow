@@ -1,19 +1,7 @@
 #!/usr/bin/env swift
-//
-//  make-background.swift — renders the Oxbow DMG window background.
-//
-//  Emits background@1x.png (640×400) and background@2x.png (1280×800) next to
-//  this file, drawn from one set of layout constants so the two resolutions
-//  cannot drift. `package-dmg.sh` combines them into the multi-resolution
-//  background.tiff that dmgbuild actually consumes.
-//
-//  The icon coordinates below are the same numbers as `icon_locations` in
-//  settings.py. They are declared here, printed on every run, and must stay in
-//  lockstep — the artwork has no arrow object, only painted artwork that the
-//  real Finder icons are positioned on top of.
-//
-//  Usage:  swift scripts/dmg/make-background.swift [--variant light|balanced]
-//
+// Renders 640x400 and 1280x800 DMG backgrounds for packaging into a multi-resolution TIFF. Keep
+// icon coordinates synchronized with `settings.py`. Usage: `swift
+// scripts/dmg/make-background.swift [--variant light|balanced]`.
 
 import AppKit
 import CoreGraphics
@@ -24,13 +12,10 @@ import UniformTypeIdentifiers
 let W: CGFloat = 640
 let H: CGFloat = 400
 
-/// Converts a top-left origin y (how Finder and the layout below think) into
-/// the bottom-left origin y that Core Graphics draws in.
+/// Converts top-left Y to Core Graphics' bottom-left origin.
 func Y(_ top: CGFloat) -> CGFloat { H - top }
 
-// MARK: - Layout
-//
-// Single source of truth for both the artwork and settings.py.
+// MARK: - Layout (keep synchronized with settings.py)
 
 let iconSize: CGFloat = 96
 
@@ -53,9 +38,7 @@ let arrowCenter = CGPoint(x: 320, y: rowY)
 
 struct Palette {
     let name: String
-    /// Appended to the emitted filenames. The default variant takes the plain
-    /// `background.tiff` name, because that is what package-dmg.sh consumes
-    /// when BACKGROUND is unset.
+    /// Default variant uses the unsuffixed filename expected when BACKGROUND is unset.
     let fileSuffix: String
     let backgroundStops: [(NSColor, CGFloat)]
     let card: NSColor
@@ -73,8 +56,7 @@ func rgb(_ hex: UInt32, _ alpha: CGFloat = 1) -> NSColor {
             alpha: alpha)
 }
 
-/// Faithful to the original mockup: white card on a light mauve wash. Looks
-/// better in a screenshot; loses its Finder labels in dark mode.
+/// Light variant; Finder's white dark-mode labels lose contrast against this card.
 let lightPalette = Palette(
     name: "light",
     fileSuffix: "-light",
@@ -87,10 +69,8 @@ let lightPalette = Palette(
     arrowShade: rgb(0xDCAE14)
 )
 
-/// The default. Mid-tone card (L≈0.19) so Finder's icon labels stay legible in
-/// BOTH light and dark mode. Finder draws those labels white in dark mode and
-/// does not consult the background, so the light variant loses them entirely
-/// on a white card. Same layout, darker skin.
+/// Mid-tone background keeps Finder labels legible in both appearances; Finder's dark-mode
+/// labels stay white regardless of artwork.
 let balancedPalette = Palette(
     name: "balanced",
     fileSuffix: "",
@@ -146,8 +126,7 @@ func drawText(_ text: String, font: NSFont, color: NSColor,
     attributed.draw(at: CGPoint(x: x, y: Y(topY) - size.height))
 }
 
-/// A chunky right-pointing block arrow. Filled and stroked with the same
-/// colour and a round line join, which rounds the outer corners for free.
+/// Filled/stroked arrow with round joins.
 func drawArrow(_ p: Palette) {
     guard let ctx = NSGraphicsContext.current?.cgContext else { return }
 
@@ -260,9 +239,7 @@ for scale in [CGFloat(1), CGFloat(2)] {
     print("wrote \(name)  \(Int(W * scale))×\(Int(H * scale))")
 }
 
-// Finder needs ONE file carrying both resolutions, or the background is soft on
-// every Retina display. tiffutil's multi-page TIFF is the only container Finder
-// reads that way; a plain @2x PNG next to the @1x is ignored.
+// Combine resolutions into one TIFF; Finder ignores a separate @2x PNG.
 let tiffName = "background\(suffix).tiff"
 let tiffutil = Process()
 tiffutil.executableURL = URL(fileURLWithPath: "/usr/bin/tiffutil")

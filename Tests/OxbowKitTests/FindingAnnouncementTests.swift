@@ -15,9 +15,7 @@ struct FindingAnnouncementTests {
     WatchPollResult(login: login, displayName: name, outcome: .found(ids.map(archive)))
   }
 
-  /// A watch with an empty `seen`, so it filters out nothing — the shape
-  /// every test in this file wants except the one that exercises the filter
-  /// itself.
+  /// Empty handled set except in tests exercising that filter.
   private func watch(_ login: String, seen: Set<String> = []) -> Watch {
     Watch(login: login, displayName: login.capitalized,
           settings: Watch.Settings(
@@ -48,9 +46,7 @@ struct FindingAnnouncementTests {
     #expect(decision.message == nil)
   }
 
-  /// The nag this rule exists to prevent. A finding sits in the inbox until
-  /// it is added or ignored, and every sweep re-reports it — so "there are
-  /// findings" as the trigger would announce the same rows hourly, forever.
+  /// Unacted-on findings recur every sweep; announce each only once.
   @Test("A finding already announced is not announced again")
   func alreadyAnnouncedStaysQuiet() {
     let decision = FindingAnnouncement.decide(
@@ -117,9 +113,7 @@ struct FindingAnnouncementTests {
     #expect(decision.message?.title == "New archive from Ninja")
   }
 
-  /// §2.2 requires the notification to say how many are waiting, which is not
-  /// the same number as how many are new: two rows a person has already been
-  /// told about are still sitting there unacted on.
+  /// Notification count includes all waiting rows, not only newly announced ones.
   @Test("The body counts everything waiting, the title only what is new")
   func bodyCountsAllWaiting() {
     let decision = FindingAnnouncement.decide(
@@ -142,9 +136,7 @@ struct FindingAnnouncementTests {
 
   // MARK: - What is carried forward
 
-  /// An archive that has expired off Twitch stops appearing in a sweep, so
-  /// holding its id forever would grow this set for the life of the process
-  /// with entries nothing can ever match again.
+  /// Drop IDs absent from later sweeps to bound remembered announcements.
   @Test("An id that stopped appearing is dropped from what is remembered")
   func vanishedIdsArePruned() {
     let decision = FindingAnnouncement.decide(
@@ -154,10 +146,8 @@ struct FindingAnnouncementTests {
     #expect(decision.announced == ["2"])
   }
 
-  /// The concrete case: an automatic download fails, §6.3 un-marks it, and it
-  /// returns as an ordinary finding. It was never announced when it queued,
-  /// so this is the first time a person is told it needs them — and the set
-  /// must not have been holding it from the sweep that submitted it.
+  /// A failed automatic download needs its first announcement when it returns for manual
+  /// attention.
   @Test("An archive that returns to the inbox after a failure is announced then")
   func returnsAfterFailure() {
     let queued = FindingAnnouncement.decide(
@@ -174,11 +164,7 @@ struct FindingAnnouncementTests {
 
   // MARK: - Filtering by seen
 
-  /// The announcement must not name an archive the watch has already acted
-  /// on. It filters by `seen` itself rather than trusting its input to have
-  /// been filtered — `WatchPoll.sweep` used to do that upstream, and a
-  /// consumer that depends on a producer's filtering breaks silently the day
-  /// the producer stops.
+  /// Filter handled IDs at the consumer; raw sweeps include them.
   @Test("an archive already in seen is never announced, whatever the sweep hands over")
   func seenArchivesAreNeverAnnounced() {
     let watch = Watch(
@@ -197,9 +183,7 @@ struct FindingAnnouncementTests {
     #expect(decision.announced == ["2"], "the seen archive must not be remembered either")
   }
 
-  /// A result with no matching watch announces nothing rather than
-  /// everything — the channel was stopped mid-sweep, and a fail-open here
-  /// would announce a whole backlog for a channel nobody watches.
+  /// Ignore results for a channel stopped mid-sweep.
   @Test("a result with no matching watch is skipped, not passed through")
   func resultWithoutAWatchIsSkipped() {
     let decision = FindingAnnouncement.decide(

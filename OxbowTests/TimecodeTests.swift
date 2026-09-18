@@ -11,9 +11,7 @@ struct TimecodeTests {
     #expect(Timecode.format(.seconds(11863)) == "03:17:43")
   }
 
-  /// The drag writes what `format` produces straight into the text fields the
-  /// user can also type in, so the two have to agree. `Duration.formatted`
-  /// would give `0:10:00`, which is why this is hand-rolled.
+  /// Drag formatting must round-trip through the editable timecode fields.
   @Test func everyFormattedValueParsesBackToItself() {
     for seconds in stride(from: 0, through: 6 * 3600, by: 37) {
       let duration = Duration.seconds(seconds)

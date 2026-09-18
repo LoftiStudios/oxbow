@@ -3,15 +3,8 @@ import Testing
 import OxbowKit
 @testable import Oxbow
 
-/// `WatchingModel.listings(from:)` — the pure function behind the sidebar's
-/// per-channel rows. A `static` over `[Section]` for the same reason
-/// `ChannelCard.disconnectedVolume(in:)` is one: it can be exercised without
-/// a store, a sweep, or a view.
-///
-/// **The property that matters most here is that the parent badge is the sum
-/// of the children.** `docs/design/watching-navigation.md` §3.2 makes
-/// `unreadCount` derive from these listings precisely so the two cannot drift;
-/// `parentBadgeIsTheSumOfTheChildren` is the test that keeps that true.
+/// Tests sidebar listings and the invariant that the parent unread badge equals the sum of
+/// channel counts.
 @MainActor
 @Suite("Watching sidebar listings")
 struct WatchingSidebarListingTests {

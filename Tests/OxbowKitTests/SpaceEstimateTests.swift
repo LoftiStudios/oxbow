@@ -2,11 +2,8 @@ import Foundation
 import Testing
 @testable import OxbowKit
 
-/// The estimator's job is not precision — `docs/design/disk-preflight.md` §3.2
-/// is explicit that the composite term is a median of four samples spanning
-/// 5.3x, and should be read as an order of magnitude rather than a number. Its
-/// job is to land in the same order of magnitude as the measurements the design
-/// was fitted to, and to scale correctly with geometry.
+/// Check measured order of magnitude and geometry scaling; content variation makes this an
+/// advisory estimate.
 @Suite("Space estimate")
 struct SpaceEstimateTests {
 
@@ -16,12 +13,8 @@ struct SpaceEstimateTests {
 
   private func gigabytes(_ bytes: Int64) -> Double { Double(bytes) / 1_000_000_000 }
 
-  /// The three geometries in `composite-rate-control.md` §4.2, which are the
-  /// only cross-geometry measurements of `-q:v 50` that exist. The pixel rates
-  /// asserted here are that table's own "pixel rate" column — if these drift,
-  /// the design doc's argument for scaling by bits-per-pixel no longer
-  /// describes the code, because the constant was fitted against exactly these
-  /// denominators.
+  /// Pin the pixel-rate denominators used to fit the three measured geometries in
+  /// `composite-rate-control.md` §4.2.
   @Test(arguments: [
     (resolution: "1920x1080", name: "1080p60", expected: 147_744_000.0),
     (resolution: "1280x720", name: "720p60", expected: 65_664_000.0),
@@ -35,11 +28,8 @@ struct SpaceEstimateTests {
     #expect(geometry.pixelRate == testCase.expected)
   }
 
-  /// The worked example in `disk-preflight.md` §5: 23 GB of source, 10 GB of
-  /// intermediate and 15 GB of composite for a six-hour 1080p60 job, 49 GB in
-  /// total. The doc prints those figures; this is what keeps them true. If
-  /// someone changes a constant, this is the number that moves and this is
-  /// where they see what it cost.
+  /// Pins `disk-preflight.md` §5's six-hour example: approximately 23 GB source, 10 GB chat, 15
+  /// GB composite, 49 GB total.
   @Test func sixHoursAt1080p60MatchesTheWorkedExample() throws {
     let source = quality("1920x1080", "1080p60", mbps: 8.5)
     let geometry = try #require(CompositeGeometry(quality: source))
@@ -75,10 +65,7 @@ struct SpaceEstimateTests {
     #expect(estimate.total == estimate.source)
   }
 
-  /// What the destination volume needs on its own, which is not the total: the
-  /// workspace holds the transient set while the destination receives one
-  /// file. Getting this backwards would warn about the source's bytes landing
-  /// somewhere they never land.
+  /// Destination need is delivered size, distinct from workspace peak.
   @Test func deliveredIsTheCompositeWhenThereIsOneAndTheSourceOtherwise() throws {
     let source = quality("1920x1080", "1080p60", mbps: 8.5)
     let geometry = try #require(CompositeGeometry(quality: source))
@@ -101,9 +88,7 @@ struct SpaceEstimateTests {
     #expect(estimate.total == 0)
   }
 
-  /// Defensive, because `Duration` is signed and the intake's two timecode
-  /// fields can be crossed. A negative estimate would compare as "fits" against
-  /// any free space at all, which is the wrong direction to fail in.
+  /// Crossed trim fields must not produce negative estimates.
   @Test func aNegativeDurationEstimatesZeroRatherThanANegativeNumber() throws {
     let source = quality("1920x1080", "1080p60", mbps: 8.5)
     let geometry = try #require(CompositeGeometry(quality: source))

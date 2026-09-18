@@ -3,20 +3,8 @@ import Testing
 import OxbowKit
 @testable import Oxbow
 
-/// Exercises the path `CompletionRecordingTests` cannot reach: a settling job
-/// arriving through `JobNotifier.apply(_:)` and landing in the video record,
-/// rather than `VideoRecorder.recordCompletion` being called directly.
-///
-/// This became constructible only once `videoRecordStore` was made
-/// assignable from outside `JobNotifier` (see that property's doc comment) —
-/// before that, a test had no way to give the notifier a store over a
-/// temporary file rather than the developer's real one.
-///
-/// **Reachable even with `center` nil**, which it always is under
-/// `xcodebuild test` — see `center`'s own doc comment. `apply(_:)` no longer
-/// gates the record write on `center`: whether a banner can be posted has no
-/// bearing on whether a settled job's outcome gets written down, so the two
-/// halves of the method run independently. `docs/design/video-record.md` §7.
+/// Exercise completion recording through `JobNotifier.apply`, with an injected store and no
+/// notification center. Recording must not depend on notification availability.
 @Suite("Job notifier recording")
 @MainActor
 struct JobNotifierRecordingTests {
@@ -52,10 +40,7 @@ struct JobNotifierRecordingTests {
     let id = JobID(rawValue: UUID())
     let delivered = URL(filePath: "/Volumes/Helios/day46.mp4")
 
-    // A job absent from the baseline never fires — `NotificationDecision
-    // .events(from:to:)` seeds silently on the first snapshot — so this
-    // first `apply` call, while the job is still running, is what
-    // establishes the baseline the transition below is diffed against.
+    // Seed a running baseline before the completion transition; initial snapshots are silent.
     notifier.apply([job(id, [step(.running, videoID: "2844787557")])])
     notifier.apply([job(
       id, [step(.done, videoID: "2844787557", artifact: delivered)])])

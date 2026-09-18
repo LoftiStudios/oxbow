@@ -38,9 +38,7 @@ struct QualityLadderTests {
     #expect(QualityLadder.resolve(.p720, in: [], forComposite: false) == "")
   }
 
-  /// Spec §3.4. Resolution writes a concrete name into `quality`, and
-  /// `compositeQuality` cannot tell a resolved name from a typed one — so a
-  /// cap must never select a rendition the composite cannot size against.
+  /// A saved cap must not resolve to a rendition unusable for composite geometry.
   @Test func compositeResolutionSkipsUnparseableRenditions() {
     let mixed = [quality("720p0-1", ""), quality("480p30", "852x480")]
     #expect(QualityLadder.resolve(.p720, in: mixed, forComposite: true) == "480p30")
@@ -98,9 +96,7 @@ struct QualityLadderTests {
 
   // MARK: - Composite filter discriminator
 
-  /// The one input where the composite filter actually bites: a rendition
-  /// with a dimension of 1 has a `shortSide` (so `sized` keeps it) but no
-  /// usable `CompositeGeometry` (so a composite must not select it).
+  /// A dimension of 1 passes short-side parsing but rounds to zero in composite geometry.
   @Test func compositeResolutionSkipsARenditionGeometryRejects() {
     let odd = [quality("1x1080", "1x1080"), quality("1080p60", "1920x1080")]
     #expect(QualityLadder.resolve(.p360, in: odd, forComposite: true) == "1080p60")
@@ -109,11 +105,7 @@ struct QualityLadderTests {
 
   // MARK: - Tie-breaking
 
-  /// When two renditions have the same shortSide, resolve picks the one
-  /// with higher bitrate. A vertical VOD can carry both landscape
-  /// (1920x1080, shortSide=1080) and portrait (1080x1920, shortSide=1080)
-  /// — both have the exact same shortSide. The tie-break is on bitrate, not
-  /// orientation, and it must hold regardless of list order.
+  /// Equal short sides tie on bitrate, not orientation or list order.
   @Test func tieBreaksOnBitrateWhenShortSidesMatch() {
     let landscape = quality("1080p60", "1920x1080", bits: 8_000_000)
     let portrait = quality("1080p60-Portrait-1", "1080x1920", bits: 5_000_000)
@@ -140,10 +132,8 @@ struct QualityLadderTests {
     #expect(QualityLadder.resolve(.p1080, in: [b, a], forComposite: false) == "1080p60-Portrait-1")
   }
 
-  /// The fallback path (when ceiling is not met) also ties on bitrate, and
-  /// the comparison must be inverted for `min` to surface the higher bitrate.
-  /// This test reaches the fallback with unequal nonzero bitrates: a cap that
-  /// sits below both renditions' shared short side.
+  /// Fallback chooses the highest bitrate at the smallest size above the cap; test unequal
+  /// rates to exercise the reversed min comparator.
   @Test func fallbackPathAlsoTieBreaksOnBitrate() {
     let landscape = quality("1080p60", "1920x1080", bits: 8_000_000)
     let portrait = quality("1080p60-Portrait-1", "1080x1920", bits: 5_000_000)
@@ -178,10 +168,7 @@ struct QualityLadderTests {
     }
   }
 
-  /// Stored in preferences, so the wire names are load-bearing. Driving the
-  /// round trip off `allCases` catches a new case automatically; the literal
-  /// strings are what actually catch a rename — a loop alone would round-trip
-  /// happily even after one.
+  /// Literal persisted names catch renames that round-trip tests alone would miss.
   @Test func rawValuesArePersistedAndPinned() {
     for cap in QualityCap.allCases {
       #expect(QualityCap(rawValue: cap.rawValue) == cap)
@@ -201,10 +188,7 @@ struct QualityLadderTests {
     #expect(QualityLadder.resolve(.p720, in: unparseable, forComposite: false) == "")
   }
 
-  /// `.best` returns empty string regardless of whether the list is parsed or
-  /// filtered. Worth pinning because `.best` is the one place a reader might
-  /// expect the composite filter to matter, and it does not — the empty string
-  /// is the same whether we filtered or not.
+  /// Best always delegates to CLI via empty quality, regardless of composite filtering.
   @Test func bestReturnsEmptyStringRegardlessOfCompositeFilter() {
     let list = [quality("1080p60", "1920x1080")]
     #expect(QualityLadder.resolve(.best, in: list, forComposite: true) == "")

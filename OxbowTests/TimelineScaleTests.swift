@@ -8,9 +8,7 @@ struct TimelineScaleTests {
 
   private static let fortyMinutes = Duration.seconds(2400)
 
-  /// 73 ticks over 72 subdivisions. 72 is chosen because it divides by 3 and
-  /// by 18, which is what makes the label positions a subset of the major
-  /// positions with no rounding — see the design doc §3.1.
+  /// 72 subdivisions align labels with major ticks because both 3 and 18 divide evenly.
   @Test func drawsSeventyThreeTicksInThreeHeights() {
     let ticks = TimelineScale(duration: Self.fortyMinutes, width: 500).ticks
     #expect(ticks.count == 73)
@@ -38,9 +36,7 @@ struct TimelineScaleTests {
     #expect(TimelineScale(duration: Self.fortyMinutes, width: 0).ticks.isEmpty)
   }
 
-  /// The tallies above would pass with every tick in the wrong place. This
-  /// pins the mapping itself: 18 is a multiple of both 3 and 18, which is the
-  /// property the whole scheme rests on.
+  /// Check positions as well as counts so misplaced ticks cannot pass.
   @Test func mapsEachStepToItsHeight() {
     #expect(TimelineScale.height(atStep: 0) == .label)
     #expect(TimelineScale.height(atStep: 3) == .major)
@@ -56,9 +52,7 @@ struct TimelineScaleTests {
     #expect(ticks[54].x == 540)
   }
 
-  /// One pixel's worth of time, rounded up to something round. A person
-  /// dragging on a six-hour VOD cannot land on a second no matter what the
-  /// control does, so the readout may as well be a number they meant.
+  /// Snap to a round interval at least one pixel wide in time.
   @Test func picksADragUnitFromTimePerPoint() {
     #expect(TimelineScale(duration: .seconds(180), width: 500).dragUnitSeconds == 1)
     #expect(TimelineScale(duration: .seconds(991), width: 500).dragUnitSeconds == 2)
@@ -81,9 +75,7 @@ struct TimelineScaleTests {
     }
   }
 
-  /// The end of the video is a stop even when it is not on the grid. Without
-  /// it the snap rounds down and the last partial unit is unreachable: this
-  /// VOD on a 30s unit would stop at 03:17:30, under a label reading 03:17:43.
+  /// The exact video end must remain reachable when it falls between grid points.
   @Test func theEndOfTheVideoIsAlwaysReachable() {
     let scale = TimelineScale(duration: .seconds(11863), width: 500)
     #expect(scale.time(atX: 500) == .seconds(11863))
@@ -133,9 +125,7 @@ struct TimelineScaleTests {
       == ["00:00:00", "00:49:30", "01:39:00", "02:28:30", "03:17:43"])
   }
 
-  /// Never four: 72/3 = 24 is a major but not a label position, so a
-  /// four-label layout would move labels onto ticks that are not the tall
-  /// ones and the ruler would visibly restructure as the window resizes.
+  /// Four labels would land on non-label ticks and change the ruler hierarchy during resize.
   @Test func dropsLabelsOnANarrowTrackButNeverToFour() {
     #expect(TimelineScale(duration: Self.fortyMinutes, width: 500).labels.count == 5)
     #expect(TimelineScale(duration: Self.fortyMinutes, width: 290).labels.count == 3)

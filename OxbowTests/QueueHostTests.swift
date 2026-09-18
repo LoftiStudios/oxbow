@@ -6,11 +6,8 @@ import Testing
 @Suite("Queue host")
 struct QueueHostTests {
 
-  /// The whole point: an intent and a window both asking for the engine must
-  /// get one engine. A second `QueueEngine` over the same queue.json and the
-  /// same workspace is what `OxbowApp`'s `Window` comment exists to prevent,
-  /// and `start()` sweeps that workspace unconditionally — so a duplicate
-  /// deletes the working files of a download already in flight.
+  /// Concurrent window/intent resolution must share one engine; a second start would sweep
+  /// active workspace files.
   @Test func concurrentCallersResolveExactlyOnce() async {
     let count = Counter()
     let host = QueueHost(resolve: {
@@ -45,9 +42,7 @@ struct QueueHostTests {
     #expect(message == "only once")
   }
 
-  /// A missing payload must be *delivered*, never awaited. An intent that
-  /// waits forever for an engine that will never exist is the failure mode
-  /// this whole type is here to prevent.
+  /// Missing helper payload must resolve as failure rather than leave callers awaiting forever.
   @Test func anUnavailableEngineIsDeliveredNotAwaited() async {
     let host = QueueHost(resolve: { .unavailable("The helper is not embedded") })
 
@@ -62,9 +57,7 @@ struct QueueHostTests {
   }
 }
 
-/// Actor rather than a plain counter: the resolver runs inside a `Task` and
-/// three callers race it, which is exactly the condition a non-isolated
-/// `var` would report wrongly.
+/// Isolate the counter because concurrent resolver callers race it.
 private actor Counter {
   private(set) var value = 0
   func increment() { value += 1 }

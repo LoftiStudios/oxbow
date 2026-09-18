@@ -38,12 +38,8 @@ struct QueueActionsTests {
     #expect(actions(for: jobs).deliveredFiles(in: [subject.id]) == [delivered])
   }
 
-  /// The bug this fix exists for: while a composite job is still running,
-  /// its video, chat, and render steps carry `destination: nil`
-  /// (`JobTemplate.makeJob`), so `QueueEngine.move` never moves them and
-  /// their `artifact` still points inside the job workspace once each is
-  /// `.done`. "Show in Finder" must reveal none of that — an in-progress
-  /// composite job has delivered nothing yet.
+  /// Completed composite inputs remain in the workspace; Finder actions must not expose them as
+  /// delivered outputs.
   @Test func anInProgressCompositeJobRevealsNothing() {
     let video = VideoRequest(videoID: "1", quality: "1080p60", destination: nil)
     let workspaceVideo = URL(filePath: "/Caches/studio.lofti.Oxbow/jobs/x/artifacts/video.mp4")
@@ -66,10 +62,7 @@ struct QueueActionsTests {
     #expect(actions(for: jobs).deliveredFiles(in: [subject.id]).isEmpty)
   }
 
-  /// Once the job actually delivers, `.assemble`'s own artifact is the one
-  /// file that should show up — the general rule (`Job.deliveredFiles`)
-  /// applied to the one step of a composite job that ever carries a real
-  /// destination.
+  /// Only assembly's delivered artifact belongs in Finder results.
   @Test func aDeliveredCompositeJobRevealsExactlyTheAssembledFile() {
     let destination = Self.folder.appending(path: "out.mp4")
     let subject = job(

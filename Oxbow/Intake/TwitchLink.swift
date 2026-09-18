@@ -1,10 +1,6 @@
 import Foundation
 
-/// Recovers a VOD id or a clip slug from whatever the user pasted.
-///
-/// Deliberately strict about the host: `twitch.tv.evil.com` and
-/// `evil-twitch.tv` are both rejected, because silently downloading from
-/// somewhere else is worse than saying the address is not understood.
+/// Extract a VOD id or clip slug; reject lookalike hosts such as twitch.tv.evil.com.
 nonisolated enum TwitchLink {
 
   enum Target: Equatable {
@@ -16,12 +12,8 @@ nonisolated enum TwitchLink {
     let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmed.isEmpty else { return nil }
 
-    // A bare token: all digits is a VOD id, anything else a clip slug — but
-    // only if it has no dot. Clip slugs are Twitch-generated alphanumeric
-    // words with no punctuation; a dotted bare token (e.g. "evil-twitch.tv")
-    // is a host someone typed without a scheme, not a slug, and letting it
-    // through here would silently hand the CLI a nonsense id instead of
-    // giving the user an honest rejection.
+    // Bare digits identify a VOD; other undotted tokens are clip slugs. Reject dotted tokens as
+    // unrecognized hosts.
     if !trimmed.contains("/") && !trimmed.contains(":") {
       guard !trimmed.contains(".") else { return nil }
       return isNumeric(trimmed) ? .video(trimmed) : .clip(trimmed)

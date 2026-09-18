@@ -23,10 +23,7 @@ struct UpdatePolicyTests {
       now: now, lastChecked: now.addingTimeInterval(-25 * 3600)))
   }
 
-  /// A stored date in the future means the clock moved backwards — a timezone
-  /// change, a correcting NTP sync, a restored backup. Treating it as "checked
-  /// recently" would disable the check until real time caught up, which for a
-  /// badly wrong clock is never.
+  /// Future check dates must not suppress checks after clock rollback.
   @Test func checksWhenTheStoredDateIsInTheFuture() {
     #expect(UpdatePolicy.shouldCheckAutomatically(
       now: now, lastChecked: now.addingTimeInterval(3600)))
@@ -47,9 +44,7 @@ struct UpdatePolicyTests {
       try available("0.3.0"), skipping: try #require(ReleaseVersion("0.3.0"))))
   }
 
-  /// Dismissing is "not this one", not "never again". A dismissal that
-  /// outlived the version it was about would silently turn the feature off
-  /// for good — which is the failure mode nobody would ever notice.
+  /// Dismissal suppresses only its exact version.
   @Test func reappearsForAVersionNewerThanTheSkippedOne() throws {
     #expect(UpdatePolicy.shouldPresent(
       try available("0.4.0"), skipping: try #require(ReleaseVersion("0.3.0"))))

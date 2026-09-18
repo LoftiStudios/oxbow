@@ -1,24 +1,10 @@
 import Foundation
 
-/// The helper's narrative output for one step, kept on disk.
-///
-/// The parser turns the helper's stdout into `ParsedLine`s, of which only
-/// `.status` drives the UI. The rest — `.log` and `.ffmpeg` — used to be
-/// dropped on the floor, which is why a helper that finished its work and
-/// then hung could only be diagnosed by sampling the process: the app had
-/// captured what it was saying and thrown it away.
-///
-/// Deliberately a file rather than Apple's unified logging. `os_log` is the
-/// right tool for the app's own diagnostics, but not for this: it redacts
-/// dynamic strings unless every interpolation is marked public, its retention
-/// is the system's to decide rather than ours, and it is one global stream
-/// that would have to be queried and re-filtered per step. What a user needs
-/// here is this step's transcript, attached to this row, copyable into a bug
-/// report.
+/// Per-step helper transcript on disk. Unlike unified logging, this keeps unredacted output
+/// with app-controlled retention and direct access for bug reports.
 public actor StepLog {
 
-  /// Bounded because a long chat render emits enormous output, and an
-  /// unbounded log would happily sit next to an 8 GB video eating disk.
+  /// Bound helper output to prevent logs growing indefinitely during long renders.
   public static let defaultMaxBytes = 256 * 1024
 
   private let fileURL: URL
@@ -35,20 +21,12 @@ public actor StepLog {
     guard let data = "\(line)\n".data(using: .utf8) else { return }
 
     guard let handle = openHandle() else { return }
-    // `write(_:)` (no `contentsOf:`) can raise an uncaught Objective-C
-    // exception on a genuine write failure rather than returning a Swift
-    // error — the job-level teardown-failure log had the same hazard and was
-    // switched to the throwing `write(contentsOf:)` for it. It matters more
-    // here: `TeardownJournal.recordStepTeardownFailure` calls into this from an
-    // unstructured `Task`, on a path whose likeliest cause is a full disk, so
-    // an uncatchable exception there would crash the app while it was trying
-    // to report a cleanup failure. `try?` swallows it the same way the
-    // job-level path does — a dropped log line, not a crash.
+    // Use throwing write(contentsOf:); write(_:) may raise an uncaught Objective-C exception on
+    // disk failure. Logging failure must not crash cleanup error handling.
     guard (try? handle.write(contentsOf: data)) != nil else { return }
     writtenBytes += data.count
 
-    // Compact only when meaningfully over, not on every line past the cap:
-    // rewriting the file per line would turn a chatty render into O(n^2) I/O.
+    // Compact with headroom to avoid rewriting the file for every line over the cap.
     if writtenBytes > maxBytes + maxBytes / 2 { compact() }
   }
 
@@ -92,11 +70,7 @@ public actor StepLog {
     return opened
   }
 
-  /// Rewrites the file keeping its tail.
-  ///
-  /// Drops whole lines, never a byte offset: cutting mid-line would leave a
-  /// mangled first entry like "ne 47", which reads as corruption to whoever
-  /// opens the log looking for what went wrong.
+  /// Keep the tail on whole-line boundaries so the first retained entry remains readable.
   private func compact() {
     guard let data = try? Data(contentsOf: fileURL) else { return }
     let text = String(decoding: data, as: UTF8.self)

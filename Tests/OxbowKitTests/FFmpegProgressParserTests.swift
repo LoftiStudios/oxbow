@@ -47,17 +47,7 @@ struct FFmpegProgressParserTests {
     #expect(remaining > .seconds(2) && remaining < .seconds(2.2))
   }
 
-  /// `total_size` is the only signal the app has for how big a composite is
-  /// becoming.
-  ///
-  /// `.composite` asks the encoder for a quality rather than a bitrate
-  /// (`composite-rate-control.md`), so the output size is not knowable in
-  /// advance — and §7.1 there establishes that it cannot be capped either,
-  /// because `-maxrate` displaces quality targeting instead of bounding it.
-  /// The mitigation is that a runaway encode announces itself: bytes written
-  /// over fraction complete is a live projection that converges early.
-  ///
-  /// FFmpeg has always emitted this; it was simply never read.
+  /// Parse `total_size` for live size projections during quality-targeted encoding.
   @Test func reportsBytesWrittenSoFar() throws {
     let progress = try #require(lines(block).compactMap { line -> StepProgress? in
       if case .status(let p) = line { return p } else { return nil }
@@ -77,18 +67,13 @@ struct FFmpegProgressParserTests {
 
   // MARK: - Projected size
 
-  /// Bytes so far over fraction complete. The composite's size is unknowable
-  /// in advance under a quality target, so this is the only number that can
-  /// warn anyone a job is heading somewhere unexpected.
+  /// Project final size from written bytes and completed fraction.
   @Test func projectsTheFinalSizeFromBytesAndProgress() {
     let p = StepProgress(fraction: 0.25, bytesWritten: 1_000_000_000)
     #expect(p.projectedBytes == 4_000_000_000)
   }
 
-  /// The first blocks are all I-frames and a tiny denominator, so an early
-  /// projection is not wrong so much as meaningless — 0.3% complete would
-  /// project a wildly inflated total and then visibly collapse, which reads as
-  /// a broken number rather than a converging one.
+  /// Suppress early projections dominated by I-frames and a tiny denominator.
   @Test func refusesToProjectFromTheFirstFewPercent() {
     #expect(StepProgress(fraction: 0.003, bytesWritten: 50_000_000).projectedBytes == nil)
     #expect(StepProgress(fraction: 0, bytesWritten: 50_000_000).projectedBytes == nil)
@@ -117,9 +102,7 @@ struct FFmpegProgressParserTests {
     #expect(progress.fraction != nil)
   }
 
-  /// `speed` is reported independently of `remaining` — the UI's only way to
-  /// tell a genuinely slow encode apart from a stalled one, even before
-  /// there is enough data for an ETA.
+  /// Speed remains useful before ETA can be calculated.
   @Test func reportsSpeedEvenWhenDegenerate() throws {
     let zeroed = block.replacingOccurrences(of: "speed=2.35x", with: "speed=0x")
     let progress = try #require(lines(zeroed).compactMap { line -> StepProgress? in

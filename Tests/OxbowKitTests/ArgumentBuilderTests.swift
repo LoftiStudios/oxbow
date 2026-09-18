@@ -247,48 +247,12 @@ struct ArgumentBuilderTests {
     #expect(a[i + 1] == "9")
   }
 
-  /// This whole suite encodes empirically-verified CLI behaviour, not a
-  /// guess — do not "tidy" it back to a `--flag=value` shape.
-  ///
-  /// Upstream declares its boolean render options as switches, not as
-  /// `--flag=value` options: the parser reads mere *presence* as true and
-  /// ignores any value that follows, so both `--timestamp=false` and
-  /// `--timestamp false` turn timestamps ON. Verified against the bundled
-  /// 1.56.5 helper on 2026-08-25 by extracting frames from paired
-  /// `=false`/`=true` renders and hashing them: `--timestamp=false` and
-  /// `--timestamp=true` produced byte-identical frames (sha256
-  /// `d9b7fea7be2a10be…`), differing only from omitting the flag entirely
-  /// (`6a2b525002429b03…`); same result for `--outline` (`735d58632d7ada2c…`
-  /// identical, `53952cd96edf2289…` when omitted). There is no way to pass
-  /// `false` through this CLI. `--banner` is a genuine exception — it is
-  /// declared differently upstream and its `=false` form really does
-  /// suppress the banner — which is why it is untouched everywhere else in
-  /// this file.
-  ///
-  /// Of `RenderRequest`'s render-option booleans, only three default to
-  /// `false` and are therefore fully expressible: absent means false, the
-  /// bare flag (no `=value`) means true. The other six the CLI defaults to
-  /// `true` (`--badges`, `--sub-messages`, `--bttv`, `--ffz`, `--stv`,
-  /// `--allow-unlisted-emotes`) cannot be turned off through this CLI at
-  /// all, so `RenderRequest` has no fields for them — see
-  /// `renderNeverEmitsTheSixUnexpressibleTrueDefaultSwitches` below.
-  /// Always on, and not a `RenderRequest` field, because there is no good
-  /// reason to want the alternative.
-  ///
-  /// A Twitch API change in November 2022 made downloaded chat carry only
-  /// whole-second timestamps, so six messages sent across one second all
-  /// record as the same instant and the render drops all six on screen at
-  /// once, then shows nothing until the next second. `--dispersion` uses the
-  /// additional metadata to restore when messages were actually sent.
-  ///
-  /// The CLI documents it as requiring an update rate below 1.0 to be
-  /// effective. We never pass `--update-rate`, and upstream's default is 0.2,
-  /// so the precondition holds and the bare flag alone is enough — asserted
-  /// below so that passing `--update-rate` later cannot silently neuter this.
-  ///
-  /// The pinned submodule contains upstream's rewritten algorithm
-  /// (`861b493`, "New, more accurate dispersion algorithm", #1636), not the
-  /// 2019 original.
+  /// Render booleans are presence-only switches: even `--timestamp=false` enables timestamps.
+  /// Paired renders verified this on helper 1.56.5; `--banner=false` is a separately declared
+  /// exception. False-default options use absence for false and a bare flag for true.
+  /// True-default emote/badge options cannot be disabled. Dispersion stays enabled to restore
+  /// subsecond chat timing and requires update rate below 1.0 (upstream default 0.2); pin that
+  /// no override defeats it.
   @Test func renderAlwaysDispersesWholeSecondTimestamps() {
     let a = args(.renderChat(RenderRequest(destination: URL(filePath: "/tmp/c.mp4"))))
     #expect(a.contains("--dispersion"))
@@ -329,13 +293,8 @@ struct ArgumentBuilderTests {
     #expect(on.contains("--outline"))
   }
 
-  /// The six switches the CLI defaults to `true` cannot be turned off at
-  /// all (see the suite comment above), so they must never appear in argv in
-  /// any form — bare, `=true`, or `=false` — regardless of what the request
-  /// asks for. The emote switches were surfaced deliberately in an earlier
-  /// design (7TV resolution is why the submodule is pinned past 1.56.5,
-  /// CLAUDE.md); they remain on by the CLI's own default, just no longer as
-  /// settable — and therefore no longer visible — fields.
+  /// True-default render switches cannot be disabled; leave them absent and rely on CLI
+  /// defaults.
   @Test func renderNeverEmitsTheSixUnexpressibleTrueDefaultSwitches() {
     let a = args(render)
     let unexpressible = ["--badges", "--sub-messages", "--bttv", "--ffz", "--stv", "--allow-unlisted-emotes"]
@@ -344,33 +303,17 @@ struct ArgumentBuilderTests {
     }
   }
 
-  /// Isolates exactly one field away from its default (all three share the
-  /// `false` default), so a builder that swapped which field fed which flag
-  /// — `hasAlternateBackgrounds`↔`hasTimestamps`, `hasTimestamps`↔
-  /// `hasOutline`, or `hasOutline`↔`hasAlternateBackgrounds` — surfaces as
-  /// the wrong token in `onlyInFlipped`, not a passing test: starting from an
-  /// all-defaults request, flipping exactly one boolean field must add
-  /// **exactly one** token, and it must be the bare flag this field owns,
-  /// with nothing removed. Table-driven so a future false-defaulting boolean
-  /// field is one row, not a new test.
+  /// Flip one boolean at a time and require exactly its bare flag to be added, catching swapped
+  /// field mappings.
   private struct BooleanFieldCase {
     let field: String
     let flagToken: String
     let flip: (inout RenderRequest) -> Void
   }
 
-  // `isSharpened` is the fourth `Bool` on `RenderRequest` and is deliberately
-  // NOT a row here: it does not emit a bare `--flag` like the other three.
-  // It conditionally appends an entire `--input-args=...` string (the
-  // unsharp filter), a shape this table's add-one-bare-flag check can't
-  // express, and it defaults to `false` for an unrelated reason (GPL
-  // avoidance, not an upstream parsing quirk). It already has its own
-  // dedicated coverage — `sharpeningUsesUnsharpAndNeverSmartblur` and
-  // `unsharpenedRenderDoesNotOverrideInputArgs`, above.
-  // `boolFieldCountMatchesTableRowsPlusDocumentedExclusions` enforces that
-  // this is the *only* exclusion: a future `Bool` field added without
-  // either a row here or a documented exclusion like this one fails that
-  // guard instead of silently widening the blind spot.
+  // Exclude `isSharpened`: it changes the input-args filter rather than emitting a bare switch
+  // and has dedicated coverage. The reflected count below guards against undocumented
+  // exclusions.
   private var booleanFieldCases: [BooleanFieldCase] {
     [
       BooleanFieldCase(field: "hasAlternateBackgrounds", flagToken: "--alternate-backgrounds") {
@@ -405,14 +348,7 @@ struct ArgumentBuilderTests {
     }
   }
 
-  /// Makes the table self-enforcing: without this, a `Bool` field added to
-  /// `RenderRequest` in the future with neither a row above nor a documented
-  /// exclusion (like `isSharpened`'s, commented above `booleanFieldCases`)
-  /// would silently widen the swap blind spot the table exists to close, and
-  /// nothing would say so. `Mirror` over a default-constructed request
-  /// counts every `Bool` stored property — the three rows plus the one
-  /// documented, named exclusion must account for all of them, or this fails
-  /// and says exactly what changed.
+  /// Count stored Bool fields so every future option needs a table row or explicit exclusion.
   @Test func boolFieldCountMatchesTableRowsPlusDocumentedExclusions() {
     let documentedExclusions = 1 // isSharpened — see the comment above `booleanFieldCases`.
     let mirror = Mirror(reflecting: RenderRequest(destination: URL(filePath: "/tmp/c.mp4")))
@@ -424,10 +360,7 @@ struct ArgumentBuilderTests {
     #expect(boolFieldCount == booleanFieldCases.count + documentedExclusions, "\(message)")
   }
 
-  /// The two GPL-avoidance rules must keep holding once appearance options are
-  /// interleaved into the same argv: a wrong implementation that emits the new
-  /// flags but regresses --output-args or lets --sharpening slip back in would
-  /// still pass every single-field test above.
+  /// Combined appearance options must still preserve LGPL output args and avoid `--sharpening`.
   @Test func gplRulesStillHoldAlongsideTheNewAppearanceOptions() {
     let a = args(.renderChat(RenderRequest(
       font: "Comic Sans MS",
@@ -481,31 +414,10 @@ struct ArgumentBuilderTests {
     ])
   }
 
-  /// The video branch must not zero its own start timestamp.
-  ///
-  /// A trimmed download legitimately begins its video stream *after* its
-  /// audio: upstream trims with an input `-ss` and `-c copy`, and a stream
-  /// copy can only start video on a keyframe, so the file honestly records
-  /// `video start_time = 0.866, audio start_time = 0.000` and every player
-  /// honours the gap.
-  ///
-  /// `setpts=PTS-STARTPTS` on `[0:v]` threw that gap away. The audio never
-  /// passes through the filter graph — it is `-c:a copy`-ed to the sidecar
-  /// and remuxed untouched at `.assemble` — so the two halves of one source
-  /// were rebased by different amounts and the delivery came out with its
-  /// video 0.866s early. Measured on a real 20-minute trimmed VOD: a
-  /// 24-frame lag, constant at both ends of the file, reproduced exactly by
-  /// replaying this argv against a clean download.
-  ///
-  /// `fps=…:start_time=0` holds the first frame across the gap instead of
-  /// dragging the whole track earlier, so output time *is* source time —
-  /// which is what `docs/design/resume.md` §2 already claimed and this made
-  /// true. Do not "simplify" it back to `setpts`.
-  ///
-  /// It is deliberately not a bare removal either: dropping the reset
-  /// outright made `h264_videotoolbox` abort mid-encode on a source starting
-  /// at 0.666s (`composite-quality.md` §9). The output stays zero-based and
-  /// CFR; only the padding changes.
+  /// Preserve a trimmed source's video/audio start gap. `setpts=PTS-STARTPTS` removes the video
+  /// offset while copied audio retains it, causing drift. `fps=…:start_time=0` pads the gap
+  /// with the first frame; removing rebasing outright can make VideoToolbox abort. See
+  /// `composite-quality.md` §9.
   @Test func compositeKeepsTheVideoOnItsSourceTimeline() {
     let a = ArgumentBuilder.arguments(
       for: .composite(CompositeRequest(
@@ -522,22 +434,9 @@ struct ArgumentBuilderTests {
     #expect(graph.contains("[1:v]setpts=PTS-STARTPTS,fps=30[c];"))
   }
 
-  /// A quality target, never a bitrate, and never `-maxrate`.
-  ///
-  /// `docs/design/composite-rate-control.md` §2: one `q:v 50` holds the chat
-  /// column within 1.9 dB across content whose bitrate requirement spans 5.3x,
-  /// and beats a fixed target by +6.3 dB *at the same bitrate*, because a fixed
-  /// target spreads bits evenly through time and the chat column's difficulty
-  /// is not evenly distributed.
-  ///
-  /// **`-maxrate` is forbidden, and it is not obvious why** (§7.1). It looks
-  /// like the guard against a runaway bitrate and does the opposite: adding
-  /// `-maxrate 30M` took ordinary content from 5.0 to 19.3 Mbps. Neither
-  /// `-q:v` nor `-maxrate` is an encoder option — `-q:v` reaches
-  /// `kVTCompressionPropertyKey_Quality` through ffmpeg's generic
-  /// `global_quality` path, while `-maxrate` maps to `DataRateLimits`, a
-  /// different rate-control mode. Setting it switches the encoder out of
-  /// quality mode rather than bounding it.
+  /// Pin quality mode without bitrate or maxrate. `-maxrate` selects VideoToolbox
+  /// DataRateLimits instead of bounding quality mode, and measured output grew from 5.0 to 19.3
+  /// Mbps. See `composite-rate-control.md` §7.1.
   @Test func compositeTargetsQualityRatherThanABitrate() {
     let a = ArgumentBuilder.arguments(
       for: .composite(CompositeRequest(
@@ -553,12 +452,8 @@ struct ArgumentBuilderTests {
     #expect(!a.contains("-constant_bit_rate"))
   }
 
-  /// The chat render's own bitrate is a different decision and stays.
-  ///
-  /// It is an intermediate that the composite immediately re-encodes, and
-  /// `composite-quality.md` §2.2 measured its contribution to the final error
-  /// at ~5%. Switching it to a quality target would buy nothing and cost a
-  /// second constant to reason about.
+  /// Keep the intermediate chat-render bitrate; its quality contribution was measured
+  /// separately in `composite-quality.md` §2.2.
   @Test func theChatRenderKeepsItsOwnBitrate() {
     let a = args(.renderChat(RenderRequest(
       bitrateMbps: 12, destination: URL(filePath: "/tmp/c.mp4"))))
@@ -593,11 +488,7 @@ struct ArgumentBuilderTests {
     #expect(StepKind.composite(request).resource == .compute)
   }
 
-  /// Seeking by time, never by frame index. On Twitch sources those two
-  /// disagree — docs/design/resume.md §2.1 has the measurements.
-  ///
-  /// Both inputs are seeked: the video and the chat render must start at the
-  /// same moment or the stack is offset.
+  /// Seek both inputs by time; source frame count and wall time can diverge (`resume.md` §2.1).
   @Test func aResumingCompositeSeeksBothInputs() {
     var context = compositeContext
     context.resumeFrom = .seconds(74.4)
@@ -610,25 +501,9 @@ struct ArgumentBuilderTests {
     for index in seeks { #expect(args[index + 2] == "-i") }
   }
 
-  /// The chat render is not the video and does not always run as long.
-  ///
-  /// Chat renders end at the last message (`compositing.md` is explicit about
-  /// it — that is why there is no `shortest=1`), so a stream that goes quiet
-  /// before it ends produces a render shorter than its video. Seeking that
-  /// render past its own end yields **zero frames**, and `hstack`'s
-  /// `eof_action=repeat` has no last frame to hold, so the whole graph emits
-  /// nothing — while FFmpeg still exits 0. The piece is empty, `.assemble`
-  /// concatenates only what came before it, and the delivery is silently
-  /// truncated at the seam.
-  ///
-  /// Measured with the bundled binary: video 60s seeked to 30s beside a 5s
-  /// chat render, chat seeked to 30s → a 1,785-byte piece with no decodable
-  /// frames, exit 0. The same run with the chat's seek clamped to one frame
-  /// inside its end → 903 frames, a full piece.
-  ///
-  /// So the two seeks are separate values. `StepContextBuilder.make` does the
-  /// clamping, because knowing the render's duration is I/O and this type is
-  /// pure.
+  /// Chat may end before video. Seeking beyond it leaves no frame for `hstack` to repeat and
+  /// can emit an empty piece with exit 0. Context construction clamps chat seek inside its
+  /// duration; argument building uses that separate value.
   @Test func aResumeBeyondTheChatRenderClampsOnlyTheChatSeek() {
     var context = compositeContext
     context.resumeFrom = .seconds(74.4)
@@ -644,10 +519,7 @@ struct ArgumentBuilderTests {
     #expect(args[seeks[1] + 3] == "/tmp/job/render.mp4")
   }
 
-  /// The clamp is an override, not a second thing to remember: when the chat
-  /// render is long enough — the ordinary case — both inputs seek to the same
-  /// instant, and a context that says nothing about the chat gets exactly the
-  /// behaviour it had before the clamp existed.
+  /// Absent chat override keeps both seeks at the same instant.
   @Test func aChatRenderLongEnoughToSeekIsSeekedWithTheVideo() {
     var context = compositeContext
     context.resumeFrom = .seconds(74.4)
@@ -662,13 +534,8 @@ struct ArgumentBuilderTests {
     #expect(!ArgumentBuilder.arguments(for: composite, context: compositeContext).contains("-ss"))
   }
 
-  /// The fragmentation flags from fragmented-output.md §3 are what make resume
-  /// possible at all; they must survive on both paths.
-  /// The first attempt copies the source's audio out beside piece 0, in the
-  /// same invocation — it is a stream copy, so it costs nothing, and it is what
-  /// lets §5 delete the 16.3 GB source before assembling. `compositeContext`
-  /// carries no sidecar yet (`hasUsableSidecar` defaults to `false`), which is
-  /// exactly a first attempt's situation. resume.md §4.
+  /// Pin fragmentation on initial and resumed pieces. Initial attempts also copy audio into
+  /// retention so assembly can run after source removal.
   @Test func aFirstAttemptAlsoWritesTheSidecarAudio() {
     let args = ArgumentBuilder.arguments(for: composite, context: compositeContext)
 
@@ -678,10 +545,7 @@ struct ArgumentBuilderTests {
     #expect(args.filter { $0 == "-i" }.count == 2)
   }
 
-  /// Once a usable sidecar exists, resuming must not touch it: a resumed
-  /// attempt holds only the tail, so re-extracting would truncate the sidecar
-  /// to it. The gate is usability, not attempt number — this is the case where
-  /// the first attempt's own copy is intact and complete.
+  /// An intact sidecar must remain untouched on resume.
   @Test func aResumingCompositeWithAUsableSidecarDoesNotRewriteIt() {
     var context = compositeContext
     context.resumeFrom = .seconds(10)
@@ -693,18 +557,8 @@ struct ArgumentBuilderTests {
     #expect(args.filter { $0 == "-i" }.count == 2)
   }
 
-  /// The defect this branch exists to fix: a `SIGKILL` during the sidecar's
-  /// own write (an ordinary, non-fragmented MP4) leaves it with no `moov`,
-  /// permanently, unless a later attempt gets a chance to rewrite it. Gating
-  /// on `resumeFrom == nil` alone meant no later attempt ever did — every
-  /// retry re-encoded the tail successfully and then failed at `.assemble` on
-  /// the same corrupt file, until the piece cap forced a full restart.
-  /// resume.md §4.
-  ///
-  /// Rewriting on a resume needs an un-seeked copy of the source: both
-  /// existing inputs carry `-ss`, so mapping from input 0 would capture only
-  /// the tail, silently truncating the sidecar instead of restoring it. A
-  /// third, un-seeked input supplies the whole track.
+  /// A killed sidecar lacks `moov` and must be rewritten on retry. Use a third, unseeked source
+  /// input so replacement audio spans the whole video, not just the resumed tail.
   @Test func aResumingCompositeWithAnUnusableSidecarRewritesItFromAThirdInput() {
     var context = compositeContext
     context.resumeFrom = .seconds(10)
@@ -722,10 +576,7 @@ struct ArgumentBuilderTests {
     #expect(args[inputIndices[1] + 1] == "/tmp/job/render.mp4")
     #expect(args[inputIndices[2] + 1] == "/tmp/job/video.mp4")
 
-    // Exactly two `-ss`, both for the composited pair — the third input gets
-    // none, so it is not identically-seeked with the other two, it is simply
-    // un-seeked. Same style as `aResumingCompositeSeeksBothInputs`: each
-    // `-ss` is immediately followed by its value, then its `-i`.
+    // Only the two composite inputs receive `-ss`; the sidecar source remains unseeked.
     let seeks = args.indices.filter { args[$0] == "-ss" }
     #expect(seeks.count == 2)
     for index in seeks {
@@ -762,9 +613,7 @@ struct ArgumentBuilderTests {
     #expect(args.contains("concat"))
     #expect(args.contains("-c"))
     #expect(args.contains("copy"))
-    // Audio comes from the sidecar copied out on the first attempt, never
-    // from a piece (pieces are video-only) and never from the downloaded video
-    // (deleted before assemble). See docs/design/resume.md §4 and §6.
+    // Assembly audio comes from retention, not video-only pieces or the deleted source.
     #expect(args.contains("1:a:0?"))
     #expect(args.contains("/tmp/resume/audio.m4a"))
     #expect(args.last == "/tmp/job/final.mp4")

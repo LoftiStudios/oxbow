@@ -2,20 +2,14 @@ import Foundation
 import Observation
 import OxbowKit
 
-/// Owns the update check's state and the two small pieces of it that outlive
-/// the process.
-///
-/// The check itself is injected as a closure rather than built here, so this
-/// type knows nothing about GitHub, `URLSession`, or JSON — and its tests need
-/// no network. `AppComposition` supplies the real one.
+/// Update-check state and persisted timing/dismissal values; injected checking avoids network
+/// access in tests.
 @MainActor
 @Observable
 final class UpdateModel {
 
   enum State: Equatable {
-    /// Nothing to say. Every automatic check that finds nothing, and every
-    /// automatic check that fails, ends here — the launch path is silent by
-    /// design.
+    /// Automatic checks remain silent on failure or no update.
     case idle
     case available(ReleaseVersion, URL)
     /// Only ever reached from the menu item.
@@ -26,12 +20,8 @@ final class UpdateModel {
 
   private(set) var state: State = .idle
 
-  /// `PreferenceStore`, not `UserDefaults`. The two small values this keeps
-  /// between launches are the only reason it touches persistence at all, and
-  /// a suite-per-test `UserDefaults` leaves a real file in
-  /// `~/Library/Preferences` for every test that builds one — thousands of
-  /// them had accumulated before `Preferences` moved to this protocol. Same
-  /// injection, same production default, no disk in a test run.
+  /// Inject PreferenceStore so tests can use memory rather than leaving UserDefaults suite
+  /// files behind.
   private let store: PreferenceStore
   private let now: () -> Date
   private let performCheck: @Sendable () async throws -> UpdateCheck.Outcome
@@ -60,8 +50,7 @@ final class UpdateModel {
     await run(isManual: true)
   }
 
-  /// Dismissing means "not this one" — the version is remembered so the next
-  /// launch stays quiet, and any version above it still gets through.
+  /// Remember the dismissed version; newer releases still notify.
   func dismiss() {
     if case .available(let version, _) = state {
       store.set(version.description, forKey: Key.skippedVersion)
@@ -73,9 +62,7 @@ final class UpdateModel {
     do {
       let outcome = try await performCheck()
 
-      // Recorded only on success, so a launch with no network retries on the
-      // next one instead of spending the day's slot on a check that never
-      // reached GitHub.
+      // Record successful checks only, allowing a failed network attempt to retry next launch.
       lastChecked = now()
 
       // A manual check ignores the stored dismissal: the user just asked.
@@ -110,26 +97,16 @@ final class UpdateModel {
 }
 
 extension UpdateModel {
-  /// The real thing, wired to GitHub over `URLSession`.
-  ///
-  /// This adapter is the one part of the feature nothing covers: it is glue
-  /// between `UpdateCheck` (tested against a stub transport) and `URLSession`
-  /// (Apple's). There is no logic in it to get wrong beyond the cast, and a
-  /// test for it would be a test of `URLSession`.
+  /// Live UpdateCheck adapter using URLSession.
   static func live() -> UpdateModel {
-    // Ephemeral so a release payload is never written to disk, and so a
-    // cached 200 can never answer a check the user explicitly asked for.
-    // Fifteen seconds because the manual check has someone waiting on it —
-    // the default sixty is a minute of a menu item having done nothing
-    // visible.
+    // Ephemeral session with a 15-second timeout; avoid persisted payloads and stale responses
+    // to manual checks.
     let configuration = URLSessionConfiguration.ephemeral
     configuration.timeoutIntervalForRequest = 15
     configuration.waitsForConnectivity = false
     let session = URLSession(configuration: configuration)
 
-    // Read raw rather than through `AboutInfo`, which deliberately exposes
-    // only the composed "Version 0.2.1 (73)" sentence. What is needed here is
-    // the bare semver.
+    // Read bare semver, not the formatted About version line.
     let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? ""
 
     let check = UpdateCheck(currentVersion: version) { request in

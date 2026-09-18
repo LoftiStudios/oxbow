@@ -1,26 +1,8 @@
 #!/usr/bin/env swift
-//
-// Compose captured windows onto a background.
-//
-// The last manual step in an otherwise one-command pipeline used to be a
-// Photoshop file: regenerate the components, then open Photoshop and rebuild
-// the hero by hand. That is the step most likely to be skipped, which is how a
-// hero image quietly goes a version stale while everything around it is
-// current.
-//
-// The shadows are not drawn here and are not approximated. `screencapture`
-// without `-o` has macOS render its own window shadow into the capture's
-// alpha, so each PNG already carries the real falloff — and the front window's
-// shadow lands on the one behind it for free, because it belongs to that
-// window's own image. Core Graphics only has to draw them in order.
-//
-// Usage:
-//   composite.swift --background bg.png --out hero.png \
-//                   --place queue.png:0:190:1.0 \
-//                   --place intake.png:1250:40:1.0
-//
-// A placement is PATH:X:Y:SCALE, in background pixels, origin top-left, drawn
-// in the order given. Scale is applied about the image's top-left corner.
+// Composes captured windows in placement order. Captures include native shadows when
+// screencapture omits `-o`. Usage: `composite.swift --background bg.png --out hero.png --place
+// queue.png:0:190:1.0 --place intake.png:1250:40:1.0`. Placements are PATH:X:Y:SCALE in
+// background pixels with a top-left origin.
 
 import AppKit
 import CoreGraphics
@@ -57,8 +39,7 @@ while let flag = arguments.first {
   case "--place":
     guard let spec = arguments.first else { die("--place needs PATH:X:Y:SCALE") }
     arguments.removeFirst()
-    // Split from the right: a path may contain colons, the four trailing
-    // fields may not.
+    // Split from the right to preserve colons in paths.
     let parts = spec.split(separator: ":")
     guard parts.count >= 4,
           let scale = Double(parts[parts.count - 1]),
@@ -100,9 +81,7 @@ guard
     bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
 else { die("could not create a \(width)x\(height) context") }
 
-// Core Graphics is bottom-left origin; every coordinate a person types is
-// top-left, because that is how every design tool and every screenshot reports
-// them. Flip once here rather than making the caller think about it.
+// Convert top-left placement coordinates to Core Graphics' bottom-left origin.
 context.interpolationQuality = .high
 context.draw(background, in: CGRect(x: 0, y: 0, width: width, height: height))
 

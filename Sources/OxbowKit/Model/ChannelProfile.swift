@@ -1,15 +1,10 @@
 import Foundation
 
-/// A channel's own metadata, as distinct from its archives.
-///
-/// Fetched once when a channel is added, never on a poll — see
-/// `ChannelFeed.profile(forLogin:)` for why that separation is load-bearing.
+/// Channel profile fetched at watch creation, not every sweep.
 public struct ChannelProfile: Equatable, Sendable {
   public let displayName: String
 
-  /// `nil` when the channel has no avatar set, which is ordinary rather than
-  /// an error. Sized at `ChannelFeed.avatarWidth`; the CDN serves only a
-  /// fixed set of sizes (`docs/twitch-channel-api.md` §9.2).
+  /// Optional avatar at ChannelFeed.avatarWidth; the CDN accepts only fixed sizes.
   public let avatarURL: URL?
 
   public init(displayName: String, avatarURL: URL?) {

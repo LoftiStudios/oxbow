@@ -5,9 +5,7 @@ import Testing
 @Suite("RelativeDay")
 struct RelativeDayTests {
 
-  /// A fixed calendar in a fixed zone, so a test that passes in London passes
-  /// in Auckland. `.current` in production is right — the user's own sense of
-  /// "yesterday" is the calendar's, not UTC's — but it makes a test a lottery.
+  /// Fixed calendar and zone keep relative dates independent of the test machine.
   private var calendar: Calendar {
     var calendar = Calendar(identifier: .gregorian)
     calendar.timeZone = TimeZone(identifier: "UTC")!
@@ -40,9 +38,7 @@ struct RelativeDayTests {
 
   @Test("it counts calendar days, not elapsed 24-hour periods")
   func countsCalendarDays() {
-    // 20 hours ago can be yesterday or today depending on the wall clock, and
-    // the user's answer is the calendar's. Anchored deliberately: `now` here
-    // is 2027-01-15T08:00:00Z, so 20 hours back is the 14th.
+    // At 08:00 UTC on Jan 15, twenty hours earlier falls on Jan 14.
     let anchor = ISO8601DateFormatter().date(from: "2027-01-15T08:00:00Z")!
     let twentyHours = anchor.addingTimeInterval(-20 * 3600)
     #expect(RelativeDay.phrase(for: twentyHours, now: anchor, calendar: calendar)
@@ -51,10 +47,7 @@ struct RelativeDayTests {
 
   @Test("a date in the future never becomes a countdown")
   func futureIsNotACountdown() {
-    // docs/design/channel-watching.md section 7: there is no expiresAt and
-    // retention does not follow from tier, so a countdown would be invented.
-    // A future publishedAt is nonsense from the API rather than something to
-    // render as "in 3 days" — it degrades to today.
+    // Future publication dates degrade to today; never infer an expiry countdown.
     #expect(phrase(daysAgo: -3) == "Published today")
   }
 
@@ -71,10 +64,7 @@ struct RelativeDayTests {
 
   // MARK: - Without the verb
 
-  /// The Watching row puts the age beside a duration — "19 days ago · 1:31" —
-  /// where "Published" reads as a sentence fragment next to a bare number.
-  /// Every other caller wants the verb, so it stays the default and this is
-  /// the exception that asks.
+  /// Rows can omit “Published” when combining age with duration.
   @Test func dropsTheVerbWhenAsked() {
     let calendar = Calendar(identifier: .gregorian)
     let now = Date(timeIntervalSince1970: 1_000_000)
@@ -86,9 +76,7 @@ struct RelativeDayTests {
       for: threeDays, now: now, calendar: calendar) == "Published 3 days ago")
   }
 
-  /// Today and yesterday are whole phrases rather than "<n> days ago", so
-  /// dropping the verb has to leave something that still reads — not a bare
-  /// "today" mid-sentence, and not an empty string.
+  /// Verb-free today/yesterday still need complete, capitalized labels.
   @Test func todayAndYesterdaySurviveLosingTheVerb() {
     let calendar = Calendar(identifier: .gregorian)
     let now = Date(timeIntervalSince1970: 1_000_000)

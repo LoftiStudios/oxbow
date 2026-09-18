@@ -26,11 +26,8 @@ struct WatchingModelTests {
           avatarURL: avatarURL)
   }
 
-  /// A `WatchStore` whose file is actually a directory — `WatchStore.load()`
-  /// throws only in this exact shape (a set-aside-worthy decode failure is
-  /// recovered internally, so it never propagates), the same trick
-  /// `AddChannelModelTests` uses to reach `AddChannelModel.add()`'s own
-  /// read-failure branch.
+  /// A directory at the watch-file path forces a read error; decode failures are recovered
+  /// internally.
   private func unreadableStore() throws -> WatchStore {
     let file = URL.temporaryDirectory
       .appending(path: "watching-\(UUID().uuidString)")
@@ -39,29 +36,15 @@ struct WatchingModelTests {
     return WatchStore(fileURL: file)
   }
 
-  /// A `VideoRecordStore` over a file that does not exist yet — `load()`
-  /// answers an empty library, and `save` creates the directory on the way
-  /// out, so every test gets a private record with nothing in it.
+  /// Private, initially empty video-record store.
   private func temporaryRecordStore() -> VideoRecordStore {
     VideoRecordStore(fileURL: URL.temporaryDirectory
       .appending(path: "watching-records-\(UUID().uuidString)")
       .appending(path: "videos.json"))
   }
 
-  /// A `VideoRecordStore` seeded with `library`, in a directory that is then
-  /// made read-only — `load()` keeps working and `save` throws.
-  ///
-  /// The record store's exact counterpart to `writeProtectedStore(seeding:)`
-  /// below, for the identical reason and against an identical `save`:
-  /// `VideoRecordStore.save` also writes a scratch file into the parent
-  /// directory before its atomic replace, and 0o500 (r-x) keeps read and
-  /// traversal while dropping the write bit that scratch file needs.
-  ///
-  /// Not `unreadableStore()`'s directory-as-file trick, which would be the
-  /// wrong branch twice over: `VideoRecordStore.load` recovers a file it
-  /// cannot read by setting it aside and answering an empty library, so that
-  /// shape makes the load *succeed* — and, having moved the directory out of
-  /// the way, leaves the following `save` free to succeed as well.
+  /// Seed the record, then make its directory read-only (0500). Reads still succeed while save
+  /// fails creating its scratch file, isolating the save-failure branch.
   private func writeProtectedRecordStore(seeding library: VideoLibrary) throws
     -> VideoRecordStore
   {
@@ -81,12 +64,8 @@ struct WatchingModelTests {
                    thumbnailURL: nil)
   }
 
-  /// `fileAnswer` defaults to answering `absent` for everything, matching the
-  /// model's own fail-closed default. A test that wants a row to read as
-  /// downloaded says which path exists, rather than leaning on a stub that
-  /// claims every path does — the row state now also consults the path a
-  /// download *would* have taken, so a blanket `present` would report every
-  /// archive on the channel as already downloaded.
+  /// Default to absent files. A blanket present stub would also match derived paths and report
+  /// every archive downloaded.
   private func model(
     store: WatchStore,
     fileAnswer: @escaping (URL) -> ArchiveRowState.FileAnswer = { _ in .absent }
@@ -97,29 +76,13 @@ struct WatchingModelTests {
       fileAnswer: fileAnswer)
   }
 
-  /// Answers `present` for exactly the file `job(_:_:)` delivers and `absent`
-  /// for anything else — notably the derived path, which these tests must not
-  /// accidentally match.
+  /// Match only the delivered path, not the derived candidate.
   private let onlyTheJobsFile: (URL) -> ArchiveRowState.FileAnswer = { url in
     url.path(percentEncoded: false) == "/out/1.mp4" ? .present(url) : .absent
   }
 
-  /// A job whose one download step carries `status` and is keyed to `id` via
-  /// `mediaIdentifier`, so `ArchiveRowState.state(for:jobs:file:)` sees it as
-  /// belonging to the archive with that id. Copies the pattern at
-  /// `WatchPollerFailedJobFilterTests.job(_:)`/`step(_:videoID:)` rather than
-  /// reaching into `OxbowKitTests`' own helper, which this target cannot see.
-  ///
-  /// `.done` sets an artifact so a caller can exercise the delivered-file
-  /// path too.
-  ///
-  /// `files` names what the job actually delivered — `Job.deliveredFiles`
-  /// reads it back through `Step.deliveredArtifact`, which requires both a
-  /// delivering kind (`.downloadVideo` here always qualifies) and a non-nil
-  /// `artifact`. Defaulted to a generic `/out/<id>.mp4` so every existing
-  /// call site, which only cares about `status`, is unaffected; a caller
-  /// that needs a specific delivered path — to match a `fileAnswer` stub
-  /// keyed on that exact URL — passes it explicitly.
+  /// Single-step job associated with the archive ID. Done jobs carry a delivered artifact;
+  /// callers can override the default path to match a precise filesystem stub.
   private func job(_ id: String, _ status: JobStatus, files: [URL] = []) -> Job {
     let stepStatus: StepStatus
     switch status {
@@ -185,12 +148,7 @@ struct WatchingModelTests {
     #expect(model.sections.first?.rows.first?.state == .running)
   }
 
-  /// `QueueEngine.publish()` is un-debounced and fires on every helper status
-  /// line, so a running download reaches `updateJobs` hundreds of times a
-  /// second carrying nothing but a new percentage. `rebuild()` clears the
-  /// failure banners, so a refused Add would explain itself for less than a
-  /// frame if a progress tick reached it. `submissionFailure` is what pins
-  /// that here: surviving one is only possible if no rebuild happened.
+  /// Progress-only snapshots must not rebuild and clear an action's failure banner.
   @Test func aProgressTickAloneDoesNotRebuild() async throws {
     let store = temporaryStore()
     try store.save([watch("ninja")])
@@ -265,13 +223,7 @@ struct WatchingModelTests {
   // MARK: - The dismissal overlay
 
   @Test func ignoringRemovesTheRowImmediately() throws {
-    // `WatchPoll.sweep` hands over every archive regardless of `seen` — see
-    // that type's own comment — so hiding this row depends on `rebuild()`
-    // re-filtering through the watch's own persisted `seen`, which only
-    // happens once `markSeen`'s write actually lands. The overlay is what
-    // makes Ignore work immediately regardless: `dismissed.insert(id)` hides
-    // the row before that write is even attempted, and stays authoritative
-    // if it fails.
+    // Ignore hides immediately; persisted seen state must keep it hidden after reconciliation.
     let store = temporaryStore()
     try store.save([watch("ninja")])
     let model = model(store: store)
@@ -295,15 +247,7 @@ struct WatchingModelTests {
     #expect(try store.load()[0].seen == ["1"])
   }
 
-  /// The bug: `rebuild()` used to filter a sweep's archives only through the
-  /// in-memory `dismissed` overlay, which only ever catches what *this*
-  /// model itself wrote through *this* `store`. A seen-set written through a
-  /// different `WatchStore` — exactly what `AddChannelModel` does when
-  /// Only new re-adds an already-watched channel — left rows on screen the
-  /// watch itself already says are seen, for up to an hour until the next
-  /// sweep excluded them on its own. No race is needed to reach it: the
-  /// watch file already has "1" seen before the very first sweep this test
-  /// applies.
+  /// Read seen IDs written through other store instances, not just local dismissals.
   @Test func rebuildAlsoExcludesArchivesTheWatchsOwnSeenSetAlreadyMarks() throws {
     let store = temporaryStore()
     try store.save([watch("ninja", seen: ["1"])])
@@ -318,14 +262,7 @@ struct WatchingModelTests {
   }
 
   @Test func ignoringLeavesWatchesCurrentWithoutACallerHavingToRefresh() throws {
-    // `markSeen` used to call `rebuild()` — which re-reads `watches` from
-    // disk — before persisting the write, so `watches` reflected the file as
-    // it stood a moment earlier and stayed stale until something else
-    // rebuilt it. Reading `watches` right here, with no `refresh()` in
-    // between, is exactly the trap: a caller (`sections` itself, or
-    // `QueueView`'s onEdit before it added its own belt-and-braces call)
-    // that trusted this value immediately after Ignore got the channel's old,
-    // smaller seen-set.
+    // Inspect watches immediately after Ignore to catch rebuilding before persistence.
     let store = temporaryStore()
     try store.save([watch("ninja")])
     let model = model(store: store)
@@ -354,26 +291,17 @@ struct WatchingModelTests {
 
     await model.add(archive("1"), from: "ninja")
 
-    // The whole point of the change: it queues, using settings frozen onto
-    // the watch, and no form opens to ask for them a second time.
+    // Queue using frozen watch settings without reopening intake.
     #expect(queued.id == "1")
     #expect(queued.settings == capped.settings)
     #expect(opened.id == nil, "the primary action must not open intake")
     #expect(try store.load()[0].seen == ["1"])
-    // This injected queue only records — it publishes no job — so the
-    // archive ends up seen with nothing in the queue for it, and a row like
-    // that is hidden. The real path always leaves a job behind; that is
-    // `addingLeavesTheRowInPlaceAsQueuedOnceItsJobExists` below.
+    // This queue stub publishes no job, so the now-seen row hides. The next test supplies the
+    // real queued-row transition.
     #expect(model.sections[0].rows.map(\.archive).isEmpty)
   }
 
-  /// **The transition this stage exists to deliver.** `add` queues first and
-  /// marks seen second, so for one instant the archive is both dismissed and
-  /// queued — and it has to stay on screen, reading "In queue", rather than
-  /// leaving the list at the moment a person asked for it. The job is what
-  /// keeps it there, exactly as the real engine's publication does: this
-  /// closure publishes from inside the submission, which is where
-  /// `QueueEngine` publishes too.
+  /// Publish during submission, as the engine does, so marking seen retains the row as queued.
   @Test func addingLeavesTheRowInPlaceAsQueuedOnceItsJobExists() async throws {
     let store = temporaryStore()
     try store.save([watch("ninja")])
@@ -397,11 +325,7 @@ struct WatchingModelTests {
     #expect(rows.first?.state == .queued)
   }
 
-  /// A job outranks the watch's own persisted `seen`, not only the in-memory
-  /// `dismissed` overlay — `WatchPoller.markSubmitted` writes `seen` through
-  /// a different `WatchStore` the moment it queues an automatic download, so
-  /// an archive can be seen on disk with a job this model never watched
-  /// being made.
+  /// A queued job outranks persisted seen state even when another writer submitted it.
   @Test func anArchiveSeenOnDiskIsStillShownWhileTheQueueHoldsAJobForIt() throws {
     let store = temporaryStore()
     try store.save([watch("ninja", seen: ["1", "2"])])
@@ -416,11 +340,8 @@ struct WatchingModelTests {
     #expect(rows.first?.state == .downloaded(URL(filePath: "/out/1.mp4")))
   }
 
-  /// Losing a job costs the row its place — the lease §7.2 of
-  /// `channel-history.md` calls this stage's scaffolding — and costs the
-  /// archive nothing else. `seen` is untouched, because deriving it from the
-  /// queue is exactly what `channel-watching.md` §4 forbids: a job someone
-  /// cleared out would otherwise license a second download.
+  /// Removing a queue job must not clear handled state and authorize another automatic
+  /// download.
   @Test func removingAJobHidesTheRowWithoutUnmarkingTheArchive() throws {
     let store = temporaryStore()
     try store.save([watch("ninja", seen: ["1"])])
@@ -435,11 +356,7 @@ struct WatchingModelTests {
     #expect(try store.load()[0].seen == ["1"], "the seen-set never follows the queue")
   }
 
-  /// The defect this stage fixes: a `.failed` job used to outrank Ignore,
-  /// because `jobbed` used to count *any* job for the archive. `.failed` is
-  /// finished — nothing is still going to produce anything for this row — so
-  /// it must not hold the row open against a person saying no. `markSeen`'s
-  /// write still has to land regardless of whether the row stays visible.
+  /// Failed jobs must not keep ignored rows visible.
   @Test func ignoringARowWithAFailedJobRemovesItAndStillPersistsSeen() throws {
     let store = temporaryStore()
     try store.save([watch("ninja")])
@@ -454,12 +371,7 @@ struct WatchingModelTests {
     #expect(try store.load()[0].seen == ["1"], "the seen write still has to land")
   }
 
-  /// The other defect: a cancelled job used to resurrect a dismissed archive
-  /// as a fresh Add, because `jobbed` used to count it too. A cancellation is
-  /// a person saying no — the same rule `AutoDownloadObserver` and
-  /// `ArchiveRowState.state` already keep — so it must not undo an Ignore, and
-  /// `unreadCount` (which only counts `.available` rows) must not come back
-  /// with it.
+  /// Cancelled jobs must not resurrect ignored rows or unread counts.
   @Test func cancellingAJobForADismissedArchiveDoesNotBringItsRowBack() throws {
     let store = temporaryStore()
     try store.save([watch("ninja")])
@@ -474,9 +386,7 @@ struct WatchingModelTests {
     #expect(model.unreadCount == 0)
   }
 
-  /// A refusal leaves the row exactly where it was. Marking it seen would
-  /// bury an archive nothing is downloading, which is the failure §6.3 calls
-  /// out — reached here before a job ever exists rather than after one fails.
+  /// Refused submission must leave the archive actionable.
   @Test func aRefusedAddSaysWhyAndLeavesTheRowAlone() async throws {
     let store = temporaryStore()
     try store.save([watch("ninja")])
@@ -511,12 +421,7 @@ struct WatchingModelTests {
     #expect(model.sections[0].rows.map(\.archive).isEmpty)
   }
 
-  /// The exact shape `OxbowApp` wires in production — its `openIntake`
-  /// closure only ever builds a `PendingIntake` from the watch `add` hands it,
-  /// never from `Preferences`. `addingPersistsAndOpensIntake` above only pins
-  /// the archive id; this pins the other half of the hand-off, that a channel
-  /// someone capped at 720p, video-only actually carries those settings to
-  /// intake rather than whatever the global defaults happen to be.
+  /// Verify frozen watch settings reach intake, rather than today's global defaults.
   @Test func addHandsIntakeTheWatchsFrozenSettingsNotGlobalPreferences() throws {
     let store = temporaryStore()
     let capped = Watch(
@@ -543,8 +448,7 @@ struct WatchingModelTests {
   }
 
   @Test func anActionOnAnUnknownChannelIsIgnoredRatherThanCrashing() throws {
-    // The watch file can change under us — a later stage will let someone
-    // remove a channel while findings from it are still on screen.
+    // The channel may have been removed since its findings arrived.
     let store = temporaryStore()
     try store.save([watch("ninja")])
     let model = model(store: store)
@@ -558,13 +462,8 @@ struct WatchingModelTests {
 
   // MARK: - markSeen refuses loudly on an unreadable store
 
-  /// The bug: `dismissed.insert(id)` already hides the row before `markSeen`
-  /// ever touches the store, so an unreadable `watches.json` used to fail
-  /// completely silently — the row vanished, `add(_:from:)` opened no
-  /// intake window, and nothing on screen said why. The other three writers
-  /// of `watches.json` (`AddChannelModel.add()` in both modes, and
-  /// `stopWatching`) all refuse loudly on the identical condition; this pins
-  /// `markSeen`'s own turn to do the same, for both call shapes.
+  /// Unreadable watch state must show a failure instead of silently hiding the row or skipping
+  /// intake.
   @Test func ignoringOnAnUnreadableStoreSurfacesTheFailureRatherThanFailingSilently() throws {
     let store = try unreadableStore()
     defer { try? FileManager.default.removeItem(at: store.fileURL.deletingLastPathComponent()) }
@@ -592,15 +491,8 @@ struct WatchingModelTests {
     #expect(model.markSeenFailure != nil, "the refusal must say why, not just vanish")
   }
 
-  /// A `WatchStore` whose directory reads fine but cannot be written to.
-  /// `load()` neither writes nor needs write access, so it keeps succeeding;
-  /// `save()` fails at its very first write (`data.write(to: scratch)`,
-  /// creating the scratch file the atomic replace needs) because the
-  /// directory itself has no write bit. That is the split this needs:
-  /// `unreadableStore()` above makes `load()` itself throw, which is
-  /// `markSeen`'s *other* failure branch — this one is behind `try?
-  /// store.save`, the one that used to swallow the error with nothing on
-  /// screen to show for it.
+  /// Readable store with a nonwritable parent: save fails creating its scratch file, isolating
+  /// the save branch from load errors.
   private func writeProtectedStore(seeding watches: [Watch]) throws -> WatchStore {
     let dir = URL.temporaryDirectory.appending(path: "watching-\(UUID().uuidString)")
     try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -608,32 +500,13 @@ struct WatchingModelTests {
     // Seed while the directory is still writable — `store.save` below is the
     // one write this test wants to survive.
     try store.save(watches)
-    // 0o500 (r-x) keeps read and traversal, so the existing `watches.json`
-    // stays fully readable, but drops write, so nothing new can be created
-    // in the directory — including the scratch file `save()` writes before
-    // its atomic replace.
+    // 0500 allows reading/traversal but prevents creating the atomic-save scratch file.
     try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: dir.path)
     return store
   }
 
-  /// The regression: `rebuild()` now reconciles `dismissed` against every
-  /// watch's own persisted `seen` (the correct fix that lets a failed
-  /// download's archive return to the inbox in the same session — see
-  /// `aFailedDownloadsArchiveReappearsInTheSameSessionOnceTheWatchForgetsIt`
-  /// above). That reconciliation reads `seen` fresh off disk on every
-  /// `rebuild()`, including the one `markSeen` runs on its own failure path —
-  /// so when `store.save` fails silently (`try?`), the id never actually
-  /// lands in `seen`, and `markSeenFailure` was never set for this branch
-  /// (only the `store.load()` throw above set it). Ignore or Add on a channel
-  /// whose persist fails used to look like nothing happened at all: no
-  /// message, and nothing to tell it apart from a completed action.
-  ///
-  /// **Confirming this exercises the save branch, not the load branch:**
-  /// unlike `unreadableStore()`, `store.load()` against this fixture must
-  /// keep succeeding throughout — asserted directly below, both before
-  /// `ignore()` runs and after, the second one also pinning that "1" never
-  /// actually made it into `seen` (proof the save itself failed, not that it
-  /// silently succeeded).
+  /// Verify reads succeed before and after the action, while the seen ID remains absent, to
+  /// prove the visible error came from save failure.
   @Test func ignoringOnAWriteProtectedStoreSurfacesTheSaveFailureRatherThanFailingSilently() throws {
     let store = try writeProtectedStore(seeding: [watch("ninja")])
     let dir = store.fileURL.deletingLastPathComponent()
@@ -643,10 +516,7 @@ struct WatchingModelTests {
       try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: dir.path)
       try? FileManager.default.removeItem(at: dir)
     }
-    // Confirms `load()` still works against this fixture — a store that
-    // could not be read at all would reach `markSeen`'s *other* failure
-    // branch instead, the one `ignoringOnAnUnreadableStoreSurfacesTheFailure
-    // RatherThanFailingSilently` above already covers.
+    // Confirm this is a save failure, not a load failure.
     #expect(try store.load().map(\.login) == ["ninja"], "precondition: load must still succeed")
 
     let model = model(store: store)
@@ -659,13 +529,8 @@ struct WatchingModelTests {
       try store.load()[0].seen.isEmpty,
       "the save must have actually failed — \"1\" never reached seen on disk")
   
-    // **The row is still there, and the banner has to say so.** `markSeen`
-    // hides it via `dismissed` before attempting the write, but `rebuild()`
-    // in the failure path prunes that overlay against what is on disk — and
-    // the failed write is exactly why disk lacks the id — so the row comes
-    // straight back. This went unpinned once already: the banner promised
-    // the row would return "the next time Oxbow launches" while it had in
-    // fact never left, and no test contradicted either half.
+    // Failed persistence restores the row immediately; the banner must describe that current
+    // state.
     #expect(
       model.sections.first?.rows.map(\.id) == ["1"],
       "a failed save must leave the row where it was, not hide it")
@@ -675,12 +540,8 @@ struct WatchingModelTests {
   }
 
   @Test func aSweepThatStraddlesADismissalDoesNotBringTheRowBack() throws {
-    // `WatchPoll.sweep` never consults `seen` — it hands over everything a
-    // channel has, before or after any write to that watch's own file — so a
-    // sweep already in flight when the ignore landed finishes with the same
-    // results it would have produced anyway, still carrying the
-    // just-dismissed archive. An identical payload reapplied is exactly that
-    // case, and the row must stay gone rather than reappear.
+    // Reapply a sweep that still carries the ignored archive to model an in-flight stale
+    // result.
     let store = temporaryStore()
     try store.save([watch("ninja")])
     let model = model(store: store)
@@ -693,19 +554,8 @@ struct WatchingModelTests {
   }
 
   @Test func aDismissalDropsOutOfTheOverlayButTheArchiveStaysHiddenViaTheWatchsOwnSeenSet() throws {
-    // A sweep computed after the write no longer carries the dismissed id at
-    // all, so it drops out of the `dismissed` overlay safely — that set
-    // stays bounded instead of growing forever, rather than accumulating
-    // every id ever acted on for the life of the app.
-    //
-    // **Before finding 3's fix, that alone made a later sweep that happened
-    // to reuse the same id show it as brand new** — `dismissed` was the
-    // *only* thing hiding it. Now `rebuild()` also reconciles against the
-    // watch's own `seen` set (`Watch.findings(in:)`), which `ignore()`
-    // already committed this id to when it persisted — so the row must stay
-    // hidden regardless of what `dismissed` has since forgotten.
-    // `dismissed` is left responsible only for the write-failed case its own
-    // doc comment describes.
+    // After an overlay ID is pruned, persisted seen state must still hide it if a later sweep
+    // returns it again.
     let store = temporaryStore()
     try store.save([watch("ninja")])
     let model = model(store: store)
@@ -720,16 +570,8 @@ struct WatchingModelTests {
       "the watch's own seen set still hides it, even once dismissed has forgotten it")
   }
 
-  /// Finding 5. A manual Add persists the archive into `seen` *and* into
-  /// `dismissed` together (`markSeen`). If that download later fails,
-  /// `AutoDownloadObserver.forget` un-marks it on disk, through a different
-  /// `WatchStore` over the same file — but `dismissed` never hears about
-  /// that; it only narrows itself in `apply(_:)` against a sweep's *found*
-  /// ids, and the archive is still found (it has not expired). Before this
-  /// fix, the row stayed hidden here regardless — reappearing only after a
-  /// relaunch threw `dismissed` away, which is exactly what Task 4's own
-  /// test could not catch, since it exercises the observer in isolation
-  /// rather than through this model's overlay.
+  /// A failed download unmarks through another store. Reconciliation must remove the stale
+  /// local dismissal so the row returns in the same session.
   @Test func aFailedDownloadsArchiveReappearsInTheSameSessionOnceTheWatchForgetsIt() async throws {
     let store = temporaryStore()
     try store.save([watch("ninja")])
@@ -739,9 +581,7 @@ struct WatchingModelTests {
     await model.add(archive("1"), from: "ninja")
     #expect(model.sections[0].rows.map(\.archive).isEmpty, "precondition: Add hid the row and marked it seen")
 
-    // Stands in for `AutoDownloadObserver.forget`: the job for "1" failed,
-    // so it is un-marked on disk through a second `WatchStore` instance over
-    // the same file — out of band, with nobody looking.
+    // Simulate the failure observer unmarking archive 1 through another store.
     var current = try store.load()
     current[0] = current[0].forgetting(["1"])
     try store.save(current)
@@ -758,11 +598,7 @@ struct WatchingModelTests {
   // MARK: - Every watched channel gets a section
 
   @Test func aChannelNeverPolledStillGetsASectionWithItsSettings() throws {
-    // Today: a channel with nothing in `latest` does not appear at all. The
-    // model has to load the watch list itself, not only wait for a sweep,
-    // or a channel added a moment ago is invisible until the poller catches
-    // up to it — which can be minutes away (`WatchingView.isSweeping`'s own
-    // doc comment).
+    // Load watches before the first sweep so newly added channels appear immediately.
     let store = temporaryStore()
     try store.save([watch("ninja",
       settings: .init(destinationPath: "/Users/x/Downloads", qualityCap: .best,
@@ -790,9 +626,7 @@ struct WatchingModelTests {
 
     let summaries = Dictionary(uniqueKeysWithValues: model.sections.map { ($0.login, $0.settingsSummary) })
     #expect(summaries["ninja"] == "Video + chat · Best available · Medium chat · Downloads")
-    // Chat size is withheld when the output does not include chat, matching
-    // `IntakeModel.withholdsChatSizeFromSave` — a chat-less watch has no
-    // chat size to show.
+    // Hide chat size for video-only watch settings.
     #expect(summaries["day9tv"] == "Video · Up to 720p · Archive")
   }
 
@@ -823,22 +657,13 @@ struct WatchingModelTests {
     model.stopWatching("ninja")
 
     #expect(try store.load().map(\.login) == ["day9tv"])
-    // Gone immediately, not just on the next sweep — `ninja`'s own row from
-    // the sweep just applied must not linger because `latest` still carries
-    // it (see `stopWatching`'s own doc comment).
+    // Remove the channel immediately despite retained sweep results.
     #expect(model.sections.map(\.login) == ["day9tv"])
     #expect(model.stopWatchingFailure == nil)
   }
 
   @Test func aSweepThatStraddlesAStopDoesNotResurrectTheStoppedChannel() throws {
-    // `WatchPoller.sweep` is sequential and can run for minutes, so a sweep
-    // already in flight when Stop Watching runs can still land afterwards —
-    // via `apply(_:)`, which replaces `latest` wholesale — still carrying
-    // the stopped channel's own entry. Reapplying the identical sweep here
-    // stands in for exactly that stale landing, and the row must stay gone
-    // rather than come back until the next real sweep excludes it on its
-    // own (the same class of bug `aSweepThatStraddlesADismissalDoesNotBring
-    // TheRowBack` guards against for Ignore).
+    // Reapply a stale in-flight sweep after stopping; it must not resurrect the channel.
     let store = temporaryStore()
     try store.save([watch("ninja"), watch("day9tv")])
     let model = model(store: store)
@@ -856,20 +681,8 @@ struct WatchingModelTests {
   }
 
   @Test func stoppingAChannelDropsItsOwnDismissedIdsSoAReAddDoesNotHideThem() throws {
-    // A stopped channel gets no more sweeps to let `apply`'s own
-    // `formIntersection` drop its ids out of the overlay — left alone, they
-    // would linger forever, and a later re-add whose first sweep reuses one
-    // of those VOD ids would have a genuinely new archive hidden by a
-    // dismissal earned by a watch that no longer exists.
-    //
-    // **Through `refresh()`, not a fresh `apply(_:)`** — re-sweeping after
-    // the re-add would mask the exact bug this pins: `latest` still holds
-    // the *original* sweep's entry for "1" throughout (untouched by
-    // `stopWatching`, see its own comment), so the only thing standing
-    // between that entry and the row it should now show again is whether
-    // `dismissed` still contains "1". `refresh()` is what production calls
-    // once the re-add's window closes, and the next real sweep can be up to
-    // an hour away.
+    // Re-add and refresh without another sweep, matching production. Old dismissals must not
+    // hide IDs in the retained listing.
     let store = temporaryStore()
     try store.save([watch("ninja")])
     let model = model(store: store)
@@ -885,13 +698,7 @@ struct WatchingModelTests {
 
   // MARK: - Stopping a watch lets go of its records
 
-  /// **This is the destructive half of Stop Watching, and the asymmetry is
-  /// the whole point.** A row with a delivered file is what Get Info renders
-  /// and what makes re-adding the channel light up with what you already
-  /// have; for a video that has since expired off Twitch it is the only
-  /// surviving trace that it ever existed, and nothing can fetch it back. A
-  /// row the channel merely offered and nobody acted on costs nothing to
-  /// re-derive from the next sweep.
+  /// Stopping retains delivered records but removes unacted-on history.
   @Test func stoppingAChannelDropsRowsItHasNothingToShowForAndKeepsTheRest() throws {
     let store = temporaryStore()
     try store.save([watch("ninja"), watch("day9tv")])
@@ -922,9 +729,7 @@ struct WatchingModelTests {
     #expect(saved.watchStates["3"] == .new)
   }
 
-  /// A download still in the queue has no delivered file to protect it yet.
-  /// Dropping its row mid-flight would leave the finished job with nothing to
-  /// record itself into.
+  /// Retain records for queued downloads before they have a delivered file.
   @Test func stoppingAChannelKeepsARowWhoseDownloadIsStillInTheQueue() throws {
     let store = temporaryStore()
     try store.save([watch("ninja")])
@@ -964,23 +769,8 @@ struct WatchingModelTests {
     #expect(purged == [kept])
   }
 
-  /// **The bug this pins: un-watching one channel wiped every other
-  /// channel's avatar.** One `ImageStore` directory holds two kinds of image
-  /// — a row's thumbnails and a watched channel's avatar (`ChannelCard` draws
-  /// the avatar through that same store) — and only the first kind is named
-  /// by anything in the video record. So a keep-set built from
-  /// `referencedImageURLs()` alone declares every avatar in the store an
-  /// orphan, and the first stop of any channel deletes all of them.
-  ///
-  /// Recoverable but wrong: `avatarURL` stays in `watches.json`, so the next
-  /// draw re-fetches. Re-fetching is the thing the store exists to avoid —
-  /// a cold launch with the network down is meant to still look like the
-  /// design (`docs/design/video-record.md` §3.6, §6).
-  ///
-  /// The stopped channel's own avatar is *not* in the keep-set, and that is
-  /// the point of asserting the exact set rather than a `contains`: it is no
-  /// longer referenced by anything, which is precisely what makes it
-  /// collectable.
+  /// Image keep-set must include other watches' avatars as well as video thumbnails. Assert the
+  /// exact set so the stopped channel's unreferenced avatar remains purgeable.
   @Test func stoppingAChannelKeepsTheAvatarsOfChannelsStillBeingWatched() throws {
     let ninjaAvatar = URL(string: "https://cdn/ninja-avatar.png")!
     let day9Avatar = URL(string: "https://cdn/day9tv-avatar.png")!
@@ -1008,17 +798,8 @@ struct WatchingModelTests {
             "a still-watched channel's avatar is still referenced")
   }
 
-  /// **Payloads are the half the image purge could not cover.** A thumbnail
-  /// is keyed by a hash of its URL and shared between rows, so it is
-  /// collected by an unreferenced scan; a payload is `payloads/<id>.txt` and
-  /// belongs to exactly one row, so nothing ever names it as an orphan and it
-  /// stays on disk forever once its row is gone
-  /// (`docs/design/video-record.md` §3.6).
-  ///
-  /// The surviving row's payload is asserted still present, not just the
-  /// dropped one's absence: "remove the ids that went" and "remove this
-  /// channel's ids" are the same set only until a row is protected by a
-  /// delivered file, and this fixture has one.
+  /// Delete payloads only for removed rows. Check a delivered row's payload survives to
+  /// distinguish selective cleanup from deleting the whole channel.
   @Test func stoppingAChannelLetsGoOfTheDroppedRowsPayloads() throws {
     let store = temporaryStore()
     try store.save([watch("ninja")])
@@ -1046,10 +827,8 @@ struct WatchingModelTests {
             "the row survived, so its payload is still reachable")
   }
 
-  /// A payload cannot be re-fetched for a video Twitch has dropped, so it goes
-  /// only once the surviving rows are actually on disk — the same ordering the
-  /// image purge follows, for the same reason. If the save failed, the file
-  /// still names the row that was dropped only in memory.
+  /// Purge payloads only after records save successfully; disk may still reference them if
+  /// saving fails.
   @Test func aFailedRecordSaveLeavesThePayloadsAlone() throws {
     let store = temporaryStore()
     try store.save([watch("ninja")])
@@ -1078,21 +857,9 @@ struct WatchingModelTests {
     #expect(payloads.payload(for: "2") == "still needed")
   }
 
-  /// **The guard on the record save, which nothing else reaches.**
-  /// `aRefusedStopLeavesTheRecordAndTheImagesAlone` below breaks the *watch*
-  /// store, which returns long before the record block runs. This breaks the
-  /// record store's `save` instead, so the purge's own precondition is what
-  /// is under test.
-  ///
-  /// Why the guard matters: `removeWatch` drops rows in memory, and the
-  /// keep-set is computed from that mutated copy. If the save then fails, the
-  /// file on disk still names every row this call dropped only in memory —
-  /// so purging against the in-memory keep-set would delete images that live,
-  /// still-present rows point at. For a video that has expired off Twitch the
-  /// stored thumbnail is the only copy left.
-  ///
-  /// Asserts the load kept working, so this is unambiguously the save branch
-  /// and not a record that could not be read at all.
+  /// Break record save while keeping load functional. Purging against unsaved in-memory
+  /// removals would delete images still referenced on disk, possibly their only surviving
+  /// copies.
   @Test func aFailedRecordSaveLeavesTheImagesAlone() throws {
     let dropped = URL(string: "https://cdn/dropped.jpg")!
     let store = temporaryStore()
@@ -1119,9 +886,7 @@ struct WatchingModelTests {
     #expect(try records.load().videos["2"] != nil,
             "the save must have actually failed — the row is still on disk")
     #expect(!purged, "a row still on disk still names its thumbnail")
-    // The watch list itself was saved before any of this, and stays saved:
-    // the record is best effort, and a record that would not write is not a
-    // reason to put a channel back that the user asked to stop watching.
+    // The successful watch removal remains committed even if best-effort record cleanup fails.
     #expect(try store.load().isEmpty)
   }
 
@@ -1149,12 +914,7 @@ struct WatchingModelTests {
   // MARK: - Re-reading the watch list on demand
 
   @Test func refreshShowsAChannelAddedToTheStoreAfterConstruction() throws {
-    // `AddChannelModel` writes through its own `WatchStore`, a different
-    // instance from the one this model reads through — nothing here notices
-    // that write on its own. Without `refresh()`, a channel added from that
-    // window stays invisible until the next hourly sweep, which is the exact
-    // flow the Watching pane's toolbar button exists for appearing to do
-    // nothing.
+    // Refresh must pick up channels added through another store without waiting for a sweep.
     let store = temporaryStore()
     try store.save([watch("ninja")])
     let model = model(store: store)
@@ -1167,11 +927,7 @@ struct WatchingModelTests {
   }
 
   @Test func stopWatchingRefusesRatherThanOverwritingWhenTheStoreCannotBeRead() throws {
-    // The same bug `AddChannelModelTests
-    // .addRefusesRatherThanOverwritingWhenTheWatchListCannotBeRead` guards
-    // against: a `try? store.load() ?? []` here would read the unreadable
-    // file as "nothing is watched" and save a filtered list over it,
-    // permanently losing every channel this call was never asked to touch.
+    // Unreadable state must not become an empty list that is then saved over existing watches.
     let store = try unreadableStore()
     defer { try? FileManager.default.removeItem(at: store.fileURL.deletingLastPathComponent()) }
     let model = model(store: store)
@@ -1187,15 +943,8 @@ struct WatchingModelTests {
 
   // MARK: - stopWatchingFailure is cleared at the right moments
 
-  /// The bug: `stopWatchingFailure` used to clear only on a *later
-  /// successful stop* — of any channel — which cut both ways. It survived a
-  /// pane switch or an unrelated Ignore/Add indefinitely (nothing else ever
-  /// touched it), yet a successful stop of a *different* channel cleared it
-  /// while the login that actually failed was still watched, implying the
-  /// problem had been resolved when it had not. `rebuild()` now clears it on
-  /// every path that reaches it (`refresh()`, `apply(_:)`, `markSeen`, and a
-  /// later `stopWatching` of any channel) — an honest "something else has
-  /// happened since" rather than a specific, misleading claim.
+  /// Clear stale stop failures on later rebuilds rather than indefinitely retaining them or
+  /// tying them to another channel's successful stop.
   @Test func stopWatchingFailureIsClearedByAnyLaterActionNotJustAMatchingStop() throws {
     let file = URL.temporaryDirectory
       .appending(path: "watching-\(UUID().uuidString)")
@@ -1207,9 +956,7 @@ struct WatchingModelTests {
     model.stopWatching("ninja")
     #expect(model.stopWatchingFailure != nil, "precondition: the refusal is visible")
 
-    // Fixes the underlying store and takes some other, unrelated action —
-    // standing in for switching away from the Watching pane and back, since
-    // `refresh()` is what that re-appearance calls.
+    // Restore the store and refresh, as when returning to the pane.
     try FileManager.default.removeItem(at: file)
     try store.save([watch("day9tv")])
     model.refresh()
@@ -1221,74 +968,34 @@ struct WatchingModelTests {
 
   // MARK: - The class invariant, under random interleaving
 
-  /// Both existing race tests (`aSweepThatStraddlesADismissalDoesNotBring
-  /// TheRowBack`, `aSweepThatStraddlesAStopDoesNotResurrectTheStoppedChannel`)
-  /// fake staleness by re-applying an *identical* payload — which pins one
-  /// instance of the bug, not the property the class is supposed to have.
-  /// This drives `apply`, `ignore`, `add`, `stopWatching`, `refresh`, and a
-  /// write through a second `WatchStore` (standing in for `AddChannelModel`
-  /// writing the same file) in a random order, and checks two things after
-  /// *every* step rather than only at the end:
-  ///
-  /// 1. `sections` and `watches` name exactly the same logins — no section
-  ///    for a channel that is not watched, no watched channel missing one.
-  /// 2. A watched channel's archives are exactly its newest sweep's findings,
-  ///    minus whatever its own persisted `seen` set has since gained.
-  ///
-  /// Deliberately does not inject a failed store write anywhere in the
-  /// interleaving — that path (`dismissed`'s one remaining job) already has
-  /// its own dedicated tests above. Every write here succeeds, so invariant 2
-  /// never has to account for "pending a failed write" to hold.
+  /// Deterministically interleave sweeps, actions, refreshes, and external additions. After
+  /// each operation, sections must match watched logins and archives must match the latest
+  /// listing minus current handled state. All writes succeed here; failure paths have separate
+  /// tests.
   @Test func watchesIsAlwaysTheSpineUnderRandomInterleaving() async throws {
     let seed: UInt64 = 0x5EED_C0FFEE
     var rng = SeededGenerator(seed: seed)
 
     let store = temporaryStore()
     let loginPool = ["ninja", "day9tv", "asmongold"]
-    // Scoped per login, deliberately: real Twitch archive ids are unique
-    // platform-wide, so two different channels never share one. `dismissed`
-    // is not scoped by login (it never has been — see its own doc comment),
-    // and sharing one raw id pool across logins here would manufacture
-    // cross-channel id collisions no real sweep could ever produce, hiding
-    // one channel's finding behind an unrelated channel's dismissal for a
-    // reason that has nothing to do with the property this test checks.
+    // Use platform-unique archive IDs across logins; collisions would create impossible
+    // cross-channel dismissals.
     func ids(for login: String) -> [String] { (1...4).map { "\(login)-\($0)" } }
 
     try store.save([watch("ninja"), watch("day9tv")])
     let model = model(store: store)
 
-    // This test's own record of what the last sweep actually handed
-    // `apply(_:)` for each login — the ground truth invariant 2 checks
-    // against. Never cleared by a stop: a real `latest` array is not either
-    // (see `WatchingModel.stopWatching`'s own comment), so a channel that is
-    // stopped and re-added is checked against the same stale sweep the model
-    // itself would still be holding.
+    // Track the last raw listing per login. Retain it across stop/re-add, matching the model's
+    // stale-listing behavior.
     var lastFound: [String: [ChannelArchive]] = [:]
     var lastFailed: Set<String> = []
 
     func currentLogins() throws -> [String] { try store.load().map(\.login) }
 
     func performSweep() throws {
-      // One `apply(_:)` call for every currently watched login, exactly the
-      // shape `WatchPoller.sweep` produces — never one call per login.
-      // `dismissed.formIntersection(found)` inside `apply(_:)` only narrows
-      // against the ids the *whole* array carries; splitting this into one
-      // call per login would starve that intersection of every other
-      // login's ids on each call and shrink `dismissed` for reasons that
-      // have nothing to do with a real sweep.
-      //
-      // Mirrors `WatchPoll.sweep` in the other respect too: a raw fetch per
-      // login, carried into `apply(_:)` whole — `WatchPoll.sweep` no longer
-      // narrows it through that login's own `findings(in:)` before handing
-      // it over (see `WatchPoll.swift`'s own comment on `.found`), so
-      // `lastFound` records the *raw* fetch, not a pre-filtered one: "the
-      // newest sweep carries it" is about what the sweep actually reported,
-      // which today is everything, seen or not. `checkInvariants` below
-      // still subtracts `watchEntry.seen` at the moment it checks, which is
-      // what preserves the asymmetry the sixth bug turned on — a later
-      // re-add with a fresh, emptied `seen` cannot retroactively widen what
-      // an earlier, now-stale sweep once said, because that subtraction
-      // reads `seen` fresh every time, not the `seen` this sweep captured.
+      // Apply one complete sweep array, not one call per login, so overlay intersection sees
+      // every channel. Keep raw archives and subtract current seen state during invariant
+      // checks.
       var results: [WatchPollResult] = []
       for watchEntry in try store.load() {
         if Bool.random(using: &rng) {
@@ -1303,13 +1010,8 @@ struct WatchingModelTests {
           lastFailed.insert(watchEntry.login)
         }
       }
-      // `apply(_:)` sets `latest = results` — wholesale, not merged (its own
-      // doc comment) — so a login this sweep does not cover (because it was
-      // unwatched when `WatchPoll.sweep` ran) loses its entry outright, not
-      // only until a later sweep adds it back. A completely stale entry
-      // surviving *through* a real sweep that had every chance to refresh it
-      // is not what "the newest sweep carries it" means; the ground truth
-      // has to go stale the same way `latest` actually does.
+      // Replace the expected listing wholesale, matching `apply`; a real sweep drops entries
+      // for unwatched channels.
       let covered = Set(results.map(\.login))
       for login in lastFound.keys where !covered.contains(login) { lastFound[login] = nil }
       lastFailed.formIntersection(covered)
@@ -1333,14 +1035,8 @@ struct WatchingModelTests {
     }
 
     func performForeignWrite() throws {
-      // Stands in for `AddChannelModel` writing `watches.json` through its
-      // own, separate `WatchStore` instance. Only ever adds — the model's
-      // own doc comment is explicit that `WatchingModel` is "the only writer"
-      // that ever *removes* a watch (`stopWatching`, which is also the only
-      // place that cleans `dismissed` of a removed watch's ids); a foreign
-      // write pruning some other channel here would be testing a shape
-      // `AddChannelModel` never actually takes; `stopWatching` above is the
-      // only removal path this interleaving needs to cover.
+      // External writes add watches, matching Add Channel. Removals go through `stopWatching`,
+      // which also cleans dismissals.
       let foreign = WatchStore(fileURL: store.fileURL)
       var current = try foreign.load()
       if let addable = loginPool.first(where: { candidate in
@@ -1380,30 +1076,14 @@ struct WatchingModelTests {
       case 4: try performStop()
       default: try performForeignWrite()
       }
-      // `refresh()` is folded in here rather than its own case so a stray
-      // `AddChannelModel`-shaped write always gets picked up promptly, the
-      // same as production wiring it to the window closing.
+      // Refresh after the external add, matching window-close wiring.
       if step.isMultiple(of: 7) { model.refresh() }
       try checkInvariants(step: step)
     }
   }
 
-  /// The sixth bug, confirmed live. `stopWatching` used to remove the login's
-  /// own entry from `latest` outright — irreversible — while `stoppedLogins`
-  /// (a reversible tombstone `refreshWatches()` lifted the moment the login
-  /// was back in the file) guarded the same race with the opposite lifetime.
-  /// Re-adding a stopped channel lifted the reversible guard and exposed the
-  /// irreversible one: the channel's own last-known findings were gone for
-  /// good, so it fell into the never-polled branch — `archives: []`,
-  /// `failure: nil` — reading as "nothing new" when the re-add (with "All
-  /// available") asked for the whole back catalogue.
-  ///
-  /// **Through `refresh()`, not `apply(_:)`.** `stoppingAChannelDropsItsOwn
-  /// DismissedIdsSoAReAddDoesNotHideThem` above walks the same sequence but
-  /// recovers by re-applying the sweep — a path production never takes after
-  /// a re-add; the window closing calls `refresh()` (see `OxbowApp`), and the
-  /// next real sweep is up to an hour away. This is the sequence that
-  /// actually happens.
+  /// Stop then re-add and refresh without a new sweep. Retained listings must reappear
+  /// immediately instead of looking like a never-polled empty channel.
   @Test func reAddingAStoppedChannelAndRefreshingShowsItsLastFindingsAgain() throws {
     let store = temporaryStore()
     try store.save([watch("ninja")])
@@ -1448,20 +1128,8 @@ struct WatchingModelTests {
 
   // MARK: - Regression: a downloaded archive must render, not disappear
 
-  /// The defect this whole plan exists for: an archive that has been
-  /// downloaded is in `seen`, and the sweep used to filter `seen` out before
-  /// the model ever saw it — so a completed download rendered as nothing at
-  /// all. This pins the fix at the level a person experiences it.
-  ///
-  /// **Not sufficient on its own.** This hand-builds a `WatchPollResult` and
-  /// feeds it straight to `apply(_:)` — it never calls `WatchPoll.sweep`,
-  /// which is where the defect actually lived. A test shaped this way would
-  /// have passed for the bug's entire lifetime, because nothing here
-  /// exercises the code that did the filtering. It still earns its place as
-  /// a guard on the *rebuild* rule — that a seen archive with a `.done` job
-  /// must render as `.downloaded` — but
-  /// `aSeenAndDownloadedArchiveSurvivesARealSweep` below is the one that
-  /// actually pins the regression.
+  /// Checks model reconstruction from supplied results. The next real-sweep test covers
+  /// filtering before results reach the model.
   @Test func aDownloadedArchiveRendersAsDownloaded() throws {
     let store = temporaryStore()
     try store.save([watch("ninja", seen: ["1"])])
@@ -1482,18 +1150,8 @@ struct WatchingModelTests {
     #expect(model.unreadCount == 0, "a downloaded row is not waiting on anybody")
   }
 
-  /// The regression test the test above cannot be: this one actually calls
-  /// `WatchPoll.sweep`, with a watch whose `seen` already names the archive,
-  /// and feeds the sweep's real output into `WatchingModel`.
-  ///
-  /// A channel whose backlog was queued the moment it was added has every
-  /// one of those archives in `seen` from the start. `WatchPoll.sweep` used
-  /// to run `watch.findings(in: archives)` on a successful fetch, which
-  /// deleted every one of them from the result before `apply(_:)` — or
-  /// anything else — ever saw it: the channel's section rendered with zero
-  /// rows, permanently, no matter how many videos it actually had. Passing
-  /// a hand-built `.found([archive])` (as the test above does) cannot catch
-  /// that, because it skips the exact function the bug was in.
+  /// Call the real sweep with already-seen IDs, then apply its output. Hand-built results would
+  /// miss the regression where sweep discarded downloaded history.
   @Test func aSeenAndDownloadedArchiveSurvivesARealSweep() async throws {
     let store = temporaryStore()
     try store.save([watch("ninja", seen: ["1"])])
@@ -1515,11 +1173,8 @@ struct WatchingModelTests {
     #expect(rows.first?.state == .downloaded(file))
   }
 
-  /// **The channel has to say the disk is gone even when no row can.** A
-  /// download recognised only by its derived path carries no claim that
-  /// survives an unreachable volume, so every such row falls back to being
-  /// offerable — and without this the channel would look like nothing had
-  /// ever been downloaded to it.
+  /// Channel-level volume status must report disconnection even when derived-path rows have no
+  /// retained file claim.
   @Test func anUnreachableDestinationIsNamedOnTheChannel() throws {
     let store = temporaryStore()
     try store.save([watch("ninja")])
@@ -1561,10 +1216,7 @@ struct WatchingModelTests {
             "the row is recorded with the state, or removeWatch can never scope it away")
   }
 
-  /// **A refused action must not look like a completed one.** Recording the
-  /// state before the watch list saved meant a failed save still hid the row
-  /// by state, while the banner said it was still there — the two surfaces
-  /// disagreeing about whether anything happened.
+  /// Record state only after the watch save succeeds; refused actions must not hide rows.
   @Test func aRefusedIgnoreRecordsNothing() throws {
     let store = try writeProtectedStore(seeding: [watch("ninja")])
     let dir = store.fileURL.deletingLastPathComponent()
@@ -1587,9 +1239,7 @@ struct WatchingModelTests {
   }
 
 
-  /// §5.2: an archive Twitch has dropped, with nothing on disk, is a
-  /// headstone — held back from the inbox, so a channel watched for a year
-  /// does not become mostly gravestones, but kept in the record.
+  /// Expired archives without files stay in history but leave the inbox.
   @Test func anExpiredArchiveIsHeldBackFromTheInboxButKeptInTheRecord() throws {
     let store = temporaryStore()
     try store.save([watch("ninja")])
@@ -1611,13 +1261,7 @@ struct WatchingModelTests {
             "but the channel's own record keeps it")
   }
 
-  /// And the channel's destination says plainly that Twitch no longer has it,
-  /// rather than offering a download that cannot succeed.
-  ///
-  /// **This used to be reached by revealing a fold in the inbox.** The fold is
-  /// gone (`docs/design/watching-navigation.md` §6) — the rows it hid now have
-  /// a destination of their own — but the thing it was protecting is not:
-  /// wherever a headstone is shown, it must never be `.available`.
+  /// Expired history must never be offered as an available download.
   @Test func theRecordCarriesTheHeadstoneMarkedExpired() throws {
     let store = temporaryStore()
     try store.save([watch("ninja")])
@@ -1643,14 +1287,8 @@ struct WatchingModelTests {
 
   // MARK: - The unfiltered record a channel's own destination shows
 
-  /// `docs/design/watching-navigation.md` §7: "the inbox's rows are a subset
-  /// of the destination's, with the difference being precisely the rows
-  /// `belongsInTheDefaultView` rejects."
-  ///
-  /// Asserted as a property rather than against a fixed expected list, so it
-  /// keeps holding as row states are added — which is the whole reason the two
-  /// lists come from one `resolved` pass and one predicate rather than from
-  /// two separate walks.
+  /// Assert inbox rows are exactly the destination subset admitted by
+  /// `belongsInTheDefaultView`, including future states.
   @Test func theInboxRowsAreASubsetOfAllRows() throws {
     let store = temporaryStore()
     try store.save([watch("ninja", seen: ["already-seen"])])
@@ -1680,9 +1318,7 @@ struct WatchingModelTests {
             "and what it adds is exactly what belongsInTheDefaultView rejects")
   }
 
-  /// Newest first, the order the sweep already returns and the one a channel
-  /// page reads in. Both lists are sorted by one function so they cannot order
-  /// a row differently.
+  /// Both lists share newest-first ordering.
   @Test func allRowsAreNewestFirst() throws {
     func dated(_ id: String, daysAgo: Int) -> ChannelArchive {
       ChannelArchive(
@@ -1700,9 +1336,7 @@ struct WatchingModelTests {
     let model = WatchingModel(
       store: store, videoRecordStore: records, openIntake: { _, _ in },
       fileAnswer: { _ in .absent })
-    // Deliberately handed to the model out of order, and with the hidden one
-    // in the middle, so a sort that only happened to hold for the shown list
-    // would show up here.
+    // Supply unsorted rows with a hidden one in the middle to exercise both lists' sorting.
     model.apply([.init(login: "ninja", displayName: "Ninja", outcome: .found([
       dated("middle", daysAgo: 5),
       dated("oldest", daysAgo: 30),
@@ -1717,10 +1351,7 @@ struct WatchingModelTests {
 
 }
 
-/// A tiny deterministic PRNG so a failure found by chance is reproducible —
-/// `SystemRandomNumberGenerator` cannot be seeded, and reproducing exactly
-/// the interleaving that broke the invariant is the entire point of fuzzing
-/// it. (splitmix64.)
+/// Seeded SplitMix64 makes failing interleavings reproducible.
 private struct SeededGenerator: RandomNumberGenerator {
   private var state: UInt64
   init(seed: UInt64) { state = seed == 0 ? 0xdeadbeef : seed }

@@ -3,15 +3,8 @@ import Testing
 
 @testable import OxbowKit
 
-/// Direct tests for the chat-seek margin.
-///
-/// A chat render does not always run as long as its video — renders end at the
-/// last message — so a composite's resume point can land past the end of the
-/// render. Seeking there yields zero frames, `hstack` has no last frame to
-/// repeat, and the piece comes out empty while FFmpeg exits 0. The margin
-/// clamps the chat's seek to just inside the render's end. Its own comment in
-/// `StepContextBuilder` records that a wrong margin is invisible, and until
-/// this suite existed nothing that runs in normal CI constrained the value.
+/// Pins the chat-seek margin used when resume lands beyond the render's end. Without an earlier
+/// seek there is no frame for hstack to repeat, allowing empty output with exit 0.
 @Suite("StepContextBuilder chat seek")
 struct StepContextBuilderTests {
 
@@ -41,14 +34,9 @@ struct StepContextBuilderTests {
     try? FileManager.default.removeItem(at: workspace.root)
   }
 
-  /// Builds a composite step wired to a video and a chat render, with all the
-  /// on-disk state a resume needs: a video artifact, a render artifact of a
-  /// known duration, `pieceFrames` worth of retained pieces, and a matching
-  /// source fingerprint.
-  ///
-  /// - Parameter renderIsChatRender: when false, the second dependency is a
-  ///   chat *download* rather than a render, which is how the margin's
-  ///   framerate-less fallback becomes reachable.
+  /// Composite fixture with sized render, retained frames, and matching source fingerprint. Set
+  /// `renderIsChatRender` false to exercise the fallback when no render frame rate is
+  /// available.
   private func makeComposite(
     _ h: Harness,
     renderSeconds: Int,
@@ -104,14 +92,8 @@ struct StepContextBuilderTests {
       compositeStep)
   }
 
-  /// The margin is two frames of the **render's** framerate, so a slower
-  /// render lands the chat seek earlier.
-  ///
-  /// Framerates 4 and 16 rather than the realistic 30 and 60: `2.0 / fps` is
-  /// exact in binary only for powers of two, so these are the rates whose
-  /// expected landings can be written as independent literals instead of by
-  /// re-deriving the production expression. The realistic pair is covered by
-  /// the ordering test below.
+  /// Use 4/16 fps for exact binary two-frame margins and independent expected literals. The
+  /// next test covers realistic rates.
   @Test func theChatSeekMarginIsTwoFramesOfTheRendersFramerate() throws {
     let slow = makeHarness()
     defer { cleanUp(slow.workspace) }
@@ -155,9 +137,7 @@ struct StepContextBuilderTests {
     #expect(at60 < .seconds(10), "both must land inside the render")
   }
 
-  /// With no render framerate to read, the margin falls back to a quarter
-  /// second. Reachable when the composite's second dependency is not a chat
-  /// render — a defensive path rather than one `JobTemplate` builds today.
+  /// A non-render second dependency exercises the defensive quarter-second fallback.
   @Test func withNoRenderFramerateTheMarginIsAQuarterSecond() throws {
     let h = makeHarness()
     defer { cleanUp(h.workspace) }
@@ -169,20 +149,9 @@ struct StepContextBuilderTests {
     #expect(context.chatResumeFrom == .seconds(9.75), "the fallback margin is 0.25s: 10 - 0.25")
   }
 
-  /// A resume point comfortably inside the render needs no clamp — the chat
-  /// seeks with the video, which is what `nil` means to `ArgumentBuilder`.
-  ///
-  /// This is a differential test: the second half reuses every fixture
-  /// parameter except `pieceFrames`, moving only the resume point out past
-  /// the landing. That is what makes the first `nil` attributable to
-  /// `from > landing` specifically — an unreadable render header or a missing
-  /// resume point would take both cases to `nil` together, not just this one.
-  ///
-  /// The leading `resumeFrom != nil` assertion is a positive control: `make`'s
-  /// guard chain short-circuits on `resume.from == nil` before it ever reaches
-  /// the `from > landing` comparison this test is meant to exercise, so
-  /// without that control a broken harness producing no resume point at all
-  /// would pass this test vacuously, for the wrong reason.
+  /// Confirm a resume point exists, then vary only retained frames across the clamp boundary.
+  /// This distinguishes an unnecessary clamp from an earlier guard returning nil for both
+  /// cases.
   @Test func aResumePointInsideTheRenderNeedsNoChatSeek() throws {
     let h = makeHarness()
     defer { cleanUp(h.workspace) }
@@ -197,11 +166,7 @@ struct StepContextBuilderTests {
       "precondition: the harness must produce a resume point, or the nil below proves nothing")
     #expect(context.chatResumeFrom == nil, "no clamp is needed, so the chat seeks with the video")
 
-    // The same arrangement with a resume point past the landing must produce a
-    // seek. Sharing every parameter but `pieceFrames` is what makes the nil
-    // above attributable to `from > landing` rather than to any earlier leg of
-    // the guard — an unreadable render header or a missing resume point would
-    // take both cases to nil together.
+    // Only the resume point changes; the same readable inputs must now produce a clamped seek.
     let past = makeHarness()
     defer { cleanUp(past.workspace) }
     let (pastJob, pastStep) = try makeComposite(

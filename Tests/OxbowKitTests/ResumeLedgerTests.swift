@@ -3,13 +3,8 @@ import Testing
 
 @testable import OxbowKit
 
-/// Direct tests for the retained-pieces logic.
-///
-/// `resumePoint` is reachable through the engine only by driving a real
-/// composite to failure and retrying it, which is what `ResumeEndToEndTests`
-/// does once, slowly. Its branches — the piece cap, a zero-frame piece, an
-/// all-frameless directory — each need their own arrangement of files on
-/// disk, so they are exercised here against a `ResumeLedger` directly.
+/// Direct ledger tests cover file arrangements that are expensive to reach through real
+/// interrupted composites.
 @Suite("ResumeLedger")
 struct ResumeLedgerTests {
 
@@ -42,9 +37,8 @@ struct ResumeLedgerTests {
 
   // MARK: - pieces(of:)
 
-  /// `piece-10` must sort after `piece-2`, not before it. A lexicographic
-  /// sort would order the concat list wrongly and `.assemble` would splice
-  /// the delivery out of order — silently, since every piece is a valid file.
+  /// Sort piece numbers numerically; lexicographic order would concatenate piece 10 before
+  /// piece 2.
   @Test func piecesSortNumericallyRatherThanLexicographically() throws {
     let (ledger, workspace, job) = makeLedger()
     defer { cleanUp(workspace) }
@@ -59,9 +53,7 @@ struct ResumeLedgerTests {
       "pieces must sort numerically; was: \(names)")
   }
 
-  /// The retention directory also holds `source.json` and `audio.m4a`.
-  /// Neither is a piece, and either reaching the concat list would corrupt
-  /// the delivery.
+  /// Exclude fingerprint and audio sidecar from the piece list.
   @Test func piecesIgnoresEverythingThatIsNotAPiece() throws {
     let (ledger, workspace, job) = makeLedger()
     defer { cleanUp(workspace) }
@@ -104,9 +96,8 @@ struct ResumeLedgerTests {
     #expect(ledger.retainedBytes(forJob: job) == 0)
   }
 
-  /// The directory is returned even when empty — it is the fallback Finder
-  /// selection in the gap between a composite starting and its first
-  /// fragment landing. docs/design/fragmented-output.md §6.
+  /// Return even an empty retention directory for Finder reveal before the first fragment
+  /// lands.
   @Test func retainedFileURLsReportTheDirectoryEvenWithNoPieces() {
     let (ledger, workspace, job) = makeLedger()
     defer { cleanUp(workspace) }
@@ -141,21 +132,8 @@ struct ResumeLedgerTests {
     #expect(resume.from == .seconds(2))
   }
 
-  /// **This is the test that pins `maximumPieces`.**
-  ///
-  /// The arrangements below use literal counts (3, then 4), not
-  /// `ResumeLedger.maximumPieces`, so the behaviour itself discriminates on
-  /// the cap's value: three pieces must resume and four must start over,
-  /// regardless of what the constant currently says. Writing the counts
-  /// relative to the constant instead would make every assertion restate the
-  /// implementation back to itself — under a cap of 5, "one under the cap
-  /// resumes" and "at the cap it starts over" would both still hold, just
-  /// one piece later, and the test would never notice the cap had moved.
-  /// The trailing `#expect(ResumeLedger.maximumPieces == 4, ...)` is not
-  /// what catches a moved cap; it is a documentation anchor tying these
-  /// literals to the constant, so a deliberate change to the cap has a clear
-  /// pointer to which test to update. Spec §10: mutate the constants, not
-  /// only the call sites.
+  /// Use literal three/four-piece fixtures to pin the cap itself. Counts derived from
+  /// `maximumPieces` would pass after an accidental cap change.
   @Test func thePieceCapIsFourAndStartingOverClearsTheArea() throws {
     let (belowLedger, belowWorkspace, belowJob) = makeLedger()
     defer { cleanUp(belowWorkspace) }
@@ -181,9 +159,7 @@ struct ResumeLedgerTests {
     #expect(ResumeLedger.maximumPieces == 4, "docs/design/resume.md §7 sets the cap at four")
   }
 
-  /// A piece FFmpeg opened but was killed before completing a fragment for
-  /// declares zero samples. Left in place it burns a slot against the cap and
-  /// `.assemble` would list it as an empty segment in the concat.
+  /// Discard zero-frame pieces so they consume neither a slot nor a concat segment.
   @Test func aZeroFramePieceIsDiscardedRatherThanCounted() throws {
     let (ledger, workspace, job) = makeLedger()
     defer { cleanUp(workspace) }
@@ -199,11 +175,8 @@ struct ResumeLedgerTests {
       "the frameless piece must be removed from disk, not merely skipped")
   }
 
-  /// Every piece frameless means there is nothing to continue from, so the
-  /// retention *directory itself* is removed, not merely emptied of pieces —
-  /// the two read the same through `pieces(of:)` alone, since the frameless
-  /// loop above already deletes each piece individually regardless of
-  /// whether the journal call runs.
+  /// All-frameless retention must remove the directory too; checking only the piece list cannot
+  /// distinguish cleanup from individual deletions.
   @Test func anAllFramelessDirectoryStartsOver() throws {
     let (ledger, workspace, job) = makeLedger()
     defer { cleanUp(workspace) }
@@ -220,12 +193,8 @@ struct ResumeLedgerTests {
       "the retention directory itself must be removed, not merely emptied of pieces")
   }
 
-  /// The resume point is frames divided by the *render's* framerate, so one
-  /// arrangement — a single 60-frame piece — must resume at a different
-  /// timestamp at 30fps than at 60. Calling `resumePoint` twice against the
-  /// same on-disk piece is safe here: with one 60-frame piece it never takes
-  /// a side-effecting branch (nothing is removed, the cap is not reached),
-  /// and both quotients are exact in binary floating point.
+  /// The same 60 frames resume at different times for 30/60 fps. Neither call mutates this
+  /// valid one-piece fixture.
   @Test func theResumePointScalesWithFramerate() throws {
     let (ledger, workspace, job) = makeLedger()
     defer { cleanUp(workspace) }

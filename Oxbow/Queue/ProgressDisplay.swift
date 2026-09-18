@@ -1,25 +1,15 @@
 import Foundation
 import OxbowKit
 
-/// What one row draws, derived from a `StepProgress` whose every field is
-/// optional because the CLI emits four different status line shapes.
-///
-/// `nonisolated`: the target defaults new declarations to `@MainActor`, but
-/// this is a pure value derived from another pure value, with no UI
-/// dependency, so it should be free to compute off the main actor too.
+/// Presentation of optional StepProgress fields, independent of the main actor.
 nonisolated struct ProgressDisplay {
   let fraction: Double?
   let phase: String?
   let counter: String?
   let remaining: String?
   let rate: String?
-  /// Where the output is heading, while it is still heading there.
-  ///
-  /// The composite asks the encoder for a quality rather than a bitrate, so
-  /// nothing knows the size in advance and nothing can cap it
-  /// (`docs/design/composite-rate-control.md` §7.1). This is the only warning
-  /// a job heading somewhere unexpected ever gives, and it arrives while there
-  /// is still time to cancel.
+  /// Projected output size during quality-targeted encoding, whose final size cannot be known
+  /// in advance. See docs/design/composite-rate-control.md §7.1.
   let projectedSize: String?
 
   var isIndeterminate: Bool { fraction == nil }
@@ -37,19 +27,14 @@ nonisolated struct ProgressDisplay {
     remaining = Self.format(progress.remaining)
     rate = Self.format(rate: progress.speed)
 
-    // "about", matching the intake's own hedge on a number that is bitrate x
-    // duration and nothing more. This one is bytes-so-far x how-much-is-left,
-    // which is a better guess but still a guess.
+    // Label the projection approximate.
     projectedSize = progress.projectedBytes.map {
       "about \(Int64($0).formatted(.byteCount(style: .file)))"
     }
   }
 
-  /// Nil for absent durations and any duration that would render as "0s".
-  /// The CLI emits `0h0m0s Remaining` before it has an estimate, and
-  /// "0s remaining" would claim a step is about to finish when it has
-  /// barely started — true whether the duration is exactly zero or just
-  /// truncates to zero whole seconds.
+  /// Hide absent durations and values rounding to 0s; the CLI emits zero before an estimate is
+  /// available.
   private static func format(_ duration: Duration?) -> String? {
     guard let duration else { return nil }
 
@@ -70,9 +55,7 @@ nonisolated struct ProgressDisplay {
     return "\(value) remaining"
   }
 
-  /// Nil below a hundredth — FFmpeg's own degenerate `0.00x` before it has
-  /// measured anything, which is worth hiding rather than showing "0.0x" and
-  /// reading as a stalled encoder when it is only an unstarted one.
+  /// Hide FFmpeg's initial near-zero rate until it has a meaningful measurement.
   private static func format(rate: Double?) -> String? {
     guard let rate, rate >= 0.01 else { return nil }
     return String(format: "%.1fx realtime", rate)

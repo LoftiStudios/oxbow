@@ -5,15 +5,11 @@ import Testing
 @Suite("Video info")
 struct VideoInfoTests {
 
-  // Reuses the suite's existing loader (Tests/OxbowKitTests/Support/FixtureLoader.swift)
-  // rather than a second copy of the same Bundle.module lookup.
   private func fixture() throws -> String {
     String(decoding: try Fixture.bytes("info-vod-raw.stdout"), as: UTF8.self)
   }
 
-  /// A VOD *is* the broadcast, so there is no parent to have expired: the
-  /// clip-only check must never leak into the VOD path and disable chat for
-  /// every VOD in the app.
+  /// Clip parent checks must not disable VOD chat.
   @Test func aVodAlwaysHasDownloadableChat() throws {
     let info = try #require(VideoInfo.parse(try fixture()))
     #expect(info.hasDownloadableChat)
@@ -44,9 +40,7 @@ struct VideoInfoTests {
   @Test func readsEveryStreamQuality() throws {
     let info = try #require(VideoInfo.parse(try fixture()))
 
-    // The fixture has six #EXT-X-STREAM-INF lines, but the sixth is
-    // audio-only (no RESOLUTION attribute) and is deliberately skipped —
-    // it is not a video quality a user would pick. Five remain.
+    // Skip the audio-only sixth variant; five video qualities remain.
     #expect(info.qualities.count == 5)
     let source = try #require(info.qualities.first)
     #expect(source.name == "1080p60")
@@ -78,13 +72,8 @@ struct VideoInfoTests {
     #expect(VideoInfo.parse("[STATUS] - Fetching Video Info [1/1]\nnot json\n") == nil)
   }
 
-  /// Regression guard for the quoted-comma trap: `CODECS`'s value contains a
-  /// comma, and (deliberately, adversarially) a decoy `RESOLUTION=1x1` that a
-  /// naive `split(",")` would read as a second, later `RESOLUTION` attribute
-  /// — overwriting the real one. A quote-aware splitter never sees the decoy
-  /// as a top-level attribute at all, because it never leaves the quotes.
-  /// Hand-built rather than a second fixture: this is an adversarial case,
-  /// not captured output, and should read as one.
+  /// Adversarial quoted CODECS value contains a decoy RESOLUTION attribute. Only top-level
+  /// commas may split attributes.
   @Test func quoteAwareParsingIgnoresDecoyKeysInsideQuotedValues() throws {
     let output = [
       #"{"data":{"video":{"title":"t","createdAt":"2026-01-01T00:00:00Z","lengthSeconds":10,"owner":{"displayName":"s"}}}}"#,
@@ -108,19 +97,14 @@ struct VideoInfoTests {
     #expect(VideoInfo.parse(output) == nil)
   }
 
-  /// The sheet shows the video's own thumbnail, so the URL has to survive the
-  /// parse. The CLI asks Twitch for `thumbnailURLs(height:180,width:320)` and
-  /// gets back one URL per preview frame; the first is the one upstream's own
-  /// UI uses.
+  /// Preserve preview URLs from metadata.
   @Test func readsTheFirstThumbnailURL() throws {
     let info = try #require(VideoInfo.parse(try fixture()))
     let thumbnail = try #require(info.thumbnailURL)
     #expect(thumbnail.absoluteString.hasSuffix("/thumb/thumb0-320x180.jpg"))
   }
 
-  /// The fixture's payload carries all four of Twitch's sampled frames, not
-  /// just the first — `VideoCard`'s filmstrip needs every one of them, in
-  /// the order Twitch returned them, to play them in sequence.
+  /// Preserve all four frames in their original order for the filmstrip.
   @Test func readsAllFourVodThumbnailFrames() throws {
     let info = try #require(VideoInfo.parse(try fixture()))
     #expect(info.thumbnailURLs.count == 4)
@@ -129,9 +113,7 @@ struct VideoInfoTests {
     ])
   }
 
-  /// A VOD still processing, or one whose previews Twitch has not generated,
-  /// arrives with the key absent or its list empty. Empty, not a broken URL:
-  /// the sheet draws a placeholder rather than an image that will 404.
+  /// Missing or empty previews produce placeholders, not metadata failure.
   @Test func hasNoThumbnailWhenTwitchOffersNone() throws {
     let output = """
       [STATUS] - Fetching Video Info [1/1]
@@ -219,47 +201,29 @@ struct VideoInfoTests {
   }
 }
 
-/// `info --format Raw` for a clip is a different document from a VOD's — one
-/// JSON object under `data.clip`, no moments line and no m3u8 section at all —
-/// so every one of these would pass against a parser that only knew the VOD
-/// shape by failing outright, which is exactly the bug they exist to catch.
+/// Clips use one data.clip JSON object without moments or playlist output.
 @Suite("Clip info")
 struct ClipInfoTests {
 
-  /// Captured from the real bundled helper (see the fixtures' README): a
-  /// modern clip, with a landscape and a portrait asset, real bitrates and
-  /// framerates, and Twitch's habit of listing every rendition twice.
+  /// Captured modern clip with landscape/portrait assets and duplicated renditions.
   private func fixture() throws -> String {
     String(decoding: try Fixture.bytes("info-clip-raw.stdout"), as: UTF8.self)
   }
 
-  /// A 2020 clip, captured the same way. Twitch backfills nothing for these:
-  /// bitrate, framerate, width and height are all zero, so the whole
-  /// resolution-and-estimate path has to survive on the `quality` string and
-  /// the asset's aspect ratio alone.
+  /// Captured older clip has zero dimensions/rates; infer resolution only from quality and
+  /// aspect ratio.
   private func legacyFixture() throws -> String {
     String(decoding: try Fixture.bytes("info-clip-legacy-raw.stdout"), as: UTF8.self)
   }
 
-  /// The two fields upstream's `ChatDownloader.InitChatRoot` actually tests
-  /// (`clip.video == null || clip.videoOffsetSeconds == null`) before it
-  /// throws "Invalid VOD for clip, deleted/expired VOD possibly?".
-  ///
-  /// Not a proxy for that decision — the same predicate over the same
-  /// payload. The `info` verb and the chat downloader both call
-  /// `TwitchHelper.GetShareClipRenderStatus`, so this is the identical
-  /// document, not a lookalike. That is what keeps this out of the territory
-  /// docs/twitch-metadata.md §6 warns about: nothing here is inferred from a
-  /// field that merely correlates.
+  /// Use the same parent-video and offset predicate as upstream ChatDownloader on the same
+  /// payload, not a correlated metadata field.
   @Test func knowsAModernClipStillHasItsBroadcast() throws {
     let info = try #require(VideoInfo.parse(try fixture()))
     #expect(info.hasDownloadableChat)
   }
 
-  /// The 2020 clip's parent VOD is long gone — Twitch expires broadcasts, so
-  /// `video` and `videoOffsetSeconds` are both null in this captured payload.
-  /// This fixture was captured for its zeroed asset fields; that it is also a
-  /// real example of a dead parent VOD is what makes it usable here.
+  /// The older clip fixture also has an expired parent with both fields null.
   @Test func knowsALegacyClipHasLostItsBroadcast() throws {
     let info = try #require(VideoInfo.parse(try legacyFixture()))
     #expect(!info.hasDownloadableChat)
@@ -268,10 +232,7 @@ struct ClipInfoTests {
   @Test func readsTheBroadcasterTitleAndDuration() throws {
     let info = try #require(VideoInfo.parse(try fixture()))
 
-    // Pinned to the captured payload, not merely non-empty: the streamer comes
-    // from `clip.broadcaster.displayName`, and the clip payload also carries a
-    // `curator.displayName` (whoever clipped it) that is easy to reach for by
-    // mistake.
+    // Pin broadcaster rather than the separate curator display name.
     #expect(info.streamer == "xQc")
     #expect(info.title == "Me on stream")
     #expect(info.duration == .seconds(7))
@@ -293,9 +254,7 @@ struct ClipInfoTests {
     #expect(info.createdAt == calendar.date(from: components))
   }
 
-  /// The clip payload has no m3u8 section, so a parser that looked for one
-  /// would produce an empty picker (design doc §6: "Clips carry their own
-  /// quality list from the same `info` call").
+  /// Clip qualities come from assets, not a playlist.
   @Test func readsQualitiesFromTheClipAssets() throws {
     let info = try #require(VideoInfo.parse(try fixture()))
 
@@ -319,9 +278,7 @@ struct ClipInfoTests {
     #expect(portrait.bitsPerSecond == 3_775_053)
   }
 
-  /// Twitch lists each rendition twice. Upstream keeps both and disambiguates
-  /// them `-1`/`-2`; we keep the `-1` name (so `-q` still matches exactly) and
-  /// drop the identical twin rather than show it.
+  /// Collapse identical duplicate renditions while retaining the first numbered display name.
   @Test func collapsesIdenticalDuplicateRenditions() throws {
     let info = try #require(VideoInfo.parse(try fixture()))
 
@@ -358,17 +315,13 @@ struct ClipInfoTests {
     #expect(info.streamer == "LeighXP")
     #expect(info.title == "Leigh Literally melts")
     #expect(info.duration == .seconds(46))
-    // `frameRate` is 0 throughout this payload, so upstream's
-    // `{quality}p{frameRate:F0}` really does name them `720p0` — reproduced
-    // rather than prettied up, because the name is what `-q` has to match.
+    // Zero frame rate is part of upstream names such as `720p0`.
     #expect(info.qualities.map(\.name) == ["720p0-1", "480p0-1", "360p0-1"])
     #expect(info.qualities.map(\.bitsPerSecond) == [0, 0, 0])
     #expect(info.qualities.map(\.resolution) == ["1280x720", "852x480", "640x360"])
   }
 
-  /// A clip whose renditions carry no pixel dimensions at all: the height has
-  /// to come from the `quality` string and the width from the asset's aspect
-  /// ratio (upstream's `BuildClipResolution`).
+  /// Missing dimensions fall back to quality height and asset aspect ratio.
   @Test func derivesResolutionFromQualityAndAspectRatioWhenDimensionsAreZero() throws {
     let output = """
       [STATUS] - Fetching Clip Info [1/1]
@@ -384,9 +337,7 @@ struct ClipInfoTests {
     #expect(quality.resolution == "1280x720")
   }
 
-  /// Portrait detection has three signals because Twitch populates them
-  /// inconsistently. This asset has no `portraitMetadata` and an aspect ratio
-  /// that says nothing — only the CDN path gives it away.
+  /// Exercise CDN-path portrait detection without the other two signals.
   @Test func detectsAPortraitAssetFromItsThumbnailPath() throws {
     let output = """
       [STATUS] - Fetching Clip Info [1/1]
@@ -408,9 +359,7 @@ struct ClipInfoTests {
     #expect(VideoInfo.parse(output) == nil)
   }
 
-  /// A clip with no assets is still nameable — the whole point of the fetch is
-  /// the filename (design doc §4) — so it parses with an empty quality list
-  /// rather than failing and dropping the user back to the raw slug.
+  /// Missing assets still permit naming metadata with an empty quality list.
   @Test func parsesAClipWithNoAssetsAndOffersNoQualities() throws {
     let output = """
       [STATUS] - Fetching Clip Info [1/1]
@@ -423,9 +372,7 @@ struct ClipInfoTests {
     #expect(info.qualities.isEmpty)
   }
 
-  /// The VOD envelope must not swallow a clip payload and vice versa — the
-  /// clip JSON contains a nested `clip.video` object, one wrong key path away
-  /// from looking like a VOD.
+  /// Nested clip.video must not be mistaken for the VOD envelope.
   @Test func theTwoShapesDoNotDecodeAsEachOther() throws {
     let clip = try #require(VideoInfo.parse(try fixture()))
     #expect(clip.streamer == "xQc")
@@ -436,28 +383,21 @@ struct ClipInfoTests {
     #expect(vod.qualities.map(\.name) == ["1080p60", "720p60", "480p30", "360p30", "160p30"])
   }
 
-  /// The clip's thumbnail comes from its asset, and a clip can carry more than
-  /// one: the fixture has a landscape asset and a portrait one. The landscape
-  /// preview is the one to show — it is the same asset the quality list sorts
-  /// first, and a 16:9 image is what the sheet's frame is shaped for.
+  /// Prefer landscape thumbnail when both orientations exist.
   @Test func readsTheLandscapeAssetsThumbnailURL() throws {
     let info = try #require(VideoInfo.parse(try fixture()))
     let thumbnail = try #require(info.thumbnailURL)
     #expect(thumbnail.absoluteString.contains("/landscape/"))
   }
 
-  /// A clip has no sampled frame list — `thumbnailURLs` has to come back as
-  /// exactly one element, the same URL `thumbnailURL` already reads, not an
-  /// empty array (no preview) or a multi-frame one (nothing to sample from).
+  /// Clips expose exactly one preview, not a sampled filmstrip.
   @Test func thumbnailURLsIsASingleElementArrayForAClip() throws {
     let info = try #require(VideoInfo.parse(try fixture()))
     #expect(info.thumbnailURLs.count == 1)
     #expect(info.thumbnailURLs.first == info.thumbnailURL)
   }
 
-  /// A vertical clip has no landscape asset at all, so the portrait preview is
-  /// the only one there is. Showing it beats showing nothing; the sheet fits
-  /// it into the frame rather than assuming 16:9.
+  /// Portrait-only clips still get their available preview.
   @Test func fallsBackToAPortraitAssetsThumbnailWhenThatIsAllThereIs() throws {
     let output = """
       [STATUS] - Fetching Clip Info [1/1]
@@ -486,11 +426,9 @@ struct ClipInfoTests {
   }
 }
 
-/// `StreamQuality.commandLineValue` — measured against the real bundled
-/// helper (1.56.5) on clip `BitterPoorLadiesNerfRedBlaster-MBUzt9WrmWvpraw3`:
-/// a name upstream disambiguated with a trailing `-<digits>` does not resolve
-/// as `-q` at all, silently falling back to the highest rendition. `name`
-/// itself is untouched everywhere else — only this derived value is stripped.
+/// Pins current CLI suffix normalization. Its original rationale was retracted in
+/// `docs/twitch-metadata.md` §5; see the flagged `commandLineValue` comment before changing
+/// behavior.
 @Suite("Stream quality command line value")
 struct StreamQualityCommandLineValueTests {
 
@@ -518,12 +456,8 @@ struct StreamQualityCommandLineValueTests {
     #expect(quality("1080p0-Portrait").commandLineValue == "1080p0-Portrait")
   }
 
-  /// The regression this suite exists to catch: `-Portrait-1` is not our
-  /// invented tie-break, it's upstream's own per-asset disambiguation, and it
-  /// is the name that actually resolves to the portrait rendition. Stripping
-  /// it (as a rule that strips any trailing `-<digits>` would) hands back
-  /// `1080p60-Portrait`, which resolves to the landscape file instead — see
-  /// the doc comment on `commandLineValue` for the measurement.
+  /// Current normalization preserves portrait suffixes rather than stripping every trailing
+  /// number.
   @Test func leavesAPortraitNameWithItsOwnDisambiguatingSuffixUnchanged() {
     #expect(quality("1080p60-Portrait-1").commandLineValue == "1080p60-Portrait-1")
   }
@@ -532,11 +466,7 @@ struct StreamQualityCommandLineValueTests {
     #expect(quality("480p30-Portrait-2").commandLineValue == "480p30-Portrait-2")
   }
 
-  /// The trap: `0` here is the framerate, upstream's placeholder for a clip
-  /// with no framerate metadata — not a disambiguation suffix. Stripping it
-  /// would turn `720p0` into `720p`, a different (and possibly nonexistent)
-  /// rendition. Only a hyphen followed by digits counts, and this name has no
-  /// hyphen at all.
+  /// In `720p0`, zero is frame rate, not a hyphenated duplicate suffix.
   @Test func doesNotStripABareTrailingDigitThatIsPartOfTheFramerate() {
     #expect(quality("720p0").commandLineValue == "720p0")
   }

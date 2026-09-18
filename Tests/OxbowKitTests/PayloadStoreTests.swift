@@ -29,10 +29,7 @@ struct PayloadStoreTests {
     #expect(PayloadStore(directory: directory).payload(for: "nope") == nil)
   }
 
-  /// A clip slug is `[A-Za-z0-9_-]`, a VOD id is digits — but this writes a
-  /// filename from caller-supplied text, so an id that could escape the
-  /// directory must be refused rather than sanitised into something else's
-  /// filename.
+  /// Reject unsafe IDs rather than mapping them onto another payload's filename.
   @Test("an id that could escape the directory is refused")
   func traversalIsRefused() {
     let directory = temporaryDirectory()

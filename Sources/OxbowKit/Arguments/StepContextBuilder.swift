@@ -1,25 +1,8 @@
 import Foundation
 
-/// Builds a step's `StepContext`: where it works, where it writes, what it
-/// reads, and — for a composite — where it resumes from.
-///
-/// Beside `StepContext` and `ArgumentBuilder` deliberately. `ArgumentBuilder`
-/// is pure and does no I/O; every filesystem decision those arguments depend
-/// on is made here and handed across as a value. That division is why
-/// `StepContext` carries `hasUsableSidecar` and `chatResumeFrom` as plain
-/// fields rather than as something the argument builder works out for itself.
-///
-/// A `Sendable` struct over immutable state, so it has no isolation of its
-/// own and `make` stays synchronous — the engine calls it from `launch`,
-/// which must not acquire a suspension point between deciding to launch a
-/// step and marking it `.running`.
-///
-/// **A query.** It creates the directories and list files a step needs, and
-/// destroys nothing. Assemble's spent-input cleanup used to live in the
-/// branch below, which made `make` a call that deleted a job's video and
-/// chat render as a side effect of being asked what the step's context was;
-/// it is `TeardownJournal.removeSpentInputs(of:)` now, called from `launch`.
-/// That is also why there is no `TeardownJournal` here.
+/// Resolve filesystem-dependent step arguments synchronously so launch can mark running without
+/// suspension. Creates directories and concat lists but deletes no inputs; destructive cleanup
+/// belongs to TeardownJournal.
 struct StepContextBuilder: Sendable {
   private let workspace: Workspace
   private let ffmpegPath: URL
@@ -31,12 +14,6 @@ struct StepContextBuilder: Sendable {
     self.ledger = ledger
   }
 
-  /// Builds a step's `StepContext`: where it works, where it writes, and
-  /// (for a composite) where it resumes from.
-  ///
-  /// A `Sendable` struct over immutable state, so this has no isolation of
-  /// its own and needs no `await` — which also happens to be what lets tests
-  /// exercise it directly, with no engine involved.
   func make(job: Job, step: Step) throws -> StepContext {
     let stepDirectory = try workspace.prepareStep(job: job.id, step: step.id)
     let artifacts = try workspace.prepareArtifacts(job: job.id)
@@ -57,14 +34,8 @@ struct StepContextBuilder: Sendable {
       job.steps.first { $0.id == dependency }?.artifact
     }
 
-    // `compactMap` silently drops a missing artifact, which would otherwise
-    // shift every later positional input down by one — a composite reading
-    // its chat render as `input 0` because the video's artifact went missing.
-    // That surfaces as a baffling FFmpeg error (wrong stream mapped, or a
-    // filter given too few inputs) far from its real cause: a step ran with a
-    // parent that was not actually `.done`, which should never happen given
-    // `Scheduler.admissible`'s guard, but a future regression there should be
-    // loud here rather than silently mis-wired.
+    // Reject missing dependency artifacts rather than letting compactMap shift positional
+    // inputs. Scheduler should prevent this; report violations as wiring errors.
     guard inputs.count == step.dependsOn.count else {
       throw StepWiringError(
         "step \(step.id) expected \(step.dependsOn.count) input artifact(s) "
@@ -72,24 +43,14 @@ struct StepContextBuilder: Sendable {
     }
 
     if case .composite(let request) = step.kind {
-      // `resumePoint` first: past the cap it removes the retained directory
-      // entirely, and `prepareResume` recreates it — empty — right after, so
-      // `directory` names a real, empty directory either way. Calling these
-      // in the other order would hand back a piece path inside a directory
-      // that no longer exists once the cap resets it.
+      // Resolve the resume point before preparing directories: hitting the piece cap removes
+      // retention, so preparing first would return paths in a deleted directory.
       let resume = ledger.resumePoint(job: job.id, framerate: request.framerate)
       let directory = try workspace.prepareResume(job: job.id)
 
-      // A resumed job re-downloads its source, and Twitch does not guarantee
-      // it comes back the same: sections get muted for DMCA after the fact,
-      // renditions get re-encoded, VODs get trimmed. Half a composite from
-      // before such a change and half from after produces a file with a
-      // discontinuity and no error anywhere — the encode succeeds, the join
-      // succeeds, and the video is quietly wrong. Byte length plus duration
-      // catches that: two real downloads of the same VOD were measured
-      // byte-for-byte different but identical in both of these, so a mismatch
-      // here means the source itself changed, not just re-encoding noise. See
-      // docs/design/resume.md §7.
+      // Compare re-downloaded source size and duration with piece zero's fingerprint before
+      // resuming. Twitch may mute or alter a source; mismatched halves would otherwise encode
+      // and assemble without error. See docs/design/resume.md §7.
       let fingerprintFile = directory.appending(path: "source.json")
       let sourceVideo = inputs.first
       if let sourceVideo {
@@ -97,14 +58,8 @@ struct StepContextBuilder: Sendable {
         if resume.from == nil {
           try? fresh.write(to: fingerprintFile)
         } else {
-          // Fail closed, not open. A full disk is the likeliest reason the
-          // composite failed at all, and also the likeliest reason
-          // `source.json` itself failed to write on the first attempt or
-          // fails to read back now — so "cannot verify" must refuse exactly
-          // like "verified, and it disagrees" (§7: refuses rather than
-          // repairs). Treating a missing or unreadable fingerprint as an
-          // implicit match would resume unverified in precisely the
-          // situation this check exists to catch.
+          // Refuse missing or unreadable fingerprints as well as mismatches. A full disk can
+          // prevent writing the fingerprint during the very failure being resumed.
           guard let recorded = try? SourceFingerprint.read(from: fingerprintFile) else {
             throw SourceChangedError(reason:
               "This download's earlier attempt could not be verified — its "
@@ -116,43 +71,16 @@ struct StepContextBuilder: Sendable {
         }
       }
 
-      // "Exists and is non-empty" is not enough — a `SIGKILL` mid-write
-      // leaves a non-empty file with no `moov`. `hasCompleteMoov` is the same
-      // no-decode box walk `FragmentIndex` already uses for pieces, applied
-      // to the one file on this path that is deliberately *not* fragmented.
-      // Any I/O failure here (missing file, unreadable) is "not usable" —
-      // the safe default, since the cost of a spurious rewrite is a cheap
-      // stream copy, while treating a corrupt sidecar as usable is the exact
-      // defect this fix closes. resume.md §4.
+      // A non-empty sidecar may lack moov after SIGKILL. Treat read failures as unusable and
+      // rewrite; a stream copy is safer than trusting incomplete audio.
       let sidecarFile = directory.appending(path: "audio.m4a")
       let hasUsableSidecar = FileManager.default.fileExists(atPath: sidecarFile.path)
         && ((try? FragmentedMP4.hasCompleteMoov(at: sidecarFile)) ?? false)
 
-      // A chat render does not always run as long as its video — renders end
-      // at the last message — so a resume point can land past the end of the
-      // render while the video still has most of an hour left. Seeking the
-      // render there yields zero frames, `hstack` has no last frame to
-      // repeat, and the composite writes an empty piece and exits 0. Clamping
-      // to one frame inside the render's end lands the seek on its last frame
-      // instead, which is exactly what a first attempt shows at that point.
-      //
-      // `nil` whenever the answer is not both known and needed: no resume, no
-      // render input, an unreadable header, or a render long enough to seek
-      // into normally. All four mean "seek the chat with the video", which is
-      // the behaviour that was always correct for them. resume.md §12.
-      // The margin is measured in the *render's* frames, never the
-      // composite's. They are routinely different — the filter graph exists
-      // partly to normalise a 30fps render up to a 60fps video — and getting
-      // this wrong is silent: a margin of one 60fps frame (0.0167s) lands
-      // past the last frame of a 30fps render, whose final frame sits
-      // 0.0333s before the end, so the seek yields nothing and the piece
-      // comes out empty exactly as if there had been no clamp at all. That
-      // is not hypothetical; it is what the first version of this did.
-      //
-      // Two frames rather than one, so a frame of rounding either way still
-      // lands inside. The cost is that the seam replays two frames of chat
-      // (67ms at 30fps) instead of freezing on the last one; the cost of
-      // being one frame too late is the whole tail of the delivery.
+      // Clamp a resume beyond a short render's end so hstack gets a frame to repeat. Use two
+      // render frames, not composite frames, to allow rounding and differing rates. Without
+      // this, FFmpeg can exit 0 with an empty piece. No known/needed clamp means use the video
+      // seek. See docs/design/resume.md §12.
       let renderFramerate: Int? = step.dependsOn.count > 1
         ? job.steps.first { $0.id == step.dependsOn[1] }.flatMap {
             if case .renderChat(let render) = $0.kind { render.framerate } else { nil }
@@ -162,10 +90,7 @@ struct StepContextBuilder: Sendable {
         guard let from = resume.from, inputs.count > 1,
               let renderLength = try? FragmentedMP4.duration(of: inputs[1])
         else { return nil }
-        // No render framerate to be had means no basis for a frame-sized
-        // margin, so fall back to a quarter second — comfortably more than
-        // one frame at any rate a chat is rendered at, and still a seam
-        // artefact nobody can see.
+        // Without a render framerate, use a quarter-second safety margin.
         let margin = renderFramerate.map { 2.0 / Double($0) } ?? 0.25
         let landing = renderLength - .seconds(margin)
         guard landing > .zero, from > landing else { return nil }
@@ -184,17 +109,15 @@ struct StepContextBuilder: Sendable {
     }
 
     if case .assemble = step.kind {
-      // The concat demuxer reads a list file. Written here rather than in
-      // ArgumentBuilder because that type is pure and does no I/O.
+      // Write the concat list here to keep ArgumentBuilder free of I/O.
       let list = ledger.pieces(of: job.id)
         .map { "file '\($0.path)'" }
         .joined(separator: "\n") + "\n"
       try list.write(
         to: stepDirectory.appending(path: "pieces.txt"), atomically: true, encoding: .utf8)
 
-      // Assemble's single input artifact is the sidecar audio, not a parent's
-      // output — everything else it needs is in the retention area and named
-      // by convention. `ArgumentBuilder` stays pure by being handed the path.
+      // Assemble's artifact input is sidecar audio; retained pieces are named separately by
+      // convention.
       return StepContext(
         stepTempDirectory: stepDirectory,
         outputFile: artifacts.appending(path: name),
@@ -217,11 +140,8 @@ struct StepContextBuilder: Sendable {
 /// piece 0 was built from — or when that comparison could not be made at
 /// all. See docs/design/resume.md §7.
 struct SourceChangedError: Error {
-  /// Set only when refusing because the fingerprint could not be read back,
-  /// rather than because it was read and disagreed with the fresh one. The
-  /// two need different words: "the source changed" overstates what is
-  /// actually known when the fingerprint itself is the thing missing. `nil`
-  /// falls back to the ordinary mismatch message at the catch site.
+  /// Distinguish an unreadable fingerprint from a verified mismatch; nil uses the mismatch
+  /// message.
   let reason: String?
 
   init(reason: String? = nil) {

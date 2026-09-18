@@ -1,10 +1,7 @@
 import Foundation
 
-/// Reads and writes the queue file.
-///
-/// Writes go through a temporary file and `replaceItemAt`, because a truncated
-/// queue.json from a crash mid-write would lose the entire queue — a trivially
-/// avoidable class of bug.
+/// Atomic queue persistence via a temporary file and `replaceItemAt` to avoid crash-truncated
+/// state.
 public struct QueueStore: Sendable {
   private struct Envelope: Codable {
     static let currentVersion = 1
@@ -12,12 +9,7 @@ public struct QueueStore: Sendable {
     var jobs: [Job]
   }
 
-  /// Just enough of the envelope to read the schema version.
-  ///
-  /// Decoding the full `Envelope` first would defeat the version field
-  /// entirely: `jobs: [Job]` has to decode before the version check can run,
-  /// so a v2 file that changes `Job`'s shape — precisely what the version
-  /// exists to signal — would throw before anything looked at the number.
+  /// Read the version before decoding jobs, whose schema may have changed in a future file.
   private struct VersionProbe: Decodable {
     var version: Int
   }
@@ -33,11 +25,7 @@ public struct QueueStore: Sendable {
 
     let data = try Data(contentsOf: fileURL)
 
-    // Every decode failure is recovered the same way, not just a version
-    // mismatch. A file we cannot read is a file the user cannot fix: without
-    // this, a single corrupt byte means `start()` throws, the app never
-    // launches, the bad file is never set aside, and it fails identically on
-    // every subsequent launch forever.
+    // Recover every decode failure so a corrupt queue cannot block all subsequent launches.
     do {
       let probe = try JSONDecoder().decode(VersionProbe.self, from: data)
       guard probe.version == Envelope.currentVersion else { return setAside() }
@@ -47,11 +35,8 @@ public struct QueueStore: Sendable {
     }
   }
 
-  /// Moves an unreadable queue file aside as `queue.json.bak` and starts
-  /// empty. Best-effort by design and deliberately non-throwing: this is the
-  /// recovery path, so it must not be able to fail launch itself. If the move
-  /// cannot be done, the file is removed instead — leaving it in place would
-  /// reproduce the same failure on the next launch.
+  /// Sets an unreadable queue aside as `queue.json.bak` and starts empty. If moving fails,
+  /// attempts removal to avoid repeating the failure. Recovery must not throw and block launch.
   private func setAside() -> [Job] {
     let backup = fileURL.appendingPathExtension("bak")
     try? FileManager.default.removeItem(at: backup)
@@ -84,9 +69,7 @@ public struct QueueStore: Sendable {
         try FileManager.default.moveItem(at: scratch, to: fileURL)
       }
     } catch {
-      // Never leave the scratch file behind: this directory is the app's
-      // persistent data directory, not a throwaway temp dir, so a leak here
-      // accumulates hidden files forever rather than being swept on reboot.
+      // Always remove scratch files from persistent storage.
       try? FileManager.default.removeItem(at: scratch)
       throw error
     }

@@ -38,15 +38,8 @@ struct BackfillEstimateTests {
 
   @Test("with-chat's peak overhead includes the chat render, so it prices higher than plain video")
   func chatAddsRenderOverheadToThePeak() {
-    // Under the corrected formula `bytes = Σ delivered + max(total - delivered)`,
-    // `.videoWithChat`'s single-archive `total - delivered` includes
-    // `SpaceEstimate.chatRender` (the transient render the source-plus-chat
-    // job tears down before delivering the composite) on top of the source
-    // overhead a plain download already carries. So — unlike the old,
-    // delivered-only formula this replaces, where the composite could price
-    // *below* the plain download — the with-chat figure is pinned here to
-    // come out strictly higher, because the peak term now actually reflects
-    // what a with-chat job holds mid-flight.
+    // Peak-aware cost is delivered sum plus maximum transient overhead. Chat's render
+    // intermediate must make its single-job peak exceed video-only.
     let archives = [archive("1", hours: 5)]
     let plain = BackfillEstimate(archives: archives, cap: .p720, output: .video)
     let withChat = BackfillEstimate(archives: archives, cap: .p720, output: .videoWithChat)
@@ -57,10 +50,7 @@ struct BackfillEstimateTests {
   @Test(
     "the nominal bitrate ladder produces the expected byte figures, per cap",
     arguments: [
-      // cap, nominal bits/sec (from `nominalQuality`), expected bytes for a
-      // 1-hour archive at `.video` (source only, so bytes == source
-      // == bitsPerSecond * 3600 / 8 exactly — no chat/composite term to
-      // muddy a direct read of the ladder).
+      // Cap, nominal bitrate, and one-hour video-only size (`bitsPerSecond * 3600 / 8`).
       (QualityCap.best, 6_000_000, Int64(2_700_000_000)),
       (QualityCap.p1080, 6_000_000, Int64(2_700_000_000)),
       (QualityCap.p720, 3_500_000, Int64(1_575_000_000)),
@@ -69,10 +59,8 @@ struct BackfillEstimateTests {
     ]
   )
   func nominalBitrateLadder(cap: QualityCap, bitsPerSecond: Int, expectedBytes: Int64) {
-    // Table asserted against a computed rather than merely restated
-    // expectation, so a typo in `nominalQuality` (e.g. 1_400_000 becoming
-    // 14_000_000) fails this even though the hand-written column above would
-    // silently "agree" with the same typo if copied from the source.
+    // Compute size from the independently listed rate to catch errors in nominal quality
+    // values.
     #expect(expectedBytes == Int64(bitsPerSecond) * 3600 / 8)
 
     let estimate = BackfillEstimate(archives: [archive("1", hours: 1)], cap: cap, output: .video)
@@ -89,9 +77,8 @@ struct BackfillEstimateTests {
 
   @Test("a live broadcast is priced on what has aired, not skipped")
   func liveIsPricedNotSkipped() {
-    // A RECORDING node's lengthSeconds describes only what has aired so far.
-    // Pricing it on that is the honest available number; dropping it from the
-    // total would understate a backfill the user can still choose to take.
+    // Include recording broadcasts at their currently known duration rather than dropping them
+    // from backfill estimates.
     let live = ChannelArchive(
       id: "1", title: "t", duration: .seconds(3600),
       publishedAt: Date(timeIntervalSince1970: 0), status: .recording, thumbnailURL: nil)

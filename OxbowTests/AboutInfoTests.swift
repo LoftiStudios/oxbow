@@ -5,10 +5,8 @@ import Testing
 @Suite("About info")
 struct AboutInfoTests {
 
-  /// The keys `scripts/stamp-version.sh` writes, plus the ones
-  /// `GENERATE_INFOPLIST_FILE` writes from `Config/Shared.xcconfig`. A fully
-  /// populated bundle; individual tests remove one key to describe what a
-  /// build missing that piece should say.
+  /// Complete stamped bundle fixture; tests remove individual keys to model missing build
+  /// components.
   private func info(
     name: String? = "Oxbow",
     shortVersion: String? = "0.1.0",
@@ -31,24 +29,18 @@ struct AboutInfoTests {
 
   // MARK: - Version line
 
-  /// The form the standard macOS About panel uses, and the one a bug report
-  /// needs: the semver users talk about plus the build number that pins it to
-  /// an exact commit.
   @Test func versionLineCombinesSemverAndBuildNumber() {
     let about = AboutInfo(infoDictionary: info(), resource: noResources)
     #expect(about.versionLine == "Version 0.1.0 (73)")
   }
 
-  /// A tree with no git history keeps the `CURRENT_PROJECT_VERSION` fallback
-  /// rather than gaining a fake build number, so the parenthesised half has
-  /// to be droppable without leaving stray punctuation behind.
+  /// Without git history, omit the unavailable build number and its punctuation.
   @Test func versionLineOmitsAnAbsentBuildNumber() {
     let about = AboutInfo(infoDictionary: info(build: nil), resource: noResources)
     #expect(about.versionLine == "Version 0.1.0")
   }
 
-  /// Never render "Version  (73)". If the marketing version is gone the
-  /// bundle is malformed, and saying so is more useful than a blank.
+  /// Missing marketing version must not leave empty version punctuation.
   @Test func versionLineReportsAnUnknownVersionWithoutASemver() {
     let about = AboutInfo(infoDictionary: info(shortVersion: nil), resource: noResources)
     #expect(about.versionLine == "Unknown version")
@@ -80,9 +72,7 @@ struct AboutInfoTests {
     #expect(about.helperVersion == "1.56.5+d4122d80214b08b3c7078003aae43088e601a435")
   }
 
-  /// The UI-only build CONTRIBUTING.md promises — no .NET toolchain, so
-  /// `stamp-version.sh` omits the key. The About window must say the helper
-  /// is absent rather than imply a version it does not have.
+  /// UI-only builds omit the helper stamp and must report it absent.
   @Test func helperVersionIsNilWhenTheHelperIsNotEmbedded() {
     let about = AboutInfo(infoDictionary: info(helper: nil), resource: noResources)
     #expect(about.helperVersion == nil)
@@ -109,8 +99,7 @@ struct AboutInfoTests {
     #expect(about.ffmpegSourceRecord?.lastPathComponent == "FFMPEG-SOURCE.txt")
   }
 
-  /// A build with no FFmpeg has no licence text either. The buttons disable
-  /// rather than opening nothing.
+  /// Disable license buttons when FFmpeg resources are absent.
   @Test func licenceFilesAreNilWhenAbsentFromTheBundle() {
     let about = AboutInfo(infoDictionary: info(), resource: noResources)
     #expect(about.ffmpegLicense == nil)
@@ -119,10 +108,7 @@ struct AboutInfoTests {
 
   // MARK: - Credits
 
-  /// These links are the attribution half of an MIT and an LGPL obligation,
-  /// so a typo in one is a compliance problem rather than a cosmetic one.
-  /// `URL(string:)` accepts almost anything as a relative URL, so assert the
-  /// parts a missing scheme or a fat-fingered host would actually break.
+  /// Check URL components: `URL(string:)` alone also accepts relative URLs.
   @Test func everyCreditLinksToAnAbsoluteHTTPSURL() {
     for credit in Credit.all {
       let url = URL(string: credit.urlString)
@@ -150,9 +136,7 @@ struct LicenceDocumentTests {
     #expect(document.text == "GNU LESSER GENERAL PUBLIC LICENSE")
   }
 
-  /// The licence text is a distribution obligation, so a stray high byte —
-  /// a © in some other encoding, say — must not blank the whole document.
-  /// Latin-1 maps every possible byte, so this fallback cannot itself fail.
+  /// Latin-1 fallback keeps non-UTF-8 license text readable.
   @Test func fallsBackToLatin1ForBytesThatAreNotUTF8() {
     let data = Data([0xA9, 0x20, 0x46, 0x46]) // © FF, in Latin-1
     let document = LicenceDocument(title: "FFmpeg License", data: data)

@@ -17,9 +17,7 @@ struct WorkspaceTests {
     try? FileManager.default.removeItem(at: workspace.root)
   }
 
-  /// A step's own directory is deleted the moment the step ends, so a log
-  /// kept there would vanish exactly when someone wants to read why the step
-  /// failed. Logs live at the job level, like the artifacts they explain.
+  /// Job-level logs survive step cleanup for diagnostics.
   @Test func aStepLogOutlivesItsStepDirectory() throws {
     let workspace = makeWorkspace()
     defer { tearDown(workspace) }
@@ -84,9 +82,7 @@ struct WorkspaceTests {
     tearDown(workspace)
   }
 
-  /// Launch sweep: nothing under `jobs/` can ever be reused — and nothing
-  /// outside it belongs to us. `root` is the app's whole cache directory, so a
-  /// sweep that took it wholesale would wipe every other cache the app keeps.
+  /// Launch sweep is confined to jobs, preserving sibling Application Support data.
   @Test func removeAllClearsOnlyTheJobsSubtree() throws {
     let workspace = makeWorkspace()
     _ = try workspace.prepareStep(job: Build.jobID(1), step: Build.stepID(1))
@@ -165,12 +161,8 @@ struct WorkspaceTests {
     #expect(!workspace.contains(piece, ofJob: job))
   }
 
-  /// Forces a genuine `FileManager.removeItem` failure via the filesystem's
-  /// `uchg` (user-immutable) flag — set with `chflags`, cleared the same
-  /// way. Neither an open file handle (does not stop `unlink` on APFS) nor a
-  /// merely read-only file (still removable by the owner of a writable
-  /// directory) forces a real failure; `uchg` does, and it is the one
-  /// portable way found to do it in a test.
+  /// Use uchg to force deletion failure; open handles and read-only files can still be unlinked
+  /// on APFS.
   private func makeUndeletable(_ url: URL) throws {
     FileManager.default.createFile(atPath: url.path, contents: Data("stuck".utf8))
     let result = chflags(url.path, UInt32(UF_IMMUTABLE))
@@ -181,12 +173,8 @@ struct WorkspaceTests {
     chflags(url.path, 0)
   }
 
-  /// Reproduces the incident this whole change exists for: an 8.66 GB video
-  /// that survived a job's teardown while `chat.json`, `render.mp4`, and the
-  /// whole `logs/` directory were correctly removed. A single recursive
-  /// `FileManager.removeItem` deletes depth-first and aborts at the first
-  /// failure — this is what proves `removeJob` no longer does that, and no
-  /// longer swallows the fact that it happened.
+  /// A stubborn file must not prevent deleting siblings, and its removal failure must be
+  /// returned.
   @Test func removeJobReportsAnUndeletableFileWithoutStrandingItsSiblings() throws {
     let workspace = makeWorkspace()
     defer { tearDown(workspace) }
@@ -265,12 +253,7 @@ struct WorkspaceTests {
     #expect(workspace.removeJob(job).isEmpty)
   }
 
-  /// A symlink inside a job's workspace pointing at a directory outside it
-  /// must be unlinked as a leaf, never followed — following it would delete
-  /// the target's own contents, widening deletion beyond this job's own
-  /// workspace, which nothing we or the helper write there is ever meant to
-  /// do. Nothing currently creates such a link; this pins the invariant
-  /// anyway, since `removeTree` must not depend on that staying true forever.
+  /// Unlink directory symlinks as leaves without deleting external target contents.
   @Test func removeJobUnlinksASymlinkToADirectoryWithoutTouchingItsTarget() throws {
     let workspace = makeWorkspace()
     defer { tearDown(workspace) }
@@ -301,11 +284,8 @@ struct WorkspaceTests {
       "the symlink's target directory itself must survive")
   }
 
-  /// A dangling symlink fails `fileExists` (stat semantics — it follows the
-  /// link to a target that is not there) even though the link itself is a
-  /// real filesystem entry that needs cleaning up. Without checking for a
-  /// symlink ahead of `fileExists`, this would report the removal as clean —
-  /// nothing failed — while leaving the broken link behind.
+  /// Check dangling symlinks before fileExists, whose target-following lookup would miss the
+  /// link itself.
   @Test func removeStepUnlinksADanglingSymlink() throws {
     let workspace = makeWorkspace()
     defer { tearDown(workspace) }
@@ -323,11 +303,8 @@ struct WorkspaceTests {
     #expect(!FileManager.default.fileExists(atPath: directory.path))
   }
 
-  /// `directory` itself can be a plain regular file rather than a directory —
-  /// `contentsOfDirectory` fails on that the same way it would for a genuine
-  /// listing problem, but this case has an obvious right answer: remove the
-  /// file, rather than reporting a directory-listing failure for something
-  /// that was never a directory.
+  /// A regular file at the requested directory path should be removed, not reported as a
+  /// listing failure.
   @Test func removeStepRemovesAPlainFileFoundWhereADirectoryWasExpected() throws {
     let workspace = makeWorkspace()
     defer { tearDown(workspace) }

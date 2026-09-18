@@ -28,17 +28,13 @@ struct JobTemplateTests {
   private var clip: ClipRequest {
     ClipRequest(clipSlug: "AwkwardHelplessSalamanderSwiftRage", quality: "720p", destination: URL(filePath: "/tmp/c.mp4"))
   }
-  /// Carries a destination so tests can distinguish "preserved" from
-  /// "coincidentally nil", and a non-JSON format so a forced-to-JSON step can
-  /// be told apart from one that merely started out that way.
+  /// Use a destination and non-JSON format so preservation and coercion are observable.
   private var chat: ChatRequest {
     ChatRequest(videoID: "2844548319", format: .html, destination: URL(filePath: "/tmp/chat.html"))
   }
   private var render: RenderRequest { RenderRequest(destination: URL(filePath: "/tmp/render.mp4")) }
 
-  /// Mirrors the construction the other composite tests use below — media,
-  /// an implied render, and a composite, which is enough to build all four
-  /// upstream steps plus the assemble step this file's tests are about.
+  /// Composite fixture with media and implied chat/render plus assembly.
   private func compositeTemplate() -> JobTemplate {
     JobTemplate(
       media: .video(VideoRequest(videoID: "v", quality: "1080p60")),
@@ -82,13 +78,8 @@ struct JobTemplateTests {
     #expect(request.format == .html)
   }
 
-  /// The combination the design spec calls out as unrepresentable at real
-  /// intake — Render's toggle always implies chat as an input there — but
-  /// `makeJob` still has to produce something well-defined for it rather than
-  /// crash or silently drop the render. There is no VOD ID anywhere in this
-  /// template to seed the implied download with, so its content is a nil
-  /// placeholder; only the structure (step count, forced format, forced-nil
-  /// destination, dependency wiring) is meaningful here.
+  /// Render-only templates are unavailable in intake but public library calls still need a
+  /// defined graph. With no media ID, only structure is meaningful here.
   @Test func renderOnlyImpliesAChatStepForcedToJsonWithNoDestination() {
     let job = makeJob(JobTemplate(render: render))
     #expect(job.steps.count == 2)
@@ -122,10 +113,7 @@ struct JobTemplateTests {
       == chat.destination?.deletingPathExtension())
   }
 
-  /// A render pairing forces the chat download to JSON, so the file it
-  /// delivers has to be *named* JSON too. Leaving the caller's `.html` path
-  /// alone wrote JSON bytes into a file called `chat.html` — the extension is
-  /// the only thing telling the user, or Finder, what is actually in there.
+  /// JSON coercion must also rewrite the delivery extension.
   @Test func aRenderPairingRewritesTheChatDestinationToMatchTheForcedFormat() {
     let job = makeJob(JobTemplate(chat: chat, render: render))
     guard case .downloadChat(let request) = job.steps[0].kind else {
@@ -187,11 +175,8 @@ struct JobTemplateTests {
     #expect(request.destination == chat.destination)
   }
 
-  /// The combination the enum could not express at all: video plus chat, but
-  /// no render pairing to force a dependency between them. Both are still
-  /// `.network`, so nothing here depends on order — but `makeJob` always
-  /// appends chat before media (see the load-bearing-order note in
-  /// `makeJob`), so the chat step comes first regardless.
+  /// Video and standalone chat are independent network steps; template order still places chat
+  /// first.
   @Test func mediaAndChatWithNoRenderAreTwoIndependentSteps() {
     let job = makeJob(JobTemplate(media: .video(video), chat: chat))
     #expect(job.steps.count == 2)
@@ -205,21 +190,12 @@ struct JobTemplateTests {
       Issue.record("expected the video download to come second")
       return
     }
-    // Unlike the render pairing, a standalone chat delivery keeps the
-    // caller's requested format untouched. `chat`'s fixture format is `.html`
-    // specifically so this can tell "preserved" apart from "coincidentally
-    // already JSON".
+    // HTML fixture distinguishes preservation from an already-JSON request.
     #expect(request.format == .html)
     #expect(request.destination == chat.destination)
   }
 
-  /// The case the explicit `dependsOn` field exists for: with no chat
-  /// requested, the render must still depend on the *implied* chat step
-  /// (step 2), never on the media step (step 1). The implied chat borrows the
-  /// video's own ID — a plausible-but-wrong implementation would instead
-  /// synthesise a chat request with no VOD ID at all, which would fetch
-  /// nothing useful even though the VOD ID was sitting right there in the
-  /// media request.
+  /// Render must depend on implied chat, which inherits the media ID, not on media directly.
   @Test func mediaAndRenderWithNoChatDeliveryMakesTheRenderDependOnTheImpliedChatNotTheMedia() {
     let job = makeJob(JobTemplate(media: .video(video), render: render))
     #expect(job.steps.count == 3)
@@ -247,10 +223,7 @@ struct JobTemplateTests {
     #expect(job.steps[1].dependsOn != [job.steps[2].id], "render must not depend on the video")
   }
 
-  /// A trimmed video must not get chat rendered against the full VOD: the
-  /// implied chat download has to carry the same trim range as the video
-  /// it is paired with, or the render's output would silently desync from
-  /// what the user actually asked to trim.
+  /// Implied chat inherits media trim to keep rendered output aligned.
   @Test func mediaAndRenderWithATrimmedVideoImpliesAChatWithTheSameTrim() {
     let trimmedVideo = VideoRequest(
       videoID: "2844548319",
@@ -268,12 +241,7 @@ struct JobTemplateTests {
     #expect(chatRequest.trimEnd == trimmedVideo.trimEnd)
   }
 
-  /// Trim inheritance is for the *implied* chat only. When the caller
-  /// supplies its own chat request, `chat ?? impliedChatRequest(for:)` must
-  /// never overwrite the caller's trim with the media's — the two ranges
-  /// are deliberately different here so an implementation that wrongly
-  /// preferred the video's trim would fail this, rather than passing by
-  /// coincidence.
+  /// Explicit chat trim wins; use different ranges to detect accidental media inheritance.
   @Test func mediaChatAndRenderKeepTheExplicitChatsOwnTrimNotTheMedias() {
     let trimmedVideo = VideoRequest(
       videoID: "2844548319",
@@ -298,13 +266,8 @@ struct JobTemplateTests {
     #expect(chatRequest.trimEnd != trimmedVideo.trimEnd)
   }
 
-  /// Clips are a media type the enum could not add without doubling its case
-  /// count (`clipAndChat`, `clipChatAndRender`). This is the render half: the
-  /// implied chat download has no video to borrow a VOD ID from, so it must
-  /// seed itself with the clip's own slug — upstream's `chatdownload --id`
-  /// accepts either. Asserting the exact slug, not merely "non-empty", is
-  /// deliberate: a wrong implementation could satisfy "non-empty" with any
-  /// placeholder and still fetch nothing.
+  /// Clip render input must inherit the exact slug; any nonempty placeholder would still fetch
+  /// the wrong chat.
   @Test func clipMediaAndRenderImpliesAChatSeededWithTheClipSlug() {
     let job = makeJob(JobTemplate(media: .clip(clip), render: render))
     #expect(job.steps.count == 3)
@@ -326,10 +289,7 @@ struct JobTemplateTests {
     }
   }
 
-  /// The clip counterpart to `mediaAndChatWithNoRenderAreTwoIndependentSteps`:
-  /// `.clip` media works the same as `.video` in the media+chat, no-render
-  /// combination — two independent steps, the caller's own chat request
-  /// untouched.
+  /// Clip plus standalone chat follows the same independent-step contract as video.
   @Test func clipMediaAndChatWithNoRenderAreTwoIndependentSteps() {
     let job = makeJob(JobTemplate(media: .clip(clip), chat: chat))
     #expect(job.steps.count == 2)
@@ -347,9 +307,7 @@ struct JobTemplateTests {
     #expect(request.destination == chat.destination)
   }
 
-  /// Upstream's `chatrender -i` parses JSON and nothing else. Accepting the
-  /// caller's `.html` here meant a full chat download followed by a parse
-  /// exception in the step that consumes it.
+  /// The renderer accepts JSON only.
   @Test func aRenderPairingAlwaysDownloadsItsChatAsJson() {
     let html = ChatRequest(videoID: "2844548319", format: .html)
     let jobs = [
@@ -378,16 +336,12 @@ struct JobTemplateTests {
       Issue.record("expected the chat download first")
       return
     }
-    // The render pairing forces JSON — `chat`'s fixture format is `.html`, so
-    // this genuinely exercises the override rather than coinciding with it —
-    // and the destination follows the format rather than staying `.html`.
+    // The HTML fixture makes coercion and extension rewriting observable.
     #expect(request.format == .json)
     #expect(request.destination == URL(filePath: "/tmp/chat.json"))
   }
 
-  /// Documented rather than merely permitted: intake makes this unreachable
-  /// (Add is disabled with no outputs selected), but `makeJob` still needs
-  /// well-defined behaviour for the fully-empty template rather than a crash.
+  /// Public empty templates remain well-defined despite being unavailable in intake.
   @Test func emptyTemplateProducesAJobWithNoSteps() {
     let job = makeJob(JobTemplate())
     #expect(job.steps.isEmpty)
@@ -412,9 +366,7 @@ struct JobTemplateTests {
       return Build.stepID(n)
     }
 
-    // chat, render, video, composite, assemble — chat and render are
-    // appended before the media step so the short chat download claims the
-    // network slot first; see the load-bearing-order note in `makeJob`.
+    // Chat precedes media to claim the network slot first, allowing later render/video overlap.
     #expect(job.steps.count == 5)
     let composite = job.steps[3]
     guard case .composite = composite.kind else {
@@ -435,10 +387,8 @@ struct JobTemplateTests {
       Issue.record("expected a render step")
       return
     }
-    // ORDER IS THE CONTRACT: ArgumentBuilder reads [0] as the video and [1]
-    // as the chat render — identified by kind, not position, since the
-    // reorder above moves media to a later index without changing which
-    // step is which parent.
+    // Composite dependency order is video, then rendered chat; identify parents by kind after
+    // step reordering.
     #expect(composite.dependsOn == [mediaStep.id, renderStep.id])
   }
 
@@ -498,12 +448,8 @@ struct JobTemplateTests {
     #expect(!job.steps.contains { if case .composite = $0.kind { true } else { false } })
   }
 
-  /// The behaviour the reorder in `makeJob` exists to buy, proved against
-  /// `Scheduler` rather than merely against step indices: once the chat
-  /// download is `.done`, the render (`.compute`) and the media download
-  /// (`.network`) share no resource class, so `Scheduler.admissible` must
-  /// admit both in the same call rather than making one wait behind the
-  /// other. See docs/design/compositing.md §6 for the timeline this buys.
+  /// After chat completes, scheduler must admit render and video together, proving the intended
+  /// overlap rather than just array order.
   @Test func chatDoneMakesRenderAndMediaBothAdmissibleTogether() {
     let template = JobTemplate(
       media: .video(video),
@@ -541,11 +487,8 @@ struct JobTemplateTests {
     #expect(Set(admitted) == Set([renderStep.id, mediaStep.id]))
   }
 
-  /// Assemble depends on the composite step alone. The audio it maps comes
-  /// from the sidecar the composite's first attempt copies into the
-  /// retention area, not from the downloaded video — so by the time assemble
-  /// runs, the media step's own output has already been deleted (§5) and
-  /// cannot be a dependency. docs/design/resume.md §6.
+  /// Assembly depends only on composite retention; the downloaded source is removed before it
+  /// runs.
   @Test func aCompositeJobEndsWithAnAssembleStep() throws {
     let job = compositeTemplate().makeJob(
       id: Build.jobID(1), title: "t", created: .now, nextStepID: Build.sequentialStepIDs())

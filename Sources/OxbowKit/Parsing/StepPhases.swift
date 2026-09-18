@@ -1,24 +1,8 @@
 import Foundation
 
-/// The named phases a step passes through, so progress can be drawn as one
-/// segmented bar rather than as a bar that fills and resets several times.
-///
-/// **Why names and not the counter.** The CLI's `[i/n]` counter is not
-/// reliably present, and the places it goes missing are the worst ones:
-/// `ChatRenderer` announces `Fetching Images [1/2]` and then drops the counter
-/// for `Rendering Video`, which is the phase that takes all the time, and
-/// `ChatDownloader` emits no counter on any phase at all. A bar driven off the
-/// counter alone would stall on segment one of a render and never move.
-///
-/// The names, by contrast, are stable and knowable: these lists come from
-/// upstream's own format strings, not from one captured run. The counter is
-/// kept as a fallback for when a name is not recognised.
-///
-/// This is a second dependency on the CLI's text, alongside
-/// `StatusLineParser` — which is why it lives next to it, and why
-/// `StepPhasesTests` replays the captured fixtures through it. That test fails
-/// the day upstream renames a phase, which is exactly when a segmented bar
-/// would otherwise begin silently stalling.
+/// Named CLI phases for segmented progress. Counters disappear during rendering and are absent
+/// from chat downloads, so match upstream phase names first and use counters only as fallback.
+/// Fixture tests detect renamed phases.
 public struct StepPhases: Sendable, Equatable {
 
   public struct Phase: Sendable, Equatable {
@@ -60,9 +44,7 @@ public struct StepPhases: Sendable, Equatable {
       ])
 
     case .downloadChat(let request):
-      // `ChatDownloader` only emits "Downloading Embed Images" when it was
-      // asked to embed them. A fixed fourth segment would leave a gap that
-      // never fills on every chat download that does not.
+      // Add the embed-images segment only when requested; otherwise it never runs.
       StepPhases(phases: [
         Phase("Downloading", "Download"),
         request.isEmbeddingImages ? Phase("Downloading Embed Images", "Images") : nil,
@@ -77,23 +59,14 @@ public struct StepPhases: Sendable, Equatable {
       ])
 
     case .composite, .assemble:
-      // FFmpeg emits no phase names — `-progress` reports a real fraction
-      // instead, so there is one segment and it fills smoothly. The label
-      // matches the phase `FFmpegProgressParser` stamps on every update,
-      // which is the same for both: both run FFmpeg via the same `.ffmpeg`
-      // dialect and the parser does not distinguish the two steps.
+      // FFmpeg reports a continuous fraction without phase names, so use one segment matching
+      // the progress parser's label.
       StepPhases(phases: [Phase("Compositing", "Combine")])
     }
   }
 
-  /// Where in this sequence a status line puts us, or nil if it cannot be
-  /// placed at all.
-  ///
-  /// Name first, counter second. The counter is only trusted when it agrees
-  /// about how many phases there are: `TsMerger` emits its own `[1/2]`
-  /// sequence containing a "Verifying Parts" that also appears in the
-  /// four-phase video flow, and a total that does not match means we are not
-  /// looking at the sequence we think we are.
+  /// Matches by name, then by counter only if its total matches this sequence. Nested helper
+  /// operations may report their own counters.
   public func index(matching progress: StepProgress) -> Int? {
     if let phase = progress.phase,
        let match = phases.firstIndex(where: { $0.cliName.caseInsensitiveCompare(phase) == .orderedSame })
@@ -108,17 +81,8 @@ public struct StepPhases: Sendable, Equatable {
     return min(max(index - 1, 0), phases.count - 1)
   }
 
-  /// How far through the whole step we are: completed phases plus however far
-  /// into the current one we have got.
-  ///
-  /// Nil rather than zero when the phase cannot be placed — a bar that reads
-  /// "0%" claims knowledge we do not have, where an indeterminate one is
-  /// honest about it.
-  ///
-  /// Phases are treated as equal shares, which they are not: `Downloading` is
-  /// far longer than `Fetching Video Info`. That makes the bar move unevenly,
-  /// but never backwards, and the segments are visible precisely so uneven
-  /// progress reads as expected rather than broken.
+  /// Completed phases plus the current phase's fraction, weighted equally. Nil means unknown
+  /// phase. Unequal phase durations make this an approximate progress measure.
   public func overallFraction(for progress: StepProgress) -> Double? {
     guard !phases.isEmpty, let index = index(matching: progress) else { return nil }
     let share = 1.0 / Double(phases.count)

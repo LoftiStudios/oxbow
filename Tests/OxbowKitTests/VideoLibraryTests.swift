@@ -47,9 +47,7 @@ struct VideoLibraryTests {
     #expect(library.seenIDs(forLogin: "wheelyf") == ["1"])
   }
 
-  /// §3.6: removing a watch drops rows that were only ever "seen on Twitch",
-  /// and keeps rows for videos actually downloaded — those are what Get Info
-  /// exists to render.
+  /// Removing a watch retains delivered history but drops unacted-on records.
   @Test("removing a watch keeps downloaded rows and drops the rest")
   func removeWatchKeepsWhatYouHave() {
     var library = VideoLibrary()
@@ -111,10 +109,7 @@ struct VideoLibraryTests {
     #expect(try decoder.decode(VideoLibrary.self, from: data) == library)
   }
 
-  /// §5.1: a channel shows what you have, what is coming, and what you could
-  /// still get. The two "you already decided" states stay behind §5.2's
-  /// filter — without that, a channel backfilled with "Only new" opens as a
-  /// hundred headstones.
+  /// Default visibility excludes skipped and ignored states.
   @Test("only the states a person still acts on are visible by default")
   func defaultVisibility() {
     #expect(WatchState.new.isVisibleByDefault)

@@ -2,52 +2,25 @@ import AppKit
 import OxbowKit
 import UserNotifications
 
-/// Tells the user when a job settles, and reveals what it delivered.
-///
-/// The delivered files travel in the notification's `userInfo`, so the reveal
-/// action needs no access to queue state — which by the time someone clicks
-/// may have moved on, or may have had the job removed out from under it.
+/// Notify on settled jobs. Store delivered URLs in userInfo so reveal survives queue changes or
+/// removal.
 @MainActor
 final class JobNotifier: NSObject, UNUserNotificationCenterDelegate {
 
-  // `nonisolated`: the class is `@MainActor`, which would otherwise isolate
-  // these to it, and `filesKey` is read from the nonisolated delegate method
-  // that handles a notification response.
+  // Delegate callbacks read these constants outside the main actor.
   nonisolated private static let revealAction = "studio.lofti.Oxbow.reveal"
   nonisolated private static let finishedCategory = "studio.lofti.Oxbow.finished"
   nonisolated private static let filesKey = "files"
 
-  /// Marks a notification as one whose click should open the Watching pane
-  /// rather than reveal a file. Carried in `userInfo` rather than as a
-  /// `categoryIdentifier`, because the category exists to declare *actions*
-  /// and this notification has none beyond its default click.
+  /// Default-click routing flag; findings need no separate action category.
   nonisolated private static let revealWatchingKey = "revealWatching"
 
-  /// The completion chime, in `Contents/Resources`.
-  ///
-  /// **Not the `.mp3` it arrived as.** `UNNotificationSound` reads `aiff`,
-  /// `wav` and `caf` only, and fails by falling back to the default sound
-  /// rather than by complaining — so a wrong extension here is a bug that
-  /// sounds like a working feature. Converted with `afconvert` and trimmed
-  /// first: the original carried 2.96s of trailing silence after 1.07s of
-  /// audio, which a notification would have held open for no reason.
+  /// Bundled completion chime. Notification audio accepts AIFF, WAV, or CAF, not MP3.
   nonisolated private static let dingFile = "ding"
 
-  /// **The chime is played by us, not by `UNNotificationSound`.**
-  ///
-  /// Setting `content.sound` produced no audio on macOS 26.6.2 — not with the
-  /// bundled file and not with `.default` either, while `authorizationStatus`
-  /// read `.authorized`, `soundSetting` read `.enabled`, alert volume was 99,
-  /// and `center.add` reported success. Four probe notifications covering
-  /// default, our file by two names, and no sound at all were silent alike.
-  /// The same file through `NSSound` in the same process plays, so the app can
-  /// reach the speakers; only the notification-sound path cannot.
-  ///
-  /// Why that path is silent is unresolved and may be specific to this
-  /// machine. What is certain is that a feature which depends on it does not
-  /// work here, and one that does not is available — so this plays the sound
-  /// directly and asks the system for none, which also means the two can never
-  /// double up if that path starts working.
+  /// Use NSSound because both custom and default UNNotificationSound were silent in testing on
+  /// macOS 26.6.2. Cause unresolved and possibly machine-specific. Leave content.sound nil to
+  /// prevent duplicate playback if that path recovers.
   private lazy var chime: NSSound? = Bundle.main
     .url(forResource: Self.dingFile, withExtension: "caf")
     .flatMap { NSSound(contentsOf: $0, byReference: false) }
@@ -55,33 +28,11 @@ final class JobNotifier: NSObject, UNUserNotificationCenterDelegate {
   private var baseline: [JobID: JobStatus] = [:]
   private var hasRequestedAuthorization = false
 
-  /// `nil` under `xcodebuild test`.
-  ///
-  /// `OxbowTests` is hosted by this app, so a test run launches it for real.
-  /// An authorization prompt during CI is a modal that hangs the run —
-  /// strictly worse than the live GitHub requests that put
-  /// `AppComposition.isUserSession` there in the first place. Holding the
-  /// centre optionally, rather than gating each call site, means a future
-  /// method cannot forget the check.
+  /// Nil during hosted tests to prevent authorization prompts and live notification access.
   private let center: UNUserNotificationCenter?
 
-  /// Where a settled job's outcome is written — see `apply(_:)`.
-  ///
-  /// Starts `nil` and is assigned by `QueueHost.attachStatusObservers`, the
-  /// same way `QueueHost.videoRecording` itself is populated: this type is
-  /// built before the support directory necessarily exists —
-  /// `registerNotificationDelegate()` can reach it well ahead of engine
-  /// resolution, precisely so a cold launch that later responds to a
-  /// notification is not dropped — so `init` has nothing to derive a store
-  /// from. By the time `attachStatusObservers` runs, the directory is already
-  /// resolved and handed straight in, which is also what makes the
-  /// self-constructed `AppComposition.defaultSupportDirectory()` call this
-  /// replaced redundant: that directory-creating I/O had already happened
-  /// once for this same launch.
-  ///
-  /// `nil` under `xcodebuild test`, for the same reason `center` is:
-  /// `attachStatusObservers` never runs in that case, so a test run never
-  /// writes the developer's own `videos.json` on a settled job in the suite.
+  /// Assigned after support-directory resolution because the notification delegate may be
+  /// registered earlier. Nil during hosted tests to prevent video-record writes.
   var videoRecordStore: VideoRecordStore?
 
   override init() {
@@ -100,40 +51,18 @@ final class JobNotifier: NSObject, UNUserNotificationCenterDelegate {
         intentIdentifiers: [])])
   }
 
-  /// Asked once, on the first enqueue.
-  ///
-  /// Not at first launch: the user has no idea yet what the app does, and a
-  /// permission prompt is the worst possible first impression of a tool they
-  /// have not used. Not at first completion either — that is the event we
-  /// would be asking permission to report, and it is already over. On first
-  /// enqueue the context answers the question by itself.
+  /// Request permission on first enqueue, before the first completion needs to be reported.
   func requestAuthorizationIfNeeded() {
     guard let center, !hasRequestedAuthorization else { return }
     hasRequestedAuthorization = true
-    // Silent on denial, like the update check: a user who says no gets an app
-    // that behaves exactly as it did before this feature existed.
     center.requestAuthorization(options: [.alert, .sound]) { _, _ in }
   }
 
-  /// Announces what an App Intent just did, since nothing else will.
-  ///
-  /// **Intent-only.** From the window you can see the queue, so this would
-  /// repeat what is already on screen — and it does not have to be guarded
-  /// for that case, because `userNotificationCenter(_:willPresent:)` below
-  /// already suppresses the banner while Oxbow is frontmost. An intent runs
-  /// with the app backgrounded, which is exactly when the banner shows.
-  ///
-  /// **The identifier is keyed on the body, so repeats replace rather than
-  /// stack.** Pasting the same link five times leaves one banner saying it is
-  /// already queued, not five — which is the behaviour the whole duplicate
-  /// guard exists for.
-  ///
-  /// No chime: the chime marks a download *finishing*, and diluting it with
-  /// submissions would cost it its meaning.
+  /// Notify background intent outcomes without a chime. Body-keyed identifiers replace repeats;
+  /// the delegate suppresses foreground banners.
   func announceIntentSubmission(title: String, body: String) {
     guard let center else { return }
-    // A submission may be the first thing this install ever does, and the
-    // enqueue path that normally asks is skipped entirely on a duplicate.
+    // A duplicate can bypass the usual first-enqueue authorization request.
     requestAuthorizationIfNeeded()
 
     let content = UNMutableNotificationContent()
@@ -146,29 +75,11 @@ final class JobNotifier: NSObject, UNUserNotificationCenterDelegate {
       trigger: nil))
   }
 
-  /// Says that a sweep found archives waiting, and opens the Watching pane
-  /// when clicked. `docs/design/channel-watching.md` §2.2.
-  ///
-  /// **What to say is not decided here.** `FindingAnnouncement` decides both
-  /// strings and, crucially, *whether there is anything to say at all* — this
-  /// posts whatever it is handed. Putting the "is this new" question here
-  /// would bury the one rule in this feature that keeps a durable inbox from
-  /// becoming an hourly banner.
-  ///
-  /// **One identifier for every finding banner, so a later one replaces the
-  /// one before it.** The same reasoning as `announceIntentSubmission`'s
-  /// body-keyed identifier, applied to a notification that is a running
-  /// count rather than an event: two sweeps four hours apart should leave
-  /// one banner saying five are waiting, not one saying two and another
-  /// saying three.
-  ///
-  /// No chime, for the reason `announceIntentSubmission` gives: the chime
-  /// marks a download finishing, and this is the opposite end of the job.
+  /// Post findings chosen by FindingAnnouncement. One identifier replaces earlier counts; no
+  /// chime. Default click selects Watching.
   func announceFindings(title: String, body: String) {
     guard let center else { return }
-    // A watch can be added, and start finding things, without a download
-    // ever having been enqueued — so the first-enqueue prompt may never have
-    // run on an install that only ever watches.
+    // Watching can find archives before any enqueue has requested permission.
     requestAuthorizationIfNeeded()
 
     let content = UNMutableNotificationContent()
@@ -181,15 +92,10 @@ final class JobNotifier: NSObject, UNUserNotificationCenterDelegate {
   }
 
   func apply(_ jobs: [Job]) {
-    // A job absent from `baseline` never fires, which is what makes the first
-    // snapshot seed silently — see `NotificationDecision.events(from:to:)`.
+    // Seed the baseline silently: jobs absent from the previous snapshot do not emit events.
     for event in NotificationDecision.events(from: baseline, to: jobs) {
-      // Where a download landed is not a notification concern, so this does
-      // not wait on `center` below — recording it happens for every event,
-      // whether or not a banner can be posted about it. The record write
-      // rides this diff rather than computing its own: `events(from:to:)` is
-      // already the one answer to "what just changed", and a second observer
-      // would be a second answer.
+      // Record every settled outcome independently of notification availability, using the same
+      // snapshot diff.
       if let videoRecordStore,
         let identifier = jobs.first(where: { $0.id == event.job })?.mediaIdentifier
       {
@@ -210,8 +116,6 @@ final class JobNotifier: NSObject, UNUserNotificationCenterDelegate {
         content.title = "Download failed"
       }
       content.body = event.title
-      // `content.sound` is deliberately left nil throughout: the chime is
-      // played here instead, by us. See `chime` and `playChimeIfAllowed()`.
       if event.outcome == .finished { playChimeIfAllowed() }
 
       center.add(UNNotificationRequest(
@@ -225,43 +129,19 @@ final class JobNotifier: NSObject, UNUserNotificationCenterDelegate {
 
   // MARK: - UNUserNotificationCenterDelegate
 
-  /// The banner is suppressed while Oxbow is frontmost — over the window that
-  /// already shows the finished row it would only repeat it.
-  ///
-  /// **This method decides the banner and nothing else.** It is called only
-  /// while the app is frontmost, so it cannot be where the chime lives; see
-  /// `playChimeIfAllowed()`.
+  /// Suppress foreground banners. Play sound from the posting path because willPresent is not
+  /// called for background presentation.
   nonisolated func userNotificationCenter(
     _ center: UNUserNotificationCenter,
     willPresent notification: UNNotification) async -> UNNotificationPresentationOptions
   {
-    // Banner only. The chime is played when the notification is posted — see
-    // `playChimeIfAllowed()` for why it cannot live here. No `.sound` is
-    // requested, so the two can never double up.
+    // Do not request notification sound; the app plays its chime separately.
     return await MainActor.run { NSApp.isActive ? [] : [.banner] }
   }
 
-  /// Plays the chime, if the user has not turned sound off for Oxbow.
-  ///
-  /// **Called where the notification is posted, not from `willPresent`.**
-  /// `willPresent` runs only while the app is frontmost — when Oxbow is in the
-  /// background the system presents the banner without consulting the
-  /// delegate, so a chime played from there is silent in precisely the case
-  /// the chime exists for. That was the first implementation and it never
-  /// made a sound.
-  ///
-  /// **The cost of owning the sound: Focus and Do Not Disturb no longer
-  /// silence it.** When `content.sound` carries the audio, the system honours
-  /// those for us; playing it ourselves puts us outside that. The per-app
-  /// sound preference is checked here because it can be, but there is no
-  /// public API for Focus state, so under Focus the banner is suppressed and
-  /// the chime is not.
-  ///
-  /// That is a real regression against the platform path and it is accepted
-  /// only because the platform path produced no audio at all (see `chime`). If
-  /// `UNNotificationSound` is ever found to work, this should go back to it —
-  /// a sound the user's Focus mode cannot stop is worse behaved than one that
-  /// is occasionally missed.
+  /// Respect Oxbow's per-app sound setting. Direct NSSound playback bypasses Focus/Do Not
+  /// Disturb, whose state has no public API. Return to UNNotificationSound if its
+  /// silent-playback issue is resolved.
   private func playChimeIfAllowed() {
     guard let center else { return }
     Task { [weak self] in
@@ -288,10 +168,6 @@ final class JobNotifier: NSObject, UNUserNotificationCenterDelegate {
     let revealsWatching = userInfo[JobNotifier.revealWatchingKey] as? Bool ?? false
 
     await MainActor.run {
-      // Ahead of the file reveal, not beside it: the two are mutually
-      // exclusive by construction (a findings banner carries no files and a
-      // finished-job banner carries no reveal flag), and ordering them
-      // rather than nesting keeps that fact readable.
       if revealsWatching {
         NSApp.activate(ignoringOtherApps: true)
         WatchingReveal.shared.request()

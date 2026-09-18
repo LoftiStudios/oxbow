@@ -1,19 +1,10 @@
 import Foundation
 
-/// One archive from a channel's video list, as the app understands it.
-///
-/// **Not `Codable`, deliberately.** The inbox is derived on every poll from
-/// the feed minus the watch's seen-set (`docs/design/channel-watching.md` §4),
-/// so an archive is fetched and displayed but never written. A stored one
-/// would outlive its own expiry and show a row nothing can download.
+/// Transient channel-feed archive. Durable history is represented separately by VideoRecord.
 public struct ChannelArchive: Equatable, Sendable {
 
-  /// Twitch's `status`, kept as a closed set plus an escape hatch.
-  ///
-  /// `other` exists because the schema cannot be introspected
-  /// (`docs/twitch-channel-api.md` §7): a value we have never seen must
-  /// decode to *something* rather than fail the whole page, and it must not
-  /// be assumed safe. `isDownloadable` therefore allows only `recorded`.
+  /// Preserve unknown statuses without failing a page, but only recorded is safe for unattended
+  /// download.
   public enum Status: Equatable, Sendable {
     case recorded
     case recording
@@ -39,13 +30,8 @@ public struct ChannelArchive: Equatable, Sendable {
   /// "Just Chatting". Nil when the node carried no category at all.
   public let categoryName: String?
 
-  /// The category's box art.
-  ///
-  /// **Fetched alongside `thumbnailURL` rather than instead of it**, because
-  /// which of the two a row should show is a question about the row, not
-  /// about the request. Both arrive on the one query the sweep already
-  /// makes, so carrying both costs a slightly larger response and no extra
-  /// round trip — and switching the row between them is a change to a view.
+  /// Fetch category art alongside video thumbnails in the same query; presentation chooses
+  /// which to show.
   public let categoryArtURL: URL?
 
   public init(
@@ -63,11 +49,7 @@ public struct ChannelArchive: Equatable, Sendable {
     self.thumbnailURL = thumbnailURL
   }
 
-  /// Whether anything unattended may queue this.
-  ///
-  /// A live broadcast is listed as a video and is the *newest* item, so it is
-  /// exactly what a "has anything appeared?" poll finds first — and what it
-  /// would download is a partial stream whose chat is not final
-  /// (`docs/design/channel-watching.md` §5.2).
+  /// Only completed recordings are safe unattended; the newest feed item may still be
+  /// broadcasting.
   public var isDownloadable: Bool { status == .recorded }
 }

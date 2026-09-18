@@ -1,27 +1,11 @@
 import AppKit
 import SwiftUI
 
-/// The About window.
-///
-/// This is where three separate obligations land, which is why it exists as a
-/// window of our own rather than as the stock `orderFrontStandardAboutPanel`:
-///
-///   - the trademark disclaimer (`docs/architecture.md` §6),
-///   - attribution for TwitchDownloaderCLI (MIT) and FFmpeg (LGPL 2.1+),
-///     together with the LGPL's licence text and source record
-///     (`docs/ffmpeg.md` §6),
-///   - the helper's `1.56.5+<sha>` build string, which is what makes a
-///     shipped DMG traceable to an exact upstream commit
-///     (`docs/development.md`, "Upstream").
-///
-/// The standard panel offers one small credits scroller and nowhere to put a
-/// control, which is not enough room for the licence text to be genuinely
-/// reachable.
+/// Shows component versions, attribution, the trademark disclaimer, and bundled FFmpeg licence
+/// documents.
 struct AboutView: View {
   let info: AboutInfo
 
-  /// Non-nil while a licence file is on screen. `LicenceDocument` is
-  /// `Identifiable`, so `sheet(item:)` both presents and carries the content.
   @State private var licence: LicenceDocument?
 
   var body: some View {
@@ -46,7 +30,6 @@ struct AboutView: View {
       }
       Text(info.applicationName)
         .font(.title2.weight(.semibold))
-      // Selectable because this is the line a bug report has to quote.
       Text(info.versionLine)
         .font(.callout)
         .foregroundStyle(.secondary)
@@ -63,10 +46,6 @@ struct AboutView: View {
 
   private var details: some View {
     VStack(alignment: .leading, spacing: 16) {
-      // Nominative use: naming Twitch to say what the app works with is
-      // fine, implying a relationship is not. Kept as running text at the
-      // top rather than buried in the credits, because being seen is the
-      // entire point of it.
       Text(
         """
         Oxbow is not affiliated with, endorsed by, or sponsored by Twitch \
@@ -104,8 +83,7 @@ struct AboutView: View {
   private var footer: some View {
     HStack(spacing: 10) {
       Spacer(minLength: 0)
-      // Disabled rather than hidden: a build with no FFmpeg in it should say
-      // so by showing an unavailable control, not by quietly having fewer.
+      // Keep unavailable licence controls visible in builds without FFmpeg.
       Button("FFmpeg License") {
         licence = LicenceDocument(title: "FFmpeg License", url: info.ffmpegLicense)
       }
@@ -126,8 +104,7 @@ struct AboutView: View {
         .font(.caption.weight(.semibold))
         .foregroundStyle(.secondary)
         .frame(width: 56, alignment: .leading)
-      // The helper string is a 40-character sha and the whole reason it is
-      // here is that someone can copy it into an issue.
+      // Allow copying the full helper commit into bug reports.
       Text(value ?? "Not embedded")
         .font(.system(.caption, design: .monospaced))
         .foregroundStyle(value == nil ? .secondary : .primary)
@@ -138,10 +115,7 @@ struct AboutView: View {
   }
 }
 
-/// One attribution line. A `Link` when the URL parses, plain text when it does
-/// not — a malformed link is caught by `AboutInfoTests`, so this fallback is
-/// about never dropping the notice itself, which is the part MIT and the LGPL
-/// actually require.
+/// Preserve the attribution text even if its URL is invalid.
 private struct CreditRow: View {
   let credit: Credit
 
@@ -171,9 +145,7 @@ private struct LicenceSheet: View {
 
   var body: some View {
     VStack(spacing: 0) {
-      // A sheet has no title bar and `navigationTitle` does nothing to one on
-      // macOS, so without this header the two footer buttons both open an
-      // unlabelled panel of text.
+      // macOS sheets ignore `navigationTitle`, so provide an explicit header.
       HStack {
         Text(document.title)
           .font(.headline)
@@ -214,8 +186,7 @@ private struct LicenceSheet: View {
       resource: { URL(filePath: "/tmp/\($0)") }))
 }
 
-/// The UI-only build CONTRIBUTING.md promises: no .NET, no FFmpeg, so no
-/// component versions and nothing for the buttons to open.
+/// Preview a build without embedded helpers.
 #Preview("No helpers embedded") {
   AboutView(
     info: AboutInfo(

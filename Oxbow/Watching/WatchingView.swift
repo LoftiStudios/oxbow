@@ -2,72 +2,19 @@ import AppKit
 import SwiftUI
 import OxbowKit
 
-/// The Watching list itself: one section per channel, `ArchiveRow`s under the
-/// quiet ones, and a failure message standing in for rows under the broken
-/// ones.
-///
-/// **A failed channel must never look like a channel with nothing new.**
-/// `WatchingModel.Section.failure` exists precisely so those two states cannot
-/// be confused — a quiet channel is nil failure and an empty list; a broken
-/// one carries a message (design §7: a parse failure degrades to a visible
-/// error, never to something indistinguishable from "no new videos"). This
-/// view is where that distinction has to actually show up, so a failed
-/// section renders its message in the space rows would otherwise occupy
-/// rather than falling through to the same "nothing here" the quiet case
-/// gets.
-///
-/// **A quiet channel's header still appears, with nothing beneath it.** A
-/// list of several watched channels, most of them quiet, is the ordinary
-/// case, and a "no new videos" row under every one of them would be the loud
-/// thing on a screen that is trying to be quiet.
-///
-/// **A demoted channel must not look like a quiet one either — the same
-/// requirement applied to `AutoDownloadPolicy`'s decision instead of a fetch
-/// failure.** A watch that hit the free-space floor or lost its destination
-/// keeps polling and keeps listing what it finds; only its automatic half
-/// paused. `DemotionRow` says so beside those findings, and `ChannelCard`
-/// swaps its bolt for a paused one, so both the list and the card answer
-/// "why didn't this just download?" without anyone having to guess that
-/// nothing being queued and nothing being found are different problems.
+/// Channel-grouped inbox. Distinguish sweep failure, empty findings, and paused automatic
+/// downloading; demotion explanations accompany findings rather than replace them.
 struct WatchingView: View {
   let sections: [WatchingModel.Section]
-  /// Whether `WatchPoller` is mid-sweep right now.
-  ///
-  /// Sweeps are sequential, one request per channel with a 15-second
-  /// timeout (`WatchPoller.live`), so with several watches the gap between
-  /// launch and the first sweep landing can run to minutes. Without this,
-  /// `sections.isEmpty` cannot tell that window apart from having nothing
-  /// watched at all, and would spend it telling someone with several watches
-  /// that they have none.
+  /// Distinguish an in-flight sweep from an empty watch list before results arrive.
   let isSweeping: Bool
-  /// Which watches the last sweep demoted to notify-only, keyed by login —
-  /// `WatchPoller.demotions`, passed straight through the same way
-  /// `isSweeping` is: this view has no store of its own to compute it from,
-  /// and `WatchingModel.Section` (built from `watches.json` and a sweep's
-  /// findings) has nothing to say about *why* automatic downloading paused,
-  /// only that a channel is set to want it.
+  /// Per-sweep demotion reasons supplied by WatchPoller; stored automatic intent alone cannot
+  /// explain a pause.
   let demotions: [String: AutoDownloadPolicy.Reason]
 
-  /// The picked row, owned by `QueueView` so the inspector above can see it.
-  ///
-  /// **Hoisted, not published.** `docs/design/inspector.md` §3.2: every
-  /// existing use of `focusedSceneValue` here is a descendant publishing to
-  /// the menu bar, and a view reading what its own subtree published is a
-  /// different data flow.
+  /// Share selection with QueueView for the inspector.
   @Binding var selection: WatchingModel.Row.ID?
 
-  /// Where `ChannelAvatar` reads cached bytes from. Optional for the same
-  /// reason `watching` and `poller` are on `QueueView`: `OxbowApp` builds it
-  /// only once a support directory resolves, and never under
-  /// `xcodebuild test`. Nil renders the placeholder.
-  /// The row a person has picked, by archive id.
-  ///
-  /// **Selection is what makes this list reachable without a mouse.** Every
-  /// action here lived on a hover control or a right-click, so a keyboard or
-  /// VoiceOver user had no way to name a row at all, let alone act on one.
-  /// A single id rather than a set: nothing here acts on several rows at once,
-  /// and `QueueActions` already treats "exactly one selected" as the condition
-  /// for its own per-item commands.
   @Environment(\.openWindow) private var openWindow
 
   var imageStore: ImageStore? = nil
@@ -77,38 +24,16 @@ struct WatchingView: View {
   /// The row's secondary action — see `ArchiveRow.onAddWithOptions`.
   var onAddWithOptions: (ChannelArchive, WatchingModel.Section) -> Void = { _, _ in }
   let onIgnore: (ChannelArchive, WatchingModel.Section) -> Void
-  /// Opens the Add Channel window in editing mode, seeded from this
-  /// section's own watch — `docs/design/channel-watching.md` §3.2's "offer
-  /// an Edit". Reached from the same context menu as Stop Watching, since
-  /// both are things a section header offers about its own channel and
-  /// nothing else on screen does.
+  /// Open the shared Add Channel window with this watch's frozen settings.
   let onEdit: (WatchingModel.Section) -> Void
-  /// Stops watching the channel a section's header menu named. No
-  /// confirmation on this side either — see `ChannelCard`'s own doc
-  /// comment for why none is offered.
+  /// Stop the selected watch without deleting delivered files or requesting confirmation.
   let onStopWatching: (WatchingModel.Section) -> Void
-  /// Set when a Stop Watching refused rather than removing anything —
-  /// `WatchingModel.stopWatchingFailure`'s own counterpart on this side.
-  ///
-  /// The whole point of refusing rather than silently overwriting the watch
-  /// list (see that property's own doc comment) is to tell the user why; a
-  /// refusal nothing displays is indistinguishable from Stop Watching simply
-  /// not working. `AddChannelModel.addFailure` gets the identical visible
-  /// treatment in its own window, for the identical reason.
+  /// Display the model's Stop Watching refusal.
   let stopWatchingFailure: String?
-  /// Set when Ignore or Add could not persist because the watch list could
-  /// not be read — `WatchingModel.markSeenFailure`'s own counterpart on this
-  /// side, for the identical reason `stopWatchingFailure` above gets one:
-  /// `dismissed` already hides the row the moment either button is pressed,
-  /// so without this a read failure made the row vanish with nothing on
-  /// screen to say why.
+  /// Display seen-state persistence failures.
   let markSeenFailure: String?
 
-  /// Why the last Add did not reach the queue — `WatchingModel
-  /// .submissionFailure`'s counterpart. Its own banner rather than folded
-  /// into `markSeenFailure`: that one means "the row is hidden but the file
-  /// did not record it", this one means the opposite — nothing was hidden
-  /// and nothing was queued.
+  /// Display enqueue refusal separately from seen-state persistence failure.
   var submissionFailure: String? = nil
 
   var body: some View {
@@ -126,9 +51,7 @@ struct WatchingView: View {
         Divider()
       }
       content
-        // Return opens the selection, the keyboard's half of double-click.
-        // Unhandled when nothing is selected or the row has no file, so the
-        // key keeps its ordinary meaning everywhere else in the window.
+        // Return opens selected files; leave it unhandled when no file is available.
         .onKeyPress(.return) {
           guard let url = selectedRow?.state.openableFile else { return .ignored }
           NSWorkspace.shared.open(url)
@@ -141,21 +64,13 @@ struct WatchingView: View {
   private var content: some View {
     if sections.isEmpty {
       if isSweeping {
-        // Distinct from the genuinely-empty case below, and deliberately not
-        // claiming anything about what it will find: a sweep that turns up
-        // nothing lands right back here with `isSweeping` false, which is
-        // exactly the "No channels watched yet" state — still honest, since
-        // nothing here can create a watch from the UI yet either.
+        // Keep loading distinct from no watched channels.
         ContentUnavailableView {
           Label("Checking your channels", systemImage: "eye")
         } description: {
           Text("Looking for new videos. This can take a while with several channels.")
         }
       } else {
-        // Not "loading" — there is a real difference between nothing to check
-        // in the first place and a sweep still in flight, and until the next
-        // plan adds a way to watch a channel from here, this *is* the nothing-
-        // to-check case for everyone who opens it.
         ContentUnavailableView {
           Label("No channels watched yet", systemImage: "eye")
         }
@@ -167,43 +82,14 @@ struct WatchingView: View {
             if let failure = section.failure {
               FailureRow(message: failure)
             } else {
-              // Demotion never withholds a finding — `AutoDownloadPolicy
-              // .decide` only withholds automatic *submission* — so a
-              // demoted channel's rows below are the exact `ArchiveRow`s an
-              // ordinary, non-automatic channel would show. This row only
-              // explains why they were not queued unattended; it never
-              // replaces them, which is what tells a demoted channel apart
-              // from a failed one (`FailureRow` above stands in for its rows,
-              // this stands alongside them).
-              // A destination-unreachable demotion is suppressed when the
-              // card is already naming that disconnection: the two say one
-              // fact in two vocabularies, one by volume and one by path, and
-              // the card's notice carries the half this row cannot — whether
-              // downloads that already happened are still there. Every other
-              // reason keeps its row, because none of them is announced
-              // anywhere else.
+              // Demotion pauses only automatic submission; keep findings visible. Suppress
+              // destination demotion text when the card already explains that disconnection.
               if let reason = demotions[section.login],
                  !(reason.isDestinationUnreachable && section.disconnectedDestination != nil)
               {
                 DemotionRow(reason: reason)
               }
-              // **Only when the channel has nothing at all**, which is not
-              // the same as having nothing *new*. This view's own doc
-              // comment argues against a "no new videos" line under every
-              // quiet channel, and that still holds: a channel whose rows
-              // are downloads and queued items is not quiet, it is working.
-              // What changed is what an empty section means. It used to be
-              // the ordinary daily state; now that a download is a row, an
-              // empty one means there is nothing here to have and nothing
-              // to get — rare, and alarming enough that saying nothing
-              // reads as breakage rather than calm.
-              //
-              // Deliberately vague about *why*. Until a history store can
-              // tell an ignored archive from a channel that has genuinely
-              // never published one, claiming either would be a guess —
-              // `djjakerudh` is `totalCount: 0` because a DJ's licensing
-              // keeps him live-only, and that is not something this row
-              // could know.
+              // Explain an empty section without inferring why it has no visible archives.
               if section.rows.isEmpty {
                 EmptyChannelRow()
               }
@@ -218,10 +104,7 @@ struct WatchingView: View {
                   onShowInfo: {
                     openWindow(id: OxbowApp.infoWindowID, value: InfoTarget.video(row.archive.id))
                   })
-                  // Double-click opens, the way it does in Finder and Music.
-                  // `simultaneousGesture` rather than `onTapGesture`, which
-                  // would swallow the single click the list needs to select
-                  // with — the two have to coexist on one row.
+                  // Simultaneous double-click preserves List single-click selection.
                   .simultaneousGesture(TapGesture(count: 2).onEnded { open(row) })
               }
             }
@@ -235,34 +118,18 @@ struct WatchingView: View {
           }
         }
       }
-      // Matches `QueueView`'s list: rows here vary in height too — a failed
-      // section's message wraps to however many lines it needs — and banding
-      // is what keeps one channel's section visually separate from the next.
-      // Rules and space rather than stripes, the way iTunes separates
-      // tracks. Zebra striping earns its keep on a dense grid where the eye
-      // has to track across columns; these rows are tall, have one column of
-      // text, and a stripe under every other one only adds noise.
+      // Separate rows with rules rather than alternating stripes.
       .listRowSeparator(.visible)
     }
   }
 
-  /// The selected row, looked up across every section.
-  ///
-  /// Archive ids are unique across all of Twitch, so one id cannot name a row
-  /// in two channels and this needs no section to disambiguate.
+  /// Archive ids are globally unique, so selection needs no channel key.
   private var selectedRow: WatchingModel.Row? {
     guard let selection else { return nil }
     return sections.lazy.flatMap(\.rows).first { $0.id == selection }
   }
 
-  /// Opens the row's file in whatever plays it.
-  ///
-  /// **Only a file actually on disk opens.** `unverifiable` means the volume
-  /// could not be reached, so there is nothing to hand to a player, and every
-  /// other state has no file at all. Opening is deliberately the *only* thing
-  /// this gesture does: `docs/design/video-record.md` §4.3 rules out letting a
-  /// double-click start a download, because a gesture you can trigger by
-  /// clicking twice must never commit somebody to twenty gigabytes.
+  /// Open existing downloaded files only. Double-click must not initiate a download.
   private func open(_ row: WatchingModel.Row) {
     guard let url = row.state.openableFile else { return }
     NSWorkspace.shared.open(url)
@@ -270,13 +137,7 @@ struct WatchingView: View {
 
 }
 
-/// A failed channel's stand-in for its rows.
-///
-/// Deliberately not `QueueBanner`: that one sits above a whole window and
-/// argues for itself with a headline. This sits inside one `Section` among
-/// several, so it has to read at a glance as "this channel, not the others"
-/// without shouting over quiet ones sitting right next to it in the same
-/// list.
+/// Show fetch errors within the affected channel's section.
 private struct FailureRow: View {
   let message: String
 
@@ -284,8 +145,7 @@ private struct FailureRow: View {
     Label {
       Text(message)
         .foregroundStyle(.secondary)
-        // The messages here are `Error.localizedDescription`, not something
-        // this view controls the length of, so they wrap rather than clip.
+        // Wrap arbitrary localized error messages.
         .fixedSize(horizontal: false, vertical: true)
     } icon: {
       Image(systemName: "exclamationmark.triangle.fill")
@@ -296,19 +156,8 @@ private struct FailureRow: View {
   }
 }
 
-/// A demoted channel's explanation, shown alongside its ordinary findings —
-/// never instead of them (see the call site's own comment).
-///
-/// **A different icon and message from `FailureRow`, deliberately — the same
-/// distinction §7 of `docs/design/channel-watching.md` draws for a failed
-/// sweep, applied here a second time.** A triangle there means the sweep
-/// itself broke and there is nothing underneath it to look at, which is
-/// exactly the shape a "no new videos" row must never be confused with. A
-/// demotion is a different situation again: the sweep succeeded, its
-/// findings are listed right below, and only the unattended half paused. The
-/// paused icon reused here for that reason also appears on the card's own
-/// header (`ChannelCard.demotionReason`) — one glance at either place
-/// answers the same question the same way.
+/// Explain paused automatic submission beside findings, using the card's paused icon rather
+/// than the fetch-failure triangle.
 private struct DemotionRow: View {
   let reason: AutoDownloadPolicy.Reason
 
@@ -326,11 +175,7 @@ private struct DemotionRow: View {
   }
 }
 
-/// Stands where a channel's rows would be when it has none.
-///
-/// Quiet on purpose — the same secondary weight as `DemotionRow`, which is
-/// also a line explaining an absence rather than offering an action. It says
-/// what is true and stops: that there is nothing to show, not why.
+/// Quiet empty-channel message without guessing a cause.
 private struct EmptyChannelRow: View {
   var body: some View {
     Label {
@@ -379,9 +224,6 @@ private struct EmptyChannelRow: View {
   .frame(width: 480, height: 420)
 }
 
-// New: a refused Stop Watching has to say why, the same visible treatment
-// `AddChannelModel.addFailure` gets in its own window — see
-// `WatchingModel.stopWatchingFailure`'s own doc comment.
 #Preview("Stop Watching failed") {
   WatchingView(
     sections: [
@@ -398,10 +240,6 @@ private struct EmptyChannelRow: View {
   .frame(width: 480, height: 420)
 }
 
-// New: Ignore and Add both hide their row through `dismissed` before ever
-// touching the store, so a read failure used to make the row vanish with
-// nothing on screen to say why — `WatchingModel.markSeenFailure`'s own doc
-// comment.
 #Preview("Ignore or Add failed") {
   WatchingView(
     sections: [
@@ -438,10 +276,7 @@ private struct EmptyChannelRow: View {
   .frame(width: 480, height: 420)
 }
 
-// New for Task 2: a watched channel that has never turned up anything —
-// either the last sweep found nothing, or it hasn't been polled yet — must
-// still show its own section with its settings, not a bare header or
-// nothing at all (`docs/design/channel-watching.md` §3.2's whole premise).
+// A watched channel without findings still shows its settings.
 #Preview("Channel with no findings") {
   WatchingView(
     sections: [
@@ -457,8 +292,6 @@ private struct EmptyChannelRow: View {
   .frame(width: 480, height: 420)
 }
 
-// Automatic downloading is off by default and consequential (§2, §11.1) — a
-// channel that has it on has to be visibly different from one that does not.
 #Preview("One channel downloads automatically") {
   WatchingView(
     sections: [
@@ -478,9 +311,7 @@ private struct EmptyChannelRow: View {
   .frame(width: 480, height: 420)
 }
 
-// New for Task 5: a watch demoted for the disk-floor reason still shows its
-// findings, unlike a failed sweep — `DemotionRow` sits above them rather than
-// replacing them, and the header's bolt turns orange rather than vanishing.
+// Verify demotion preserves findings and changes the automatic indicator.
 #Preview("Channel demoted, below floor") {
   WatchingView(
     sections: [
@@ -502,9 +333,6 @@ private struct EmptyChannelRow: View {
   .frame(width: 480, height: 420)
 }
 
-// New for Task 5: the other of the two demotion causes — an unreachable
-// destination takes precedence over the floor when both apply
-// (`AutoDownloadPolicy.decide`), so this is its own reason, its own sentence.
 #Preview("Channel demoted, destination unreachable") {
   WatchingView(
     sections: [
@@ -531,9 +359,7 @@ private struct EmptyChannelRow: View {
 }
 
 #Preview("Checking, first sweep") {
-  // The window between launch and the first sweep landing: `sections` is
-  // still empty, but this must not read as "no channels watched" — see
-  // `isSweeping`'s doc above.
+  // Before the first sweep lands, do not imply no channels are watched.
   WatchingView(
     sections: [], isSweeping: true, demotions: [:], selection: .constant(nil),
     onAdd: { _, _ in }, onIgnore: { _, _ in }, onEdit: { _ in }, onStopWatching: { _ in },
@@ -541,15 +367,8 @@ private struct EmptyChannelRow: View {
     .frame(width: 480, height: 420)
 }
 
-/// Fixtures for the previews above.
-///
-/// Not `ArchiveRowPreviewData`: those pin `publishedAt` against a fixed `now`
-/// that `ArchiveRow`'s own previews pass back in, so the age reads sensibly.
-/// This view never threads a `now` down to the rows it builds — a real
-/// `WatchingView` shouldn't either, since the age is supposed to track
-/// whatever "today" actually is — so these fixtures anchor `publishedAt` to
-/// the real clock instead, or the fixed fixture's age would drift by a day
-/// for every day this file goes unread.
+/// Anchor dates to the real clock because WatchingView does not inject now; ArchiveRow's
+/// fixed-date fixtures would drift here.
 private enum WatchingViewPreviewData {
   static let normal = ChannelArchive(
     id: "1", title: "Indie horror night",

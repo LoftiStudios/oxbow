@@ -1,32 +1,8 @@
 #!/usr/bin/env swift
-//
-// Print the CGWindowID of an on-screen window, for `screencapture -l`.
-//
-// `screencapture` has exactly one non-interactive way to capture a single
-// window — `-l<windowid>` — and no way to name that window. Everything else it
-// offers is either interactive (`-i`, `-w`) or a screen rectangle (`-R`),
-// which loses the rounded corners and picks up whatever is behind the window.
-// So something has to turn "that app's window" into a number.
-//
-// Usage:  window-id.swift <pid> [title-substring]
-// Prints the id to stdout, or exits 1 with a diagnostic listing what it did see.
-//
-// Matching is by PID, not by application name, and that is load-bearing. The
-// screenshot run launches a second Oxbow alongside whatever the developer
-// already has open, because `Contents/MacOS/Oxbow` bypasses LaunchServices and
-// genuinely starts a new process. Matching on the name "Oxbow" found the
-// developer's real window first and captured a queue full of real streamers —
-// silently, since the image looked perfectly correct. A PID cannot be
-// ambiguous that way.
-//
-// Screen Recording permission: CGWindowListCopyWindowInfo omits kCGWindowName
-// for other processes unless the calling binary holds it. `screencapture`
-// needs the same permission, so a run that can capture can generally also read
-// titles — but the two are granted to different binaries (Terminal vs. this
-// script's interpreter), so they can disagree. When the title is missing this
-// falls back to the largest normal-layer window owned by the app, which for
-// Oxbow is the queue window and is right often enough to be worth having
-// rather than failing outright.
+// Prints a window ID for `screencapture -l`. Usage: `window-id.swift <pid> [title-substring]`;
+// exits 1 with diagnostics if absent. Match PID, not app name, to avoid capturing the user's
+// separate Oxbow instance. Missing Screen Recording permission can hide titles; fall back to
+// the process's largest normal-layer window.
 
 import CoreGraphics
 import Foundation
@@ -83,13 +59,8 @@ guard !candidates.isEmpty else {
 }
 
 if let wantedTitle, !wantedTitle.isEmpty {
-  // Exact before substring, and it is load-bearing. A window is briefly titled
-  // with the application name before its content applies its own title, so
-  // while a second window is settling there are two whose title contains
-  // "Oxbow" -- and a substring match would happily return the wrong one. Which
-  // it did, back when this run also captured Job Info: the queue capture came
-  // back 460x620, Job Info's default size, looking like a perfectly ordinary
-  // screenshot.
+  // Prefer exact titles: a newly opening window may briefly share the app name and otherwise
+  // win a substring match.
   if let exact = candidates.first(where: { $0.title == wantedTitle }) {
     print(exact.id)
     exit(0)

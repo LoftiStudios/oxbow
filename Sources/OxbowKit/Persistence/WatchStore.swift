@@ -1,10 +1,6 @@
 import Foundation
 
-/// Reads and writes the watch list.
-///
-/// Structurally identical to `QueueStore`, and deliberately so: same
-/// envelope, same version probe, same atomic replace, same set-aside
-/// recovery.
+/// Atomic, versioned watch-list persistence with set-aside recovery, matching `QueueStore`.
 public struct WatchStore: Sendable {
   private struct Envelope: Codable {
     static let currentVersion = 1
@@ -12,20 +8,8 @@ public struct WatchStore: Sendable {
     var watches: [Watch]
   }
 
-  /// Just enough of the envelope to read the schema version.
-  ///
-  /// The version is read on its own so the check does not depend on
-  /// `watches` being decodable at all — a v2 file that changes `Watch`'s
-  /// shape, precisely what the version field exists to signal, is read as
-  /// "wrong version" rather than as whatever `Envelope`'s decode failure
-  /// would otherwise look like. It does **not** currently change what
-  /// happens on that file: with today's catch-all `catch { setAside() }`
-  /// below, decoding the full envelope first and probing first both land in
-  /// the identical recovery for every input this guards against. The probe
-  /// earns its keep the day that recovery is narrowed to something
-  /// version-aware — at that point the ordering stops being cosmetic and
-  /// starts being the only thing telling "wrong version" apart from
-  /// "corrupt".
+  /// Read the version before the body so future schema changes can be identified independently
+  /// of decoding. Current catch-all recovery treats wrong versions and corruption alike.
   private struct VersionProbe: Decodable {
     var version: Int
   }
@@ -48,10 +32,8 @@ public struct WatchStore: Sendable {
     }
   }
 
-  /// Moves an unreadable file aside and starts empty. Non-throwing by
-  /// design: this is the recovery path, so it must not be able to fail
-  /// launch itself. If the move cannot be done the file is removed instead —
-  /// leaving it would reproduce the same failure on every launch.
+  /// Sets unreadable state aside and starts empty without blocking launch. Attempts removal if
+  /// the backup move fails.
   private func setAside() -> [Watch] {
     let backup = fileURL.appendingPathExtension("bak")
     try? FileManager.default.removeItem(at: backup)
@@ -83,8 +65,7 @@ public struct WatchStore: Sendable {
         try FileManager.default.moveItem(at: scratch, to: fileURL)
       }
     } catch {
-      // Never leave the scratch file behind: this is the app's persistent
-      // data directory, not a temp dir, so a leak accumulates forever.
+      // Always remove scratch files from persistent storage.
       try? FileManager.default.removeItem(at: scratch)
       throw error
     }

@@ -3,10 +3,8 @@ import Testing
 import OxbowKit
 @testable import Oxbow
 
-/// `docs/design/channel-watching.md` §6.3: a failed automatic download
-/// returns to the inbox by un-marking its `mediaIdentifier` from every
-/// watch's `seen` set; a cancelled one does not, because a cancellation is a
-/// person saying no rather than the app failing to manage something.
+/// Failed downloads return to the inbox; cancellation records a deliberate decision and stays
+/// handled.
 @MainActor
 @Suite("Auto-download observer")
 struct AutoDownloadObserverTests {
@@ -57,10 +55,7 @@ struct AutoDownloadObserverTests {
     #expect(watches.first?.seen.contains("1") == false)
   }
 
-  /// The broadening the doc comment has to justify: an archive a person
-  /// Added manually from the inbox is in `seen` too, and this un-marks it
-  /// on failure exactly the same way — there is no persisted record of
-  /// which submissions were automatic to distinguish the two.
+  /// Manual inbox submissions also return on failure; submission origin is not persisted.
   @Test func aManuallyAddedArchiveIsAlsoReturnedOnFailure() throws {
     let store = temporaryStore()
     try store.save([watch("ninja", seen: ["1"])])
@@ -84,8 +79,7 @@ struct AutoDownloadObserverTests {
 
   // MARK: - Cancelled is not a failure
 
-  /// §6.3: re-offering something a person just cancelled would be the app
-  /// arguing with them. Only `.failed` returns to the inbox.
+  /// Only failure returns an archive to the inbox; cancellation is deliberate.
   @Test func aCancelledJobLeavesItsArchiveMarkedSeen() throws {
     let store = temporaryStore()
     try store.save([watch("ninja", seen: ["1"])])
@@ -122,12 +116,8 @@ struct AutoDownloadObserverTests {
 
   // MARK: - Fires once per job
 
-  /// The hazard requirement 4 names directly: a job sits `.failed` in every
-  /// snapshot until it is removed, so this must act on the *transition*
-  /// into failure, not on every snapshot that carries one. Proven here by
-  /// re-marking the archive seen between two `apply` calls that both see
-  /// the same already-failed job — if this fired every snapshot, the second
-  /// call would un-mark it right back off.
+  /// Re-mark between identical failed snapshots to prove only the transition triggers
+  /// unmarking.
   @Test func aFailedJobIsOnlyActedOnOnce() throws {
     let store = temporaryStore()
     try store.save([watch("ninja", seen: ["1"])])
@@ -148,13 +138,8 @@ struct AutoDownloadObserverTests {
     #expect(watches.first?.seen.contains("1") == true)
   }
 
-  /// A job already `.failed` the very first time this observer ever sees it
-  /// — the shape a crash-reconciled launch takes, per `QueueHost`'s own
-  /// comment on why status observers attach before `start()` — must still
-  /// be acted on. Unlike `NotificationDecision`'s silent first-snapshot
-  /// seeding (where a missed notification is merely stale), silently
-  /// skipping this one would permanently strand the archive: nothing else
-  /// ever asks about it again. See the type's own doc comment.
+  /// Act on failures in the first snapshot too, including crash-reconciled jobs that would
+  /// otherwise remain hidden.
   @Test func aJobAlreadyFailedOnTheFirstSnapshotIsStillActedOn() throws {
     let store = temporaryStore()
     try store.save([watch("ninja", seen: ["1"])])
@@ -166,9 +151,6 @@ struct AutoDownloadObserverTests {
     #expect(watches.first?.seen.contains("1") == false)
   }
 
-  /// A retried job that fails again crosses the failed transition a second
-  /// time and must be un-marked again — that is a new failure, not a
-  /// repeat of the first.
   @Test func aRetriedJobFailingAgainIsActedOnAgain() throws {
     let store = temporaryStore()
     try store.save([watch("ninja", seen: ["1"])])
@@ -199,19 +181,13 @@ struct AutoDownloadObserverTests {
 
     observer.apply([failedJob])
 
-    // Nothing about the observer's contract touches `Job` at all — it only
-    // ever reads it. Asserting the input is unchanged pins that this stays
-    // a queue-side no-op, per §6.3: "adds a way to notice, not a new policy
-    // about disk."
+    // The observer must not mutate queue jobs.
     #expect(failedJob.status == .failed)
   }
 
   // MARK: - A superseded failure is not re-surfaced
 
-  /// Two jobs for the same media both fail, neither ever succeeded. This is
-  /// not a superseded failure — there is nothing that answered it — so the
-  /// archive still comes back, exactly once (`forget` un-marking twice is
-  /// harmless, but nothing here should need that to stay true).
+  /// Two unsuperseded failures for one video return it once.
   @Test func twoFailedJobsForTheSameMediaStillUnmarksOnce() throws {
     let store = temporaryStore()
     try store.save([watch("ninja", seen: ["1"])])
@@ -227,10 +203,7 @@ struct AutoDownloadObserverTests {
     #expect(watches.first?.seen.contains("1") == false)
   }
 
-  /// The relaunch hazard from the observer's own doc comment: a `.done`
-  /// job for the same media in the same snapshot means a retry already
-  /// succeeded, so the failure has already been answered and un-marking
-  /// would put an archive back in the inbox that is already on disk.
+  /// A completed retry in the same snapshot supersedes the older failure.
   @Test func aFailedJobAlongsideADoneJobForTheSameMediaDoesNotUnmark() throws {
     let store = temporaryStore()
     try store.save([watch("ninja", seen: ["1"])])
@@ -286,12 +259,8 @@ struct AutoDownloadObserverTests {
     #expect(watches.first?.seen.contains("1") == false)
   }
 
-  /// The relaunch sequence from the observer's own doc comment: job A fails
-  /// and is left `.failed`, deliberately untouched; a person re-Adds the
-  /// archive, whose job B succeeds; the app relaunches before A is
-  /// dismissed. The new observer's baseline is empty, so A reads as freshly
-  /// failed on the first snapshot — but B's `.done` status in that same
-  /// snapshot must stop the archive being un-marked a second time.
+  /// After relaunch, a successful replacement job must prevent an older failed job from
+  /// returning the archive to the inbox.
   @Test func aRelaunchDoesNotResurfaceAFailureAlreadyAnsweredByASuccessfulRetry() throws {
     let store = temporaryStore()
     try store.save([watch("ninja", seen: ["1"])])
@@ -306,9 +275,7 @@ struct AutoDownloadObserverTests {
     current[0] = current[0].marking(["1"])
     try store.save(current)
 
-    // B succeeds. A is still sitting `.failed`, untouched (requirement 6).
-    // The app quits here and relaunches with a fresh observer before A is
-    // dismissed.
+    // Relaunch with A still failed and B complete.
     let relaunchedObserver = AutoDownloadObserver(store: store)
     relaunchedObserver.apply([
       job(alpha, [step(.failed(failure))]),
@@ -320,10 +287,7 @@ struct AutoDownloadObserverTests {
 
   // MARK: - Read-before-write
 
-  /// Matches `AddChannelModel.add()`, `WatchingModel.markSeen` and
-  /// `WatchPoller.markSubmitted`: refuse rather than overwrite when the
-  /// store cannot be read, rather than writing back a stale copy loaded
-  /// earlier.
+  /// Refuse unreadable state, as all other watch-list writers do.
   @Test func anUnreadableStoreIsRefusedRatherThanOverwritten() throws {
     let file = URL.temporaryDirectory
       .appending(path: "auto-download-\(UUID().uuidString)")
@@ -332,9 +296,6 @@ struct AutoDownloadObserverTests {
     let store = WatchStore(fileURL: file)
     let observer = AutoDownloadObserver(store: store)
 
-    // Must not crash, and must not attempt to write a fabricated watch list
-    // over whatever is actually on disk (unreadable here, but this is the
-    // same refusal every other writer of this file makes).
     observer.apply([job(alpha, [step(.failed(failure))])])
   }
 }

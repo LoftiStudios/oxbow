@@ -24,9 +24,7 @@ struct VolumeSpaceTests {
       : URL(filePath: "/")
   }
 
-  /// One volume: the workspace's peak is the whole answer, because a
-  /// same-volume `moveItem` is a rename and the delivered file costs nothing
-  /// on top of the total that already contains it.
+  /// Same-volume delivery is a rename, so workspace peak already includes its cost.
   @Test func oneVolumeIsCheckedAgainstTheWorkspaceTotal() throws {
     let space = probe(["/": 30_000_000_000])
     let found = try #require(space.shortfall(
@@ -40,9 +38,7 @@ struct VolumeSpaceTests {
     #expect(found.volumeName == "Macintosh HD")
   }
 
-  /// Enough room is `nil`, not a zero-valued shortfall: the callers render
-  /// presence, and an always-present value would make both of them ask a
-  /// second question to find out whether the first one meant anything.
+  /// No shortfall is nil, not a zero-valued warning.
   @Test func enoughRoomIsNoShortfall() {
     let space = probe(["/": 200_000_000_000])
     #expect(space.shortfall(
@@ -52,9 +48,7 @@ struct VolumeSpaceTests {
       destination: internalDestination) == nil)
   }
 
-  /// Across volumes the peaks are independent: the workspace carries the
-  /// transient set and the destination carries one delivered file. Summing
-  /// them would produce a number describing neither volume.
+  /// Check workspace peak and destination output independently across volumes.
   @Test func acrossVolumesTheDestinationIsCheckedAgainstTheDeliveredFileAlone() throws {
     let space = probe(["/": 200_000_000_000, "/Volumes/Scratch": 5_000_000_000])
     let found = try #require(space.shortfall(
@@ -80,10 +74,7 @@ struct VolumeSpaceTests {
     #expect(found.volumeName == "Macintosh HD")
   }
 
-  /// Both volumes short reports the workspace, deterministically. Which one is
-  /// named barely matters — the user has to clear one of them either way — but
-  /// a warning that names a different volume on each evaluation would read as
-  /// a bug.
+  /// When both are short, report workspace deterministically.
   @Test func bothVolumesShortReportsTheWorkspaceDeterministically() throws {
     let space = probe(["/": 1_000_000, "/Volumes/Scratch": 1_000_000])
     let found = try #require(space.shortfall(
@@ -95,12 +86,7 @@ struct VolumeSpaceTests {
     #expect(found.volumeName == "Macintosh HD")
   }
 
-  /// An unreadable volume produces no warning rather than a false one.
-  ///
-  /// This is the load-bearing case for trust. A warning invented from a failed
-  /// probe is one the user cannot act on, and it would fire on exactly the
-  /// unusual setups — network shares, odd mounts — where it is least likely to
-  /// be right.
+  /// Failed probes produce no invented shortfall.
   @Test func anUnreadableVolumeProducesNoWarning() {
     let space = VolumeSpace(
       availableBytes: { _ in nil },
@@ -114,9 +100,7 @@ struct VolumeSpaceTests {
       destination: externalDestination) == nil)
   }
 
-  /// A readable mount point whose capacity will not answer is the same case,
-  /// and is reachable separately: `volumeRoot` succeeding tells you nothing
-  /// about whether `availableBytes` will.
+  /// A readable mount root does not guarantee readable capacity.
   @Test func aVolumeWhoseCapacityIsUnreadableProducesNoWarning() {
     let space = VolumeSpace(
       availableBytes: { _ in nil },
@@ -141,10 +125,7 @@ struct VolumeSpaceTests {
     #expect(VolumeSpace.live.volumeName(temporary) != nil)
   }
 
-  /// The workspace directory does not exist on a first launch, and the intake
-  /// asks about it anyway. `resourceValues` on a missing path throws rather
-  /// than answering about the volume it would live on, so the live probe has
-  /// to walk up to something real first.
+  /// First-launch workspace may not exist; probe an existing ancestor.
   @Test func theLiveProbeAnswersForAPathThatDoesNotExistYet() throws {
     let missing = URL(filePath: NSTemporaryDirectory())
       .appending(path: "oxbow-\(UUID().uuidString)/nested/deeper")

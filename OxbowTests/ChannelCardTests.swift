@@ -3,11 +3,7 @@ import Testing
 import OxbowKit
 @testable import Oxbow
 
-/// `ChannelCard.disconnectedVolume(in:)` — the pure function behind the
-/// channel-level notice `docs/design/channel-history.md` §4.2 asks for.
-/// Pulled out to a `static` function (the same move `NotificationDecision`
-/// and `ArchiveRowState` already make) so this can be exercised without
-/// building a view.
+/// Tests the channel-level disconnected-volume notice without constructing a view.
 @Suite("Channel card disconnected volume")
 struct ChannelCardTests {
 
@@ -34,9 +30,7 @@ struct ChannelCardTests {
     #expect(ChannelCard.disconnectedVolume(in: rows) == "Helios")
   }
 
-  /// Two different volumes is not a state a person should ever actually see —
-  /// one channel has one destination — but the function must not paper over
-  /// it with a summary it never computed. It names the first and stops.
+  /// If multiple volumes appear, report the first rather than invent a combined result.
   @Test func twoDifferentVolumesYieldsTheFirstAndInventsNoSummary() {
     let rows = [
       row("1", .unverifiable(volumeName: "Helios")),

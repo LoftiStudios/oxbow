@@ -41,18 +41,14 @@ struct ProgressDisplayTests {
   }
 
   @Test func aZeroRemainingTimeIsNotShown() {
-    // The CLI emits 0h0m0s before it has an estimate. Rendering that as
-    // "0s remaining" would claim the step is about to finish when it has
-    // barely started.
+    // Suppress the CLI's initial zero ETA; it does not mean completion is imminent.
     let display = ProgressDisplay(progress: StepProgress(phase: "Rendering Video", fraction: 0.0, remaining: .seconds(0)))
 
     #expect(display.remaining == nil)
   }
 
   @Test func aSubSecondRemainingTimeIsNotShown() {
-    // A positive duration that truncates to zero whole seconds (e.g. half a
-    // second) must be suppressed the same way an exact zero is — otherwise
-    // it renders the same misleading "0s remaining".
+    // Also suppress positive durations that truncate to zero seconds.
     let display = ProgressDisplay(progress: StepProgress(phase: "Rendering Video", fraction: 0.0, remaining: .milliseconds(500)))
 
     #expect(display.remaining == nil)
@@ -81,10 +77,7 @@ struct ProgressDisplayTests {
 
   // MARK: - Projected size
 
-  /// The composite's size is unknowable before it runs, so the row carries a
-  /// projection while it is running. Formatted the same way the intake's own
-  /// estimate is, and hedged with "about" for the same reason: it is a
-  /// projection, not a measurement.
+  /// Format projected output as approximate, consistent with intake estimates.
   @Test func showsWhereTheOutputIsHeading() {
     let d = ProgressDisplay(progress: StepProgress(fraction: 0.25, bytesWritten: 1_000_000_000))
     let size = try! #require(d.projectedSize)

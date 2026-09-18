@@ -39,9 +39,7 @@ struct QueueStoreTests {
     #expect(FileManager.default.fileExists(atPath: backup.path))
   }
 
-  /// A corrupt file must never be able to block launch. Without recovery here
-  /// `load()` throws, `QueueEngine.start()` rethrows, the app cannot start,
-  /// the bad file is never set aside, and it fails identically forever.
+  /// Corrupt persistence must recover rather than block every later launch.
   @Test func setsAsideACorruptFile() throws {
     let url = temporaryFile()
     let backup = url.appendingPathExtension("bak")
@@ -56,10 +54,7 @@ struct QueueStoreTests {
     #expect(FileManager.default.fileExists(atPath: backup.path))
   }
 
-  /// The case the version field exists for, and the one the gate could not
-  /// see: a future schema that changes `Job`'s shape. Decoding the payload
-  /// before reading the version threw inside `[Job]` and never reached the
-  /// check.
+  /// Test a future version whose job schema also changed.
   @Test func setsAsideAFutureVersionWithAnIncompatibleJobShape() throws {
     let url = temporaryFile()
     let backup = url.appendingPathExtension("bak")

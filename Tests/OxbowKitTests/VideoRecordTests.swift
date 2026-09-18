@@ -35,8 +35,7 @@ struct VideoRecordTests {
       payloadHelperVersion: "1.56.5")
   }
 
-  /// The rule the whole stage turns on: neither source is complete, and a
-  /// later write must not erase what an earlier one learned.
+  /// Merge partial facts without erasing previously learned fields.
   @Test("merging keeps what each side knows and erases nothing")
   func mergeIsAdditive() {
     let merged = swept.merging(submitted)
@@ -104,7 +103,7 @@ struct VideoRecordTests {
     #expect(try decoder.decode(VideoRecord.self, from: data) == submitted)
   }
 
-  /// The point of keeping any of this: an expired video still renders.
+  /// Retained metadata can render an expired video.
   @Test("a record can still describe a video Twitch has dropped")
   func rememberedRendersAnExpiredVideo() {
     let info = submitted.remembered()
@@ -115,28 +114,19 @@ struct VideoRecordTests {
     #expect(info?.qualities.first?.name == "1080p60")
   }
 
-  /// A row migrated from the old bare-id seen-set has no title and never
-  /// will, so there is nothing to render and it says so rather than
-  /// producing a card named after nobody.
+  /// Bare-ID records without titles cannot produce a card.
   @Test("a record with no title remembers nothing")
   func rememberedNeedsATitle() {
     #expect(VideoRecord(id: "1", login: "wheelyf").remembered() == nil)
   }
 
-  /// The fallback, for a record written before `displayName` existed or by a
-  /// path that never learned one. The login is what it can honestly offer.
+  /// Missing display name falls back to stored login.
   @Test("the streamer falls back to the login when no display name was kept")
   func rememberedUsesTheLogin() {
     #expect(submitted.remembered()?.streamer == "wheelyf")
   }
 
-  /// **And prefers the display name when there is one.**
-  ///
-  /// `video-record.md` §3.4: a display name and a login are two different
-  /// strings and neither follows from the other. Without this the remembered
-  /// card read `seecatplay` where the live one read `SeeCatPlay` — a visible
-  /// difference between a card the record drew and the same card drawn from
-  /// Twitch, which §4.1 says must not exist.
+  /// Prefer retained display name over login, matching live metadata cards.
   @Test("the streamer prefers the stored display name")
   func rememberedPrefersTheDisplayName() {
     var record = submitted

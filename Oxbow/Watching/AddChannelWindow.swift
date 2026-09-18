@@ -2,25 +2,8 @@ import AppKit
 import SwiftUI
 import OxbowKit
 
-/// Look up a channel, see what it has, choose a scope and settings, and add
-/// the watch. Every rule this window obeys lives in `AddChannelModel`; this
-/// is the rendering of it.
-///
-/// **`IntakeWindow`'s sibling, not its rewrite.** A channel add is the same
-/// shape as a video add — a lookup, a settled result, some choices, an Add
-/// that stays disabled until they compose into something real, a refusal
-/// that stays on screen rather than dismissing — so this follows that
-/// window's reasoning rather than inventing a second one. See
-/// `AddChannelModel`'s own doc comment for why the model itself is smaller
-/// than `IntakeModel`, and `docs/design/channel-watching.md` §3 for the
-/// feature this is the UI half of.
-///
-/// **A window, not a sheet**, for the identical reason `IntakeWindow` gives:
-/// the priced backfill line at the foot of this form (§3.3) is one more row a
-/// sheet capped by the queue window's height would have to fight for space
-/// against, and a window sizes itself instead. `Window` rather than
-/// `WindowGroup` in `OxbowApp`, so the toolbar button re-focuses the one that
-/// exists rather than stacking a second lookup on top of the first.
+/// Single add/edit channel window backed by AddChannelModel. Sizes independently of the queue;
+/// see docs/design/channel-watching.md §3.
 struct AddChannelWindow: View {
   @Environment(\.dismiss) private var dismiss
   @State private var model: AddChannelModel
@@ -32,55 +15,17 @@ struct AddChannelWindow: View {
   @State private var backfillFailure: String?
   @FocusState private var isLoginFocused: Bool
 
-  /// Reads free space directly against `model.folder`, the same way
-  /// `destination` below reads the folder's Finder icon directly rather than
-  /// going through the model — this is display only, never a gate on `Add`
-  /// (§3.3 prices the choice, it does not block it). Injectable so a preview
-  /// can pin a volume instead of reading the developer's own disk: see
-  /// `previewModel`'s own comment on why `IntakeWindow`'s previews do the
-  /// same for `VolumeSpace`.
+  /// Advisory capacity display, injected for deterministic previews; never gates Add.
   private let volumeSpace: VolumeSpace
 
-  /// Runs once this window closes, after `model.reset()`.
-  ///
-  /// **This is the other half of fixing the Watching pane's stale-until-next-
-  /// sweep bug.** `AddChannelModel` writes `watches.json` through its own
-  /// `WatchStore`, a different instance from the one `WatchingModel` reads
-  /// through — so a successful Add here is invisible to that model until
-  /// something tells it to look again. `OxbowApp` hands in
-  /// `{ watching?.refresh() }`; defaulting to a no-op keeps every preview and
-  /// test below from having to supply one.
+  /// After close/reset, ask Watching to reload writes made through this window's store handle.
   private let onClose: () -> Void
 
-  /// Runs when a watch has actually been written, before the window
-  /// dismisses — never on Cancel, and never on a refusal.
-  ///
-  /// **Separate from `onClose` because a sweep is not free.** `onClose` fires
-  /// on every close including Cancel, and it can afford to: re-reading
-  /// `watches.json` costs nothing. A sweep costs one Twitch request per
-  /// watched channel, so hanging it off the same hook would spend a dozen
-  /// requests on a dialog somebody backed out of.
-  ///
-  /// **Why a sweep is needed at all.** Adding a channel with automatic
-  /// downloading on writes the watch and nothing else: findings are derived
-  /// from `WatchPoller.results`, and submission happens only inside a sweep.
-  /// Without this the channel appeared in the Watching pane with no rows
-  /// under it and queued nothing, for up to the full hour until the next
-  /// scheduled sweep — with every caption on this window promising the
-  /// opposite ("queued and downloaded now").
+  /// Poll after a successful save so findings appear immediately. Separate from onClose, which
+  /// also runs on Cancel and should not trigger network work.
   private let onSaved: () -> Void
 
-  /// A watch waiting to be edited, from `OxbowApp`'s own `@State`.
-  ///
-  /// **A binding, not a plain value, so this window can clear it — the
-  /// identical shape `IntakeWindow.pendingIntake` uses for the identical
-  /// reason.** `AddChannelWindow` is a `Window`, not a `WindowGroup`, so
-  /// `OxbowApp` holds the one instance of this scene's worth of state across
-  /// opens and closes. A watch left set here after being consumed would
-  /// resurrect Edit mode on the very next ordinary Add Channel open — the
-  /// same staleness bug `IntakeWindow`'s own comment on `pendingIntake`
-  /// describes, just for this window's Add/Edit split instead of that one's
-  /// finding hand-off.
+  /// Consume and clear pending edits so the next Add Channel open cannot inherit editing mode.
   @Binding private var pendingEdit: Watch?
 
   init(
@@ -100,16 +45,7 @@ struct AddChannelWindow: View {
     self.onSaved = onSaved
   }
 
-  /// For previews, and for anything else that wants to drive the window
-  /// without a network behind it — `AddChannelModel`'s own init takes
-  /// closures for exactly this reason, and this is what lets a preview reach
-  /// them, the same role `IntakeWindow.init(model:)` plays for intake.
-  ///
-  /// `pendingEdit` defaults to a constant `nil`: no preview below exercises
-  /// the Watching hand-off, so none of them need a real binding to clear —
-  /// the previews that show editing mode call `model.beginEditing(_:)`
-  /// directly instead, the same way `IntakeWindow`'s own previews apply a
-  /// `PendingIntake` straight to the model rather than through a binding.
+  /// Injected model supports previews without network access; no pending edit by default.
   init(
     model: AddChannelModel, volumeSpace: VolumeSpace = .live,
     pendingEdit: Binding<Watch?> = .constant(nil),
@@ -128,11 +64,7 @@ struct AddChannelWindow: View {
       Form {
         channel
 
-        // Editing shows the four settings with no scope choice above them
-        // (requirement 3) and no priced backfill below them (requirement 5)
-        // — `settings` itself already withholds the estimate on its own,
-        // since `model.estimate` is nil while editing (no lookup ever runs),
-        // but `scope` has no such self-gate and must not be reachable at all.
+        // Editing omits creation-only scope and backfill controls.
         if model.isEditing {
           settings
         } else if model.hasArchivesToConfigure {
@@ -148,55 +80,25 @@ struct AddChannelWindow: View {
     .frame(minWidth: 460, minHeight: 360)
     .background(HostWindowReader(window: $hostWindow))
     .defaultFocus($isLoginFocused, true)
-    // Dynamic, not the scene's own static "Add Channel" title — requirement
-    // 6. `JobInfoWindow.navigationTitle` is the precedent for overriding a
-    // `Window` scene's title from inside its content this way.
     .navigationTitle(model.isEditing ? "Edit Channel" : "Add Channel")
-    // A pending edit wins over the standing preferences: someone who chose
-    // Edit on a specific channel did not mean to see today's global
-    // defaults. Checked first, and `reseedFromPreferences()` runs only in
-    // the branch that does not consume one — `beginEditing(_:)` seeds
-    // everything editing needs on its own, from the watch, and re-seeding
-    // from `Preferences` afterwards would immediately undo the freeze this
-    // whole window exists to respect (§3.2).
+    // Apply pending edits before defaults; reseeding afterwards would overwrite frozen watch
+    // settings.
     .onAppear {
       if let pendingEdit {
         model.beginEditing(pendingEdit)
         self.pendingEdit = nil
       } else {
-        // Re-reads the four standing preferences before anything else runs,
-        // so a Settings change made while this window was closed is on
-        // screen the moment it reopens — see
-        // `AddChannelModel.reseedFromPreferences()`, and `IntakeWindow`'s
-        // identical `.onAppear` call for the reasoning this mirrors.
         model.reseedFromPreferences()
       }
     }
-    // Catches an edit request that arrives while this window is already
-    // open. `Window`'s single-instance guarantee means `openWindow` just
-    // refocuses an open window rather than recreating it, so `.onAppear`
-    // above never fires a second time — without this, choosing Edit… on a
-    // watched channel while the window was already open (in Add mode, or
-    // editing a different channel) did nothing visible, and left
-    // `pendingEdit` set for the *next* ordinary Add Channel open to
-    // stumble into, locking it into Edit mode for a channel nobody asked
-    // about this time. Unlike `QueueView`'s identical hazard for
-    // `pendingIntake` — accepted there because its worst case is a delayed
-    // prefill — this one puts the wrong mode on screen outright, so it gets
-    // fixed rather than documented away.
+    // Consume edits arriving while already open; refocusing a Window does not call onAppear
+    // again.
     .onChange(of: pendingEdit) { _, newValue in
       guard let newValue else { return }
       model.beginEditing(newValue)
       pendingEdit = nil
     }
-    // The scene outlives the window, so closing it has to do what dismissing
-    // a sheet would have done for free. See `AddChannelModel.reset()` — and,
-    // for the open half of the same problem, `reseedFromPreferences()`
-    // above. Without this, reopening after a successful add shows that
-    // channel's form again, fully composed, with Add still the default
-    // action — one stray ⏎ then replaces that channel's watch with `seen`
-    // recomputed from the stale lookup, discarding every finding the user
-    // had already acted on.
+    // Reset the retained model on close so a later Return cannot recreate a stale watch.
     .onDisappear {
       model.reset()
       onClose()
@@ -205,19 +107,8 @@ struct AddChannelWindow: View {
 
   // MARK: - Sections
 
-  /// The login, and what came back for it — or, while editing, the login
-  /// alone, fixed.
-  ///
-  /// **Editing shows the login but never lets it be typed** (requirement 2).
-  /// Changing which channel a watch points at is not an edit, it is a
-  /// different watch with a different `seen` set — `WatchingModel
-  /// .stopWatching(_:)` and `Section.id` both key on the login as a stable
-  /// identity, and a text field here would invite treating it as just
-  /// another setting. There is also nothing to look up: `AddChannelModel
-  /// .beginEditing(_:)` runs no fetch, so the Look Up button and everything
-  /// below it that only makes sense once a lookup has settled — the
-  /// unrecognised-login warning, the archive summary, a failure message —
-  /// would all be reading state that can never become anything but idle.
+  /// Editing fixes the channel identity and performs no lookup; only new watches show editable
+  /// login and lookup state.
   @ViewBuilder
   private var channel: some View {
     Section {
@@ -229,12 +120,7 @@ struct AddChannelWindow: View {
           TextField("Login", text: $model.loginText, prompt: Text("Twitch channel login or URL"))
             .focused($isLoginFocused)
             .onSubmit { Task { await model.look() } }
-          // A deliberate action rather than intake's debounced `.task(id:)`.
-          // A pasted link is unambiguously finished the moment it lands; a
-          // login is typed a character at a time and there is no clipboard
-          // signal telling this window someone is done. Rather than guess
-          // with a timer, `look()` runs only when asked — by this button,
-          // or ⏎.
+          // Fetch only on Look Up or Return, not on each typed login change.
           Button("Look Up") { Task { await model.look() } }
             .disabled(model.normalisedLogin == nil || model.displayedLookup == .loading)
         }
@@ -244,10 +130,8 @@ struct AddChannelWindow: View {
             .font(.callout)
             .foregroundStyle(.red)
         } else {
-          // `displayedLookup`, not `lookup` — a settled result for a login
-          // that has since been edited away must read as `.idle`, not show
-          // the previous channel's summary under the current one's text
-          // field. See `AddChannelModel.displayedLookup`'s own doc comment.
+          // Use the identity-checked lookup so edited text cannot display another channel's
+          // results.
           switch model.displayedLookup {
           case .idle:
             EmptyView()
@@ -257,12 +141,7 @@ struct AddChannelWindow: View {
           case .loaded(let archives):
             lookupSummary(archives)
           case .failed(let message):
-            // Red, matching `isLoginUnrecognised` above rather than
-            // intake's orange `metadataFailure`: intake's failure still
-            // leaves a job composable from the id-derived fallback name,
-            // but `AddChannelModel.composeWatch()` has nothing to fall back
-            // to without archives in hand — this is a full stop, not a
-            // degraded-but-workable state.
+            // Lookup failure blocks Add, unlike intake's usable video-only metadata fallback.
             Label(message, systemImage: "exclamationmark.triangle")
               .font(.callout)
               .foregroundStyle(.red)
@@ -272,14 +151,7 @@ struct AddChannelWindow: View {
     }
   }
 
-  /// The channel and what it has, once a lookup has settled.
-  ///
-  /// **Shows the login, not the display name.** `AddChannelModel` only
-  /// resolves the real Twitch display name in `add()`, immediately before it
-  /// is persisted (see `resolvedDisplayName(for:)`'s own doc comment for
-  /// why) — paying for that round trip here, on every lookup, would be a
-  /// second network call for a cosmetic difference the Watching sidebar shows
-  /// a moment later anyway, once the watch exists.
+  /// Show login until add() resolves the display name; no extra profile request during lookup.
   private func lookupSummary(_ archives: [ChannelArchive]) -> some View {
     VStack(alignment: .leading, spacing: 4) {
       Text(model.normalisedLogin ?? "")
@@ -297,9 +169,7 @@ struct AddChannelWindow: View {
     }
   }
 
-  /// Only new, or all available — `docs/design/channel-watching.md` §3.1:
-  /// neither is right often enough to be assumed, so it is a choice rather
-  /// than a default silently applied.
+  /// Offer creation scope explicitly; see docs/design/channel-watching.md §3.1.
   private var scope: some View {
     Section {
       Picker("Backfill", selection: $model.scope) {
@@ -313,10 +183,8 @@ struct AddChannelWindow: View {
           .font(.caption)
           .foregroundStyle(.secondary)
       } else {
-        // §3.1: pagination is unreachable, so "all" is worded as exactly
-        // what it delivers — never the unqualified promise a person would
-        // otherwise read it as, on precisely the prolific channel where the
-        // gap between "all" and "the newest 100" is likely to matter.
+        // Describe the returned page, not an unqualified full catalogue: pagination is
+        // unavailable.
         Text("Every video shown above becomes a finding. Twitch will not "
           + "return more than its newest 100 archives, and Oxbow cannot "
           + "page past that limit.")
@@ -326,13 +194,7 @@ struct AddChannelWindow: View {
     }
   }
 
-  /// The four settings, seeded from `Preferences` when this window opened and
-  /// frozen onto the watch by `AddChannelModel.add()` — never re-read from
-  /// here, and never written back to `Preferences` either. `saveNote` below
-  /// is what makes that one-way trip legible: unlike `IntakeWindow`, there is
-  /// no checkbox offering to save these back as the new defaults, because a
-  /// channel's settings and the app's standing defaults are two different
-  /// things the moment this window closes (§3.2).
+  /// Freeze these settings on the watch without writing back global preferences.
   @ViewBuilder
   private var settings: some View {
     Section {
@@ -361,12 +223,6 @@ struct AddChannelWindow: View {
         .font(.caption)
         .foregroundStyle(.secondary)
 
-      // Checkbox, not a switch, matching `IntakeWindow`'s own reasoning for
-      // "Make these settings my defaults": this reads as a persistent mode
-      // once ticked, but the mode it sets is real and standing, so a switch
-      // would say the same thing — the difference from intake's checkbox is
-      // only that this one is not a one-shot action, it is the setting
-      // itself.
       HStack {
         Toggle(isOn: $model.downloadsAutomatically) {
           Text("Download automatically")
@@ -374,41 +230,17 @@ struct AddChannelWindow: View {
         .toggleStyle(.checkbox)
         Spacer(minLength: 0)
       }
-      // Matches `WatchingView`'s tooltip on this same flag, worded for the
-      // moment someone decides whether to tick this rather than for a
-      // watch already ticked — same honesty, different point in the flow.
-      // This used to say Oxbow didn't do this yet, on or off; automatic
-      // downloading is real now, so what it says has to actually depend on
-      // the checkbox above it rather than being true regardless of it.
-      //
-      // **"New archives" is the wrong noun under `.allAvailable`.** That
-      // scope is not shown, and so cannot be true, while editing
-      // (`isEditing` skips `scope` above), but for a brand-new watch it is
-      // the most expensive path this feature has: the existing backfill is
-      // included, not only what appears after today, and saying "new" here
-      // would understate a first sweep that can queue up to a hundred
-      // archives at once (finding 4's own batch bound caps what actually
-      // runs unattended, but the caption still has to describe what was
-      // just agreed to, not what the bound happens to let through).
+      // For allAvailable, the caption must include existing backfill rather than promise only
+      // future archives.
       Text(automaticDownloadCaption)
         .font(.caption)
         .foregroundStyle(.secondary)
 
-      // Gated on `count > 0`, not just on `estimate` existing: `.onlyNew`
-      // always prices an empty set (`AddChannelModel.estimate`'s own doc
-      // comment), so `estimate` is non-nil the moment a lookup settles but
-      // reads "about Zero KB" under that scope — a number with nothing
-      // behind it. `scope`'s own caption above already says why nothing is
-      // being fetched; this line only has something to add once `.allAvailable`
-      // gives it a real backfill to price.
+      // Hide the empty onlyNew estimate.
       if let estimate = model.estimate, estimate.count > 0 {
         if model.output == .videoWithChat {
-          // `.help` carries the mechanism, not the caption itself — this is
-          // the one control in the window that can move a number the
-          // counter-intuitive way (turning chat *on* can shrink the figure;
-          // see `backfillMechanismNote`), and a caption already carrying two
-          // clauses ("about … at its peak · … free on …") has no room left
-          // to defend itself against its own surprise.
+          // Keep the estimator explanation in help text; enabling chat can reduce the estimated
+          // backfill peak.
           Text(backfillCaption(for: estimate))
             .font(.caption)
             .foregroundStyle(.secondary)
@@ -424,16 +256,8 @@ struct AddChannelWindow: View {
     }
   }
 
-  /// What copies onto the watch says, and why. Always ends the same way —
-  /// this is a one-time freeze, not a promise that nothing here can ever be
-  /// changed again.
-  ///
-  /// **A different note while editing**, because the add-mode wording is
-  /// wrong there in a way that matters: "these settings start from your
-  /// defaults" is false the moment they were seeded by `beginEditing(_:)`
-  /// from the watch instead, and pointing back at "the Watching list" to
-  /// revisit them is circular when the Watching list's own context menu is
-  /// how this form got opened in the first place.
+  /// Explain frozen settings differently for creation and editing, which seeds from the watch
+  /// itself.
   private var saveNote: String {
     guard model.isEditing else {
       return "These settings start from your defaults, but adding this "
@@ -446,60 +270,8 @@ struct AddChannelWindow: View {
       + "on changes."
   }
 
-  /// What running the backfill this scope and these settings describe would
-  /// need, and what is free to hold it.
-  ///
-  /// **"About", not a figure.** `BackfillEstimate`'s own doc comment is
-  /// explicit that it prices a nominal rendition for the cap, never a real
-  /// video's — the channel feed carries no renditions to price against — so
-  /// this must never read with the precision `IntakeModel`'s own per-job
-  /// `spaceWarningText` earns from an actual `StreamQuality`. Worded exactly
-  /// as it would be if `estimate.bytes` had a hundred siblings that all
-  /// disagreed with it by a little.
-  ///
-  /// **"At its peak", not "in total".** `BackfillEstimate.bytes` is not what
-  /// the backfill leaves behind once every job is done — that would be the
-  /// sum of what each archive delivers. It is what the disk has to hold
-  /// while the backfill is *running*: every archive already delivered, plus
-  /// one job's own transient overhead — only one job runs at a time
-  /// (`TeardownJournal` tears down each one's scratch before the next
-  /// starts, per `BackfillEstimate`'s own doc comment), so only one
-  /// transient ever coexists with the delivered sum. Wording this as a
-  /// standing total would promise a number the backfill never actually sits
-  /// at.
-  ///
-  /// **Does NOT rise whenever chat is turned on — above roughly five
-  /// archives it falls, and this line has to be read that way.** An earlier
-  /// version of this comment claimed the opposite ("turning chat on adds a
-  /// render pass with a transient of its own, so the peak … rises with it"),
-  /// which is only true for a short backfill. `h264_videotoolbox`'s constant
-  /// quality mode re-encodes the composite to about 47% of Twitch's own
-  /// source bitrate at 1080p (`SpaceEstimate.compositeBitsPerPixel` against
-  /// `CompositeGeometry.pixelRate`; `docs/design/disk-preflight.md` §5 records
-  /// the same property in absolute terms — 15 GB of composite against 23 GB
-  /// of source for the same six-hour job), while a plain video download pays
-  /// the full source bitrate for every archive it keeps. Chat's own
-  /// transient render pass is real, but it is paid once per *running job*,
-  /// not once per archive, so it is a fixed cost that a longer backfill
-  /// dilutes rather than a per-archive one that compounds. Past a small
-  /// handful of archives — near five, by the same arithmetic — the saving on
-  /// every archive already delivered outweighs that one fixed cost, and
-  /// `Σ composite + one transient` drops below `Σ source`. Below that count
-  /// the line still reads higher with chat on; above it, lower.
-  /// What the automatic-download checkbox's caption says, honestly, for
-  /// whichever combination of the checkbox and (for a brand-new watch) the
-  /// backfill scope is currently chosen.
-  ///
-  /// **The `.allAvailable` case is the one this exists for.** "New archives
-  /// … are queued and downloaded on their own" is true for `.onlyNew` and
-  /// for editing (where scope never applies again, §3.1) — nothing already
-  /// listed is a finding under either. It is false the moment scope is
-  /// `.allAvailable`: every archive on screen becomes a finding, and ticking
-  /// automatic alongside it means the *existing* catalogue is queued right
-  /// now, not only whatever appears later. That is the specific combination
-  /// §3.3 calls out as the one click that can queue a hundred archives, so
-  /// the caption for it says so in the same terms rather than reusing the
-  /// word "new" for something that is not.
+  /// Describe automatic downloading for the selected scope. New allAvailable watches include
+  /// immediate backfill; edits and onlyNew describe future findings.
   private var automaticDownloadCaption: String {
     guard model.downloadsAutomatically else {
       return "New archives only appear in Watching until you press Add on a finding."
@@ -524,13 +296,8 @@ struct AddChannelWindow: View {
     return "Running this backfill will need \(needed) at its peak · \(free) free on \(name)"
   }
 
-  /// Why turning chat on can *shrink* `backfillCaption`'s figure instead of
-  /// growing it — see that function's own doc comment for the arithmetic.
-  /// This is the only control in the window that moves a number the
-  /// counter-intuitive way, so it is the one that has to say why: toggling
-  /// Video → Video + chat and watching the estimate drop, with nothing on
-  /// screen attributing it to anything, reads as a broken estimator rather
-  /// than as the correct answer.
+  /// Explain why estimated composite delivery savings can outweigh one running job's transient
+  /// overhead and reduce the backfill peak.
   private var backfillMechanismNote: String {
     "The chat build is re-encoded rather than kept at Twitch's own bitrate, "
       + "so across several archives it usually lands smaller than video alone."
@@ -559,9 +326,7 @@ struct AddChannelWindow: View {
     }
   }
 
-  /// Just the buttons, pinned below the form — `IntakeWindow.footer`'s own
-  /// reasoning applies unchanged: the one thing this window commits to
-  /// should not be able to scroll out of view under a growing form.
+  /// Pin action buttons outside the scrolling form.
   private var footer: some View {
     HStack(spacing: 12) {
       if let backfillFailure {
@@ -579,7 +344,6 @@ struct AddChannelWindow: View {
       if isAdding { ProgressView().controlSize(.small) }
       Button("Cancel") { dismiss() }
         .keyboardShortcut(.cancelAction)
-      // Requirement 6: Edit rather than Add, while editing.
       Button(model.isEditing ? "Edit" : "Add") { add() }
         .keyboardShortcut(.defaultAction)
         .disabled(!model.canAdd || isAdding)
@@ -590,10 +354,7 @@ struct AddChannelWindow: View {
 
   // MARK: - Actions
 
-  /// Dismisses only once the watch is on disk. `model.add()` awaits the save
-  /// all the way in and reports whether it landed; a refusal leaves the
-  /// window open with its reason on screen, the same contract
-  /// `IntakeWindow.add()` keeps with `IntakeModel`.
+  /// Keep the window open on save refusal; dismiss only after persistence succeeds.
   private func add() {
     isAdding = true
     Task {
@@ -603,36 +364,17 @@ struct AddChannelWindow: View {
         return
       }
 
-      // The backfill goes into the queue here, in this window, while it is
-      // still open — not by writing the watch and leaving a sweep to notice
-      // it later. That indirection is what made "All available" plus
-      // "Download automatically" look like it did nothing at all: the watch
-      // was saved correctly, and then up to an hour passed before anything
-      // could act on it, with every caption on this window claiming
-      // otherwise.
-      //
-      // Doing it here also means a refusal has somewhere to appear. The
-      // sweep's version of this used to discard the reason entirely.
+      // Queue backfill immediately while refusals still have a window to appear in.
       await queueBackfill()
       isAdding = false
 
-      // Only when nothing was refused. A refusal has to stay on screen to be
-      // read, and dismissing would take it with it — the same contract
-      // `model.add()` already keeps for its own failure.
       guard backfillFailure == nil else { return }
       onSaved()
       dismiss()
     }
   }
 
-  /// Puts this channel's backfill into the queue, and reports what would not
-  /// go.
-  ///
-  /// **Partial success is the normal case and is reported as one.** Six of
-  /// seven archives queueing is six archives downloading; refusing the batch
-  /// because one was unbuildable would be worse for the person and would
-  /// throw away work already done. So everything that queued is marked seen,
-  /// and the rest are named.
+  /// Keep partial successes, mark them seen, and report archives that could not be queued.
   private func queueBackfill() async {
     backfillFailure = nil
     let archives = model.backfillToQueue
@@ -651,10 +393,7 @@ struct AddChannelWindow: View {
     model.markQueued(result.queued.map(\.id))
 
     guard !result.failures.isEmpty else { return }
-    // One sentence naming the count, then one reason. The reasons repeat far
-    // more often than they differ — a channel whose composites cannot be
-    // built fails the same way every time — so listing all of them would be
-    // the same line seven times over.
+    // Report a failure count and one representative reason rather than repeated messages.
     let reason = result.failures.values.sorted().first ?? ""
     if result.queued.isEmpty {
       backfillFailure = "None of the \(archives.count) archives could be queued. \(reason)"
@@ -666,10 +405,7 @@ struct AddChannelWindow: View {
     }
   }
 
-  /// An Open panel, not a Save panel — unlike `IntakeWindow.chooseFolder()`
-  /// this is choosing where a whole channel's future downloads land, never a
-  /// single file's name, so there is no filename to seed and no
-  /// `allowedContentTypes` to restrict.
+  /// Choose a directory for future downloads, not a filename.
   private func chooseFolder() {
     let panel = NSOpenPanel()
     panel.canChooseDirectories = true
@@ -689,11 +425,8 @@ struct AddChannelWindow: View {
 
   // MARK: - Wiring the live feed
 
-  /// Turns a `ChannelFeedError`-throwing call into the `Result` shape
-  /// `AddChannelModel`'s two closures expect, folding in any other error —
-  /// URLSession's own offline/DNS/TLS failures — as `.unreachable`, the same
-  /// translation `WatchPoller.sweep`'s own closure makes for the identical
-  /// reason: `.server(status: 0)` would blame Twitch for the user's wifi.
+  /// Convert typed feed errors to Result; map transport failures to unreachable rather than a
+  /// server error.
   private static func result<T>(
     _ body: () async throws -> T) async -> Result<T, ChannelFeedError>
   {
@@ -706,24 +439,8 @@ struct AddChannelWindow: View {
     }
   }
 
-  /// An ephemeral session over `ChannelFeed`, mirroring
-  /// `WatchPoller.live(supportDirectory:)`'s own construction exactly —
-  /// same timeout, same refusal to wait for connectivity, same reasoning
-  /// against a URL cache for a question whose whole point is "what is there
-  /// right now." Not shared with that method: this window has no
-  /// `supportDirectory` to build a `WatchStore` from (its caller already has
-  /// one), so there is nothing to gain by routing through it, only a
-  /// parameter it does not need.
-  ///
-  /// **A lazy `static let`, not a function called from `init`.** SwiftUI
-  /// re-evaluates a view's `init` on every scene-body re-render, but
-  /// `_model = State(initialValue:)` only ever keeps the first result — every
-  /// later call built a configuration, a session and a `ChannelFeed` purely
-  /// to throw them away unread. Nothing about this value is per-window: the
-  /// configuration is fixed and the session carries no state that should
-  /// differ between one `AddChannelWindow` and the next, so one shared,
-  /// lazily-built instance for the process is strictly more correct than a
-  /// fresh one nobody asked for.
+  /// Shared lazy ephemeral feed avoids rebuilding discarded sessions on SwiftUI init calls.
+  /// Match the poller's timeout and no-cache policy.
   private static let liveChannelFeed: ChannelFeed = {
     let configuration = URLSessionConfiguration.ephemeral
     configuration.timeoutIntervalForRequest = 15
@@ -741,12 +458,8 @@ struct AddChannelWindow: View {
 
 // MARK: - Previews
 
-/// A model wired to a canned fetch, so the previews below show the window's
-/// settled states without a network call — the same role `IntakeWindow`'s own
-/// `previewModel` plays there, and for the same reasons: a fresh
-/// `InMemoryPreferenceStore` per call so no preview here writes the real
-/// `studio.lofti.Oxbow` domain, and a fixed `WatchStore` over a scratch file
-/// so Add in a live preview canvas cannot touch a real watch list.
+/// Canned fetches, fresh in-memory preferences, and a scratch watch file isolate interactive
+/// previews.
 @MainActor
 private func previewModel(
   login: String = "day9tv",
@@ -789,9 +502,7 @@ private enum AddChannelWindowPreviewData {
 }
 
 extension VolumeSpace {
-  /// A volume with a fixed amount of room, matching `IntakeWindow`'s own
-  /// `previewFull` — a canvas that changes with the developer's disk is a
-  /// canvas nobody can review.
+  /// Fixed capacity keeps previews independent of the developer's disk.
   fileprivate static func previewFull(free: Int64) -> VolumeSpace {
     VolumeSpace(
       availableBytes: { _ in free },
@@ -800,32 +511,20 @@ extension VolumeSpace {
   }
 }
 
-/// Idle: a login typed but `Look Up` never pressed — the everyday starting
-/// point, since unlike intake's pasted link this window never fetches on its
-/// own (see `channel`'s own doc comment on why `Look Up` is a deliberate
-/// action).
 #Preview("Idle") {
   AddChannelWindow(
     model: previewModel(archives: nil),
     volumeSpace: .previewFull(free: 500_000_000_000))
 }
 
-/// A settled lookup with archives in hand — scope, settings and the priced
-/// backfill line are all showing. `.task` stands in for pressing `Look Up`:
-/// this window fetches only on that explicit action, so a preview has to
-/// trigger the identical call rather than relying on anything firing on
-/// appear.
+/// Trigger look() explicitly; the real window does not fetch on appearance.
 #Preview("Loaded with archives") {
   let model = previewModel()
   return AddChannelWindow(model: model, volumeSpace: .previewFull(free: 500_000_000_000))
     .task { await model.look() }
 }
 
-/// `scope` switched to `.allAvailable`, so the backfill total is priced
-/// against something other than zero — `.onlyNew`'s own estimate is always
-/// nought, since nothing is taken under it (`AddChannelModel.estimate`'s own
-/// doc comment). The scope is set only after the lookup settles, matching how
-/// a person would actually reach this state.
+/// Set allAvailable after lookup to show a non-empty backfill estimate.
 #Preview("All available - priced") {
   let model = previewModel()
   return AddChannelWindow(model: model, volumeSpace: .previewFull(free: 500_000_000_000))
@@ -835,20 +534,14 @@ extension VolumeSpace {
     }
 }
 
-/// A channel Twitch does not recognise. Add stays disabled and the refusal
-/// reads as a fact about the channel, not a broken window.
 #Preview("Failed lookup") {
   let model = previewModel(failure: .noSuchChannel)
   return AddChannelWindow(model: model, volumeSpace: .previewFull(free: 500_000_000_000))
     .task { await model.look() }
 }
 
-/// Editing an existing watch — Task 3. No scope picker, no priced backfill,
-/// a fixed login, and Edit rather than Add on the title and the confirm
-/// button — every one of `AddChannelModel.beginEditing(_:)`'s consequences
-/// visible in one canvas. `previewModel`'s own fetch is never called here:
-/// editing runs no lookup, so this calls `beginEditing(_:)` directly on a
-/// freshly built model instead of routing through it.
+/// Seed editing directly without a lookup; verify fixed login and absence of scope/backfill
+/// controls.
 #Preview("Editing") {
   let model = previewModel(login: "leighxp")
   model.beginEditing(Watch(

@@ -7,108 +7,41 @@ struct OxbowApp: App {
   @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
   @State private var content: QueueContent?
 
-  /// Built eagerly: unlike the engine it needs nothing resolved first, and
-  /// the launch-time check should not queue behind helper discovery.
+  /// Start update checks independently of helper discovery.
   @State private var updates = UpdateModel.live()
 
-  /// Built once a support directory is known, inside the guarded `.task`
-  /// below rather than here — unlike `updates`, it needs a resolved path and
-  /// must never exist during a test run. See that `.task` for why.
+  /// Construct after resolving support paths, only in a user session.
   @State private var poller: WatchPoller?
 
-  /// The Watching list. Built alongside `poller`, from a `WatchStore` over
-  /// the same `watches.json` — `WatchPoller` only ever reads that file, and
-  /// `WatchingModel` is the one writer (see its own doc comment), so both
-  /// need to agree on the same path rather than each deriving it separately.
+  /// Use the same watch-store path for polling and UI state.
   @State private var watching: WatchingModel?
 
-  /// The same `WatchStore` `watching` was built from, kept alongside it so
-  /// `AddChannelWindow` can open a second writer over `watches.json` without
-  /// resolving the support directory a second time. Optional, and nil for
-  /// the identical reason `watching` is: both are built together, behind the
-  /// same `AppComposition.isUserSession` guard, in the `.task` below.
+  /// Retain the resolved store for AddChannelWindow; nil outside a user session.
   @State private var watchStore: WatchStore?
 
-  /// Cached channel and archive images, built alongside `watching` and
-  /// `poller` and behind the same guard: it does network and file I/O, which
-  /// `xcodebuild test` must not do for a window it launched incidentally.
-  /// The video record, for the one reader that is not a watching surface.
-  ///
-  /// Get Info re-fetches a video's metadata on every open, and for a video
-  /// Twitch has dropped that fetch fails — which is exactly the case the
-  /// record was built to answer. Held here rather than resolved inside the
-  /// window: a window can be opened repeatedly, and
-  /// `AppComposition.defaultSupportDirectory()` does directory-creating I/O.
+  /// Resolve the video record once for Get Info's fallback instead of doing directory-creating
+  /// I/O on every window open.
   @State private var videoRecordStore: VideoRecordStore?
 
   @State private var imageStore: ImageStore?
 
-  /// A Watching finding waiting to be applied the next time intake opens.
-  ///
-  /// Set by `WatchingModel.openIntake` (below) and consumed by
-  /// `IntakeWindow.onAppear`, which clears it back to `nil` immediately after
-  /// applying it — see that clearing's own comment for why leaving it set
-  /// would be the Add Channel window's missing-reset bug all over again.
-  /// Held here, rather than on `WatchingModel` itself, for the same reason
-  /// `watching` and `poller` are: this is the one instance of intake's state
-  /// across the app's whole run (`Window`, not `WindowGroup`), and the value
-  /// has to outlive whichever `WatchingModel` happened to set it.
+  /// Hand off a finding to the single intake Window; it clears the value after applying it.
   @State private var pendingIntake: PendingIntake?
 
-  /// A watch waiting to be edited, set by `QueueView` when a Watching
-  /// section's context menu chooses Edit and consumed by `AddChannelWindow`
-  /// on its own `.onAppear` — the identical shape `pendingIntake` above
-  /// takes for its own hand-off, for the identical reason: `AddChannelWindow`
-  /// is a `Window`, not a `WindowGroup`, so the one long-lived instance of
-  /// its state needs somewhere outside itself to receive which watch to
-  /// edit before the window has even appeared to consume it.
+  /// Hand off a watch to the single AddChannelWindow before it appears.
   @State private var pendingChannelEdit: Watch?
 
-  /// Read once. Nothing in it can change while the app runs — it is all
-  /// stamped into the bundle at build time — and both the menu item and the
-  /// window title need the name.
   private let about = AboutInfo.main
 
-  /// Handed to `AddChannelWindow`'s `init` below, hoisted here rather than
-  /// built with `Preferences()` inline at that call site. `body` is a
-  /// computed property SwiftUI re-evaluates on every state change this scene
-  /// depends on, and `AddChannelWindow.init` only keeps its `preferences`
-  /// argument long enough to seed `AddChannelModel`'s own `@State` — so a
-  /// fresh `Preferences()` built inline there was constructed and discarded
-  /// on every re-render for no reason. `Preferences()`'s default init is
-  /// cheap (it wraps `.standard` and two closures, nothing eager), but a
-  /// value with no reason to be rebuilt should not be.
+  /// Retain preferences instead of constructing them on every scene body evaluation.
   @State private var addChannelPreferences = Preferences()
 
   var body: some Scene {
-    // `Window`, not `WindowGroup`. The engine is built once at launch
-    // (design §2) and the app is single-window (design §4), and a
-    // `WindowGroup` enforces neither: ⌘N stays live, and each new window
-    // gets its own `@State`.
-    //
-    // That second `@State` used to be the whole danger. A second window ran
-    // `setUp()` again and built a second `QueueController` — a second
-    // `QueueEngine` over the same queue.json and the same workspace — and
-    // `QueueEngine.start()` sweeps that workspace unconditionally, so
-    // opening a window would delete the working files of a download already
-    // in flight while the first engine's pending save never flushed. That
-    // particular disaster is now prevented twice: `setUp()` awaits
-    // `QueueHost.shared`, which resolves once and hands every later caller
-    // the same controller, so a second window would share the engine rather
-    // than construct one. `Window` is no longer the only thing standing
-    // between the app and two engines — but nothing else here changed: ⌘N
-    // would still be live, each window would still carry its own `@State`,
-    // and single-instance is still the guarantee this app wants.
-    //
-    // Removing the New Window command from the group would hide the menu
-    // item while leaving the scene duplicable by anything else that opens
-    // one. `Window` makes single-instance the scene's own guarantee, and
-    // drops the menu item as a consequence rather than as the fix.
+    // Window enforces a single queue window. QueueHost separately guarantees one engine and
+    // controller.
     Window("Oxbow", id: Self.queueWindowID) {
       Group {
-        // One view for both outcomes. `QueueView` owns the toolbar and the
-        // banner, so a payload-missing launch gets the `+`-disabled window
-        // design §6 describes rather than a bare page with no chrome.
+        // Use QueueView for missing-helper launches too, retaining toolbar and banner chrome.
         if let content {
           QueueView(
             content: content, updates: updates, watching: watching, poller: poller,
@@ -117,12 +50,7 @@ struct OxbowApp: App {
             pendingIntake: $pendingIntake,
             pendingChannelEdit: $pendingChannelEdit)
         } else {
-          // This spinner covers `QueueEngine.start()` too, deliberately.
-          // `QueueHost.ready()` answers only after the saved queue is loaded
-          // and the workspace swept, so that nothing can enqueue into an
-          // engine `start()` is about to overwrite — see `liveController`.
-          // Showing rows before that would mean showing a queue that is still
-          // being reconciled underneath them.
+          // Wait for startup reconciliation before exposing the queue or permitting enqueue.
           ProgressView().frame(minWidth: 480, minHeight: 320)
         }
       }
@@ -136,24 +64,13 @@ struct OxbowApp: App {
         ScreenshotWindowFocus()
       }
       #endif
-      // Its own task, not a step inside `setUp()`: the two are unrelated,
-      // and a check that waits for the helper to be found would be a check
-      // that never runs on the builds most in need of an update.
-      //
-      // Guarded, because `OxbowTests` is hosted by this app: without it every
-      // `xcodebuild test` made a live GitHub request and wrote the real
-      // preferences. See `AppComposition.isUserSession`.
+      // Check independently of engine setup. Gate hosted tests to avoid live requests and
+      // preference writes.
       .task {
         guard AppComposition.isUserSession else { return }
         await updates.checkAutomatically()
       }
-      // Its own task for the same reason the update check has one: unrelated
-      // work, on an unrelated schedule.
-      //
-      // Guarded the same way and for the same reason: `OxbowTests` is hosted
-      // by this app, so `xcodebuild test` launches it for real, and an
-      // unguarded sweep would make a live Twitch request on every test run.
-      // See `AppComposition.isUserSession`.
+      // Poll independently of engine setup, but never in the XCTest host process.
       .task {
         guard AppComposition.isUserSession else { return }
         guard poller == nil else { return }
@@ -161,24 +78,14 @@ struct OxbowApp: App {
         let store = WatchStore(fileURL: AppComposition.watchStoreURL(supportDirectory: support))
         watching = WatchingModel(
           store: store,
-          // Built here, from the one site that decides where Oxbow's video
-          // record lives, rather than inside the model — the same discipline
-          // `WatchPoller.live` and `VideoRecording.live` follow, so that
-          // "where does the record live" stays answerable in one place.
           videoRecordStore: VideoRecordStore(
             fileURL: AppComposition.videoRecordURL(supportDirectory: support)),
-          // Only sets the state — opening the window itself is `QueueView`'s
-          // job, via the `.onChange(of: pendingIntake)` beside its own
-          // `openWindow`. This closure has no environment to call it from:
-          // it runs inside a plain `.task`, not a view's own body.
+          // QueueView observes this hand-off and opens the window through its environment.
           openIntake: { archive, watch in
             pendingIntake = PendingIntake(archiveID: archive.id, settings: watch.settings)
           },
-          // A finding's primary Add queues it here, with the channel's own
-          // frozen settings, rather than opening a form to ask again for
-          // settings that were chosen when the channel was added. The
-          // answer is nil on success and a sentence on refusal — see
-          // `ArchiveSubmission`, and `WatchingModel.add(_:from:)`.
+          // Queue with the watch's frozen settings. Nil means success; a string explains
+          // refusal.
           queue: { archive, watch in
             guard case .ready(let controller) = await QueueHost.shared.ready() else {
               return "Oxbow's download engine is not available."
@@ -186,34 +93,18 @@ struct OxbowApp: App {
             let result = await ArchiveSubmission.submit([archive], for: watch, into: controller)
             return result.failures[archive.id]
           },
-          // Not `VolumeSpace.live` here — its accessors resolve through
-          // `nearestExisting`, which walks up to the deepest ancestor that
-          // exists. For an unmounted `/Volumes/Helios/f.mp4` that ancestor
-          // is `/Volumes` itself, which always exists on the boot volume,
-          // so both `VolumeSpace` accessors would answer non-nil and an
-          // unplugged drive would read as a deleted file. See
-          // `ArchiveRowState.FileAnswer.resolve`'s doc comment for the full
-          // reasoning; this just supplies its two disk probes.
+          // Do not use VolumeSpace.nearestExisting: an unmounted /Volumes path resolves to the
+          // boot volume and would misclassify an offline file as deleted.
           fileAnswer: { url in
             ArchiveRowState.FileAnswer.resolve(
               url,
               fileExists: { FileManager.default.fileExists(atPath: $0.path) },
               folderExists: { FileManager.default.fileExists(atPath: $0.path) })
           },
-          // Reads the image store at call time rather than capturing one,
-          // because there is no store to capture yet: it is stood up a few
-          // lines below this, after the model exists. Nil until then, which
-          // is correct — nothing can have been unwatched before the first
-          // sweep has even had a store to draw into.
+          // Read imageStore at call time; it is constructed after the model.
           purgeImages: { referenced in
             Task { await imageStore?.purge(keeping: referenced) }
           },
-          // Built here for the same reason `videoRecordStore` is, and from
-          // the same site: `AppComposition` decides where every piece of
-          // Oxbow's state on disk lives, and a payload directory chosen a
-          // second time — even the identical one — could drift away from the
-          // one `VideoRecording.live` writes into, leaving un-watching to
-          // delete from an empty directory while the real payloads piled up.
           payloads: PayloadStore(
             directory: AppComposition.payloadDirectory(supportDirectory: support)))
         watchStore = store
@@ -221,13 +112,7 @@ struct OxbowApp: App {
           directory: AppComposition.imageStoreURL(supportDirectory: support))
         videoRecordStore = VideoRecordStore(
           fileURL: AppComposition.videoRecordURL(supportDirectory: support))
-        // **Not during a screenshot run.** The fixture's channels are
-        // invented, so a sweep would spend the capture's first seconds
-        // failing to reach Twitch for three logins that do not exist and
-        // leave that on screen. The same reasoning as `QueueController`'s
-        // `runsWork: false`: a fixture run loads state and is looked at, it
-        // does not do work. `watching` above is still built, which is what
-        // puts the channels in the sidebar.
+        // Fixture channels are fictional: load them for display, but do not poll Twitch.
         #if DEBUG
         guard ScreenshotFixture.directory == nil else { return }
         #endif
@@ -235,58 +120,28 @@ struct OxbowApp: App {
         poller?.start()
       }
     }
-    // 720 was chosen for the queue alone, the same way its old 480pt minimum
-    // was (see `QueueView`'s `.frame`) — pre-sidebar, that gave the queue
-    // 240pt of room above its floor. Grown by the sidebar's own 180pt ideal
-    // width for the same reason as the minimum: without it, the queue opens
-    // at only 60pt above its new floor instead of the 240pt it used to get,
-    // which is the same truncation this task exists to fix, just at launch
-    // instead of at minimum width.
+    // Include the sidebar's 180pt ideal width in the default window size.
     .defaultSize(width: 900, height: 480)
     .windowResizability(.contentMinSize)
     .commands {
-      // Replace, not add. The stock item calls
-      // `orderFrontStandardAboutPanel`, whose one small credits scroller has
-      // no room for the licence text this app is obliged to make reachable
-      // (see `AboutView`). Leaving it in place would put two About items in
-      // the menu, one of them insufficient.
+      // Replace the stock About panel with access to bundled licence documents.
       CommandGroup(replacing: .appInfo) {
         AboutCommand(applicationName: about.applicationName)
-        // Where a Mac app puts it, and the only way to get a definitive
-        // answer: the automatic check is silent unless it finds something,
-        // so without this there is no way to tell "up to date" from "broken".
+        // Manual checks report up-to-date status and failures; automatic checks are silent
+        // unless an update exists.
         CheckForUpdatesCommand(updates: updates)
       }
-      // ⌘N is free: the queue is a `Window`, so there is no New Window item to
-      // collide with. It opens intake, which is the only thing in this app a
-      // person creates. The toolbar `+` in `QueueView` opens the same window —
-      // the shortcut is a second path to it, never the only one.
+      // Use ⌘N for the same single intake window as the toolbar + button.
       CommandGroup(replacing: .newItem) {
         AddDownloadCommand(isEnabled: controller != nil)
       }
-      // Its own top-level menu, the way Transmission gives transfers one.
-      // Everything here is also reachable by right-clicking a row; the menu is
-      // what makes it discoverable, and what gives it key equivalents.
       DownloadsCommands()
-      // Refresh, in View. See `WatchingCommands` for why it is not in
-      // Downloads alongside the row actions.
       WatchingCommands()
     }
 
-    // Intake as its own window, not a sheet on the queue.
-    //
-    // A sheet cannot exceed its host window, and this form legitimately wants
-    // most of a screen once the render options are open — which made the queue
-    // window's minimum size a function of its own modal. A window sizes itself,
-    // remembers what the user dragged it to, and closes with ⌘W.
-    //
-    // `Window`, so ⌘N and the `+` re-focus the one that exists rather than
-    // stacking half-filled copies of a form that each hold their own
-    // `IntakeModel` and their own in-flight metadata fetch.
+    // A single intake Window sizes independently and refocuses existing work instead of
+    // duplicating forms and fetches.
     Window("Add Download", id: Self.intakeWindowID) {
-      // Unreachable without a controller — both the menu item and the toolbar
-      // button are disabled in that case — but the window needs one, and there
-      // is no honest thing to put here instead.
       if let controller {
         IntakeWindow(controller: controller, pendingIntake: $pendingIntake)
       }
@@ -294,57 +149,28 @@ struct OxbowApp: App {
     .defaultSize(width: 560, height: 680)
     .windowResizability(.contentMinSize)
     .defaultPosition(.center)
-    // Not restored on launch. macOS reopens whatever windows were open at
-    // quit, which for a half-filled form means every launch starts with an
-    // Add Download window nobody asked for — and its `IntakeModel` is
-    // rebuilt empty anyway, so what reappears is a blank form, not the one
-    // that was there.
+    // Do not restore an empty intake on launch; its in-memory input does not survive quitting.
     .restorationBehavior(.disabled)
 
-    // Add Channel, its own window for the same reasons intake is one — a
-    // form that can legitimately grow (§3.3's priced backfill line joins the
-    // usual settings) belongs in something that sizes to its own content
-    // rather than a sheet capped by the queue window's height.
-    //
-    // `Window`, so the toolbar button on the Watching pane re-focuses the one
-    // that exists rather than stacking a second lookup on top of the first.
+    // A single Add Channel window sizes independently and avoids duplicate lookups.
     Window("Add Channel", id: Self.addChannelWindowID) {
-      // Unreachable before `watchStore` resolves — the same guard `intake`
-      // above puts on `controller` — and there is nothing honest to show in
-      // its place: this window exists to write `watches.json`, and until the
-      // support directory is known there is no file to write to.
       if let watchStore {
         AddChannelWindow(
           store: watchStore, preferences: addChannelPreferences,
           pendingEdit: $pendingChannelEdit,
-          // The other half of the Watching pane refresh fix — see
-          // `AddChannelWindow.onClose`'s own doc comment and
-          // `WatchingModel.refresh()`'s. A channel added here writes through
-          // a `WatchStore` distinct from the one `watching` reads, so nothing
-          // tells that model to look again unless this does.
+          // Reload Watching after another store handle writes the watch list.
           onClose: { watching?.refresh() },
-          // A watch that was just written has no sweep behind it, so its
-          // findings do not exist yet and its automatic path has had nothing
-          // to act on. See `AddChannelWindow.onSaved` for what this was
-          // like without it.
+          // Poll the new watch immediately to discover and act on findings.
           onSaved: { Task { await poller?.refreshNow() } })
       }
     }
     .defaultSize(width: 480, height: 640)
     .windowResizability(.contentMinSize)
     .defaultPosition(.center)
-    // Not restored, matching intake: a channel half-typed into a login field
-    // is not a form worth resurrecting on the next launch, and its
-    // `AddChannelModel` is rebuilt empty regardless.
     .restorationBehavior(.disabled)
 
-    // Get Info, one window per download.
-    //
-    // `WindowGroup(for:)` rather than a single inspector window: asking for
-    // info on the same job twice focuses the window that is already open
-    // instead of stacking duplicates, and two downloads can be compared side
-    // by side — which is what Finder's ⌘I does and what a single
-    // follows-the-selection panel cannot.
+    // One window per InfoTarget: repeat requests refocus it; different videos can be compared
+    // side by side.
     WindowGroup(id: Self.infoWindowID, for: InfoTarget.self) { $target in
       if let target, let controller {
         JobInfoWindow(target: target, controller: controller, record: videoRecordStore)
@@ -352,61 +178,33 @@ struct OxbowApp: App {
     }
     .defaultSize(width: 460, height: 620)
     .windowResizability(.contentMinSize)
-    // Same reasoning as intake: macOS reopens what was open at quit, and a
-    // restored info window would be pointing at a job whose queue has since
-    // been reconciled — or removed entirely.
+    // Do not restore info windows pointing at jobs removed or reconciled since quit.
     .restorationBehavior(.disabled)
 
-    // `Window`, so the About box is single-instance for the same reason the
-    // queue and intake are: choosing the menu item twice brings the existing
-    // one forward instead of stacking copies.
-    //
-    // `commandsRemoved()` drops the menu commands this scene would otherwise
-    // contribute. The About box should be reachable only from the menu item,
-    // the way a Mac About box is.
+    // Single-instance About window, opened through the custom menu item.
     Window("About \(about.applicationName)", id: Self.aboutWindowID) {
       AboutView(info: about)
     }
     .windowResizability(.contentSize)
     .commandsRemoved()
     .defaultPosition(.center)
-    // Nothing here is worth restoring, and an About box reappearing on launch
-    // is the same unasked-for window intake would be.
     .restorationBehavior(.disabled)
 
-    // ⌘, and the app-menu item, for free — this is the whole scene.
-    // `SettingsView` reads and writes `Preferences()`'s default `.standard`
-    // domain itself; nothing here needs to be threaded through.
-    //
-    // macOS 26 auto-icons *system-provided* menu items (design doc §7.1):
-    // `About Oxbow` and `Check for Updates…` above both needed an explicit
-    // `Label` because they are ours, not the system's, and drew bare without
-    // one. `Settings…` is a scene macOS itself generates the menu item for,
-    // the same way it generates `Quit` and `Hide` — so it may already be
-    // auto-iconed, unlike those two. **Unverified**: this cannot be checked
-    // without opening the built app's menu bar, which this change does not
-    // do. If it turns out to draw bare, replace this scene's content with
-    // `CommandGroup(replacing: .appSettings) { ... Label("Settings…",
-    // systemImage: "gearshape") ... }`, the same shape as the `CommandGroup`
-    // above, plus an `@Environment(\.openSettings)` action.
+    // Settings supplies the system menu item and ⌘, shortcut. Unverified: whether macOS 26 adds
+    // its menu icon automatically; see docs/design/settings.md §7.1.
     Settings {
       SettingsView()
     }
   }
 
-  /// The id the About menu item opens.
   static let aboutWindowID = "about"
 
-  /// The queue itself — the window the update banner appears in.
   static let queueWindowID = "queue"
 
-  /// The id `QueueView` and the Downloads menu open Get Info with.
   static let infoWindowID = "info"
 
-  /// The id both the menu item and `QueueView`'s toolbar button open.
   static let intakeWindowID = "intake"
 
-  /// The id `QueueView`'s toolbar button opens from the Watching pane.
   static let addChannelWindowID = "addChannel"
 
   private var controller: QueueController? {
@@ -420,13 +218,7 @@ struct OxbowApp: App {
   }
 }
 
-/// The File ▸ Add Download… item.
-///
-/// A `View` rather than a `Button` written inline in the `CommandGroup`,
-/// because `openWindow` is an environment value and an `App` has no
-/// environment to read it from. Command content is a view builder, so a view
-/// placed there does have one — this is the supported way for a menu item to
-/// open a scene.
+/// A View provides the openWindow environment value unavailable to App itself.
 private struct AddDownloadCommand: View {
   let isEnabled: Bool
 
@@ -443,11 +235,7 @@ private struct AddDownloadCommand: View {
   }
 }
 
-/// The Oxbow ▸ Check for Updates… item.
-///
-/// Opens the queue window before checking, because the queue window is where
-/// the answer is drawn. Choosing this from the menu bar with every window
-/// closed would otherwise run a check whose result nothing displays.
+/// Open the queue before checking so the result is visible even when all windows were closed.
 private struct CheckForUpdatesCommand: View {
   let updates: UpdateModel
 
@@ -463,10 +251,6 @@ private struct CheckForUpdatesCommand: View {
   }
 }
 
-/// The Oxbow ▸ About Oxbow item.
-///
-/// A `View` for the same reason `AddDownloadCommand` is one: `openWindow` is
-/// an environment value, and an `App` has no environment to read it from.
 private struct AboutCommand: View {
   let applicationName: String
 
@@ -481,66 +265,21 @@ private struct AboutCommand: View {
   }
 }
 
-/// Delays app termination until the running helpers have been killed and the
-/// queue's pending debounced save is on disk.
-///
-/// `QueueController.shutDown()` is async; `applicationWillTerminate(_:)` is
-/// not, and by the time it runs the app is already committed to quitting, so
-/// there is nothing left to await it against. `applicationShouldTerminate(_:)`
-/// is the hook that is allowed to say "not yet": returning `.terminateLater`
-/// suspends the quit, and `NSApp.reply(toApplicationShouldTerminate:)` resumes
-/// it once the shutdown actually completes. This blocks no thread — the work
-/// runs to completion on `QueueEngine`'s own actor, and the reply is sent only
-/// after that `await` returns, which is what guarantees both the kills and the
-/// write land before the process is allowed to exit.
-///
-/// **Both halves have to happen here, and in that order.** Quitting mid-
-/// download used to leave `TwitchDownloaderCLI` and its FFmpeg running as
-/// orphans, because `HelperProcessing.cancel()` is the only thing that signals
-/// their process group and nothing on the quit path called it. The delay this
-/// adds is bounded by one ~2s SIGTERM grace period however many steps are in
-/// flight, because `shutDown()` signals them concurrently — and the scheduler
-/// admits at most one `.network` and one `.compute` step, so it is never more
-/// than two.
-///
-/// Verified directly, not assumed, against a real VOD download in the built
-/// app: quit while both `TwitchDownloaderCLI` and the `ffmpeg` it had spawned
-/// were running, then `pgrep`'d for each from outside. Before this change the
-/// app exited in ~0.3s and both survived, reparented to `launchd` with their
-/// cwd still inside the job workspace that the next launch's
-/// `Workspace.removeAll()` sweep deletes. After it, the app takes ~2.4s to go
-/// — one SIGTERM grace period, externally observable proof that
-/// `.terminateLater` really does hold the process open for the awaited work —
-/// and `pgrep` finds neither. Relaunching then showed the step reconciled to
-/// `.failed(.interrupted)`, as designed.
+/// Delay termination with terminateLater until async shutdown kills helper process groups and
+/// flushes the pending queue save. applicationWillTerminate cannot await this work. Concurrent
+/// cancellation bounds the wait to one grace period.
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
-  /// Two things, and the order between them is the point.
-  ///
-  /// **The delegate registration is synchronous and unconditional**, because
-  /// `UNUserNotificationCenter` requires its delegate before the app finishes
-  /// launching — that is what makes a notification response which *cold-
-  /// launches* Oxbow get delivered instead of dropped. Someone who queued a
-  /// six-hour composite from Spotlight, walked away and quit is exactly the
-  /// person who clicks "Show in Finder" on a launched-from-cold app, and the
-  /// failure is silent. Deferring it into the `Task` below would not do:
-  /// unstructured work cannot begin until this method returns. Routing it
-  /// through resolution would not do either — the notifier is otherwise only
-  /// built on `ready()`'s `.ready` branch, so a `helperMissing` launch would
-  /// register no delegate at all.
-  ///
-  /// **The resolution nudge is fire-and-forget**, because this method cannot
-  /// await and nothing here needs the result. `ready()` is idempotent, so the
-  /// scene's own `.task` joins this resolution rather than starting a second
-  /// one.
+  /// Register the notification delegate synchronously before launch completes, including
+  /// missing-helper launches, to receive cold-launch responses. Then start idempotent QueueHost
+  /// resolution without waiting.
   func applicationDidFinishLaunching(_ notification: Notification) {
     QueueHost.shared.registerNotificationDelegate()
     Task { _ = await QueueHost.shared.ready() }
   }
 
   func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-    // `resolvedController`, not `ready()`: quitting must never *start* a
-    // resolution in order to discover there is nothing to shut down.
+    // Quitting must not start engine resolution merely to check whether shutdown is needed.
     guard let controller = QueueHost.shared.resolvedController else { return .terminateNow }
     Task {
       await controller.shutDown()

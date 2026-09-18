@@ -5,66 +5,28 @@ public enum VideoInfoFetchError: Error, Equatable {
   /// The helper did not exit cleanly. Carries `standardError` because, like
   /// every other CLI failure, the useful sentence is usually in there.
   case helperFailed(status: ProcessExitStatus, standardError: String)
-  /// The helper exited cleanly but its stdout did not contain a line
-  /// `VideoInfo.parse` could make sense of. Carries a bounded snippet of the
-  /// joined output — `Raw`'s shape is not a stable upstream contract (see
-  /// `VideoInfo`'s doc comment), and a bare case name gives whoever debugs a
-  /// format drift nothing to go on. This is the same lesson `StepLog` exists
-  /// for: capturing helper output and then discarding it is how a diagnosable
-  /// failure turns into one that needs a process sample instead.
+  /// Clean exit with unparseable stdout. Retains a bounded snippet to diagnose changes in
+  /// upstream's raw format.
   case unparseableOutput(snippet: String)
 }
 
-/// Fetches one video's metadata by running the CLI's `info` verb directly.
-///
-/// Deliberately **not a queue step**: it produces no artifact, has no place
-/// in the job model, and must never appear in the queue list. Intake calls
-/// this once, before a job exists, to derive an output filename and offer a
-/// quality picker (docs/design/chat-and-render.md §3).
-///
-/// A plain `String` id rather than `TwitchLink.Target`: that type lives in
-/// the app target, which `OxbowKit` cannot see, and does not need to — the
-/// CLI's `info --id` accepts a VOD id and a clip slug identically, so the
-/// caller resolves which it holds and passes the string.
+/// Runs CLI `info` before enqueueing; metadata fetches produce no queue artifact. Accepts
+/// either a VOD ID or clip slug without depending on app-layer link types.
 public enum VideoInfoFetcher {
 
-  /// How much of the unparseable output `.unparseableOutput` keeps, in
-  /// `Character`s. Enough to show what upstream actually sent; bounded so a
-  /// runaway payload (a very chatty helper, or a genuinely wrong invocation)
-  /// can never balloon an error string to megabytes.
-  ///
-  /// Not `private`: `VideoInfoFetcherTests` pins this bound so a future edit
-  /// can't accidentally make it unbounded again.
+  /// Maximum characters retained in an unparseable-output diagnostic; pinned by tests.
   static let snippetLimit = 280
 
-  /// Accumulates the helper's narrative output.
-  ///
-  /// An actor, not a captured local `var`: `onOutput` is `@Sendable` and
-  /// nothing about `HelperProcessing.run` promises its calls stay on one
-  /// thread, so appending needs real isolation, not just sequential-in-
-  /// practice ordering.
+  /// Isolated output buffer because the Sendable callback does not guarantee single-threaded
+  /// calls.
   private actor OutputCollector {
     private var lines: [String] = []
     func append(_ line: String) { lines.append(line) }
     var joined: String { lines.joined(separator: "\n") }
   }
 
-  /// One `info` run: what we could parse, and the helper's narrative output it
-  /// was parsed from.
-  ///
-  /// The payload is kept because `VideoInfo.parse` reads a fraction of it —
-  /// the moments line not at all — and a record that stores only the parsed
-  /// half freezes today's field set into the archive
-  /// (`docs/design/video-record.md` §3.3).
-  ///
-  /// **Not a transcript of the process, and a future parser should not read
-  /// it as one.** It is the `.log` and `.ffmpeg` lines joined with newlines,
-  /// so the `[STATUS]` banner `StatusLineParser` classifies separately never
-  /// reaches it, and blank lines are not preserved. What that costs is
-  /// nothing: the three parts anything would want — the video-info JSON line,
-  /// the moments JSON line and the m3u8 — are each a non-empty line that
-  /// matches no status preamble, so none of them can be the thing that was
-  /// dropped. Only the shape of the whitespace between them is gone.
+  /// Parsed metadata and retained payload for future parsers. Payload joins log/FFmpeg lines,
+  /// omitting status banners and blank lines; it is not a byte-for-byte process transcript.
   public struct Fetched: Sendable {
     public let info: VideoInfo
     public let payload: String
@@ -75,15 +37,8 @@ public enum VideoInfoFetcher {
     }
   }
 
-  /// Runs `info --id <id> --format Raw` and parses the result.
-  ///
-  /// The info payload — the video-info JSON, the moments JSON, and the m3u8
-  /// master playlist — arrives on `onOutput` as `.log`/`.ffmpeg` lines, not
-  /// `.status`: nothing in that body matches one of the CLI's `[STATUS] - `
-  /// preambles, so `StatusLineParser` classifies it as narrative output (see
-  /// `StepLog`'s doc comment for the same distinction). Only the leading
-  /// `[STATUS] - Fetching Video Info [1/1]` banner is `.status`, and it is
-  /// ignored here — `VideoInfo.parse` finds its own start point regardless.
+  /// Runs `info --format Raw`. Collect JSON and playlist from log/FFmpeg events; ignore the
+  /// leading status banner.
   public static func fetchDetailed(
     id: String,
     helper: URL,
@@ -99,17 +54,9 @@ public enum VideoInfoFetcher {
 
     let collector = OutputCollector()
 
-    // Cancelling this task has to reach the child, or it does not reach
-    // anything: `HelperProcess.run` blocks on `waitpid` and observes nothing
-    // about the task it is running on. Intake refetches on every keystroke
-    // (debounced), and SwiftUI's `.task(id:)` cancels the previous fetch when
-    // the link changes — so without this, typing a URL a character at a time
-    // leaves an `info` subprocess per keystroke running to completion, each
-    // one talking to Twitch, all of their results discarded.
-    //
-    // `cancel()` is async and this handler is not, so it goes through a
-    // detached task; `HelperProcess.cancel` is a one-way flag, so arriving
-    // before the spawn is as good as arriving after it.
+    // Forward task cancellation to the subprocess; cancelling an async waiter alone does not
+    // stop it. The synchronous handler dispatches async `cancel`, whose permanent flag also
+    // covers cancellation before spawn.
     let result = try await withTaskCancellationHandler {
       try await process.run(launch) { line in
         switch line {
@@ -122,10 +69,7 @@ public enum VideoInfoFetcher {
       Task { await process.cancel() }
     }
 
-    // A cancelled fetch has no answer, and must not be reported as a helper
-    // failure: the caller asked for this to stop, and `.helperFailed` would
-    // put "Oxbow could not read that video's details" in front of a user who
-    // simply carried on typing.
+    // Cancellation is not a metadata failure to display while the user edits a link.
     try Task.checkCancellation()
 
     guard case .exited(0) = result.status else {
@@ -142,10 +86,7 @@ public enum VideoInfoFetcher {
     return Fetched(info: info, payload: joined)
   }
 
-  /// The metadata alone, for callers with nothing to do with the payload.
-  ///
-  /// Kept so intake — which fetches on every debounced keystroke and records
-  /// nothing (§3.5) — does not have to carry a payload it will discard.
+  /// Metadata-only convenience for callers that do not retain the payload.
   public static func fetch(
     id: String,
     helper: URL,

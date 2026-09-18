@@ -3,12 +3,8 @@ public enum JobStatus: Sendable, Equatable {
 }
 
 extension JobStatus {
-  /// Whether this job is still going to produce something.
-  ///
-  /// The test the duplicate rule asks. `failed` and `cancelled` are
-  /// deliberately *finished*: refusing a second attempt at one of those
-  /// would leave someone unable to re-queue a download that went wrong from
-  /// the one surface that has no queue window to retry it in.
+  /// Unfinished jobs block duplicates. Failed and cancelled jobs remain eligible for a fresh
+  /// attempt.
   public var isUnfinished: Bool {
     switch self {
     case .queued, .running: true

@@ -27,14 +27,8 @@ struct QueueStatusTests {
       steps: steps)
   }
 
-  /// **Quantization off.** A zero quantum is the documented degenerate case
-  /// and passes the fraction through unchanged, which is what these tests
-  /// want: they are about which step the bar follows, not about rounding.
-  ///
-  /// Do not "improve" this to a realistic quantum. At 1/128 a fraction of
-  /// 0.4 becomes 0.3984375, and every bar assertion below would have to
-  /// carry a rounded literal that says nothing about the rule it is testing.
-  /// Rounding has its own section further down.
+  /// Disable quantization to isolate step selection. Rounding is tested separately; a realistic
+  /// quantum would alter these expected fractions.
   private func status(_ jobs: [Job]) -> QueueStatus {
     QueueStatus(jobs: jobs, quantum: 0)
   }
@@ -61,8 +55,7 @@ struct QueueStatusTests {
 
   // MARK: - The count
 
-  /// Spec §3: with a single job the bar tells the whole story, and a badge
-  /// reading "1" adds a glyph without adding information.
+  /// One running job needs progress but no redundant count badge.
   @Test func oneOutstandingJobShowsNoCount() {
     #expect(status([job([step(.running, fraction: 0.5)])]).badge == nil)
   }
@@ -123,8 +116,7 @@ struct QueueStatusTests {
     #expect(status([job([step(.running, fraction: 0.25)])]).bar == .fraction(0.25))
   }
 
-  /// Spec §4.2: an absent bar reads as idle, which is a lie while a chat
-  /// download is running. An empty track says "working, no estimate".
+  /// Unknown progress shows an empty track, not an idle Dock.
   @Test func aRunningStepWithNoFractionIsIndeterminate() {
     #expect(status([job([step(.running, fraction: nil)])]).bar == .indeterminate)
   }

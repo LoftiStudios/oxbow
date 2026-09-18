@@ -37,10 +37,8 @@ struct WatchTests {
 
   @Test("only new seeds from a live broadcast too, so it is not re-offered later")
   func onlyNewSeedsFromLiveToo() {
-    // A RECORDING node is not downloadable, but it is listed. If scope
-    // skipped it, the archive would appear as brand new the moment it
-    // finished — correct for allAvailable, wrong for onlyNew, whose promise
-    // is that nothing already on the channel appears.
+    // Only-new seeding includes recording broadcasts so completion cannot make an existing
+    // stream look new.
     let seeded = watch().seeded(withScope: .onlyNew, from: [archive("1", status: .recording)])
     #expect(seeded.seen == ["1"])
   }
@@ -54,9 +52,7 @@ struct WatchTests {
 
   @Test("findings include a live broadcast, because a human may still choose it")
   func findingsIncludeLive() {
-    // §5.2 forbids anything *unattended* queueing a RECORDING. It does not
-    // hide it from a person; the auto-download path filters on
-    // `isDownloadable`, and this does not.
+    // Live broadcasts remain manually visible; unattended submission applies its own filter.
     #expect(watch().findings(in: [archive("1", status: .recording)]).map(\.id) == ["1"])
   }
 
@@ -77,9 +73,7 @@ struct WatchTests {
 
   @Test("a forgotten archive is a finding again")
   func forgottenArchiveIsAFindingAgain() {
-    // The whole point: a failed automatic download has to come back to the
-    // inbox, and it does so by no longer being in `seen` — nothing else
-    // needs to change for `findings(in:)` to surface it again.
+    // Unmarking failed downloads returns them to findings.
     let watch = watch(seen: ["1"]).forgetting(["1"])
     #expect(watch.findings(in: [archive("1")]).map(\.id) == ["1"])
   }
@@ -105,9 +99,7 @@ struct WatchTests {
 
   @Test("a URL addressing a reserved route is not a channel, and is rejected")
   func rejectsReservedRoutes() {
-    // These are exactly what `TwitchLink.parse` treats as a video or a bare
-    // VOD id (`Oxbow/Intake/TwitchLink.swift`) — the first path segment is
-    // real, but it is not a login.
+    // Video routes and IDs must not be confused with channel URLs.
     #expect(Watch.normalisedLogin("https://www.twitch.tv/videos/2862926638") == nil)
     #expect(Watch.normalisedLogin("https://www.twitch.tv/directory/game/Fortnite") == nil)
     #expect(Watch.normalisedLogin("https://twitch.tv/settings/profile") == nil)
@@ -125,11 +117,8 @@ struct WatchTests {
 
   @Test("a bare all-digit token is accepted, because a numeric login is legal")
   func acceptsBareNumericLogin() {
-    // `TwitchLink.parse` reads a bare all-digit token as a VOD id, and that
-    // divergence from this function is real — but a numeric string is a
-    // legal Twitch login (`docs/twitch-channel-api.md` never rules it out),
-    // so rejecting it here would be wrong for its own sake, not merely
-    // inconsistent with the other parser. See M1 in the review notes.
+    // Numeric tokens are valid logins here, even though the video-link parser treats them as
+    // VOD IDs.
     #expect(Watch.normalisedLogin("2862926638") == "2862926638")
   }
 
@@ -147,10 +136,7 @@ struct WatchTests {
     #expect(Watch.normalisedLogin(String(repeating: "a", count: 26)) == nil) // 26: too long
   }
 
-  /// A file written before `avatarURL` existed must still load. The feature
-  /// has no installed base, but there is a live `watches.json` on the
-  /// author's machine and losing it to a decode failure would be a bad way
-  /// to find that out.
+  /// Watch files written before optional avatarURL must still decode.
   @Test("a watch without an avatarURL still decodes")
   func decodesWithoutAvatar() throws {
     let json = Data("""

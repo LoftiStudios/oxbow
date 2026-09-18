@@ -44,8 +44,7 @@ struct SubmissionRecordingTests {
     #expect(payloads.payload(for: "2844787557") == fetched.payload)
   }
 
-  /// The moments line is stored even though nothing parses it. That is the
-  /// entire reason the payload is kept whole rather than parsed down.
+  /// Retain moments even though today's parser ignores them.
   @Test("the unparsed parts of the payload survive")
   func unparsedPartsSurvive() throws {
     let directory = temporaryDirectory()
@@ -78,9 +77,7 @@ struct SubmissionRecordingTests {
     #expect(payloads.payload(for: "../escape") == nil)
   }
 
-  /// No helper version means no stamp — and an unstamped payload is not
-  /// re-parseable later, so it is not written at all rather than written
-  /// anonymously.
+  /// Do not retain a raw payload without the helper-version stamp needed to interpret it later.
   @Test("an unknown helper version stores facts but no payload")
   func noVersionMeansNoPayload() throws {
     let directory = temporaryDirectory()
@@ -95,14 +92,8 @@ struct SubmissionRecordingTests {
     #expect(payloads.payload(for: "1") == nil)
   }
 
-  /// **The write that was missing, and the bug it was one swap away from.**
-  /// `WatchState.countsAsSeen` reads `queued` as handled, and it is the whole
-  /// seen-set (`docs/design/video-record.md` §3.2). Nothing wrote `queued` at
-  /// all for a while, so a submitted-but-unfinished archive read as unseen —
-  /// latent only because `WatchPoller.markSubmitted` was still writing the
-  /// legacy `Watch.seen` beside it. The moment `seenIDs(forLogin:)` becomes
-  /// the answer, an archive whose download is still running gets offered and
-  /// downloaded a second time.
+  /// Submission must record queued state so subsequent sweeps cannot offer an in-flight archive
+  /// again.
   @Test("a submission leaves the video queued")
   func submissionMarksQueued() throws {
     let directory = temporaryDirectory()
@@ -116,38 +107,21 @@ struct SubmissionRecordingTests {
 
     let library = try records.load()
     #expect(library.watchStates["2844787557"] == .queued)
-    // The point of the state, asserted rather than assumed: the archive is
-    // handled, so the next sweep must not offer it again.
+    // Queued state suppresses duplicate findings.
     #expect(library.seenIDs(forLogin: "wheelyf") == ["2844787557"])
   }
 
   // MARK: - The two routes that actually record
 
-  /// Temp stores in their own directory, so a suite run touches nothing the
-  /// developer owns. `VideoRecording`'s memberwise init is internal and this
-  /// suite is `@testable`, which is the whole reason the wired paths can be
-  /// driven at all: `QueueHost.videoRecording` is deliberately nil under
-  /// `xcodebuild test`, so the only way to watch a submission reach the record
-  /// is to hand it a handle of one's own.
+  /// Inject disposable stores; hosted tests intentionally leave `QueueHost.videoRecording` nil.
   private func makeRecording(in directory: URL) -> VideoRecording {
     VideoRecording(
       records: VideoRecordStore(fileURL: directory.appending(path: "videos.json")),
       payloads: PayloadStore(directory: directory.appending(path: "payloads")))
   }
 
-  /// A model wired to `fetched`, enqueueing into nothing.
-  ///
-  /// Every collaborator that would otherwise read the machine is stubbed, for
-  /// the reasons `IntakeModelTests` gives at each: a pinned calendar so
-  /// `OutputNaming` does not date the job in the CI runner's zone, an
-  /// in-memory preference store with `directoryExists` stubbed true so the
-  /// destination does not fall back to a real `~/Downloads`, and a terabyte
-  /// free so no disk warning depends on the volume this runs on.
-  ///
-  /// `output` is pinned to `.video` so that neither `chatProblem` nor
-  /// `compositeProblem` can refuse the submission. What is under test here is
-  /// where the record gets written, not which outputs a video supports; those
-  /// rules have their own suites.
+  /// Stub clock, preferences, paths, and capacity. Use video-only output to isolate recording
+  /// from chat eligibility.
   private func makeModel() -> IntakeModel {
     var preferences = Preferences(
       store: InMemoryPreferenceStore(),
@@ -171,10 +145,7 @@ struct SubmissionRecordingTests {
       preferences: preferences)
   }
 
-  /// The Shortcuts, Spotlight and watched-channel route. `VideoRecorder` is
-  /// covered above in isolation; this is the assertion that a real submission
-  /// reaches it, which nothing made before — `QueueHost.videoRecording` being
-  /// nil under test meant the wiring itself was only ever read, never run.
+  /// Exercise recording through the actual intent submission path.
   @Test("a submission through the intent path lands a record and its payload")
   func theIntentPathRecords() async throws {
     let directory = temporaryDirectory()
@@ -194,15 +165,8 @@ struct SubmissionRecordingTests {
     #expect(recording.payloads.payload(for: "2844787557") == fetched.payload)
   }
 
-  /// The hand-pasted route, which is the case the record exists for
-  /// (`docs/design/video-record.md` §3.5): grab a channel's video by hand
-  /// today, add that channel as a watch later, and the row should already know
-  /// you have it. Add Download used to call `IntakeModel.add()` directly and
-  /// so recorded nothing at all, and no test noticed because the only covered
-  /// route was the intent's.
-  ///
-  /// Drives `IntakeAdd.perform` — every line of the window's Add button that
-  /// is not `isAdding`, `dismiss()` or the defaults checkbox.
+  /// Exercise the window's `IntakeAdd.perform` route so manually pasted videos also enter the
+  /// record.
   @Test("pressing Add on a pasted link lands a record and its payload")
   func theAddDownloadPathRecords() async throws {
     let directory = temporaryDirectory()
@@ -224,17 +188,8 @@ struct SubmissionRecordingTests {
     #expect(recording.payloads.payload(for: "2844787557") == fetched.payload)
   }
 
-  /// **The rule the whole arrangement exists to keep**: a link that was
-  /// looked at and abandoned leaves nothing behind (§3.5). `load()` runs on
-  /// every debounced keystroke, so recording there would file every link
-  /// anybody ever pasted into the window.
-  ///
-  /// This is the automated half of that guarantee. The other half is
-  /// structural and stronger: `IntakeModel` references no `VideoRecordStore`,
-  /// no `PayloadStore` and no `VideoRecording`, so `load()` has nothing it
-  /// could write with. Keep it that way — moving the store onto the model to
-  /// make some future call site tidier would delete the guarantee and leave
-  /// only this test standing between a paste and a permanent record.
+  /// Metadata lookup alone must leave no record. Keep persistence dependencies outside
+  /// `IntakeModel` so abandoned links cannot be recorded on load.
   @Test("a fetch with no Add behind it records nothing")
   func lookingAtALinkRecordsNothing() async throws {
     let directory = temporaryDirectory()
@@ -253,10 +208,7 @@ struct SubmissionRecordingTests {
     #expect(recording.payloads.payload(for: "2844787557") == nil)
   }
 
-  /// A refused enqueue must leave no record either: §3.5 is about videos that
-  /// were downloaded, and a job that was never composed is not one. The link
-  /// here is never `load()`ed, so there is no resolved quality to compose
-  /// from and `add()` refuses.
+  /// An uncomposed job must leave no record.
   @Test("an add that fails records nothing")
   func aRefusedAddRecordsNothing() async throws {
     let directory = temporaryDirectory()
@@ -271,9 +223,7 @@ struct SubmissionRecordingTests {
 
     #expect(!didAdd)
     #expect(try recording.records.load().videos.isEmpty)
-    // Nor a state: a video that was never submitted is not queued, and a
-    // `queued` state with no job behind it would mask the archive from the
-    // next sweep for good.
+    // Nor queued state without a backing job.
     #expect(try recording.records.load().watchStates.isEmpty)
   }
 }

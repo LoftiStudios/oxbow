@@ -2,48 +2,15 @@ import Foundation
 import Testing
 @testable import OxbowKit
 
-/// Whether `build/ffmpeg/ffmpeg` exists in this checkout. Building it needs
-/// its own toolchain (`./scripts/build-ffmpeg.sh`), which UI-only work does
-/// not require (CLAUDE.md: "Building without build/helper or build/ffmpeg
-/// succeeds with a warning") — so the default `swift test` run must not fail
-/// outright when it is missing. This suite is `.enabled(if:)`-gated on it
-/// below and skips cleanly instead.
+/// Skip when bundled FFmpeg is absent so UI-only checkouts can run the package suite.
 private func bundledFFmpegExists() -> Bool {
   FileManager.default.fileExists(atPath: SidecarRewriteFFmpegTests.ffmpegPath.path)
 }
 
-/// Proves, against the real bundled FFmpeg, the one claim
-/// `docs/design/resume.md` §4's sidecar fix actually rests on and that no
-/// other test exercises: that on a resume, mapping the sidecar's audio from
-/// the **third, un-seeked** input produces a sidecar spanning the **whole
-/// source**, not just the tail from the resume point. `ArgumentBuilderTests`
-/// proves the argv has the right *shape* (a third input, `2:a:0?`, no `-ss`
-/// on it) — but the argv was never what broke; the original defect was a
-/// gate that skipped the sidecar entirely, and the fix's claim about what
-/// `-ss`-free mapping actually *does* is a statement about FFmpeg's own
-/// behaviour, which only running FFmpeg can confirm.
-///
-/// **Deliberately in the default suite, not behind `OXBOW_RESUME_E2E=1`.**
-/// That gate exists for real network access and multi-minute real encodes;
-/// this needs neither. The synthetic source below is built entirely from the
-/// bundled FFmpeg's own demuxers and encoders — no `lavfi`, `testsrc`, or
-/// `sine`, none of which exist even in the full build (see `docs/ffmpeg.md`)
-/// — by feeding black frames from `/dev/zero` through `rawvideo`, the same
-/// technique `Tests/OxbowKitTests/Fixtures/fragmented-3-frames.mp4`
-/// established for a video-only fixture, and silence through `wav`. Both of
-/// those demuxers are in the `MINIMAL=1` component list as well as the full
-/// one, so this holds against either build variant; `writeSilentWAV` below
-/// records why the audio track cannot simply be `/dev/zero` too.
-///
-/// One short `h264_videotoolbox`/`aac` encode of a few seconds of silence and
-/// black frames costs a fraction of a second — this runs the real composite
-/// argv through the real bundled binary and is still no slower than the
-/// fixture-based tests around it. It needs the bundled FFmpeg binary, though,
-/// which the default suite otherwise never touches, so the whole suite is
-/// skipped — not failed — when it is absent. The run stays green either way,
-/// and no CI job that runs the OxbowKit suite has the binary, so
-/// `docs/development.md` records where this does run and how to run it
-/// yourself before trusting a green result.
+/// Runs real resumed-composite arguments against bundled FFmpeg and proves rewritten audio
+/// spans the full source. Synthetic black frames and WAV silence work with both full and
+/// minimal builds, without network or lavfi. Skips when FFmpeg is absent; a green skipped run
+/// does not verify this behavior.
 @Suite("Sidecar rewrite spans the whole source", .enabled(if: bundledFFmpegExists()))
 struct SidecarRewriteFFmpegTests {
 
@@ -60,10 +27,7 @@ struct SidecarRewriteFFmpegTests {
       .appending(path: "build/ffmpeg/ffmpeg")
   }()
 
-  /// Runs `arguments` against the bundled FFmpeg and waits for it to finish.
-  /// Stdout and stderr share one pipe — there is no stdin to feed and every
-  /// output here is at most a few KB, so a single synchronous drain cannot
-  /// deadlock the way an unread pipe against a live process normally could.
+  /// Capture both output streams into one drained pipe, avoiding an undrained second pipe.
   private func run(_ arguments: [String], in directory: URL) throws -> (status: Int32, output: String) {
     let process = Process()
     process.executableURL = Self.ffmpegPath
@@ -78,17 +42,8 @@ struct SidecarRewriteFFmpegTests {
     return (process.terminationStatus, String(decoding: data, as: UTF8.self))
   }
 
-  /// The final `time=HH:MM:SS.ss` FFmpeg's default stats line reports for a
-  /// pass over `file` — the same technique `ResumeEndToEndTests.finalTime`
-  /// uses against the real VOD, reimplemented locally so this suite has no
-  /// dependency on that one and can be `.enabled(if:)`-gated independently.
-  ///
-  /// `-c copy` rather than a decode. Writing to `-f null` otherwise picks the
-  /// null muxer's default encoder for the stream, which for AAC audio is
-  /// `pcm_s16le` — a *decoder* in the `MINIMAL=1` set but not an encoder, so
-  /// the measurement failed there on a file the composite had just written
-  /// perfectly well. Stream copy needs no encoder at all, reads the same
-  /// packet timestamps, and is the cheaper of the two.
+  /// Measure final packet time with stream copy. Decoding to the null muxer would require the
+  /// PCM encoder absent from the minimal build.
   private func duration(of file: URL, scratch: URL) throws -> Double {
     let result = try run(["-hide_banner", "-i", file.path, "-c", "copy", "-f", "null", "-"], in: scratch)
     guard result.status == 0 else {
@@ -105,21 +60,9 @@ struct SidecarRewriteFFmpegTests {
     return h * 3600 + m * 60 + s
   }
 
-  /// Writes `seconds` of 44.1 kHz mono silence as a WAV file.
-  ///
-  /// The audio has to reach FFmpeg through a demuxer that the `MINIMAL=1`
-  /// component set in `scripts/build-ffmpeg.sh` also has. Raw PCM straight
-  /// from `/dev/zero` needs `-f s16le`, and `s16le` is absent from that
-  /// build's `--enable-demuxer` list — so the video half of this source built
-  /// fine there while the audio half failed with `Unknown input format`.
-  /// `wav` is on the list, and prefixing the same zero bytes with a 44-byte
-  /// RIFF header yields the identical silent `pcm_s16le` track through a
-  /// demuxer both variants ship. Adding `s16le` to that list would have
-  /// worked too, but `docs/ffmpeg.md` §2 keeps the minimal set derived from
-  /// what Oxbow actually invokes, and a test is not a reason to widen it.
-  ///
-  /// The header also carries the rate, channel count and length, so this
-  /// input needs no `-f`, `-ar`, `-ac` or `-t` of its own.
+  /// Writes 44.1 kHz mono silent WAV. The minimal build includes the WAV demuxer but not raw
+  /// s16le; the header also supplies rate, channels, and duration without extra input
+  /// arguments.
   private func writeSilentWAV(seconds: Double, to url: URL) throws {
     let sampleRate = 44100
     let bytesPerSample = 2  // pcm_s16le, one channel
@@ -153,10 +96,7 @@ struct SidecarRewriteFFmpegTests {
     try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: scratch) }
 
-    // A synthetic source with both a video and an audio track, entirely from
-    // the bundled FFmpeg's own component set: black yuv420p frames read
-    // straight from /dev/zero and capped by the output -t, and silence from a
-    // WAV whose own header already fixes its length at sourceDuration.
+    // Black rawvideo plus silent WAV uses components present in both FFmpeg build variants.
     let sourceDuration = 6.0
     let silence = scratch.appending(path: "silence.wav")
     try writeSilentWAV(seconds: sourceDuration, to: silence)
@@ -174,13 +114,8 @@ struct SidecarRewriteFFmpegTests {
     ], in: scratch)
     try #require(build.status == 0, Comment(rawValue: "synthetic source build failed:\n\(build.output)"))
 
-    // The exact argv a resumed composite emits: `ArgumentBuilder`, not a
-    // hand-rolled command — this is what actually ships, not a re-statement
-    // of it. Both composited inputs are the same synthetic file, seeked to
-    // the resume point; the video and chat render are ordinarily different
-    // files, but `ArgumentBuilder` never inspects their contents, only their
-    // position, so reusing one file for both is faithful to the real argv
-    // shape without needing a second synthesized track.
+    // Use production ArgumentBuilder output. Reuse the synthetic file for video/chat inputs;
+    // their positions and seek arguments match the real invocation.
     let resumeSeconds = 4.0
     let tailDuration = sourceDuration - resumeSeconds  // 2s — what a wrongly-seeked sidecar would be capped at
     let pieceOutput = scratch.appending(path: "piece.mp4")
@@ -195,9 +130,7 @@ struct SidecarRewriteFFmpegTests {
       framerate: 10, duration: .seconds(sourceDuration), destination: pieceOutput)
     let arguments = ArgumentBuilder.arguments(for: .composite(request), context: context)
 
-    // Same shape `ArgumentBuilderTests` already asserts on synthetic paths —
-    // restated here as a precondition, not a duplicate: if this ever stops
-    // holding, the run below would be testing the wrong thing.
+    // Verify the intended unseeked-sidecar argument shape before executing it.
     try #require(arguments.contains("2:a:0?"), "expected a resumed rewrite to map from the third input")
     let inputIndices = arguments.indices.filter { arguments[$0] == "-i" }
     try #require(inputIndices.count == 3, "expected video, chat, and a third un-seeked copy")
@@ -214,11 +147,7 @@ struct SidecarRewriteFFmpegTests {
     print("Synthetic source: \(sourceDuration)s. Resume point: \(resumeSeconds)s (tail \(tailDuration)s). "
       + "Rewritten sidecar: \(sidecarDuration)s.")
 
-    // The claim under test. A sidecar mapped from the wrongly-seeked input 0
-    // would top out around `tailDuration` (2s here) — worse than the original
-    // corruption, since §4 explains it would desync silently instead of
-    // failing loudly. A correct, un-seeked-third-input sidecar runs to the
-    // full source.
+    // Sidecar duration must reach the full source, not the two-second resumed tail.
     #expect(sidecarDuration > sourceDuration - 0.5,
             Comment(rawValue: "sidecar (\(sidecarDuration)s) must cover the whole \(sourceDuration)s "
               + "source, not just what survived the resume seek"))

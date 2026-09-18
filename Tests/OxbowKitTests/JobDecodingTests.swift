@@ -5,10 +5,8 @@ import Testing
 @Suite("Job decoding")
 struct JobDecodingTests {
 
-  /// Mirrors `Job`'s shape before `replacesExistingFile` existed, so the
-  /// fixture is generated rather than hand-written — hand-writing it means
-  /// hand-writing `Step`'s and `StepKind`'s synthesised encodings, which is
-  /// exactly the thing that would drift.
+  /// Generate legacy JSON from an old-shape type so nested synthesized encodings cannot drift
+  /// by hand.
   private struct LegacyJob: Encodable {
     let id: JobID
     let created: Date
@@ -33,9 +31,8 @@ struct JobDecodingTests {
     #expect(job.title == "t")
   }
 
-  /// Absent must read as `false`, not as permission. An old job resumes
-  /// having authorized nothing, so delivery has to step around whatever it
-  /// finds rather than assume a warning was shown and accepted.
+  /// Missing replacement permission defaults false; old jobs must not overwrite files without
+  /// authorization.
   @Test func aJobPersistedBeforeTheFlagAuthorizesNoReplacement() throws {
     let job = try JSONDecoder().decode(Job.self, from: legacy())
     #expect(!job.replacesExistingFile)

@@ -165,10 +165,8 @@ struct ChannelFeedTests {
 
   @Test("a per-node parse failure throws rather than degrading to an empty list")
   func partialParseFailureThrows() async throws {
-    // One node undecodable (missing `lengthSeconds`) alongside one good node.
-    // `docs/design/channel-watching.md` §7 forbids a silent empty-list
-    // degradation here: an empty result is indistinguishable from "nothing
-    // new", which is catastrophic combined with `onlyNew` seeding.
+    // Mix malformed and valid nodes to ensure parse failures cannot silently become an empty
+    // channel.
     let body = Data("""
       {"data":{"user":{"id":"1","login":"ninja","videos":{"edges":[
         {"node":{"id":"1","title":"ok","lengthSeconds":60,"publishedAt":"2026-01-01T00:00:00Z","status":"RECORDED"}},
@@ -194,11 +192,7 @@ struct ChannelFeedTests {
 
   // MARK: - profile(forLogin:)
 
-  /// Its own request, asking only for the channel's own fields — never
-  /// folded into the archives query, so a poll (which never calls this) pays
-  /// nothing extra. That matters more now that it also fetches an avatar:
-  /// folded in, every poll of every channel would refetch an image URL that
-  /// changes about never.
+  /// Profile metadata uses a separate request so recurring archive polls do not refetch it.
   @Test("asks for the channel's own fields alone, not the archives query")
   func profileQueryShape() async throws {
     let sent = LockedBox<URLRequest?>(nil)

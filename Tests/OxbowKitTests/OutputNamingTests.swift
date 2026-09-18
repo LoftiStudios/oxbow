@@ -40,9 +40,7 @@ struct OutputNamingTests {
     #expect(inPacific.contains("2026-08-18"))
   }
 
-  /// `baseName` must pass its reservation through to `sanitized` rather than
-  /// silently returning an up-to-255-byte name — otherwise the video and its
-  /// " - chat.mp4" sibling can disagree about their own shared base name.
+  /// Forward the suffix reservation so sibling outputs retain a shared base name.
   @Test func baseNamePassesItsReservationThrough() {
     let longTitle = String(repeating: "a", count: 300)
     let suffix = " - chat.mp4"
@@ -74,15 +72,8 @@ struct OutputNamingTests {
     #expect(name.utf8.count <= 255)
   }
 
-  /// Cutting at a byte offset can split a scalar and produce invalid UTF-8, or
-  /// sever a ZWJ sequence into unrelated emoji.
-  ///
-  /// A scalar-boundary truncation of this input yields 250 bytes of whole
-  /// families plus one lone leading scalar of the 251st (e.g. a bare 👨) —
-  /// that's still valid UTF-8 with no replacement character, so the two
-  /// checks above pass even with the ZWJ sequence severed. The
-  /// `allSatisfy` check below is what actually catches it: a severed
-  /// scalar is a `Character` that isn't the whole family emoji.
+  /// Valid UTF-8 alone cannot detect a severed ZWJ emoji. Check every Character is a complete
+  /// family cluster.
   @Test func truncationNeverSplitsAGraphemeCluster() {
     let familyCluster: Character = "👨‍👩‍👧‍👦" // one grapheme cluster, 7 scalars, 25 UTF-8 bytes
     let family = String(repeating: familyCluster, count: 40) // ZWJ sequences
@@ -174,9 +165,7 @@ struct OutputNamingTests {
     #expect(free == URL(filePath: "/downloads/v (2).mp4"))
   }
 
-  /// Counting must not stop at the first step: re-downloading the same VOD a
-  /// fourth time has to find a free name, not collide with the second and
-  /// third attempts.
+  /// Continue past multiple occupied numbered names.
   @Test func keepsCountingPastEveryTakenName() {
     let destination = URL(filePath: "/downloads/v.mp4")
     let taken: Set<URL> = [
@@ -190,9 +179,7 @@ struct OutputNamingTests {
     #expect(free == URL(filePath: "/downloads/v (4).mp4"))
   }
 
-  /// The base name was already trimmed to fit ".mp4" and nothing more, so the
-  /// counter has to buy its own room back out of the base — otherwise a
-  /// maximum-length name steps into a filename APFS will not accept.
+  /// The duplicate counter must reclaim bytes from an already-maximal base name.
   @Test func keepsTheSteppedNameWithinTheFilenameByteBudget() {
     let base = OutputNaming.sanitized(
       String(repeating: "a", count: 300), reservingSuffixBytes: OutputSuffixForTests.videoBytes)
@@ -204,9 +191,7 @@ struct OutputNamingTests {
     #expect(free.lastPathComponent.hasSuffix(" (2).mp4"))
   }
 
-  /// A destination with no extension must not grow one — `deletingPathExtension`
-  /// on a bare name is a no-op, and appending "." to it would invent a file
-  /// type the user never asked for.
+  /// Extensionless destinations must not gain a trailing dot.
   @Test func stepsAroundANameThatHasNoExtension() {
     let destination = URL(filePath: "/downloads/v")
 
@@ -216,9 +201,8 @@ struct OutputNamingTests {
   }
 }
 
-/// The app target owns `OutputSuffix`; the package cannot see it, so the one
-/// number these tests need is restated here rather than the suite reaching
-/// across a module boundary that does not exist.
+/// Restates the suffix byte count because the app-owned `OutputSuffix` is unavailable to the
+/// package.
 private enum OutputSuffixForTests {
   static let videoBytes = ".mp4".utf8.count
 }

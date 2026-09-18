@@ -63,9 +63,7 @@ struct PreferencesTests {
     #expect(store(defaults).optionsPanelIsExpanded == false)
   }
 
-  /// Spec: collapsing the panel is not expressing a preference about
-  /// downloads, so it must not set the same flag a real save does — or the
-  /// Settings window would start claiming defaults nobody chose.
+  /// Panel expansion must not mark download defaults saved.
   @Test func settingOptionsPanelIsExpandedDoesNotSetHasSavedDefaults() throws {
     let defaults = InMemoryPreferenceStore()
     var writer = store(defaults)
@@ -75,9 +73,7 @@ struct PreferencesTests {
 
   // MARK: - hasSavedDefaults
 
-  /// Spec §2.4. Saving values identical to the factory ones still counts as
-  /// having expressed a preference — comparing against factory would call
-  /// that user a first-timer forever.
+  /// Saving factory-identical values still records explicit configuration.
   @Test func writingAFactoryIdenticalValueStillSetsTheFlag() throws {
     let defaults = InMemoryPreferenceStore()
     var writer = store(defaults)
@@ -125,36 +121,20 @@ struct PreferencesTests {
 
   // MARK: - freeSpaceFloor
 
-  /// The same failure mode `QualityLadderTests.rawValuesArePersistedAndPinned`
-  /// pins the quality cap's raw values against: a rename of the stored key or
-  /// a change to the factory value's unit must fail a test, not silently
-  /// orphan whatever is already on disk.
+  /// Pin persisted keys and byte units against accidental storage-format changes.
   @Test func freeSpaceFloorKeyAndFactoryValueArePinned() throws {
     let defaults = InMemoryPreferenceStore()
     defaults.set(Int64(7_000_000_000), forKey: "freeSpaceFloor")
     #expect(store(defaults).freeSpaceFloor == 7_000_000_000)
 
-    // The factory value, in bytes. This test exists to make a change to it a
-    // deliberate edit rather than a quiet one, and it has done that once:
-    // the value was 49 GB — the peak `docs/design/disk-preflight.md` §5
-    // prices for a six-hour 1080p60 job with chat (23 + 10 + 15 GB) — back
-    // when the floor was the only thing standing between an unattended job
-    // and a full disk.
-    //
-    // `AutoDownloadPolicy` now prices each batch with `BackfillEstimate`,
-    // which is peak-aware in the same way, and refuses anything that would
-    // cross the floor. Reserving a second copy of that peak meant declining
-    // a 300 MB download in order to protect against a 49 GB one. The floor's
-    // remaining job is leaving the machine usable, hence 10 GB — which is
-    // also a rung on the settings picker, as Restore Defaults requires.
+    // The 10 GB reserve is system headroom; peak job cost is already included by
+    // `BackfillEstimate`.
     #expect(Preferences.factoryFreeSpaceFloor == 10_000_000_000)
   }
 
   // MARK: - A destination that no longer resolves
 
-  /// Spec §4.2. Unmounted volume, deleted folder. The disk preflight measures
-  /// the volume the destination sits on, so a silent fallback would change
-  /// what the estimate means without changing what it says.
+  /// Missing destinations must expose fallback because it changes the volume being estimated.
   @Test func aMissingDestinationFallsBackAndSaysSo() throws {
     let defaults = InMemoryPreferenceStore()
     var writer = store(defaults)

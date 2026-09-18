@@ -17,12 +17,8 @@ public struct StreamQuality: Sendable, Equatable, Codable {
     Int(Double(bitsPerSecond) * duration.asSeconds / 8)
   }
 
-  /// The rendition's dimensions as Twitch reported them, or nil when it
-  /// reported none — which older clips genuinely do.
-  ///
-  /// The one parser for `resolution`. `CompositeGeometry` reads it rather than
-  /// splitting the string a second time, because two parsers for one field is
-  /// how two answers to one question start disagreeing.
+  /// Reported dimensions, or nil when absent (including older clips). Shared by geometry and
+  /// quality selection.
   public var pixelSize: (width: Int, height: Int)? {
     let parts = resolution.split(separator: "x")
     guard parts.count == 2,
@@ -32,70 +28,18 @@ public struct StreamQuality: Sendable, Equatable, Codable {
     return (width, height)
   }
 
-  /// The smaller dimension — the orientation-agnostic reading of the `p`
-  /// number in the name.
-  ///
-  /// `1080p60-Portrait` is 1080x1920: its height is 1920 and its `1080p` is
-  /// the **width**. Anything comparing a rendition against a quality ceiling
-  /// has to read this, or a portrait clip files as the highest tier there is.
+  /// Orientation-independent quality size: `1080p60-Portrait` is 1080x1920, so its 1080p tier
+  /// comes from width rather than height.
   public var shortSide: Int? {
     guard let size = pixelSize else { return nil }
     return min(size.width, size.height)
   }
 
-  /// The value to pass as the CLI's `-q`, as distinct from `name`.
-  ///
-  /// Upstream's `ClipVideoQualities.GetQuality` resolves `-q` by an **exact
-  /// name match** first, only falling back to keywords and a
-  /// `WIDTHxHEIGHTpFPS` regex when that fails — and that fallback can
-  /// silently resolve to the wrong rendition. So the only reliable value to
-  /// send is a name upstream would itself produce, which is not always
-  /// `name`: `clipQualities` disambiguates repeats **across the whole list**,
-  /// while upstream disambiguates **per asset**, so the two can diverge.
-  ///
-  /// **Measured against the real bundled helper (1.56.5)** on a clip whose
-  /// renditions include 1080p60, 720p60 and 480p30: a `-<digits>` suffix
-  /// `clipQualities` invented purely to break a list-wide tie (`480p30-1`,
-  /// `480p30-2`, `720p60-1` — none of these exist as upstream names) does not
-  /// resolve as `-q` at all. It fails silently — exit code 0, no warning —
-  /// and falls back to the highest rendition:
-  ///
-  /// | `-q` argument | resolution actually downloaded |
-  /// |---|---|
-  /// | `480p30-1` | 1920x1080 (wrong) |
-  /// | `480p30-2` | 1920x1080 (wrong) |
-  /// | `720p60-1` | 1920x1080 (wrong) |
-  /// | `480p30`   | 852x480 (correct) |
-  /// | `720p60`   | 1280x720 (correct) |
-  /// | `480p`     | 852x480 (correct) |
-  ///
-  /// Stripping a suffix like that — one we invented — is what makes it
-  /// resolve. But a `-Portrait-<digits>` name is the opposite case: there,
-  /// upstream's own per-asset disambiguation is what produced the `-N`, and
-  /// the full name is the one that resolves correctly:
-  ///
-  /// | `-q` argument | resolution actually downloaded |
-  /// |---|---|
-  /// | `1080p60-Portrait-1` | 1080x1920 (correct, portrait) |
-  /// | `1080p60-Portrait`   | 1920x1080 (wrong — same file as `1080p60-1`) |
-  ///
-  /// Stripping *that* `-1` would hand someone the landscape file and call it
-  /// a success. So the rule cannot be "strip any trailing `-<digits>`" — it
-  /// has to strip one **only when what remains is a bare quality name**,
-  /// i.e. the remainder matches `^\d{3,4}p\d{1,3}$`. A `-Portrait` name never
-  /// matches that (the remainder still has `-Portrait` on it), so it is never
-  /// stripped, whether or not it carries its own upstream `-N`.
-  ///
-  /// **The trap this must not fall into: a trailing digit is not always a
-  /// disambiguation suffix.** `720p0` is one token — `0` is the framerate,
-  /// upstream's placeholder for a clip with no framerate metadata — and
-  /// stripping it would turn `720p0` into `720p`, a different (and possibly
-  /// nonexistent) rendition. Only a *hyphen* followed by digits at the end,
-  /// with a bare quality name left over, counts.
-  ///
-  /// `name` itself is untouched by this: it stays upstream-verbatim because
-  /// it is what the picker displays and what disambiguates two renditions
-  /// that would otherwise collide.
+  /// CLI quality value: strips a numeric suffix only when the remainder is a bare quality name
+  /// (e.g. `480p30-1` → `480p30`). Preserves portrait suffixes and frame-rate digits such as
+  /// `720p0`. TODO: reconcile this behavior with `docs/twitch-metadata.md` §5, which retracts
+  /// the original diagnosis and says valid duplicate suffixes must be preserved. Unknown names
+  /// silently select the best rendition.
   public var commandLineValue: String {
     guard let hyphenIndex = name.lastIndex(of: "-") else { return name }
     let suffix = name[name.index(after: hyphenIndex)...]
@@ -108,105 +52,32 @@ public struct StreamQuality: Sendable, Equatable, Codable {
   }
 }
 
-/// The video's own metadata plus its available qualities, as parsed from the
-/// CLI's `info --format Raw` output.
-///
-/// `--format Raw` because `--format json` throws `NotImplementedException`
-/// upstream (worth a PR there).
-///
-/// **Two payload shapes, not one.** `InfoHandler` branches on whether the id
-/// is all digits, and the two branches emit completely different documents:
-///
-/// - A **VOD** (`HandleVodRaw`) writes three parts on stdout: a line of
-///   video-info JSON (`{"data":{"video":…}}`), a line of "moments" JSON, then
-///   an m3u8 master playlist. Qualities come from that playlist.
-/// - A **clip** (`HandleClipRaw`) writes one JSON object and nothing else:
-///   `{"data":{"clip":…}}`, whose qualities live inline at
-///   `clip.assets[].videoQualities`. There is no m3u8 section at all.
-///
-/// So parsing means finding the first line that is JSON, trying each envelope
-/// in turn, and taking qualities from wherever that shape keeps them. Both
-/// produce the same `VideoInfo`, so nothing downstream has to know which link
-/// the user pasted.
+/// Metadata from CLI `info --format Raw`; JSON format is unimplemented upstream. VOD output
+/// contains video JSON, moments JSON, then an m3u8 playlist. Clips contain one JSON object with
+/// qualities under `assets[].videoQualities`.
 public struct VideoInfo: Sendable, Equatable {
   public var streamer: String
-  /// The channel's login, as distinct from `streamer` (its display name).
-  ///
-  /// **The two are not interchangeable and one cannot be derived from the
-  /// other.** They are usually one word in two cases and sometimes unrelated —
-  /// a display name can be Japanese while the login is ASCII. `ChannelFeed`
-  /// keys everything on login, so this is the join key between a hand-pasted
-  /// video and a watched channel; lowercasing a display name to get it is the
-  /// "field that merely correlates" trap `docs/twitch-metadata.md` §6 is about.
-  ///
-  /// Optional because an older payload may not carry it, and because nil is
-  /// the honest answer when it is absent. Nothing blocks on it: a record with
-  /// no login simply is not claimed by any channel yet.
+  /// Channel join key. Never derive it from the display name: the two may use different
+  /// scripts. Nil leaves the record unassociated with a watched channel.
   public var login: String?
   public var title: String
   public var createdAt: Date
   public var duration: Duration
   public var qualities: [StreamQuality]
-  /// Every preview frame Twitch gave us, in order.
-  ///
-  /// **A VOD carries four, a clip exactly one.** Measured against the live
-  /// CDN on VOD 2859050150: the four VOD frames are genuinely different
-  /// images (distinct SHAs, 12-14 KB each at Twitch's default 320x180), not
-  /// one frame repeated — the CLI's GraphQL query hardcodes
-  /// `thumbnailURLs(height:180,width:320)`, so 320x180 is what arrives here,
-  /// whatever size the sheet later asks the CDN to rewrite it to (see
-  /// `StreamThumbnail`). A clip's array always has exactly one element,
-  /// already full-size (1920x1080 on a modern clip) because it comes from the
-  /// asset's own single `thumbnailURL` rather than a sampled list.
-  ///
-  /// Empty, not absent, when Twitch has nothing: a VOD still processing
-  /// arrives with an empty `thumbnailURLs`, and a clip whose assets are
-  /// missing has no preview either. Both are states the sheet already handles
-  /// for the rest of the metadata, so this is one more thing that may be
-  /// empty rather than a reason to fail the parse.
+  /// Preview frames in Twitch's order: four sampled VOD images, one clip thumbnail. May be
+  /// empty while processing or when assets are absent. See `StreamThumbnail` for VOD size
+  /// rewriting.
   public var thumbnailURLs: [URL]
 
-  /// The frame upstream's own WPF pages show (`PageVodDownload.xaml.cs` reads
-  /// the first of the same list) — computed rather than stored, so there is
-  /// only one place `thumbnailURLs` can disagree with the single image
-  /// everything outside `VideoCard`'s filmstrip still wants, notably
-  /// `Oxbow/Info/JobInfoWindow.swift`.
+  /// First available preview, for surfaces that show a single image.
   public var thumbnailURL: URL? { thumbnailURLs.first }
 
-  /// Whether this video's chat can be downloaded at all.
-  ///
-  /// False only for a clip whose parent broadcast is gone. A clip carries no
-  /// chat of its own — upstream reconstructs it from the VOD the clip was cut
-  /// from, seeking to `videoOffsetSeconds` — so when Twitch has expired or
-  /// deleted that broadcast there is nothing to read, and
-  /// `ChatDownloader.InitChatRoot` aborts the process with "Invalid VOD for
-  /// clip, deleted/expired VOD possibly?".
-  ///
-  /// **This is upstream's own predicate, not a proxy for it.** The `info`
-  /// verb and the chat downloader both call
-  /// `TwitchHelper.GetShareClipRenderStatus`, so we test
-  /// `clip.video == null || clip.videoOffsetSeconds == null` over the same
-  /// document `ChatDownloader` will test — which is what keeps this clear of
-  /// docs/twitch-metadata.md §6, where the sin is trusting a field that
-  /// merely correlates with what you want to know.
-  ///
-  /// **It is still a hint about the future, and only safe in one direction.**
-  /// An expired broadcast never comes back, so false stays false and refusing
-  /// on it is sound. True can go stale — §5 of that document shows a clip
-  /// payload changing inside half an hour — so a VOD can expire between
-  /// intake and the job actually running. `FailureInterpreter` therefore
-  /// keeps its own case for this; nothing here replaces it.
-  ///
-  /// True for every VOD: a VOD *is* the broadcast, so it has no parent that
-  /// could have expired. Defaulted true in `init` for the same reason every
-  /// other caller — tests, previews — is describing something whose chat is
-  /// fine.
+  /// Uses the chat downloader's own predicate: clips need both a parent video and
+  /// `videoOffsetSeconds`. False rules out chat; true may become stale before execution, so
+  /// runtime failure handling is still required. VODs default to true. See
+  /// `docs/twitch-metadata.md` §6.
   public var hasDownloadableChat: Bool
 
-  /// `thumbnailURLs` defaults to empty: it adorns the intake sheet and
-  /// nothing else derives from it, so the tests and previews that build a
-  /// `VideoInfo` for its name, duration or qualities should not have to name
-  /// any frames.
   public init(
     streamer: String,
     login: String? = nil,
@@ -237,10 +108,7 @@ public struct VideoInfo: Sendable, Equatable {
     let decoder = JSONDecoder()
     decoder.dateDecodingStrategy = .iso8601
 
-    // VOD first, clip second. The two envelopes cannot both decode the same
-    // payload — a VOD's `data` has no `clip` key and a clip's has no `video`
-    // key — so the order is only about which failure is the common one, not
-    // about resolving an ambiguity.
+    // VOD and clip envelopes have distinct keys; try the more common VOD shape first.
     if let envelope = try? decoder.decode(VideoInfoEnvelope.self, from: jsonData) {
       let video = envelope.data.video
       return VideoInfo(
@@ -251,10 +119,7 @@ public struct VideoInfo: Sendable, Equatable {
         duration: .seconds(video.lengthSeconds),
         // The m3u8 master playlist follows the JSON lines, and only for a VOD.
         qualities: Self.parseQualities(from: lines[(jsonLineIndex + 1)...]),
-        // Every frame, in the order Twitch returned them. `compactMap` rather
-        // than failing the whole parse over one bad URL string — not observed
-        // in practice, but a malformed entry here should cost one frame, not
-        // the video's title and duration too.
+        // Skip malformed preview URLs without discarding the video's metadata.
         thumbnailURLs: (video.thumbnailURLs ?? []).compactMap(URL.init(string:)))
     }
 
@@ -267,12 +132,9 @@ public struct VideoInfo: Sendable, Equatable {
         createdAt: clip.createdAt,
         duration: .seconds(clip.durationSeconds),
         qualities: Self.clipQualities(of: clip),
-        // A clip yields a one-element array from its existing single URL —
-        // there is no sampled list to draw more frames from.
+        // Clips expose one thumbnail, not a sampled list.
         thumbnailURLs: Self.clipThumbnailURL(of: clip).map { [$0] } ?? [],
-        // Upstream's exact condition, negated. Both fields, not just
-        // `video`: upstream checks both, and a payload carrying one without
-        // the other would abort the chat download just the same.
+        // Match upstream's check of both parent video and offset.
         hasDownloadableChat: clip.video != nil && clip.videoOffsetSeconds != nil)
     }
 
@@ -302,34 +164,10 @@ public struct VideoInfo: Sendable, Equatable {
     return qualities
   }
 
-  /// The clip's renditions, named exactly as upstream names them.
-  ///
-  /// **The names have to match upstream's, character for character**, because
-  /// the name (via `StreamQuality.commandLineValue`, see its doc for the
-  /// exact rule) is what the picker later hands back as `-q`. Upstream's
-  /// `ClipVideoQualities.GetQuality` tries an exact-name match first and only
-  /// then falls back to keywords and a `WIDTHxHEIGHTpFPS` regex, which cannot
-  /// parse a `-Portrait` name at all.
-  ///
-  /// That fallback does not fail loudly. Verified against the real CLI:
-  /// `-q 1080p60-Portrait-1` downloads the portrait rendition, and the
-  /// tidier-looking `-q 1080p60-Portrait` downloads the **landscape** one —
-  /// byte-for-byte the same file as `-q 1080p60-1`, exit code 0, no warning.
-  /// A prettier name of our own invention would therefore hand people the
-  /// wrong video and call it a success. So this reproduces
-  /// `VideoQualities.FromClip` / `BuildQualityList`:
-  ///
-  /// - `{quality}p{frameRate rounded}`, with `-Portrait` appended for a
-  ///   vertical asset;
-  /// - repeated names disambiguated `-1`, `-2`, … (Twitch really does return
-  ///   each rendition twice);
-  /// - landscape before portrait, then by descending height, framerate, name.
-  ///
-  /// The one deliberate divergence is that byte-identical renditions are
-  /// collapsed. Twitch returns every rendition twice, so a faithful list is
-  /// half duplicate rows in the picker; the survivor keeps the `-1` name
-  /// upstream gave it, so it still matches exactly. Two renditions that share
-  /// a name but differ in size or bitrate are both kept.
+  /// Reproduces upstream quality names and ordering: rounded frame rate, optional `-Portrait`,
+  /// numbered duplicates, landscape first. Unknown CLI names silently select best quality, so
+  /// preserve upstream suffixes. Collapse otherwise identical renditions while retaining the
+  /// first disambiguated name; see `commandLineValue` for CLI normalization.
   private static func clipQualities(of clip: ClipInfoEnvelope.ClipEnvelope) -> [StreamQuality] {
     struct Rendition {
       var name: String
@@ -402,14 +240,8 @@ public struct VideoInfo: Sendable, Equatable {
       }
   }
 
-  /// The clip's preview image: the first landscape asset's, falling back to
-  /// the first asset that has one at all.
-  ///
-  /// Landscape first for the same reason `clipQualities` sorts it first — a
-  /// clip commonly carries both a landscape and a portrait asset, and the
-  /// landscape one is the clip as it was streamed. The fallback is what makes
-  /// a genuinely vertical clip (which has no landscape asset) show a preview
-  /// rather than nothing.
+  /// Prefer the first landscape asset's preview, falling back to any asset for portrait-only
+  /// clips.
   private static func clipThumbnailURL(of clip: ClipInfoEnvelope.ClipEnvelope) -> URL? {
     let assets = clip.assets ?? []
     let preferred = assets.first { !$0.isPortrait && $0.thumbnailURL != nil }
@@ -432,13 +264,8 @@ public struct VideoInfo: Sendable, Equatable {
     return (Int((Double(height) * aspectRatio).rounded()), height)
   }
 
-  /// Splits an `EXT-X-STREAM-INF` attribute list on top-level commas only.
-  ///
-  /// `CODECS="avc1.640029,mp4a.40.2"` contains a comma *inside* its quoted
-  /// value. A plain `split(separator: ",")` would break that field in two and
-  /// shift every attribute after it — and it would look correct on any
-  /// variant whose CODECS happens to list a single codec. So this walks the
-  /// string tracking quote state and only splits where we are not inside `"`.
+  /// Splits playlist attributes on unquoted commas. `CODECS="avc1.640029,mp4a.40.2"` must
+  /// remain one attribute.
   private static func parseAttributes(_ text: Substring) -> [String: String] {
     var result: [String: String] = [:]
 
@@ -486,34 +313,20 @@ private struct VideoInfoEnvelope: Decodable {
     var createdAt: Date
     var lengthSeconds: Int
     var owner: OwnerEnvelope
-    /// Optional, and optional for a reason: a VOD that is still processing
-    /// comes back without previews. Making it required would fail the whole
-    /// parse over a decoration and drop the sheet back to naming the job
-    /// after a bare id.
+    /// Processing VODs may omit previews; their absence must not fail metadata decoding.
     var thumbnailURLs: [String]?
   }
 
   struct OwnerEnvelope: Decodable {
     var displayName: String
-    /// Optional for the reason `thumbnailURLs` is: a payload without it must
-    /// cost one field, not the video's title and duration too.
+    /// Missing login must not discard the video's other metadata.
     var login: String?
   }
 }
 
-/// Mirrors just the fields we need from the CLI's clip JSON.
-///
-/// Field names and nesting come from
-/// `TwitchDownloaderCore/TwitchObjects/Gql/GqlShareClipRenderStatusResponse.cs`,
-/// which `InfoHandler.HandleClipRaw` serializes verbatim.
-///
-/// `assets` and its members are optional because `--format Raw` is the one
-/// path upstream fetches with `canThrow: false` — a deleted or unpublished
-/// clip reaches us with its assets missing rather than as an error. `title`,
-/// `createdAt`, `durationSeconds` and `broadcaster` are not: a payload without
-/// them is not a clip we can name a file after, and failing the decode there
-/// is what puts the sheet into its (honest) "could not read that video's
-/// details" state instead of silently naming a job after nobody.
+/// Fields from upstream's `GqlShareClipRenderStatusResponse`. Assets are optional because raw
+/// info uses `canThrow: false` and may return deleted/unpublished clips without them. Core
+/// naming fields remain required.
 private struct ClipInfoEnvelope: Decodable {
   var data: DataEnvelope
 
@@ -527,16 +340,11 @@ private struct ClipInfoEnvelope: Decodable {
     var durationSeconds: Int
     var broadcaster: BroadcasterEnvelope
     var assets: [AssetEnvelope]?
-    /// The broadcast this clip was cut from, decoded **only for its
-    /// presence** — the same idiom as `portraitMetadata` below, and for the
-    /// same reason: an empty `Decodable` accepts any object shape, so a
-    /// future field appearing inside `video` can never fail the whole clip's
-    /// metadata over something we do not read. Its `id` is upstream's
-    /// business, not ours.
+    /// Decode only the parent video's presence; its internal fields are irrelevant to chat
+    /// availability.
     var video: ParentVideoEnvelope?
-    /// Where in that broadcast the clip starts. Null exactly when `video` is,
-    /// in every payload observed — but upstream tests both, so we decode
-    /// both rather than assume they move together.
+    /// Clip start within its parent broadcast. Decode separately because upstream checks both
+    /// this and the parent video.
     var videoOffsetSeconds: Int?
   }
 
@@ -544,8 +352,7 @@ private struct ClipInfoEnvelope: Decodable {
 
   struct BroadcasterEnvelope: Decodable {
     var displayName: String
-    /// Optional for the reason `thumbnailURLs` is: a payload without it must
-    /// cost one field, not the video's title and duration too.
+    /// Missing login must not discard the clip's other metadata.
     var login: String?
   }
 
@@ -571,9 +378,8 @@ private struct ClipInfoEnvelope: Decodable {
   struct PortraitMetadataEnvelope: Decodable {}
 
   struct ClipQualityEnvelope: Decodable {
-    /// The frame height as a string — `"1080"`, not `"1080p60"`. Optional
-    /// only so that one unnameable rendition is skipped rather than failing
-    /// the whole clip's metadata; upstream declares it nullable too.
+    /// Height as a string (e.g. `1080`). Nil skips one unnameable rendition without failing the
+    /// clip.
     var quality: String?
     var frameRate: Double
     var bitrate: Int

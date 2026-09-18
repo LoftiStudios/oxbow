@@ -53,23 +53,12 @@ struct QueueControllerTests {
     await controller.enqueue(template, title: "combined")
 
     try await waitFor(controller) { $0.count == 1 }
-    // Video + chat + render: three steps, not merely "at least one" — a
-    // template that silently dropped the render step would still satisfy a
-    // weaker `steps.count > 0` assertion.
+    // Require all three requested steps so a dropped render cannot pass.
     #expect(controller.jobs.first?.steps.count == 3)
   }
 
-  /// Weaker assertions here (e.g. "steps.count == 3") pass just as well for
-  /// an implementation that emits the right steps in the wrong order, or
-  /// with `dependsOn` wired to the wrong step. `JobTemplate.makeJob` already
-  /// has exhaustive coverage of that shape in `JobTemplateTests`; this test
-  /// exists only to prove the controller forwards the template to the engine
-  /// unmangled, so it checks the same shape end to end through the real
-  /// `QueueController.enqueue` → `QueueEngine.enqueue` path.
-  /// `JobTemplate.makeJob` appends chat and render before the media step —
-  /// load-bearing for `Scheduler`'s parallelism, not cosmetic; see the note
-  /// in `makeJob` and docs/design/compositing.md §6 — so the realised order
-  /// is chat, render, media, not media, chat, render.
+  /// Check order and dependencies through controller enqueue, not just step count. Chat
+  /// precedes render and media so rendering can overlap video download.
   @Test func aMultiOutputTemplateProducesStepsInChatRenderMediaOrder() async throws {
     let (controller, root) = try makeController(.succeeds)
     defer { try? FileManager.default.removeItem(at: root) }
@@ -99,10 +88,7 @@ struct QueueControllerTests {
     }
 
     #expect(steps[2].dependsOn == [], "media is independent")
-    // A render pairing forces JSON regardless of what the caller asked for
-    // (JobTemplate.renderInput) - asserting this, not just the step order,
-    // rules out an implementation that forwarded a mangled copy of the chat
-    // request.
+    // Also verify JSON coercion for render input.
     #expect(chatRequest.format == .json)
     #expect(steps[1].dependsOn == [steps[0].id], "render depends on the chat download, not the media")
   }
@@ -145,9 +131,7 @@ struct QueueControllerTests {
     try await waitFor(controller) { $0.first?.steps.first?.status == .cancelled }
   }
 
-  /// The state a queued job's Cancel button exists for. Both steps are
-  /// downloads and the scheduler admits one step per resource class, so the
-  /// second necessarily waits for the whole of the first.
+  /// Two network steps force one to remain queued, exercising its Cancel action.
   @Test func cancellingAQueuedJobLeavesTheRunningOneAlone() async throws {
     let (controller, root) = try makeController(.hangsUntilCancelled)
     defer { try? FileManager.default.removeItem(at: root) }
@@ -156,9 +140,7 @@ struct QueueControllerTests {
     await controller.enqueue(videoTemplate(id: "2844548319", destination: root.appending(path: "a.mp4")), title: "a")
     await controller.enqueue(videoTemplate(id: "2844548320", destination: root.appending(path: "b.mp4")), title: "b")
 
-    // By shape, not by index. The enqueues are ordered now that `enqueue` is
-    // awaited, but which job the *scheduler* admits first is still its own
-    // decision, and this test is about the queued one either way.
+    // Find the queued job by status rather than assuming scheduler order.
     try await waitFor(controller) { jobs in
       jobs.count == 2
         && jobs.contains { $0.status == .running }
@@ -190,14 +172,9 @@ struct QueueControllerTests {
     try await waitFor(controller) { $0.first?.status == .done }
   }
 
-  /// The quit path the app delegate actually calls. A `flush()`-only quit
-  /// exited with the helper still running, orphaning `TwitchDownloaderCLI`
-  /// and the FFmpeg it spawned; `shutDown()` has to signal it first.
+  /// Shutdown must signal the helper before flushing and quitting to avoid orphan processes.
   @Test func shuttingDownSignalsTheHelperStillRunning() async throws {
-    // Built inline rather than through `makeController`: the test has to hold
-    // the very `StubHelper` the engine launched in order to ask it whether it
-    // was signalled. Handing back the same instance every time is safe here —
-    // the job has exactly one step, so it is only ever launched once.
+    // Retain the exact helper instance to inspect cancellation; this job has one invocation.
     let helper = StubHelper(.hangsUntilCancelled)
     let root = URL(filePath: NSTemporaryDirectory()).appending(path: "oxbow-\(UUID().uuidString)")
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -222,21 +199,14 @@ struct QueueControllerTests {
       "the step stays running so the next launch reports it as interrupted")
   }
 
-  /// `fetchInfo` runs outside the queue entirely - this is the one place
-  /// that exercises it through `QueueController` rather than
-  /// `VideoInfoFetcher` directly (already covered exhaustively by
-  /// `VideoInfoFetcherTests` in OxbowKit). It only has to prove the
-  /// controller wires the helper executable and a fresh process through
-  /// correctly and surfaces a failure as a thrown error, not swallow it or
-  /// return some placeholder value.
+  /// Verify controller metadata-fetch wiring and error propagation; detailed parsing is covered
+  /// in OxbowKit.
   @Test func fetchInfoSurfacesAHelperFailureAsAThrownError() async throws {
     let (controller, root) = try makeController(.failsThenSucceeds(StubHelper.Attempts()))
     defer { try? FileManager.default.removeItem(at: root) }
     await controller.start()
 
-    // No job is ever enqueued: `.failsThenSucceeds`'s first attempt always
-    // fails, so this call alone exercises the failure path without
-    // depending on queue scheduling at all.
+    // The stub's first call fails without enqueueing any job.
     await #expect(throws: VideoInfoFetchError.helperFailed(status: .exited(1), standardError: "stub failure")) {
       try await controller.fetchInfo(for: "2844548319")
     }
@@ -255,13 +225,7 @@ struct QueueControllerTests {
     var enqueues = 0
   }
 
-  /// The Dock and Notification Center read from here, so a snapshot the
-  /// window sees and one they see can never be different snapshots.
-  ///
-  /// The second assertion is the one with teeth: it reads `controller.jobs`
-  /// from inside the observer, so swapping the two statements in `start()`
-  /// fails this test. Asserting only on the closure's argument would pass
-  /// under either ordering.
+  /// Read `controller.jobs` inside the observer to prove state updates precede callbacks.
   @Test func republishesEverySnapshotToTheStatusObserver() async throws {
     let (controller, root) = try makeController(.succeeds)
     defer { try? FileManager.default.removeItem(at: root) }
@@ -281,9 +245,7 @@ struct QueueControllerTests {
     #expect(recorder.jobsAlwaysMatchedTheSnapshot)
   }
 
-  /// Spec §7.2: authorization is requested on first enqueue, which needs a
-  /// signal that is an enqueue rather than a snapshot that happens to
-  /// contain a new job — at launch those look identical.
+  /// Permission requests follow enqueue events, not launch snapshots that already contain jobs.
   @Test func announcesAnEnqueue() async throws {
     let (controller, root) = try makeController(.succeeds)
     defer { try? FileManager.default.removeItem(at: root) }

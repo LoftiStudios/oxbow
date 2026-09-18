@@ -1,27 +1,11 @@
 import Darwin
 import Foundation
 
-/// Runs one CLI invocation to completion.
-///
-/// Cancellation is deliberately blunt: the CLI passes a CancellationToken that
-/// can never fire and installs no signal handler, so there is no cooperative
-/// path. SIGTERM first is purely for FFmpeg's benefit — it closes its output
-/// file on receipt — and SIGKILL follows regardless.
-///
-/// - Important: Each `run` uses **three dedicated threads** for the life of
-///   the invocation — the stdout pump, the stderr pump, and the `waitpid`
-///   call are blocking syscalls, hosted on `BlockingThread` / their own
-///   `Thread` precisely so they can never pin the cooperative pool. The async
-///   tasks below only ever suspend. This replaced an earlier design that
-///   blocked inside `Task.detached`: on a 3-core CI runner the pool saturated
-///   and `cancel()` — itself an actor job needing a pool thread — was starved
-///   until the child exited on its own.
-///
-/// One instance drives exactly one invocation of `run`. `cancel()` sets a
-/// one-way flag that is never reset, so `run` on an already-cancelled
-/// instance returns immediately as killed **without spawning anything** —
-/// reuse across invocations is unsupported by design. `QueueEngine` creates a
-/// fresh instance per step.
+/// Runs one CLI invocation. Cancellation sends SIGTERM for FFmpeg to close output, then
+/// SIGKILL; the CLI has no cooperative cancellation path. Stdout, stderr, and waitpid each use
+/// a dedicated blocking thread so cancellation cannot be starved by the cooperative pool.
+/// Instances are single-use: cancellation is permanent, and a cancelled instance never spawns a
+/// process.
 public actor HelperProcess {
   private var spawned: Spawn?
   private var isCancelled = false
@@ -33,10 +17,8 @@ public actor HelperProcess {
     onOutput: @escaping @Sendable (ParsedLine) async -> Void)
     async throws -> RunResult
   {
-    // Checked before the spawn, not after: spawning and then immediately
-    // killing would still have started a real CLI process, which reaches the
-    // network before it dies. The reported status is what the child would
-    // have got had it existed long enough to receive it.
+    // Check before spawning so a cancelled fetch cannot briefly launch a helper and contact
+    // Twitch.
     if isCancelled {
       return RunResult(status: .signalled(SIGKILL), standardError: "")
     }
@@ -47,9 +29,6 @@ public actor HelperProcess {
       workingDirectory: launch.workingDirectory)
     self.spawned = spawned
 
-    // Cancelled between the check above and the spawn actually happening —
-    // `ProcessSpawner.spawn` is synchronous, but `cancel()` can still have run
-    // on this actor before `run` was first entered.
     if isCancelled {
       ProcessSpawner.signal(SIGKILL, toGroupOf: spawned.pid)
     }
@@ -110,20 +89,12 @@ public actor HelperProcess {
 
     ProcessSpawner.signal(SIGTERM, toGroupOf: pid)
 
-    // Detached so the grace period survives even if the task calling
-    // `cancel()` is itself cancelled. `Task.sleep` checks the cancellation
-    // of the task it runs on; if it ran on the caller's task directly, an
-    // outer cancellation would make it throw instantly, and the `try?`
-    // would swallow that — firing SIGKILL immediately and defeating the
-    // reason SIGTERM was sent first. A detached task has its own,
-    // independent cancellation state, so the sleep completes in full.
+    // Detach the grace-period sleep from caller cancellation; otherwise cancellation makes it
+    // throw immediately and SIGKILL follows SIGTERM without delay.
     try? await Task.detached { try await Task.sleep(for: .seconds(2)) }.value
 
-    // Re-read actor state instead of trusting the pre-sleep local copy:
-    // during those two seconds `run` can complete, reap the child, and
-    // clear `self.spawned`. Signalling the stale pid then would hit
-    // whatever process has since recycled that pgid — every helper is its
-    // own group leader, so pgid == pid — rather than a no-op.
+    // Re-read `spawned` after sleeping. `run` may have reaped the child and cleared it;
+    // signalling the old PID risks hitting a recycled process group.
     guard let stillRunning = self.spawned, stillRunning.pid == pid else { return }
     ProcessSpawner.signal(SIGKILL, toGroupOf: stillRunning.pid)
   }

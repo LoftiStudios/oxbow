@@ -1,21 +1,8 @@
 import Foundation
 
-/// The retained pieces of an interrupted composite, and where to resume from.
-///
-/// A composite that dies part-way leaves its finished output as a sealed
-/// piece under `Workspace.resumeDirectory`; the next attempt writes the next
-/// piece beside it and `.assemble` concatenates them. This type owns what is
-/// on disk there: which pieces exist, how much they cost, and — the only
-/// part that decides anything — where a resumed encode should pick up.
-/// docs/design/resume.md §§7, 8.
-///
-/// Holds a `TeardownJournal` rather than reaching for `Workspace` directly,
-/// because hitting the piece cap clears the retention area, and every
-/// workspace removal goes through the journal so its failures are recorded.
-///
-/// A `Sendable` struct over immutable state, so it has no isolation of its
-/// own and every method stays synchronous — the engine calls these from
-/// `makeContext`, which is `nonisolated` and must not become `async`.
+/// Manages retained composite pieces and the next resume point (`docs/design/resume.md` §§7–8).
+/// Cleanup goes through `TeardownJournal`. Synchronous and Sendable so context construction
+/// needs no suspension.
 struct ResumeLedger: Sendable {
   private let workspace: Workspace
   private let journal: TeardownJournal
@@ -25,12 +12,8 @@ struct ResumeLedger: Sendable {
     self.journal = journal
   }
 
-  /// How many times a composite may be continued before a retry starts over.
-  ///
-  /// Each resume adds an encode boundary, and a job that has failed this many
-  /// times is reporting something that continuing will not fix. Accumulating
-  /// pieces turns a persistent fault into a slowly degrading file instead of
-  /// a clear failure. docs/design/resume.md §7.
+  /// Piece limit before a retry starts over. Bounds repeated encode boundaries and retained
+  /// output for persistently failing jobs; see `docs/design/resume.md` §7.
   static let maximumPieces = 4
 
   /// The pieces already on disk for a job, in order.
@@ -80,13 +63,8 @@ struct ResumeLedger: Sendable {
     // the next began. Repair is a no-op on an untorn file.
     if let last = existing.last { _ = try? FragmentedMP4.repair(last) }
 
-    // A piece that contributed zero frames is one FFmpeg opened (`ftyp` +
-    // `moov`) but was killed before finishing a single fragment for — there
-    // is nothing in it to resume from. Left on disk it would still count as
-    // a real attempt: it burns a slot against `maximumPieces`, and
-    // `.assemble`'s `pieces.txt` would list it as an empty segment in the
-    // concat. Discarded outright rather than repaired — repair only fixes a
-    // torn trailing fragment, and an absent one is not that.
+    // Discard zero-frame pieces: they contain nothing usable, waste a piece slot, and would
+    // create an empty concat segment.
     var survivors: [URL] = []
     var frames = 0
     for piece in existing {

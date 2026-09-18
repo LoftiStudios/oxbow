@@ -10,9 +10,7 @@ struct QueueEngineTests {
     URL(filePath: NSTemporaryDirectory()).appending(path: "oxbow-engine-\(UUID().uuidString)")
   }
 
-  /// The queue file lives *outside* the workspace root — see
-  /// `Configuration.store`. Derived from `root` rather than random so
-  /// `cleanUp` can find it again from the one value the tests hold on to.
+  /// Keep queue persistence outside swept workspace; derive its path for deterministic cleanup.
   private func storeURL(for root: URL) -> URL {
     root.deletingLastPathComponent().appending(path: "\(root.lastPathComponent)-queue.json")
   }
@@ -53,19 +51,8 @@ struct QueueEngineTests {
   }
 
 
-  /// `start(runsWork: false)` publishes the store exactly as written.
-  ///
-  /// This is what `scripts/screenshots.sh` relies on: it launches the real app
-  /// against a fabricated queue so a published screenshot need not contain a
-  /// real streamer's name, and both halves of a normal start would ruin that.
-  /// `tick()` would try to download the invented video ids and settle every
-  /// step as failed, and `Reconciler` would first demote the `running` step —
-  /// correctly, since a running step on disk means the app died mid-step.
-  /// Between them a fixture could only ever depict a finished queue, which
-  /// shows none of the per-step progress the interface exists to present.
-  ///
-  /// So the property under test is that a `running` step survives the load,
-  /// which is precisely what a normal start is supposed to prevent.
+  /// Fixture startup must preserve saved running progress and start no work. Normal
+  /// reconciliation and scheduling would destroy the screenshot fixture's staged state.
   @Test func loadingWithoutRunningWorkPublishesTheStoreVerbatim() async throws {
     let root = makeRoot()
     defer { cleanUp(root) }
@@ -98,11 +85,8 @@ struct QueueEngineTests {
     #expect(only.progress.fraction == 0.35)
   }
 
-  /// The render step's destination is deliberately outside `root`, mirroring
-  /// real usage — the user's chosen destination is never inside the app's own
-  /// workspace, and must survive `Workspace.removeAll()`'s sweep. Because it
-  /// is outside `root`, it is not cleaned up by a `root`-only `defer`, so
-  /// callers must remove `renderDestination` themselves.
+  /// Delivery is outside workspace and must survive its sweep. Callers must clean this separate
+  /// path explicitly.
   private func makeChatAndRenderTemplate() -> (template: JobTemplate, renderDestination: URL) {
     let destination = URL(filePath: NSTemporaryDirectory())
       .appending(path: "render-\(UUID().uuidString).mp4")
@@ -112,14 +96,8 @@ struct QueueEngineTests {
     return (template, destination)
   }
 
-  /// The helper's narrative output is the only record of what a step was
-  /// doing. Discarding it is why a helper that finished its work and then
-  /// hung could only be diagnosed by sampling the process.
-  ///
-  /// Asserted on a FAILING step deliberately: a job that reaches `.done` has
-  /// its whole workspace removed, log included, which is right — there is
-  /// nothing to diagnose about work that succeeded and was delivered. The
-  /// log has to survive exactly where someone would go looking for it.
+  /// Assert logs on a failed step, whose workspace survives; successful jobs intentionally
+  /// remove their logs.
   @Test func keepsTheHelpersNarrativeOutputForAFailedStep() async throws {
     let (engine, root) = makeEngine(.failsWithoutArtifact(stderr: "boom"))
     defer { cleanUp(root) }
@@ -141,13 +119,7 @@ struct QueueEngineTests {
     #expect(contents.contains("frame= 42"), "ffmpeg line missing; log was: \(contents)")
   }
 
-  /// Status lines drive the progress bar and arrive by the hundreds — one per
-  /// render frame batch. Writing them all to the log would bury the handful
-  /// of lines that actually say what a step was doing when it stopped, so
-  /// only a periodic heartbeat (`QueueEngine.heartbeat`) reaches the log —
-  /// and only once a step has run long enough for one to be due. This step
-  /// reports exactly one status line before failing, well under
-  /// `heartbeatInterval`, so no heartbeat fires at all.
+  /// One status update below the heartbeat interval must not enter the diagnostic log.
   @Test func statusLinesAreNotWrittenToTheLog() async throws {
     let (engine, root) = makeEngine(.failsWithoutArtifact(stderr: "boom"))
     defer { cleanUp(root) }
@@ -169,9 +141,7 @@ struct QueueEngineTests {
     #expect(!contents.contains("Working"), "a status line leaked into the log")
   }
 
-  /// The flip side, stated so it is a decision rather than an accident: a job
-  /// that succeeded has nothing left to explain, and its log goes with the
-  /// workspace it lived in.
+  /// Successful delivery removes logs with the workspace.
   @Test func aSucceedingJobTakesItsLogWithItsWorkspace() async throws {
     let (engine, root) = makeEngine(.succeeds)
     defer { cleanUp(root) }
@@ -192,11 +162,8 @@ struct QueueEngineTests {
   }
 
 
-  /// Retry is a from-scratch restart, not a resume — nothing in this stack can
-  /// resume — so the real question is whether a cancelled job comes back to
-  /// life at all. Cancelling settles every step as `.cancelled`, and this
-  /// asserts the whole job runs through to `.done` afterwards rather than
-  /// restarting one step and stalling.
+  /// Retry a cancelled multi-step job through completion; restarting only one cancelled sibling
+  /// would stall it.
   @Test func aCancelledMultiStepJobCanBeRetriedAndRunsToCompletion() async throws {
     let (engine, root) = makeEngine(.succeeds)
     let (template, renderDestination) = makeChatAndRenderTemplate()
@@ -223,9 +190,6 @@ struct QueueEngineTests {
 
   // MARK: - Removing jobs
 
-  /// The queue had no way to forget anything: every job ever enqueued stayed
-  /// in the list forever, which is what made the window read as an append-only
-  /// log rather than a queue.
   @Test func removesASettledJobAndLeavesTheOthers() async throws {
     let (engine, root) = makeEngine(.succeeds)
     defer { cleanUp(root) }
@@ -249,9 +213,7 @@ struct QueueEngineTests {
     await engine.flush()
   }
 
-  /// Removing a job removes what it left behind in our workspace — the logs
-  /// and any intermediates a failure kept around. Otherwise "clear the list"
-  /// quietly leaks disk forever.
+  /// Removing a job must reclaim retained logs and intermediates.
   @Test func removingAJobDeletesItsWorkspace() async throws {
     let (engine, root) = makeEngine(.failsWithoutArtifact(stderr: "boom"))
     defer { cleanUp(root) }
@@ -274,9 +236,7 @@ struct QueueEngineTests {
     await engine.flush()
   }
 
-  /// **The file the user asked for is not ours to delete.** Removing a row is
-  /// housekeeping on our own queue; the download in their Downloads folder is
-  /// the whole point of the app and survives untouched.
+  /// Removing a queue row must never delete the user's delivered download.
   @Test func removingAJobLeavesTheDeliveredFileAlone() async throws {
     let (engine, root) = makeEngine(.succeeds)
     let destination = URL(filePath: NSTemporaryDirectory())
@@ -306,11 +266,8 @@ struct QueueEngineTests {
 
   // MARK: - Delivering into an occupied destination
 
-  /// Nobody was warned, so nothing may be destroyed. A file that appeared at
-  /// the destination while a long download was running is left exactly as it
-  /// was, and the finished download lands beside it under a stepped name —
-  /// which is the name the step reports as delivered, so Show in Finder and
-  /// Get Info point at the file that actually exists.
+  /// Without replacement permission, preserve collisions and record the actual numbered
+  /// delivery path.
   @Test func deliversBesideAFileTheUserWasNeverWarnedAbout() async throws {
     let (engine, root) = makeEngine(.succeeds)
     let folder = URL(filePath: NSTemporaryDirectory())
@@ -336,9 +293,7 @@ struct QueueEngineTests {
     await engine.flush()
   }
 
-  /// The intake sheet showed the warning and the user chose Replace, so
-  /// replacing is what they asked for. Stepping the name aside here would
-  /// quietly overrule them and leave the stale file as the one they find.
+  /// Explicit Replace permission must overwrite the chosen destination.
   @Test func replacesTheExistingFileWhenTheUserAgreedToIt() async throws {
     let (engine, root) = makeEngine(.succeeds)
     let folder = URL(filePath: NSTemporaryDirectory())
@@ -366,10 +321,7 @@ struct QueueEngineTests {
     await engine.flush()
   }
 
-  /// Removing something still running has to kill its helper first. Dropping
-  /// the row without cancelling would orphan `TwitchDownloaderCLI` and the
-  /// FFmpeg it spawned, still writing into a workspace we just deleted — the
-  /// exact failure `shutDown()` exists to prevent, reached by another door.
+  /// Removing running work must cancel its helper before deleting its workspace.
   @Test func removingARunningJobCancelsItsHelperFirst() async throws {
     let (engine, root) = makeEngine(.hangsUntilCancelled)
     defer { cleanUp(root) }
@@ -483,21 +435,8 @@ struct QueueEngineTests {
     await engine.flush()
   }
 
-  /// A composite that exits 0 having produced no frames must fail, not
-  /// succeed.
-  ///
-  /// This is the guard the chat-seek bug went undetected behind. FFmpeg's
-  /// exit code says nothing here — the engine already knows that, which is
-  /// why `isUsableArtifact` exists — but "exists and is non-empty" is not
-  /// enough for a piece: a filter graph that yields nothing still writes
-  /// `ftyp` and `moov`, so the file is neither missing nor zero-length and
-  /// every existence check reads it as finished. `.assemble` would then
-  /// concatenate it as an empty segment and deliver a file truncated at the
-  /// seam, with no error anywhere.
-  ///
-  /// The piece is the one artifact in the pipeline whose emptiness is
-  /// readable without decoding — `trun` declares each fragment's sample
-  /// count — so this costs a box walk, not a subprocess.
+  /// A nonempty MP4 header can contain zero frames despite exit 0. Reject pieces without
+  /// declared samples so assembly cannot silently truncate at the resume seam.
   @Test func aCompositeThatProducesNoFramesFailsRatherThanDeliveringATruncatedFile() async throws {
     let helper = FakeHelper(.writesAFramelessPiece)
     let (engine, root) = makeEngine { helper }
@@ -531,12 +470,7 @@ struct QueueEngineTests {
     await engine.flush()
   }
 
-  /// The "one file out" promise the whole feature rests on: a composite job's
-  /// video, chat render, AND composite are all intermediates shaped exactly
-  /// like real intake output (`destination: nil`, or in the composite's case
-  /// a destination `move` deliberately ignores) and must never reach the
-  /// user's chosen folder — only the assemble step, which joins the
-  /// composite's pieces, is delivered.
+  /// Composite jobs deliver only assembly output; all earlier artifacts are intermediate.
   @Test func aCompositeJobDeliversExactlyOneFile() async throws {
     let (engine, root) = makeEngine(.succeeds)
     defer { cleanUp(root) }
@@ -558,18 +492,9 @@ struct QueueEngineTests {
     #expect(job.status == .done)
     #expect(job.steps.allSatisfy { $0.status == .done })
 
-    // The video, chat, and render steps carried no destination of their own,
-    // so each is an intermediate: deleted with the job's workspace, its claim
-    // dropped in the same breath. The composite's own output is a piece in
-    // the retention area, not the delivered file — `Workspace.contains`
-    // deliberately excludes that area (see its doc comment), so the done
-    // job's workspace sweep never touches it directly. What actually removes
-    // the bytes is delivery-time retention cleanup (docs/design/resume.md
-    // §8): a delivered job has nothing left to resume, so `removeJobWorkspace`
-    // drops the whole retained directory — and, in the same actor turn, nils
-    // the composite step's claim on it, so nothing is left pointing at a
-    // piece that no longer exists (`Reconciler` short-circuits for a `.done`
-    // job, so there is no later chance to notice a stale one).
+    // Successful delivery removes workspace artifacts and retained pieces, clearing their
+    // claims in the same actor turn. Done jobs bypass later reconciliation, so dangling claims
+    // must not survive here.
     let workspace = Workspace(root: root)
     for step in job.steps {
       switch step.kind {
@@ -585,9 +510,7 @@ struct QueueEngineTests {
       atPath: workspace.resumeDirectory(job.id).path),
       "a delivered job's retained pieces have no further use")
 
-    // Nothing else reached disk under root except the assembled file — the
-    // video, render, and retained composite piece were all cleared once the
-    // job delivered.
+    // Only assembly output remains after cleanup.
     let enumerator = FileManager.default.enumerator(atPath: root.path)
     let delivered = (enumerator?.allObjects as? [String] ?? []).filter { $0.hasSuffix(".mp4") }
     #expect(Set(delivered) == ["out.mp4"])
@@ -595,11 +518,7 @@ struct QueueEngineTests {
     await engine.flush()
   }
 
-  /// The composite step's Finder-reveal item, rule 2: once a job has fully
-  /// delivered, `removeJobWorkspace` has already deleted its retention area
-  /// (verified just above), so pointing at it would be a dead directory. The
-  /// item must fall back to what the job actually produced — the `.assemble`
-  /// step's own artifact — rather than leaving the user staring at nothing.
+  /// After retention cleanup, composite Finder reveal falls back to delivered assembly output.
   @Test func revealTargetPointsAtTheDeliveredFileOnceRetentionIsGone() async throws {
     let (engine, root) = makeEngine(.succeeds)
     defer { cleanUp(root) }
@@ -623,14 +542,8 @@ struct QueueEngineTests {
     await engine.flush()
   }
 
-  /// The composite step's Finder-reveal item, rule 2 continued: pinned to the
-  /// `.assemble` step specifically, never `job.deliveredFiles.first`. Those
-  /// two coincide today only because the intake gives chat, video, and render
-  /// steps `destination: nil` on a composite job — nothing in `JobTemplate`
-  /// stops a caller from setting one anyway, and step order puts chat ahead
-  /// of assemble. Without the pin, this would reveal the chat JSON instead of
-  /// the finished video the moment both deliver — exactly the drift the
-  /// review that produced this test called out.
+  /// Follow assembly specifically: a library caller may also deliver chat earlier in step
+  /// order, making `deliveredFiles.first` incorrect.
   @Test func revealTargetPrefersTheAssembleStepOverAnEarlierDeliveringStep() async throws {
     let (engine, root) = makeEngine(.succeeds)
     defer { cleanUp(root) }
@@ -651,21 +564,15 @@ struct QueueEngineTests {
     try await settle(engine)
 
     let job = try #require(await engine.currentJobs.first)
-    // Both the chat step and the assemble step delivered — chat earlier in
-    // step order — which is what makes this pin down "follows assemble
-    // specifically" rather than "follows whichever delivering step is first".
+    // Chat delivers before assembly, distinguishing the specific assembly lookup from first
+    // output.
     #expect(job.deliveredFiles.count == 2)
     #expect(await engine.revealTarget(forJob: job.id) == .delivered(videoDestination))
 
     await engine.flush()
   }
 
-  /// The composite step's Finder-reveal item, rule 2's other half: rule 1
-  /// checks the retention directory still exists before trusting it, and the
-  /// delivered branch owes its own file the same check. Moved or deleted
-  /// after delivery, `assemble.artifact` still names it — the exact defect
-  /// `e61278f` fixed on the retention branch, reproduced here on the
-  /// delivered one.
+  /// Verify the assembled file still exists before offering reveal.
   @Test func revealTargetIsNilWhenTheDeliveredFileNoLongerExists() async throws {
     let (engine, root) = makeEngine(.succeeds)
     defer { cleanUp(root) }
@@ -695,16 +602,8 @@ struct QueueEngineTests {
     await engine.flush()
   }
 
-  /// `removeJobWorkspace`'s `.done` branch nils a step's claim on any
-  /// artifact `Workspace.contains` recognises, then separately deletes the
-  /// whole retained directory. The composite step's own artifact lives
-  /// *inside* that retained directory, which `contains` deliberately does not
-  /// recognise (see its doc comment) — so without an explicit fix, the nilling
-  /// loop skips it and the deletion removes the file out from under a claim
-  /// that survives. That dangling reference is user-visible:
-  /// `JobInfo.deliveredFiles` and "Show in Finder" (`QueueActions.swift`)
-  /// both read a step's `artifact`, so a delivered job would list, and offer
-  /// to reveal, a `piece-0.mp4` this same delivery just deleted.
+  /// Clear retained-piece claims explicitly; workspace containment excludes retention, so the
+  /// ordinary cleanup loop cannot do it.
   @Test func aDeliveredCompositeJobDoesNotClaimItsRemovedPiece() async throws {
     let (engine, root) = makeEngine(.succeeds)
     defer { cleanUp(root) }
@@ -733,15 +632,8 @@ struct QueueEngineTests {
     await engine.flush()
   }
 
-  /// The failure mode `move`'s `.composite` case exists to prevent: composite
-  /// and assemble carry the *same* destination (`JobTemplate` builds the
-  /// `AssembleRequest` from `CompositeRequest.destination`), so if `move`
-  /// ever let `.composite` deliver again, this would pass by coincidence —
-  /// the file would land at the right path just one step early, with fewer
-  /// pieces joined than a resumed job actually produced. Caught mid-flight,
-  /// with assemble deliberately held `.running` so the moment the composite
-  /// alone could have delivered is directly observable: the destination must
-  /// not exist while composite is `.done` and assemble has not finished.
+  /// Hold assembly running after composite completes. The destination must remain absent,
+  /// proving composite cannot deliver early to their shared path.
   @Test func aCompositeStepNeverDeliversToItsOwnDestination() async throws {
     let sequenced = SequencedBehaviours(
       [.succeeds, .succeeds, .succeeds, .succeeds, .hangsUntilCancelled])
@@ -759,10 +651,7 @@ struct QueueEngineTests {
           destination: destination)),
       title: "t")
 
-    // Step order is chat, render, video, composite, assemble (`JobTemplate`'s
-    // load-bearing append order). Wait for the composite to finish and the
-    // assemble step — which shares the composite's destination — to be
-    // genuinely in flight, held there by the fake's last behaviour.
+    // Wait for composite done and assembly running before inspecting delivery.
     for _ in 0..<200 {
       let steps = await engine.currentJobs.first?.steps
       if steps?[3].status == .done, steps?[4].status == .running {
@@ -783,7 +672,6 @@ struct QueueEngineTests {
     await engine.flush()
   }
 
-  /// The scenario the whole failure model exists for.
   @Test func aFailedDependencyBlocksItsDependent() async throws {
     let (engine, root) = makeEngine(.failsWithoutArtifact(
       stderr: "Unhandled exception. System.Exception: vod_manifest_restricted"))
@@ -810,17 +698,8 @@ struct QueueEngineTests {
     await engine.flush()
   }
 
-  /// Exercises a genuine restart, not just `QueueStore` round-tripping
-  /// (already covered in `QueueStoreTests`): a second, independent
-  /// `QueueEngine` loads the first one's saved queue and reconciles it
-  /// against disk. The store file lives outside `root` deliberately — see
-  /// `Configuration.store`'s doc comment.
-  ///
-  /// The property under test is that a **finished** job stays finished. Its
-  /// chat artifact was an intermediate, deliberately discarded when the job
-  /// completed; treating that absence as "needs redoing" made a job the user
-  /// saw as Done re-download its chat on every launch, forever, discarding it
-  /// again each time. See the design spec, §5.
+  /// Restart through a second engine to prove completed jobs stay done after their
+  /// intermediates were intentionally deleted.
   @Test func persistsAcrossRestart() async throws {
     let root = URL(filePath: NSTemporaryDirectory())
       .appending(path: "oxbow-engine-\(UUID().uuidString)")
@@ -848,9 +727,7 @@ struct QueueEngineTests {
     try await settle(engine)
     await engine.flush()
 
-    // A genuinely new instance, not the same engine reloaded in place — this
-    // is what actually exercises the `Reconciler` wiring in `start()`. Its
-    // helper factory is a tripwire: a finished job must launch nothing at all.
+    // A fresh engine's helper factory is a tripwire: done jobs must launch nothing.
     var restartConfiguration = configuration
     restartConfiguration.makeProcess = {
       Issue.record("a finished job must not relaunch any step on restart")
@@ -866,9 +743,7 @@ struct QueueEngineTests {
     #expect(reloaded[0].status == .done, "a finished job must still be finished after a restart")
     #expect(reloaded[0].steps.allSatisfy { $0.status == .done })
 
-    // The chat artifact was an intermediate. It was deleted when the job
-    // finished, and the claim on it was dropped in the same breath — so
-    // nothing is left pointing at a file that no longer exists.
+    // Deleted chat intermediates must also lose their artifact claims.
     #expect(reloaded[0].steps[0].artifact == nil, "the discarded intermediate must not be claimed")
     #expect(reloaded[0].steps[1].artifact == renderDestination)
     #expect(
@@ -880,11 +755,7 @@ struct QueueEngineTests {
     await restarted.flush()
   }
 
-  /// A composite job keeps its downloaded video as an intermediate exactly as
-  /// a render already keeps its chat file: `destination: nil` discards it
-  /// with the rest of the workspace once the job finishes, rather than
-  /// delivering a stray file the user never asked for. Mirrors
-  /// `persistsAcrossRestart`'s check on the chat artifact, minus the restart.
+  /// Composite media with no destination is removed after delivery.
   @Test func aVideoWithNoDestinationStaysInTheWorkspace() async throws {
     let (engine, root) = makeEngine(.succeeds)
     defer { cleanUp(root) }
@@ -898,9 +769,7 @@ struct QueueEngineTests {
     let job = try #require(await engine.currentJobs.first)
     #expect(job.status == .done)
 
-    // The video was an intermediate. It was deleted when the job finished,
-    // and the claim on it was dropped in the same breath — so nothing is left
-    // pointing at a file that no longer exists.
+    // Deleted media intermediates must also lose their artifact claims.
     #expect(job.steps[0].artifact == nil, "the discarded intermediate must not be claimed")
 
     // Nothing reached the user's folder: nil means "discard with the job,"
@@ -939,9 +808,7 @@ struct QueueEngineTests {
     await engine.flush()
   }
 
-  /// Critical: `cancel(step:)` must never let the step read as `.failed`.
-  /// Before this fix, the in-flight `finish` call raced the cancellation and
-  /// always won, overwriting `.cancelled` with `.failed(signalled(...))`.
+  /// Cancellation must not be overwritten by the in-flight helper's signalled failure.
   @Test func cancellingARunningStepSettlesAsCancelledNotFailed() async throws {
     let (engine, root) = makeEngine(.hangsUntilCancelled)
     defer { cleanUp(root) }
@@ -962,21 +829,8 @@ struct QueueEngineTests {
     await engine.flush()
   }
 
-  /// A stubborn file inside a step's own working directory must not vanish
-  /// into the same silence a whole-job teardown failure used to: found on a
-  /// real machine as an 8.66 GB video that survived its job's teardown with
-  /// nothing anywhere recording that the removal had failed.
-  ///
-  /// `chflags`'s user-immutable flag is used to force a genuine
-  /// `FileManager.removeItem` failure — unlike an open file handle, which
-  /// does not stop `unlink` on APFS, or a read-only file, which is still
-  /// removable by the owner of a writable directory. `uchg` is the one
-  /// portable way to make deletion itself fail.
-  ///
-  /// `removeStep` only ever touches a step's own working directory, never
-  /// `logs/` — so unlike a job-level failure (see
-  /// `aJobTeardownFailureIsRecordedInTheWorkspaceLevelLog` below), this one
-  /// has an obvious, still-standing home: the step's own `StepLog`.
+  /// Force deletion failure with `uchg`: open handles and read-only files can still be unlinked
+  /// on APFS. Step logs survive step-directory removal and must report the failure.
   @Test func aStepTeardownFailureIsRecordedInThatStepsOwnLog() async throws {
     let (engine, root) = makeEngine(.hangsUntilCancelled)
     defer { cleanUp(root) }
@@ -986,9 +840,7 @@ struct QueueEngineTests {
     await engine.enqueue(
       JobTemplate(chat: ChatRequest(videoID: "2844548319", format: .json)), title: "test")
 
-    // `enqueue` runs `tick()` — and so `makeContext`'s `prepareStep` — to
-    // completion synchronously before returning, so the step's working
-    // directory already exists here; no polling needed.
+    // Enqueue prepares the step directory synchronously before returning.
     let jobID = try #require(await engine.currentJobs.first?.id)
     let stepID = try #require(await engine.currentJobs.first?.steps.first?.id)
 
@@ -1002,9 +854,7 @@ struct QueueEngineTests {
     await engine.cancel(step: stepID)
     try await settle(engine)
 
-    // The teardown failure is written by a fire-and-forget `Task` (see
-    // `recordStepTeardownFailure`), so it may still be in flight the moment
-    // `isIdle` goes true — poll rather than reading the log exactly once.
+    // Poll for the asynchronous failure-log write; idle does not imply it has landed.
     let logFile = workspace.logFile(job: jobID, step: stepID)
     var contents = ""
     for _ in 0..<80 {
@@ -1024,11 +874,7 @@ struct QueueEngineTests {
     await engine.flush()
   }
 
-  /// The job-level counterpart of the test above. `removeJob` deletes a
-  /// job's own `logs/` directory as part of what it tears down, so a
-  /// job-level failure has nowhere per-job to land — this is what confirms
-  /// it lands in `Workspace.teardownFailureLog` instead, and that the file
-  /// naming the failure survives it.
+  /// Job cleanup failures must be recorded outside the job tree that cleanup removes.
   @Test func aJobTeardownFailureIsRecordedInTheWorkspaceLevelLog() async throws {
     let (engine, root) = makeEngine(.hangsUntilCancelled)
     defer { cleanUp(root) }
@@ -1040,12 +886,8 @@ struct QueueEngineTests {
 
     let jobID = try #require(await engine.currentJobs.first?.id)
 
-    // A stray file directly in the job's own directory — a sibling of
-    // `artifacts/` and `logs/` — so its removal failing aborts nothing
-    // upstream of it and this test is purely about where the failure is
-    // *reported*, not whether siblings survive (that is `WorkspaceTests`'
-    // job, at the `Workspace` level where it can be asserted without an
-    // engine's timing in the way).
+    // Place the stubborn file beside artifacts/logs to isolate reporting; sibling cleanup is
+    // covered in WorkspaceTests.
     let stuck = workspace.jobDirectory(jobID).appending(path: "stuck.tmp")
     FileManager.default.createFile(atPath: stuck.path, contents: Data("x".utf8))
     try #require(
@@ -1077,8 +919,7 @@ struct QueueEngineTests {
     await engine.flush()
   }
 
-  /// Critical: `cancel(job:)` must preserve steps that had already finished,
-  /// and must not report the ones it kills as `.failed`.
+  /// Job cancellation preserves completed steps and must not report killed steps as failed.
   @Test func cancellingAJobKeepsFinishedStepsAndCancelsTheRest() async throws {
     let sequenced = SequencedBehaviours([.succeeds, .hangsUntilCancelled, .hangsUntilCancelled])
     let (engine, root) = makeEngine { FakeHelper(sequenced.next()) }
@@ -1095,16 +936,8 @@ struct QueueEngineTests {
           destination: root.appending(path: "composite.mp4"))),
       title: "test")
 
-    // `makeJob` appends chat and render before the media step (see the
-    // load-bearing-order note there and docs/design/compositing.md §6), so
-    // chat — depending on nothing — is the only step admissible at t0 and
-    // launches first; it succeeds via the fake's first behaviour. That frees
-    // `.network`, and with chat now `.done`, render's one dependency is
-    // satisfied: render (`.compute`) and the video download (`.network`)
-    // share no resource class, so both are admitted and launched in the same
-    // tick, hanging via the fake's remaining two behaviours. The composite
-    // depends on both and so is left genuinely still queued. Wait for
-    // exactly that state before cancelling.
+    // Let chat finish, then hold render and video running together while composite remains
+    // queued. Cancel only after reaching that state.
     for _ in 0..<200 {
       let steps = await engine.currentJobs.first?.steps
       if steps?[0].status == .done, steps?[1].status == .running, steps?[2].status == .running {
@@ -1131,9 +964,7 @@ struct QueueEngineTests {
     await engine.flush()
   }
 
-  /// Important #5: `retry` had no coverage at all, which is exactly where
-  /// both criticals lived. Asserts both halves of retry-in-place: the failed
-  /// step requeues (and relaunches), and its blocked dependent is released.
+  /// Retry must relaunch the failure and release its blocked dependent.
   @Test func retryingAFailedStepRequeuesItAndReleasesItsBlockedDependent() async throws {
     let (engine, root) = makeEngine(.failsWithoutArtifact(stderr: "boom"))
     let (template, renderDestination) = makeChatAndRenderTemplate()
@@ -1165,21 +996,15 @@ struct QueueEngineTests {
     await engine.flush()
   }
 
-  /// Critical 2 regression: a step that succeeds but whose finished file
-  /// cannot be moved to its destination must fail — not read as done — and
-  /// the artifact itself must survive, since `finish`'s own cleanup would
-  /// otherwise be the thing that deletes the only copy.
+  /// Failed delivery must leave the step failed and retain its workspace artifact.
   @Test func aFailedMoveFailsTheStepAndPreservesTheArtifact() async throws {
     let (engine, root) = makeEngine(.succeeds)
     defer { cleanUp(root) }
 
     try await engine.start()
 
-    // Force `move` to fail deterministically (no timing dependency): create
-    // a plain file where the destination's parent directory needs to be, so
-    // `FileManager.createDirectory(at:withIntermediateDirectories:)` throws
-    // instead of silently succeeding — a full disk or unwritable volume
-    // fails the same way in production.
+    // A regular file at the destination's parent path forces directory creation to fail
+    // deterministically.
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     let blocker = root.appending(path: "blocked")
     FileManager.default.createFile(atPath: blocker.path, contents: Data())
@@ -1203,9 +1028,7 @@ struct QueueEngineTests {
     }
     #expect(job.status == .failed, "a failed move must not read as a finished job")
 
-    // The one assertion that actually pins the data-loss fix: the artifact
-    // `move` failed to relocate must still be sitting in the workspace,
-    // proving `completeStep` did not treat this job as done and delete it.
+    // Retaining the artifact proves failed delivery did not trigger successful-job cleanup.
     let artifact = Workspace(root: root).artifactsDirectory(job.id).appending(path: "video.mp4")
     #expect(
       FileManager.default.fileExists(atPath: artifact.path),
@@ -1214,12 +1037,8 @@ struct QueueEngineTests {
     await engine.flush()
   }
 
-  /// The invariant this pins: **a step is `.done` only while the artifact it
-  /// records still exists.** `jobs/<id>/` holds `artifacts/`, the intermediates
-  /// handed between steps, so deleting a cancelled job's workspace wholesale
-  /// destroyed the chat file a finished chat step still pointed at — and a
-  /// later retry of the render then ran `-i <deleted path>` and surfaced a
-  /// .NET file-not-found stack trace to the user.
+  /// Cancelling must not leave done steps pointing at deleted intermediates that retry would
+  /// consume.
   @Test func cancellingAJobKeepsAnIntermediateItsDoneStepStillClaims() async throws {
     let sequenced = SequencedBehaviours([.succeeds, .hangsUntilCancelled, .succeeds])
     let (engine, root) = makeEngine { FakeHelper(sequenced.next()) }
@@ -1266,10 +1085,7 @@ struct QueueEngineTests {
     await engine.flush()
   }
 
-  /// Spec §1.5: a step succeeded iff its artifact exists **and is non-empty**.
-  /// A helper killed after opening its output file leaves a zero-byte file
-  /// behind; existence alone reads that as a finished download and moves it to
-  /// the user's folder.
+  /// Reject zero-byte artifacts left by killed helpers.
   @Test func anEmptyArtifactIsNotASuccess() async throws {
     let (engine, root) = makeEngine(.leavesAnEmptyArtifact)
     let destination = URL(filePath: NSTemporaryDirectory())
@@ -1298,9 +1114,7 @@ struct QueueEngineTests {
     await engine.flush()
   }
 
-  /// The same rule at the other site that applies it: load-time
-  /// reconciliation. A `.done` step whose recorded artifact is a zero-byte
-  /// leftover has nothing usable and must be redone.
+  /// Apply the same nonempty-artifact rule during reconciliation.
   @Test func restartRequeuesADoneStepWhoseArtifactIsEmpty() async throws {
     let root = makeRoot()
     let (template, renderDestination) = makeChatAndRenderTemplate()
@@ -1337,10 +1151,8 @@ struct QueueEngineTests {
     await engine.flush()
   }
 
-  /// The most common real restart: the app crashed mid-download. The step
-  /// persisted as `.running` cannot resume, so it must come back as
-  /// `.failed(.interrupted)` — and its dependent must neither run against a
-  /// missing input nor be wedged, which retrying the interrupted step proves.
+  /// Persisted running downloads become interrupted failures; retry must also release their
+  /// dependents.
   @Test func restartInterruptsARunningStepAndReleasesItsDependent() async throws {
     let root = makeRoot()
     let (template, renderDestination) = makeChatAndRenderTemplate()
@@ -1381,16 +1193,8 @@ struct QueueEngineTests {
 
   // MARK: - Shutdown
 
-  /// The orphaned-helper bug: quitting used to flush the queue and exit
-  /// without ever signalling the running helpers, so `TwitchDownloaderCLI`
-  /// and its FFmpeg outlived the app.
-  ///
-  /// Asserts both halves of the fix at once, because they are one decision:
-  /// the helper is signalled, *and* the step it was running is left `.running`
-  /// in the saved queue so the next launch reconciles it to
-  /// `.failed(.interrupted)` — the design's model for interrupted work — 
-  /// rather than to a `.cancelled` the user never asked for or a
-  /// `.failed(.signalled(SIGTERM))` that would read as a crash.
+  /// Shutdown signals helpers but persists interrupted steps as running for next-launch
+  /// reconciliation, not as user cancellation or process crashes.
   @Test func shutDownSignalsTheRunningHelperAndLeavesItsStepForTheReconciler() async throws {
     // The same instance every time, so the test can interrogate the one the
     // engine actually launched. Safe here: only one step ever launches.
@@ -1435,10 +1239,7 @@ struct QueueEngineTests {
     await relaunched.flush()
   }
 
-  /// A quit is held open by `.terminateLater`, so the window is still alive
-  /// while `shutDown()` runs and the user can still reach the intake sheet.
-  /// Admitting anything in that window would spawn a helper the app is about
-  /// to walk out on — exactly the orphan this change exists to remove.
+  /// Do not admit new work while quit is held open for shutdown.
   @Test func nothingNewLaunchesOnceTheQuitIsUnderWay() async throws {
     let (engine, root) = makeEngine(.hangsUntilCancelled)
     defer { cleanUp(root) }
@@ -1458,13 +1259,8 @@ struct QueueEngineTests {
       "a quit must not launch work it is about to abandon")
   }
 
-  /// The automated form of the manual check on this bug. `FakeHelper` can only
-  /// prove `cancel()` was called; only a real `HelperProcess` proves the
-  /// signal reaches the whole *process group*, which is the half that keeps
-  /// FFmpeg from being orphaned alongside the CLI that spawned it.
-  ///
-  /// The fixture stands in for that pair: a helper with a child that outlives
-  /// it unless the group is signalled. Both pids must be gone after the quit.
+  /// Use a real helper/child pair to verify shutdown reaches the entire process group; a fake
+  /// only proves `cancel()` was called.
   @Test func shutDownReapsTheWholeProcessGroupOfARealHelper() async throws {
     let root = makeRoot()
     defer { cleanUp(root) }
@@ -1520,9 +1316,7 @@ struct QueueEngineTests {
 
     await engine.shutDown()
 
-    // Polled, not asserted on the first read: a killed grandchild is
-    // reparented to launchd and stays a zombie — which `kill(pid, 0)` still
-    // reports as alive — until launchd gets round to reaping it.
+    // Poll until launchd reaps the killed grandchild; `kill(pid, 0)` still sees zombies.
     for pid in pids {
       var gone = false
       for _ in 0..<200 {
@@ -1535,11 +1329,8 @@ struct QueueEngineTests {
 
   // MARK: - Resume
 
-  /// Everything the resume tests need: an engine wired to a real workspace,
-  /// and a job whose only step is a composite. `dependsOn` is left empty —
-  /// `makeContext`'s wiring guard only checks that inputs and `dependsOn`
-  /// agree in count, and these tests are aimed at the resume machinery, not
-  /// at wiring a full multi-step job.
+  /// Resume fixture with a single composite step and matching empty dependency/input lists,
+  /// isolating resume from full job wiring.
   private struct ResumeHarness {
     let engine: QueueEngine
     let workspace: Workspace
@@ -1564,9 +1355,7 @@ struct QueueEngineTests {
       try engine.makeContext(job: job, step: job.steps[0])
     }
 
-    /// A piece already on disk, built from the same box layouts
-    /// `FragmentIndexTests` uses — a single fragment declaring `frames`
-    /// samples is all `resumePoint` ever reads.
+    /// Synthetic retained piece with one fragment declaring the requested frame count.
     func writePiece(index: Int, frames: Int) throws {
       try FileManager.default.createDirectory(
         at: workspace.resumeDirectory(job.id), withIntermediateDirectories: true)
@@ -1575,9 +1364,7 @@ struct QueueEngineTests {
         to: workspace.resumeDirectory(job.id).appending(path: "piece-\(index).mp4"))
     }
 
-    /// What piece 0 was (supposedly) built from — written here rather than
-    /// produced by a real first attempt, so a test can dial in a mismatch
-    /// directly instead of running two composites to provoke one.
+    /// Seed a fingerprint directly to exercise source mismatches without two real encodes.
     func writeFingerprint(byteCount: Int, duration: Duration) throws {
       try FileManager.default.createDirectory(
         at: workspace.resumeDirectory(job.id), withIntermediateDirectories: true)
@@ -1585,12 +1372,7 @@ struct QueueEngineTests {
         .write(to: workspace.resumeDirectory(job.id).appending(path: "source.json"))
     }
 
-    /// A video file of an exact size, standing in for a re-downloaded source —
-    /// written directly rather than run through a helper, so a test can dial
-    /// in the precise byte count `SourceFingerprint` compares against. The
-    /// return value only matters to callers that need to assert on the path
-    /// afterward — `aChangedSourceRefusesToResume` only needs the file on
-    /// disk, not the URL back.
+    /// Write an exact-size source fixture for fingerprint comparisons.
     @discardableResult
     func writeVideoArtifact(byteCount: Int) throws -> URL {
       let url = try workspace.prepareArtifacts(job: job.id).appending(path: "video.mp4")
@@ -1606,9 +1388,7 @@ struct QueueEngineTests {
       return url
     }
 
-    /// A finalised sidecar: `ftyp` + `mdat` + a complete trailing `moov` — the
-    /// layout a first attempt's `-c:a copy` produces when it runs to
-    /// completion. Same box-building helper `FragmentIndexTests` uses.
+    /// Completed sidecar layout: ftyp, mdat, then complete moov.
     func writeUsableSidecar() throws {
       try FileManager.default.createDirectory(
         at: workspace.resumeDirectory(job.id), withIntermediateDirectories: true)
@@ -1628,11 +1408,8 @@ struct QueueEngineTests {
       try data.write(to: workspace.resumeDirectory(job.id).appending(path: "audio.m4a"))
     }
 
-    /// Exercises the composite branch of `makeContext` directly, wired to a
-    /// video dependency so the source-fingerprint check has something to
-    /// compare — and translates a thrown `SourceChangedError` the way
-    /// `launch(_:)` does, since that translation is what a caller actually
-    /// sees.
+    /// Exercise composite context with a video dependency and the same source-change error
+    /// translation used by launch.
     func runComposite() async -> StepOutcome {
       let videoStep = Step(
         id: StepID(rawValue: UUID()),
@@ -1660,12 +1437,8 @@ struct QueueEngineTests {
       }
     }
 
-    /// A job as an `.assemble` step finds one: its video, chat render and
-    /// composite all `.done` with artifacts, and assemble itself the only
-    /// step left.
-    ///
-    /// The steps are ordered video, render, composite, assemble, so a test
-    /// can name one by index.
+    /// Pre-assembly job with completed video, render, and composite artifacts; ordered for
+    /// index-based fixture access.
     func assembleReadyJob() -> Job {
       let videoStep = Step(
         id: StepID(rawValue: UUID()),
@@ -1684,10 +1457,8 @@ struct QueueEngineTests {
           destination: workspace.root.appending(path: "out.mp4"))),
         status: .done,
         dependsOn: [videoStep.id, renderStep.id],
-        // Never read by the assemble branch — it hardcodes the sidecar path
-        // instead — but `makeContext`'s wiring guard still counts it, so a
-        // nil here would misreport this as a wiring bug rather than
-        // exercising the launch this test is actually after.
+        // Assembly does not read this piece directly, but the wiring guard requires an artifact
+        // for each dependency.
         artifact: workspace.resumeDirectory(job.id).appending(path: "piece-0.mp4"))
       let assembleStep = Step(
         id: StepID(rawValue: UUID()),
@@ -1705,18 +1476,9 @@ struct QueueEngineTests {
       return try? engine.makeContext(job: wired, step: wired.steps[3])
     }
 
-    /// Drives the engine's real `launch` path for one of the job's steps and
-    /// returns once that step is `.running`.
-    ///
-    /// The step at `stepIndex` is seeded `.failed` because `retry(job:)` is
-    /// the one public call that requeues a step and ticks without also
-    /// sweeping the workspace the way `start()` does. Loaded with
-    /// `runsWork: false` for the same reason: the artifacts written below
-    /// have to survive `start`'s unconditional `removeAll()`.
-    ///
-    /// `launch` runs `makeContext` and everything after it synchronously on
-    /// the actor, so by the time this returns the launch-time work has
-    /// already happened — there is nothing to poll for.
+    /// Load with `runsWork: false`, then seed artifacts and retry the failed target. Retry
+    /// exercises real launch without another startup sweep; launch-time context work completes
+    /// synchronously before it returns.
     func launchThroughTheEngine(
       stepIndex: Int = 3)
       async throws -> (video: URL, render: URL, launched: StepID)
@@ -1737,20 +1499,16 @@ struct QueueEngineTests {
       return (video, render, wired.steps[stepIndex].id)
     }
 
-    /// Whether the engine actually took the step — the control every one of
-    /// these tests needs, since a harness that quietly launched nothing
-    /// would satisfy any "this file still exists" claim for free.
+    /// Positive control: a launch that never ran would satisfy file-survival assertions
+    /// vacuously.
     func isRunning(_ step: StepID) async -> Bool {
       await engine.currentJobs
         .flatMap(\.steps)
         .first { $0.id == step }?.status == .running
     }
 
-    /// Runs `job` to real completion through the engine's own pipeline,
-    /// rather than through `makeContext` directly — clearing the resume area
-    /// on delivery is `QueueEngine.removeJobWorkspace`'s doing, and that only
-    /// fires from inside the actor once the job's own steps are genuinely
-    /// `.done`.
+    /// Run through actual completion so engine delivery cleanup—not direct context
+    /// construction—clears retention.
     func completeJobSuccessfully() async {
       try? store.save([job])
       try? await engine.start()
@@ -1800,11 +1558,8 @@ struct QueueEngineTests {
     let context = try harness.engineContext(forCompositeOf: harness.job)
 
     #expect(context.outputFile.lastPathComponent == "piece-0.mp4")
-    // `.path`, not `==`, on the URLs themselves: `deletingLastPathComponent()`
-    // always returns a directory-flavoured URL (trailing slash), which never
-    // compares equal via `==` to the file-flavoured URL `resumeDirectory`
-    // returns even for the identical path — the same reason `WorkspaceTests`
-    // compares `.path` rather than the URLs directly.
+    // Compare paths; directory-flavored URLs with trailing slashes are not necessarily equal to
+    // file-flavored URLs naming the same path.
     #expect(context.outputFile.deletingLastPathComponent().path
       == harness.workspace.resumeDirectory(harness.job.id).path)
     #expect(context.resumeFrom == nil)
@@ -1835,22 +1590,15 @@ struct QueueEngineTests {
 
     #expect(context.outputFile.lastPathComponent == "piece-0.mp4")
     #expect(context.resumeFrom == nil)
-    // The cap reset drops the whole retained directory (`removeResumable`)
-    // and `prepareResume` recreates it empty right after — so this pins that
-    // it comes back genuinely empty, not merely present. If `removeResumable`
-    // ever silently failed, `piece-1` through `piece-3` would survive here,
-    // the fresh run would overwrite only `piece-0`, and assemble would splice
-    // three stale pieces onto one fresh one — a silently wrong video.
+    // The cap reset must recreate an empty directory; surviving old pieces would be
+    // concatenated with fresh output.
     let contents = try FileManager.default.contentsOfDirectory(
       atPath: harness.workspace.resumeDirectory(harness.job.id).path)
     #expect(contents.isEmpty)
   }
 
-  /// A piece that reached only `ftyp`+`moov` before the crash — killed before
-  /// a single fragment finished — has nothing to resume from and must not be
-  /// treated as a real attempt: left in place it would burn a slot against
-  /// the piece cap and hand `.assemble` an empty segment in `pieces.txt`.
-  /// resume.md §7.
+  /// Discard header-only zero-frame pieces so they consume neither a retry slot nor a concat
+  /// segment.
   @Test func aZeroFramePieceIsDiscardedRatherThanCounted() async throws {
     let harness = try makeHarness()
     defer { harness.tearDown() }
@@ -1869,10 +1617,8 @@ struct QueueEngineTests {
       "a zero-frame piece must be removed outright, not left to reach .assemble's pieces.txt")
   }
 
-  /// No sidecar on disk at all — a genuine first attempt — must not be
-  /// reported as usable. `hasUsableSidecar` defaults to `false` in
-  /// `StepContext`, but this pins that `QueueEngine` actually computes it
-  /// rather than relying on the default surviving by accident.
+  /// Verify the engine computes absent sidecar as unusable, rather than merely relying on the
+  /// context default.
   @Test func aFirstAttemptHasNoUsableSidecar() async throws {
     let harness = try makeHarness()
     defer { harness.tearDown() }
@@ -1882,9 +1628,7 @@ struct QueueEngineTests {
     #expect(!context.hasUsableSidecar)
   }
 
-  /// The bug this branch fixes: a sidecar surviving from an earlier attempt
-  /// must be checked for a complete `moov`, not just "on disk" — a
-  /// `SIGKILL` mid-write leaves a non-empty file that is not usable.
+  /// A nonempty sidecar may still lack a complete moov after SIGKILL.
   @Test func aRetryWithACorruptSidecarReportsItAsUnusable() async throws {
     let harness = try makeHarness()
     defer { harness.tearDown() }
@@ -1896,9 +1640,7 @@ struct QueueEngineTests {
     #expect(!context.hasUsableSidecar)
   }
 
-  /// A sidecar that finished writing normally (the graceful-`SIGTERM` case,
-  /// or a resume that already repaired it) must be reported usable, so
-  /// `ArgumentBuilder` leaves it alone rather than needlessly re-copying it.
+  /// Completed sidecars must be recognized so resume leaves them untouched.
   @Test func aRetryWithAnIntactSidecarReportsItAsUsable() async throws {
     let harness = try makeHarness()
     defer { harness.tearDown() }
@@ -1928,13 +1670,8 @@ struct QueueEngineTests {
     #expect(failure.summary.contains("source changed"))
   }
 
-  /// The fail-open twin of `aChangedSourceRefusesToResume`: no `source.json`
-  /// at all, as if the first attempt's own `try?` write had failed — a full
-  /// disk is the likeliest reason a composite failed in the first place, and
-  /// also the likeliest reason the fingerprint write failed alongside it. A
-  /// resume that cannot verify its source must refuse the same as one that
-  /// verifies and finds a mismatch, not silently treat "unreadable" as
-  /// "matches". resume.md §7.
+  /// Missing fingerprints must refuse resume, just like mismatches. A failed fingerprint write
+  /// must not silently authorize an unverifiable source.
   @Test func aMissingFingerprintRefusesToResume() async throws {
     let harness = try makeHarness()
     defer { harness.tearDown() }
@@ -1953,17 +1690,8 @@ struct QueueEngineTests {
     #expect(failure.summary.contains("could not be verified"))
   }
 
-  /// Deleting the re-fetched inputs before assembling is what keeps the disk
-  /// peak at ~58 GB rather than ~84 on a six-hour job. resume.md §5.
-  ///
-  /// Driven through the engine's own `launch`, not through `makeContext`,
-  /// because that is where the call now lives — remove
-  /// `journal.removeSpentInputs(of:)` from `launch` and this goes red.
-  ///
-  /// The helper hangs rather than succeeding so the step is still `.running`
-  /// when the assertions run. That rules out the other way these files could
-  /// have vanished: a job that reached a terminal status takes its whole
-  /// workspace, artifacts included, with it.
+  /// Launch assembly with a hanging helper to prove inputs are removed before encoding, not by
+  /// eventual job cleanup. This bounds recovery peak disk use.
   @Test func launchingAssembleDropsTheRefetchedInputsFirst() async throws {
     let harness = try makeHarness { FakeHelper(.hangsUntilCancelled) }
     defer { harness.tearDown() }
@@ -1978,12 +1706,7 @@ struct QueueEngineTests {
     await harness.engine.cancel(job: harness.job.id)
   }
 
-  /// Building a context is a query, and a query must not destroy files.
-  ///
-  /// This is the half of the behaviour that changed when the cleanup moved
-  /// out of `StepContextBuilder`: put it back and this goes red, while
-  /// `launchingAssembleDropsTheRefetchedInputsFirst` stays green — which is
-  /// exactly why both are here rather than either alone.
+  /// Context construction must preserve files; input cleanup belongs to launch.
   @Test func buildingAnAssembleContextDestroysNothing() async throws {
     let harness = try makeHarness()
     defer { harness.tearDown() }
@@ -2001,23 +1724,14 @@ struct QueueEngineTests {
     #expect(context.outputFile.lastPathComponent == "assemble.mp4")
   }
 
-  /// Only `.assemble` spends them. A composite is *about to read* the video
-  /// and the render it would otherwise be dropping, so a cleanup that fires
-  /// on every launch destroys the inputs of the step doing the launching —
-  /// and does it with the engine reporting nothing wrong until FFmpeg fails
-  /// on a missing file.
-  ///
-  /// Drop the `if case .assemble` guard in `launch` and this goes red while
-  /// `launchingAssembleDropsTheRefetchedInputsFirst` stays green.
+  /// Composite launch must retain the inputs it is about to read; only assembly spends them.
   @Test func launchingACompositeSpendsNothing() async throws {
     let harness = try makeHarness { FakeHelper(.hangsUntilCancelled) }
     defer { harness.tearDown() }
 
     let (video, render, composite) = try await harness.launchThroughTheEngine(stepIndex: 2)
 
-    // The control. Without it a harness that launched nothing at all would
-    // satisfy both survival claims below and this test would catch nothing —
-    // which is exactly what a dead-harness probe showed.
+    // Positive control against a harness that launches nothing.
     #expect(await harness.isRunning(composite), "control: the composite must really have launched")
     #expect(FileManager.default.fileExists(atPath: video.path),
             "a composite must still have the video it is about to read")
@@ -2070,9 +1784,7 @@ struct QueueEngineTests {
     #expect(await harness.engine.retainedBytes(forJob: harness.job.id) == 0)
   }
 
-  /// What the composite step's Finder-reveal item points at
-  /// (docs/design/fragmented-output.md §6): the retention directory, and the
-  /// pieces inside it, in order — never anything under the job workspace.
+  /// Reveal retention directory and ordered pieces, outside workspace.
   @Test func retainedFileURLsReportTheDirectoryAndItsPiecesInOrder() async throws {
     let harness = try makeHarness()
     defer { harness.tearDown() }
@@ -2085,10 +1797,8 @@ struct QueueEngineTests {
     #expect(pieces.map(\.lastPathComponent) == ["piece-0.mp4", "piece-1.mp4"])
   }
 
-  /// The fallback the reveal action needs: a composite that has started but
-  /// has not yet finished its first fragment still has a real, existing
-  /// directory to point Finder at — `prepareResume` creates it the moment the
-  /// step starts, before any `piece-*.mp4` exists.
+  /// Before the first fragment exists, the prepared retention directory is still a valid Finder
+  /// target.
   @Test func retainedFileURLsReportTheDirectoryEvenWithNoPiecesYet() async throws {
     let harness = try makeHarness()
     defer { harness.tearDown() }
@@ -2099,10 +1809,7 @@ struct QueueEngineTests {
     #expect(pieces.isEmpty)
   }
 
-  /// The composite step's Finder-reveal item, rule 1: the retention area is
-  /// still on disk, so it reveals what is actually there — the same answer
-  /// `retainedFileURLs` already gives, wrapped so a caller does not have to
-  /// separately decide whether that answer applies.
+  /// When retention exists, reveal its actual contents.
   @Test func revealTargetReportsRetainedPiecesWhileTheyAreOnDisk() async throws {
     let harness = try makeHarness()
     defer { harness.tearDown() }
@@ -2110,19 +1817,13 @@ struct QueueEngineTests {
 
     let target = await harness.engine.revealTarget(forJob: harness.job.id)
 
-    // Built from the same call `revealTarget` itself makes, not from
-    // `resumeDirectory` directly — `contentsOfDirectory` resolves `/var` to
-    // `/private/var` on a real filesystem, and a hand-built expectation
-    // would fail on that alone rather than on anything this test is
-    // actually about.
+    // Use the filesystem-returned URL form to avoid `/var` versus `/private/var` mismatches.
     let (directory, pieces) = await harness.engine.retainedFileURLs(forJob: harness.job.id)
     #expect(target == .retained(directory: directory, pieces: pieces))
     #expect(pieces.map(\.lastPathComponent) == ["piece-0.mp4"])
   }
 
-  /// Rule 3: a composite that has never started has neither a retention area
-  /// nor anything delivered — there is genuinely nothing to reveal, and the
-  /// item must disable rather than invent something to select.
+  /// Never-started composites have nothing to reveal.
   @Test func revealTargetIsNilBeforeTheCompositeHasEverStarted() async throws {
     let harness = try makeHarness()
     defer { harness.tearDown() }
@@ -2130,11 +1831,7 @@ struct QueueEngineTests {
     #expect(await harness.engine.revealTarget(forJob: harness.job.id) == nil)
   }
 
-  /// The invariant resume.md §8 exists to protect, and the one no existing
-  /// test pinned: cancellation is the one ending where retention is
-  /// deliberately *kept*. `removeJobWorkspace`'s not-done branch has two
-  /// early returns, and adding a stray `removeResumable` call to either
-  /// would pass every other test in this file while quietly breaking this.
+  /// Cancellation preserves retention for a later retry.
   @Test func cancellingAJobWithARetainedPieceKeepsIt() async throws {
     let root = makeRoot()
     let workspace = Workspace(root: root)
@@ -2153,9 +1850,7 @@ struct QueueEngineTests {
           framerate: 30, duration: .seconds(60),
           destination: root.appending(path: "out.mp4"))))])
 
-    // A piece retained from an earlier interrupted attempt — what a resumed
-    // composite continues from, and what cancelling a *new* attempt must
-    // not touch.
+    // Cancelling a resumed attempt must preserve earlier pieces.
     try FileManager.default.createDirectory(
       at: workspace.resumeDirectory(jobID), withIntermediateDirectories: true)
     try FragmentBuilder.fragmentedFile([UInt32(30)])
@@ -2184,13 +1879,8 @@ struct QueueEngineTests {
     await engine.flush()
   }
 
-  /// A retention directory naming no job the queue just loaded — the
-  /// signature of a lost or corrupted queue store — is otherwise both
-  /// unreachable (nothing in the UI names it) and unshowable
-  /// (`retainedBytes(forJob:)` needs a `JobID` nothing has any more)
-  /// forever, since `removeAll()` deliberately never reaches `resumeRoot`.
-  /// `start()` must sweep exactly that case, and nothing else: a job still
-  /// in the queue is not an orphan, whatever its status.
+  /// Launch removes retention directories absent from the loaded queue; all known job IDs
+  /// survive regardless of status.
   @Test func startSweepsAnOrphanedResumeDirectoryButKeepsAKnownJobs() async throws {
     let root = makeRoot()
     let workspace = Workspace(root: root)

@@ -16,19 +16,14 @@ struct StatusLineParserFixtureTests {
       return nil
     }
 
-    // 403 is the recorded count for this fixture, verified byte-for-byte:
-    // 401 `\r` + 4 `\n` = 405 delimiters, and the fixture contains no `\r\n`
-    // pair, so each one ends a line. Two of those 405 lines are `[INFO]`
-    // rather than `[STATUS]`. Pinned exactly rather than thresholded, because
-    // the fixture is never regenerated: a regression that silently dropped
-    // updates would still satisfy `> 300` but must fail here.
+    // Pin all 403 status updates: 401 carriage returns plus four newlines delimit 405 lines,
+    // two of which are INFO. A loose lower bound would miss dropped updates.
     #expect(statuses.count == 403, "expected exactly 403 updates for this fixture, got \(statuses.count)")
     #expect(statuses.last?.fraction == 1.0)
     #expect(statuses.contains { $0.phase == "Rendering Video" })
   }
 
-  /// Chunk boundaries must not change the result. Byte-at-a-time is the
-  /// cruellest case and the one a pipe can genuinely produce.
+  /// Byte-at-a-time input must parse identically to full buffers.
   @Test(arguments: [1, 7, 64, 4096])
   func producesIdenticalOutputAtAnyChunkSize(chunkSize: Int) throws {
     let bytes = try Fixture.bytes("chatrender-success.stdout")
@@ -48,9 +43,7 @@ struct StatusLineParserFixtureTests {
     #expect(actual == expected)
   }
 
-  /// A killed process can leave its final line unterminated. Derive that
-  /// case from the real fixture (drop its trailing `\n`) rather than
-  /// inventing a hand-written string, so it still stands in for real bytes.
+  /// Remove the real fixture's final newline to model an unterminated line after a kill.
   @Test func recoversTrailingPartialLineOnFinish() throws {
     var bytes = try Fixture.bytes("chatrender-success.stdout")
     #expect(bytes.last == UInt8(ascii: "\n"), "fixture is expected to end in a newline before truncation")

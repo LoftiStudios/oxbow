@@ -12,10 +12,7 @@ struct ChatSizeTests {
     #expect(ChatSize.allCases == [.small, .medium, .large])
   }
 
-  /// Stored in preferences, so the wire names are load-bearing. Driving the
-  /// round trip off `allCases` catches a new case automatically; the literal
-  /// strings are what actually catch a rename — a loop alone would round-trip
-  /// happily even after one.
+  /// Literal wire names catch renames; round-tripping all cases alone would not.
   @Test func rawValuesArePersistedAndPinned() {
     for size in ChatSize.allCases {
       #expect(ChatSize(rawValue: size.rawValue) == size)

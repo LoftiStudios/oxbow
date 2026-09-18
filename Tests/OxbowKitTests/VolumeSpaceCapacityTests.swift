@@ -2,12 +2,8 @@ import Foundation
 import Testing
 @testable import OxbowKit
 
-/// `betterCapacity` exists because of one measured fact: on a network volume
-/// `volumeAvailableCapacityForImportantUsage` answers **zero**, not nil.
-/// Measured on an SMB share with 8 TB free — importantUsage 0 bytes, plain
-/// capacity 8035.90 GB. Zero sails past every `??` fallback, so a NAS
-/// destination read as a full disk and its channel was demoted on every
-/// sweep, permanently.
+/// SMB can report zero important-usage capacity despite ample ordinary capacity; nil coalescing
+/// alone misses this case.
 @Suite("Volume capacity selection")
 struct VolumeSpaceCapacityTests {
 
@@ -31,8 +27,7 @@ struct VolumeSpaceCapacityTests {
     #expect(VolumeSpace.betterCapacity(important: nil, plain: 42) == 42)
   }
 
-  /// Unreadable and empty stay distinct — the distinction whose loss caused
-  /// this in the first place.
+  /// Unknown capacity stays distinct from zero free bytes.
   @Test("neither key answering is nil, not zero")
   func neitherKeyIsNil() {
     #expect(VolumeSpace.betterCapacity(important: nil, plain: nil) == nil)

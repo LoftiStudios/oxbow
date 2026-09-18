@@ -2,21 +2,13 @@ import AppKit
 import OxbowKit
 import SwiftUI
 
-/// An archive's image, from the image store.
-///
-/// **16:9 by aspect ratio against a given width, never a fixed height.** The
-/// same reasoning `VideoCard`'s own thumbnail keeps: reserving the shape
-/// rather than the pixels means the row does not jump when the image lands,
-/// and does not have to be re-tuned when the row's width changes.
+/// Reserve a width-relative 16:9 slot to prevent row movement when images load.
 struct ArchiveThumbnail: View {
   let url: URL?
   let store: ImageStore?
   var width: CGFloat = 48
 
-  /// What the image is of, for VoiceOver. Category box art has a name worth
-  /// reading — "ELDEN RING" — where a bare video frame had nothing, so this
-  /// is a label rather than the `.accessibilityHidden` a decorative image
-  /// would take.
+  /// Optional subject label for meaningful category art; unlabelled frames are decorative.
   var label: String?
 
   @State private var image: NSImage?
@@ -39,19 +31,12 @@ struct ArchiveThumbnail: View {
     .accessibilityLabel(label ?? "")
     .accessibilityHidden(label == nil)
     .task(id: url) {
-      // Cleared first, matching `ChannelAvatar`: `.task(id:)` re-runs when
-      // the archive changes, and without this the previous row's frame
-      // lingers over the new one until the new fetch lands.
+      // Clear the previous archive image before fetching its replacement.
       image = nil
       guard let url, let store else { return }
       guard let data = await store.data(for: url) else { return }
-      // The fetch this resumes from may be for the archive this row used to
-      // show: `.task(id:)` cancels the old one, but cancellation is
-      // cooperative and `ImageStore.data(for:)` does not check it either, so
-      // without this the stale fetch lands *after* the new task has cleared
-      // `image` and puts another video's picture on this one. A row in a
-      // scrolling list is recycled often enough for that to be ordinary, and
-      // a wrong thumbnail is a wrong claim about what a video is.
+      // Reject cancelled results: ImageStore does not check cancellation, so a recycled row may
+      // receive a stale fetch after clearing its image.
       guard !Task.isCancelled else { return }
       image = NSImage(data: data)
     }

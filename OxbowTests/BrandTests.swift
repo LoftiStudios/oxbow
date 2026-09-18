@@ -6,9 +6,7 @@ import Testing
 @Suite("Brand palette")
 struct BrandTests {
 
-  /// The one thing that can silently go wrong in a hex initialiser is channel
-  /// order, and a swapped red and blue still compiles, still renders, and
-  /// still looks like a colour. `#9184d9` is the website's `--color-accent`.
+  /// Pin channel order in the hex initializer against the website accent.
   @Test func hexInitialiserReadsChannelsInRGBOrder() throws {
     let components = try #require(NSColor(Color(hex: 0x9184D9)).usingColorSpace(.sRGB))
     #expect(abs(components.redComponent - 0x91 / 255.0) < 0.001)
@@ -16,14 +14,8 @@ struct BrandTests {
     #expect(abs(components.blueComponent - 0xD9 / 255.0) < 0.001)
   }
 
-  /// Each palette carries its own foreground, so each is checked against its
-  /// own two gradient ends rather than against a colour assumed to be white.
-  /// WCAG AA for normal text is 4.5:1, and the banner's text is normal text.
-  ///
-  /// Written as a loop over both appearances deliberately: the light palette
-  /// was added months after the dark one, and a floor that only ever covered
-  /// the colours that existed when it was written is a floor that stops
-  /// working the moment someone adds a third.
+  /// Check every palette's foreground against both gradient endpoints at the 4.5:1
+  /// text-contrast floor.
   @Test func everyPaletteKeepsItsForegroundAboveTheContrastFloor() throws {
     for palette in [Brand.updateBannerLight, Brand.updateBannerDark] {
       for end in [palette.start, palette.end] {
@@ -32,10 +24,7 @@ struct BrandTests {
     }
   }
 
-  /// Catches the two palettes being swapped — which compiles, renders, and is
-  /// wrong in both appearances at once. Asserted by luminance rather than by
-  /// identity so it describes what "light mode" has to mean, not merely which
-  /// constant got returned.
+  /// Luminance detects accidentally swapped appearance palettes.
   @Test func lightModeGetsTheLighterOfTheTwoPalettes() throws {
     let light = Brand.updateBanner(for: .light)
     let dark = Brand.updateBanner(for: .dark)
@@ -45,12 +34,8 @@ struct BrandTests {
     #expect(try luminance(of: light.foreground) < luminance(of: dark.foreground))
   }
 
-  /// The two bands run in opposite directions, and that is the decision, not
-  /// an oversight: dark mode deepens toward the leading edge, light mode
-  /// toward the trailing one. What it buys is that the text — which is
-  /// trailing-aligned in both — always sits on the *more saturated* end, so
-  /// the colour pools behind the message either way rather than draining away
-  /// from it in one appearance.
+  /// Opposite gradient directions keep trailing-aligned text over the saturated end in both
+  /// appearances.
   @Test func theTwoBandsRunInOppositeDirections() throws {
     #expect(try luminance(of: Brand.updateBannerDark.start)
       < luminance(of: Brand.updateBannerDark.end))
@@ -58,34 +43,20 @@ struct BrandTests {
       > luminance(of: Brand.updateBannerLight.end))
   }
 
-  /// A progress bar is a graphical object, so the floor is WCAG's 3:1 for
-  /// non-text contrast rather than the 4.5:1 the banner's text answers to.
-  ///
-  /// Each fill is measured against the window its own appearance draws, since
-  /// that is the surface it has to separate from. The tighter constraint is
-  /// actually the bar's own track — a `.quaternary` grey the environment
-  /// resolves, so it cannot be named as a constant here — and both fills were
-  /// measured against it from a render before landing: 4.46:1 light, 3.09:1
-  /// dark. An earlier dark value sat at 2.20:1 there while still clearing this
-  /// test against the window, which is exactly why the number to watch is the
-  /// track and why these two were chosen over it.
+  /// Non-text contrast floor is 3:1 against the window. This does not cover the
+  /// environment-resolved track, which needs visual verification; measured track contrasts were
+  /// 4.46:1 light and 3.09:1 dark.
   @Test func bothProgressFillsStayVisibleOnTheirOwnWindow() throws {
     #expect(try contrast(of: Brand.progressLight, on: .white) >= 3)
     #expect(try contrast(of: Brand.progressDark, on: Color(hex: 0x1F1F1F)) >= 3)
   }
 
-  /// The fills invert relative to the banner palettes above, and that is the
-  /// decision rather than an oversight. A banner carries text, so its dark
-  /// appearance takes the *darker* band; a progress bar is a solid shape on a
-  /// background, so its dark appearance takes the *lighter* fill — otherwise
-  /// the bar disappears into the window it sits on.
+  /// Progress fills get lighter in dark mode to separate from the window.
   @Test func darkModeGetsTheLighterOfTheTwoFills() throws {
     #expect(try luminance(of: Brand.progressDark) > luminance(of: Brand.progressLight))
   }
 
-  /// Both fills stay in the same family, which is what stops the two
-  /// appearances reading as two different products. Blue is the dominant
-  /// channel in each, and by a similar margin.
+  /// Both appearances retain blue-dominant fills.
   @Test func bothFillsStayInTheSameFamily() throws {
     for fill in [Brand.progressLight, Brand.progressDark] {
       let components = try #require(NSColor(fill).usingColorSpace(.sRGB))

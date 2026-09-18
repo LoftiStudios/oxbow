@@ -41,12 +41,8 @@ struct SchedulerTransitionTests {
     #expect(status(jobs, 2) == .blocked)
   }
 
-  /// **Retrying is job-level, because cancelling is.**
-  ///
-  /// `cancel(job:)` settles *every* unfinished step as `.cancelled`, so
-  /// retrying only the first one would requeue step 1 and leave the rest
-  /// cancelled — the job would run its first step and then sit there reading
-  /// as cancelled forever, with nothing left that could move it.
+  /// Job cancellation affects every unfinished step, so job retry must release all cancelled
+  /// siblings.
   @Test func retryingACancelledJobRequeuesEveryCancelledStep() {
     var jobs = chatThenRender
     Scheduler.cancel(job: Build.jobID(1), in: &jobs)
@@ -59,9 +55,7 @@ struct SchedulerTransitionTests {
     #expect(status(jobs, 2) == .queued)
   }
 
-  /// A failed job's dependents are `.blocked` rather than cancelled, and
-  /// retrying the step that failed already unblocks them. Job-level retry has
-  /// to reach the same end state by the same route, not double-queue them.
+  /// Failed-job retry also releases blocked dependents without double queueing.
   @Test func retryingAFailedJobRequeuesTheFailureAndUnblocksItsDependents() {
     var jobs = chatThenRender
     Scheduler.complete(
@@ -75,9 +69,7 @@ struct SchedulerTransitionTests {
     #expect(status(jobs, 2) == .queued)
   }
 
-  /// Successful steps are never re-run. Retry is "start the parts that did not
-  /// finish", not "start over" — re-downloading a 3GB VOD because its chat
-  /// render failed would be a very expensive misunderstanding.
+  /// Preserve successful steps during retry.
   @Test func retryingAJobLeavesItsFinishedStepsAlone() {
     var jobs = chatThenRender
     let artifact = URL(filePath: "/tmp/chat.json")
@@ -189,9 +181,7 @@ struct SchedulerTransitionTests {
     #expect(status(jobs, 2) == .blocked)
   }
 
-  /// The multi-parent branch of `unblockDependents`, which every other test
-  /// leaves vacuous: with one parent the guard can only ever see the parent
-  /// that was just retried.
+  /// Exercise the additional-parent guard absent from single-parent graphs.
   @Test func aStepStaysBlockedUntilNoParentIsStillFailed() {
     let failure = StepFailure(kind: .noArtifact, summary: "x")
     var jobs = [Build.job(1,
@@ -221,9 +211,7 @@ struct SchedulerTransitionTests {
     }
   }
 
-  /// The rule with no single-parent equivalent: retrying one failed parent
-  /// must not release a child whose OTHER parent is still failed — that other
-  /// parent still needs its own retry.
+  /// Retrying one parent must not unblock a child whose other parent still failed.
   @Test func retryingOneParentLeavesTheCompositeBlockedWhileTheOtherIsFailed() {
     let failure = StepFailure(kind: .noArtifact, summary: "x")
     var jobs = [Build.job(1,
@@ -235,11 +223,8 @@ struct SchedulerTransitionTests {
     #expect(jobs[0].steps[2].status == .blocked)
   }
 
-  /// The counterpart, and the one that pins the .blocked-vs-.queued split:
-  /// once no parent is in a failure state the composite is RELEASED to
-  /// .queued — because .blocked means "an upstream failed", and that has
-  /// stopped being true. It is still not runnable, which admissible() enforces
-  /// separately.
+  /// Once no parent has a failure state, release to queued; admission still waits for every
+  /// parent to finish.
   @Test func retryingTheLastFailedParentReleasesTheCompositeToQueued() {
     let failure = StepFailure(kind: .noArtifact, summary: "x")
     var jobs = [Build.job(1,

@@ -1,24 +1,14 @@
 import SwiftUI
 import OxbowKit
 
-/// One step's progress as a segmented bar: a segment per phase, filled behind
-/// you, partly filled where you are, empty ahead.
-///
-/// **Why not one bar.** A VOD download is four phases and the CLI reports a
-/// percentage per phase, so a single `ProgressView` bound to that percentage
-/// runs 0→100% four times over — which reads as three false finishes. A
-/// continuous bar would fix the resets but hide the structure, and since the
-/// phases are nothing like equal in length ("Downloading" dwarfs "Fetching
-/// Video Info") a smooth bar that crawls and then leaps looks broken. Showing
-/// the segments is what makes uneven progress read as expected instead.
+/// Show one segment per CLI phase; a single percentage bar would restart at zero between phases
+/// and imply false completion.
 struct PhaseProgressBar: View {
   let phases: StepPhases
   let progress: StepProgress
 
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-  /// Read here rather than inherited: the fill below is a `Color` this view
-  /// picks, not a control the environment's tint reaches.
   @Environment(\.colorScheme) private var colorScheme
 
   private static let track: CGFloat = 5
@@ -41,8 +31,7 @@ struct PhaseProgressBar: View {
             .font(.caption2)
             .foregroundStyle(index == current ? AnyShapeStyle(.primary) : AnyShapeStyle(.tertiary))
             .lineLimit(1)
-            // Labels are short but the queue's rows are not wide. Shrinking
-            // beats truncating: "Commenter…" says less than small text does.
+            // Scale short phase labels rather than truncating them.
             .minimumScaleFactor(0.75)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -67,9 +56,7 @@ struct PhaseProgressBar: View {
       .frame(maxWidth: .infinity)
   }
 
-  /// A phase behind us is full, the one we are in is however far in we are,
-  /// and everything ahead is empty. With no placeable phase nothing is filled
-  /// — the caller draws an indeterminate bar in that case rather than this one.
+  /// Fill completed phases, partially fill the current phase, and leave future phases empty.
   private func fill(at index: Int) -> Double {
     guard let current else { return 0 }
     if index < current { return 1 }
@@ -77,10 +64,8 @@ struct PhaseProgressBar: View {
     return fillOfCurrent
   }
 
-  /// The current phase's own percentage, or a full segment when it reports
-  /// none. A phase like "Fetching Video Info" or "Writing Output File" never
-  /// emits a percentage at all; leaving its segment empty would read as
-  /// stalled, and the segments behind it already say we got past it.
+  /// Fill the current segment when its phase reports no percentage, rather than showing it as
+  /// stalled.
   private var fillOfCurrent: Double {
     min(max(progress.fraction ?? 1, 0), 1)
   }
@@ -125,13 +110,7 @@ private let previewStages: [(String, StepProgress)] = [
    StepProgress(phase: "Finalizing Video", fraction: 0.98, index: 4, total: 4)),
 ]
 
-/// Both brand fills, side by side.
-///
-/// A progress bar is only on screen while something is downloading, so without
-/// this the only way to look at the colours is to start a real VOD and wait.
-/// Both appearances at once rather than one pinned preview each, because the
-/// two values are chosen against each other — the dark fill has to be the
-/// lighter one — and that is only checkable when they are side by side.
+/// Compare both appearances together; the dark-mode fill should be lighter.
 #Preview("Brand fills, both appearances") {
   HStack(alignment: .top, spacing: 0) {
     ForEach([ColorScheme.light, .dark], id: \.self) { scheme in

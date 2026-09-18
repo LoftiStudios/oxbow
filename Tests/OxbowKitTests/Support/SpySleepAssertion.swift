@@ -16,9 +16,7 @@ final class SpySleepAssertion: SleepAsserting, @unchecked Sendable {
     return recorded
   }
 
-  /// Only the calls that changed state, which is what the real assertion
-  /// would actually act on. Starts from inactive, so a leading `false` is
-  /// not a transition.
+  /// State transitions only; initial false is not a change.
   var transitions: [Bool] {
     var result: [Bool] = []
     var current = false
