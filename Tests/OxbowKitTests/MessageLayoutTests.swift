@@ -11,7 +11,7 @@ import Testing
 struct MessageLayoutTests {
 
   private let style = ChatTextStyle(width: 342, height: 1026, fontSize: 15)
-  private let white = CGColor(gray: 1, alpha: 1)
+  private let plain = ChatAppearance(request: RenderRequest(width: 342, height: 1026, fontSize: 15))
 
   private func comment(
     name: String = "xQcOW", fragments: String? = #"[{"text": "hello", "emoticon": null}]"#,
@@ -28,8 +28,16 @@ struct MessageLayoutTests {
     return try ChatDocument.decode(from: Data(json.utf8)).comments[0]
   }
 
-  private func layout(_ comment: ChatDocument.Comment) throws -> MessageLayout {
-    try #require(MessageLayout(comment: comment, style: style, messageColor: white))
+  private func layout(
+    _ comment: ChatDocument.Comment, index: Int = 0, offset: Double = 0, appearance: ChatAppearance? = nil)
+    throws -> MessageLayout
+  {
+    try #require(MessageLayout(
+      comment: comment, index: index, offset: offset, style: style, appearance: appearance ?? plain))
+  }
+
+  private func skips(_ comment: ChatDocument.Comment) -> Bool {
+    MessageLayout(comment: comment, index: 0, offset: 0, style: style, appearance: plain) == nil
   }
 
   @Test func matchesTheCLIsSpacingAtFontSizeFifteen() {
@@ -101,9 +109,9 @@ struct MessageLayoutTests {
   }
 
   @Test func skipsWhatTheCLISkips() throws {
-    #expect(MessageLayout(comment: try comment(fragments: nil), style: style, messageColor: white) == nil)
-    #expect(MessageLayout(comment: try comment(notice: "raid"), style: style, messageColor: white) == nil)
-    #expect(MessageLayout(comment: try comment(notice: "resub"), style: style, messageColor: white) != nil)
+    #expect(skips(try comment(fragments: nil)))
+    #expect(skips(try comment(notice: "raid")))
+    #expect(!skips(try comment(notice: "resub")))
   }
 
   /// A highlighted message with no fragments draws its body instead of being skipped.
@@ -116,22 +124,79 @@ struct MessageLayoutTests {
 @Suite("Username colour")
 struct UsernameColorTests {
 
-  @Test func parsesSixAndEightDigitHex() throws {
-    let six = try #require(HexColor.parse("#1E90FF"))
-    #expect(six.components == [30.0 / 255, 144.0 / 255, 1, 1])
-    // Skia reads eight digits as AARRGGBB.
-    let eight = try #require(HexColor.parse("#80FF0000"))
-    #expect(eight.components?[3] == 128.0 / 255)
-    #expect(eight.components?[0] == 1)
-    #expect(HexColor.parse("#12345") == nil)
-    #expect(HexColor.parse("not a colour") == nil)
-  }
-
   /// Unlike the CLI's per-process hash, the same viewer gets the same default every time.
   @Test func aViewerWithoutAColourGetsAStableDefault() {
     #expect(UsernameColor.fnv1a("xQcOW") == UsernameColor.fnv1a("xQcOW"))
     #expect(UsernameColor.fnv1a("xQcOW") != UsernameColor.fnv1a("xqcow"))
     // FNV-1a's published offset basis: the hash of nothing.
     #expect(UsernameColor.fnv1a("") == 2_166_136_261)
+  }
+}
+
+@Suite("Chat appearance")
+struct ChatAppearanceTests {
+
+  private let style = ChatTextStyle(width: 342, height: 1026, fontSize: 15)
+
+  private func appearance(
+    timestamps: Bool = false, outline: Bool = false, alternate: Bool = false) -> ChatAppearance
+  {
+    ChatAppearance(request: RenderRequest(
+      width: 342, height: 1026, fontSize: 15, hasAlternateBackgrounds: alternate,
+      hasTimestamps: timestamps, hasOutline: outline))
+  }
+
+  private func comment(_ text: String, color: String = "#0000FF") throws -> ChatDocument.Comment {
+    let json = """
+      {"video": {"start": 0, "end": 1}, "comments": [{
+        "_id": "a", "created_at": "2026-01-01T00:00:00Z", "content_offset_seconds": 0,
+        "commenter": {"display_name": "xQcOW", "name": "n"},
+        "message": {"body": "b", "fragments": [{"text": "\(text)", "emoticon": null}], "user_color": "\(color)"}}]}
+      """
+    return try ChatDocument.decode(from: Data(json.utf8)).comments[0]
+  }
+
+  @Test(arguments: [
+    (0, "0:00", 0), (59, "0:59", 0), (600, "10:00", 1), (3599, "59:59", 1),
+    (3600, "1:00:00", 2), (36_000, "10:00:00", 3), (90_061, "25:01:01", 3),
+  ])
+  func formatsTimestampsAsTheCLIDoes(seconds: Int, text: String, lengthClass: Int) {
+    let timestamp = Timestamp(seconds: seconds)
+    #expect(timestamp.text == text)
+    #expect(timestamp.lengthClass == lengthClass)
+  }
+
+  /// A timestamp takes a fixed width for its length and twice the word spacing after it, and
+  /// wrapped lines start there too: a hanging indent.
+  @Test func aTimestampIndentsTheMessageAndItsWrappedLines() throws {
+    let many = Array(repeating: "hello", count: 12).joined(separator: " ")
+    let layout = try #require(MessageLayout(
+      comment: try comment(many), index: 0, offset: 125.4, style: style,
+      appearance: appearance(timestamps: true)))
+    let indent = 3 + style.timestampWidth(0) + 6
+    #expect(layout.words[0].text == "2:05")
+    #expect(layout.words[0].x == 3)
+    #expect(layout.words[1].x == indent)
+    let wrapped = try #require(layout.words.first { $0.line == 1 })
+    #expect(wrapped.x == indent)
+  }
+
+  /// Against #111111, pure blue is too dark to read and too close to purple: the CLI's own
+  /// adjustment gives #0C49F2. With an outline it is read against black instead.
+  @Test func makesTheUsernameReadableAgainstWhatItSitsOn() throws {
+    let plain = try #require(MessageLayout(
+      comment: try comment("hi"), index: 0, offset: 0, style: style, appearance: appearance()))
+    #expect(plain.words[0].color == ChatColor(rgb: 0x0C49F2))
+    let outlined = try #require(MessageLayout(
+      comment: try comment("hi"), index: 0, offset: 0, style: style, appearance: appearance(outline: true)))
+    #expect(outlined.words[0].color == ChatColor(rgb: 0x0000FF).readable(against: .black))
+  }
+
+  /// Stripes follow the comment's place in the file, not on screen.
+  @Test func alternatesBackgroundsByPositionInTheFile() {
+    let striped = appearance(alternate: true)
+    #expect(striped.background(forComment: 0) == ChatColor(rgb: 0x111111))
+    #expect(striped.background(forComment: 1) == ChatColor(rgb: 0x191919))
+    #expect(appearance().background(forComment: 1) == ChatColor(rgb: 0x111111))
   }
 }

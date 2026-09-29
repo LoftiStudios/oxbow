@@ -28,7 +28,7 @@ struct ChatRenderComparisonWindow: View {
       scrubber
     }
     .padding()
-    .frame(minWidth: 760, minHeight: 640)
+    .frame(minWidth: 980, minHeight: 640)
     .fileImporter(isPresented: $isImportingChat, allowedContentTypes: [.json]) { result in
       if case .success(let url) = result { model.openChat(url) }
     }
@@ -42,6 +42,10 @@ struct ChatRenderComparisonWindow: View {
       Button("Open Chat…") { isImportingChat = true }
       Button("Open CLI Render…") { isImportingReference = true }
       Spacer()
+      // Match these to the flags the CLI render was made with, or the panes will differ.
+      Toggle("Timestamps", isOn: $model.hasTimestamps)
+      Toggle("Outline", isOn: $model.hasOutline)
+      Toggle("Alternate backgrounds", isOn: $model.hasAlternateBackgrounds)
       Stepper(value: $model.fontSize, in: 6...48, step: 1) {
         Text("Font size \(model.fontSize, format: .number)")
       }
@@ -88,6 +92,9 @@ struct ChatRenderComparisonWindow: View {
 final class ChatRenderComparison {
   var seconds: Double = 0 { didSet { redraw() } }
   var fontSize: Double = 15 { didSet { rebuildRenderer() } }
+  var hasTimestamps = false { didSet { rebuildRenderer() } }
+  var hasOutline = false { didSet { rebuildRenderer() } }
+  var hasAlternateBackgrounds = false { didSet { rebuildRenderer() } }
 
   private(set) var referenceFrame: CGImage?
   private(set) var nativeFrame: CGImage?
@@ -156,7 +163,9 @@ final class ChatRenderComparison {
     renderer = NativeChatRenderer(
       document: document,
       request: RenderRequest(
-        width: Int(size.width), height: Int(size.height), framerate: framerate, fontSize: fontSize))
+        width: Int(size.width), height: Int(size.height), framerate: framerate, fontSize: fontSize,
+        hasAlternateBackgrounds: hasAlternateBackgrounds, hasTimestamps: hasTimestamps,
+        hasOutline: hasOutline))
     redraw()
   }
 

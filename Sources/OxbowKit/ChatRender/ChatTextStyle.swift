@@ -35,6 +35,13 @@ struct ChatTextStyle: Sendable {
   /// A word moves to the next line when it would end past this (CR:1637).
   var wrapLimit: Double { Double(width - sidePadding * 2) }
 
+  /// The fixed advance of a timestamp of each length class, measured once from placeholder
+  /// digits and truncated, as the CLI caches them (CR:152-158).
+  func timestampWidth(_ lengthClass: Int) -> Int {
+    let sample = ["0:00", "00:00", "0:00:00", "00:00:00"][min(max(lengthClass, 0), 3)]
+    return Int(GlyphRun.width(of: Substring(sample), in: regular))
+  }
+
   /// Baseline from the top of each line. The CLI centres Skia's hinted, rounded-out ink bounds
   /// of "ABC123" in the line (CR:373-375), which measure 15 px tall at font size 15 and give
   /// 20. The height is taken as the font size here — exact at 15, the only size Oxbow uses so

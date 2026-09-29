@@ -17,7 +17,7 @@ struct MessageLayout: Sendable {
 
     let text: String
     let face: Face
-    let color: CGColor
+    let color: ChatColor
     /// Zero-based line within the comment.
     let line: Int
     /// The CLI keeps word origins on whole pixels; glyphs inside a word stay fractional.
@@ -30,23 +30,31 @@ struct MessageLayout: Sendable {
   /// Height of the comment's section, excluding the gap between comments.
   func height(in style: ChatTextStyle) -> Int { lineCount * style.sectionHeight }
 
-  /// Nil when the CLI would skip the comment (CR:846-869).
-  init?(comment: ChatDocument.Comment, style: ChatTextStyle, messageColor: CGColor) {
+  /// Nil when the CLI would skip the comment (CR:846-869). `index` is the comment's place in
+  /// the file, which decides its background; `offset` is its display time from the timeline,
+  /// which its timestamp shows.
+  init?(
+    comment: ChatDocument.Comment, index: Int, offset: Double, style: ChatTextStyle,
+    appearance: ChatAppearance)
+  {
     guard let commenter = comment.commenter, let fragments = Self.fragments(of: comment) else {
       return nil
     }
 
     var builder = Builder(style: style)
-    builder.place(
-      commenter.displayName + ":", face: .bold, color: UsernameColor.color(for: comment))
+    if appearance.hasTimestamps {
+      builder.placeTimestamp(Timestamp(seconds: Int(offset)), color: appearance.message)
+    }
+    let username = appearance.username(UsernameColor.color(for: comment), forComment: index)
+    builder.place(commenter.displayName + ":", face: .bold, color: username)
     for fragment in fragments {
       if fragment.emoticonID != nil {
         // CR:1553-1585: a cache miss draws the fragment's text whole, unsplit.
-        builder.place(fragment.text, face: .regular, color: messageColor)
+        builder.place(fragment.text, face: .regular, color: appearance.message)
         continue
       }
       for word in fragment.text.split(whereSeparator: Self.isWhitespace) {
-        builder.place(String(word), face: .regular, color: messageColor)
+        builder.place(String(word), face: .regular, color: appearance.message)
       }
     }
 
@@ -87,19 +95,31 @@ struct MessageLayout: Sendable {
     var words: [Word] = []
     var line = 0
     var x: Int
+    /// Where a wrapped line starts: the side padding, or just past a timestamp, which gives
+    /// timestamped comments a hanging indent (CR:1956).
+    var lineStart: Int
 
     init(style: ChatTextStyle) {
       self.style = style
       x = style.sidePadding
+      lineStart = style.sidePadding
     }
 
-    mutating func place(_ text: String, face: Word.Face, color: CGColor) {
+    /// CR:1921-1957. Advanced by a fixed width per length, not its own, so every timestamp of a
+    /// length lines its message up at the same x.
+    mutating func placeTimestamp(_ timestamp: Timestamp, color: ChatColor) {
+      words.append(Word(text: timestamp.text, face: .regular, color: color, line: line, x: x))
+      x += style.timestampWidth(timestamp.lengthClass) + style.wordSpacing * 2
+      lineStart = x
+    }
+
+    mutating func place(_ text: String, face: Word.Face, color: ChatColor) {
       let font = face == .bold ? style.bold : style.regular
       var remaining = Substring(text)
       var width = GlyphRun.width(of: remaining, in: font)
 
       // A word wider than a whole line is cut into line-sized pieces first (CR:1593-1606).
-      let lineWidth = Double(style.width - style.sidePadding - style.sidePadding)
+      let lineWidth = Double(style.width - style.sidePadding - lineStart)
       while width > lineWidth, !remaining.isEmpty {
         var piece = Self.prefix(of: remaining, fitting: lineWidth, in: font)
         if piece.isEmpty {
@@ -112,10 +132,10 @@ struct MessageLayout: Sendable {
       placeWhole(remaining, width: width, face: face, color: color)
     }
 
-    private mutating func placeWhole(_ text: Substring, width: Double, face: Word.Face, color: CGColor) {
+    private mutating func placeWhole(_ text: Substring, width: Double, face: Word.Face, color: ChatColor) {
       if Double(x) + width > style.wrapLimit {
         line += 1
-        x = style.sidePadding
+        x = lineStart
       }
       if !text.isEmpty {
         words.append(Word(text: String(text), face: face, color: color, line: line, x: x))

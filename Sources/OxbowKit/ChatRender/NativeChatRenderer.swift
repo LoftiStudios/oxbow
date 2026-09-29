@@ -4,8 +4,9 @@ import CoreGraphics
 import Foundation
 import Synchronization
 
-/// Draws the chat column natively, matching the CLI's render of the same file. Plain text only
-/// so far: docs/design/native-chat-render.md §6, phase 1 slice 1.
+/// Draws the chat column natively, matching the CLI's render of the same file. Text, with every
+/// appearance option `RenderRequest` carries; no badges, emotes or emoji images yet.
+/// docs/design/native-chat-render.md §6, phase 1.
 ///
 /// Any frame can be drawn on its own. The CLI builds each redraw from the last, but what it
 /// carries between them is a cache, not state: the newest visible comment fixes the whole frame
@@ -16,8 +17,7 @@ public final class NativeChatRenderer: ChatFrameSource {
   private let document: ChatDocument
   private let timeline: ChatTimeline
   private let style: ChatTextStyle
-  private let background: CGColor
-  private let messageColor: CGColor
+  private let appearance: ChatAppearance
   /// Laid-out comments by index; nil where the CLI skips the comment. Layout is the expensive
   /// part of a frame and a comment appears in hundreds of them.
   private let layouts = Mutex<[Int: MessageLayout?]>([:])
@@ -27,8 +27,7 @@ public final class NativeChatRenderer: ChatFrameSource {
     size = CGSize(width: request.width, height: request.height)
     timeline = ChatTimeline(document: document, framerate: request.framerate)
     style = ChatTextStyle(width: request.width, height: request.height, fontSize: request.fontSize)
-    background = HexColor.parse(request.backgroundColor) ?? HexColor.color(rgb: 0x111111)
-    messageColor = HexColor.parse(request.messageColor) ?? HexColor.color(rgb: 0xFFFFFF)
+    appearance = ChatAppearance(request: request)
   }
 
   public var duration: Duration { timeline.duration }
@@ -50,11 +49,10 @@ public final class NativeChatRenderer: ChatFrameSource {
       bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
     else { return nil }
 
-    context.setFillColor(background)
+    context.setFillColor(appearance.background.cgColor)
     context.fill(CGRect(origin: .zero, size: size))
     // Grayscale antialiasing with fractional glyph positions: what Skia produces here, where
     // its LCD flag has no pixel geometry to act on.
-    context.setShouldAntialias(true)
     context.setShouldSmoothFonts(false)
     context.setAllowsFontSubpixelPositioning(true)
     context.setShouldSubpixelPositionFonts(true)
@@ -67,7 +65,9 @@ public final class NativeChatRenderer: ChatFrameSource {
     while comment >= 0, top > -style.verticalPadding {
       defer { comment -= 1 }
       guard let layout = layout(of: comment) else { continue }
-      top -= layout.height(in: style) + style.verticalPadding
+      let height = layout.height(in: style)
+      top -= height + style.verticalPadding
+      drawBackground(forComment: comment, top: top, height: height, in: context)
       draw(layout, top: top, in: context)
     }
     return context.makeImage()
@@ -76,9 +76,28 @@ public final class NativeChatRenderer: ChatFrameSource {
   private func layout(of index: Int) -> MessageLayout? {
     if let cached = layouts.withLock({ $0[index] }) { return cached }
     let layout = MessageLayout(
-      comment: document.comments[index], style: style, messageColor: messageColor)
+      comment: document.comments[index], index: index, offset: timeline.offsets[index],
+      style: style, appearance: appearance)
     layouts.withLock { $0[index] = .some(layout) }
     return layout
+  }
+
+  /// CR:773-778: half a gap above and below the comment, so stripes meet. Not antialiased, as
+  /// the CLI's paint is not; the half-pixel edges round rather than blur.
+  private func drawBackground(forComment index: Int, top: Int, height: Int, in context: CGContext) {
+    let color = appearance.background(forComment: index)
+    guard color != appearance.background else { return }
+    let padding = Double(style.verticalPadding)
+    let fromTop = Double(top) - padding / 2
+    let rect = CGRect(
+      x: 0, y: Double(style.height) - fromTop - Double(height) - padding,
+      width: Double(style.width), height: Double(height) + padding)
+    context.saveGState()
+    context.setShouldAntialias(false)
+    context.setBlendMode(.copy)
+    context.setFillColor(color.cgColor)
+    context.fill(rect)
+    context.restoreGState()
   }
 
   /// `top` is from the top of the frame, as the CLI measures; Core Graphics counts from the
@@ -88,22 +107,65 @@ public final class NativeChatRenderer: ChatFrameSource {
       let font = word.face == .bold ? style.bold : style.regular
       let baseline = top + word.line * style.sectionHeight + style.baseline
       let origin = CGPoint(x: Double(word.x), y: Double(style.height - baseline))
+      let glyphs = Self.glyphs(of: word, font: font, origin: origin)
 
-      context.setFillColor(word.color)
-      // Glyph positions are offset by the text position, and CTLineDraw below moves it: without
-      // this, every word drawn after a shaped one lands off the frame.
-      context.textPosition = .zero
-      if let run = GlyphRun.glyphs(of: Substring(word.text), in: font) {
-        var x = origin.x
-        let positions = run.advances.map { advance in
-          defer { x += advance.width }
-          return CGPoint(x: x, y: origin.y)
+      // CR:1625-1632: the outline is stroked under the fill, word by word.
+      if appearance.hasOutline {
+        let path = CGMutablePath()
+        for run in glyphs {
+          for (glyph, position) in zip(run.glyphs, run.positions) {
+            guard let outline = CTFontCreatePathForGlyph(run.font, glyph, nil) else { continue }
+            path.addPath(outline, transform: CGAffineTransform(translationX: position.x, y: position.y))
+          }
         }
-        CTFontDrawGlyphs(font, run.glyphs, positions, run.glyphs.count, context)
-      } else {
-        context.textPosition = origin
-        CTLineDraw(GlyphRun.shapedLine(Substring(word.text), font: font, color: word.color), context)
+        context.saveGState()
+        context.setLineWidth(appearance.outlineWidth)
+        context.setLineJoin(.round)
+        context.setStrokeColor(ChatColor.black.cgColor)
+        context.addPath(path)
+        context.strokePath()
+        context.restoreGState()
       }
+
+      context.setFillColor(word.color.cgColor)
+      for run in glyphs {
+        CTFontDrawGlyphs(run.font, run.glyphs, run.positions, run.glyphs.count, context)
+      }
+    }
+  }
+
+  private struct PositionedGlyphs {
+    let font: CTFont
+    let glyphs: [CGGlyph]
+    let positions: [CGPoint]
+  }
+
+  /// A word's glyphs at absolute positions, unshaped where the font covers it and shaped by
+  /// Core Text, with fallback fonts, where it does not. Absolute because drawing a shaped line
+  /// moves the context's text position, which offsets everything drawn after it.
+  private static func glyphs(of word: MessageLayout.Word, font: CTFont, origin: CGPoint) -> [PositionedGlyphs] {
+    if let run = GlyphRun.glyphs(of: Substring(word.text), in: font) {
+      var x = origin.x
+      let positions = run.advances.map { advance in
+        defer { x += advance.width }
+        return CGPoint(x: x, y: origin.y)
+      }
+      return [PositionedGlyphs(font: font, glyphs: run.glyphs, positions: positions)]
+    }
+
+    let line = GlyphRun.shapedLine(Substring(word.text), font: font, color: nil)
+    let runs = (CTLineGetGlyphRuns(line) as? [CTRun]) ?? []
+    return runs.map { run in
+      let count = CTRunGetGlyphCount(run)
+      var glyphs = [CGGlyph](repeating: 0, count: count)
+      var positions = [CGPoint](repeating: .zero, count: count)
+      CTRunGetGlyphs(run, CFRange(location: 0, length: count), &glyphs)
+      CTRunGetPositions(run, CFRange(location: 0, length: count), &positions)
+      let attributes = CTRunGetAttributes(run) as NSDictionary
+      let runFont = attributes[kCTFontAttributeName] as! CTFont? ?? font
+      return PositionedGlyphs(
+        font: runFont, glyphs: glyphs,
+        positions: positions.map { CGPoint(x: origin.x + $0.x, y: origin.y + $0.y) })
     }
   }
 }
