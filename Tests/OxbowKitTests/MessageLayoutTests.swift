@@ -200,3 +200,19 @@ struct ChatAppearanceTests {
     #expect(appearance().background(forComment: 1) == ChatColor(rgb: 0x111111))
   }
 }
+
+/// The OFL requires Inter's licence to travel with the fonts: it must be in the same bundle.
+@Suite("Bundled fonts")
+struct BundledFontsTests {
+
+  @Test func shipsInterWithItsLicence() throws {
+    for font in ["Inter-Regular", "Inter-Bold"] {
+      #expect(ChatTextStyle.resources.url(forResource: font, withExtension: "ttf", subdirectory: "Fonts") != nil)
+    }
+    let licence = try #require(
+      ChatTextStyle.resources.url(forResource: "LICENSE", withExtension: "txt", subdirectory: "Fonts"))
+    let text = try String(contentsOf: licence, encoding: .utf8)
+    #expect(text.contains("SIL OPEN FONT LICENSE Version 1.1"))
+    #expect(text.contains("Copyright (c) 2016 The Inter Project Authors"))
+  }
+}
