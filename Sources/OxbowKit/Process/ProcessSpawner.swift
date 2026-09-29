@@ -26,6 +26,9 @@ public enum ProcessSpawner {
       close(outPipe[0]); close(outPipe[1]); close(errPipe[0]); close(errPipe[1])
       throw SpawnError.pipeFailed(error)
     }
+    // A write after the child has gone — it crashed, or was cancelled — must fail, not raise
+    // SIGPIPE, whose default action ends Oxbow along with it.
+    if standardInput { _ = fcntl(inPipe[1], F_SETNOSIGPIPE, 1) }
 
     var actions: posix_spawn_file_actions_t?
     posix_spawn_file_actions_init(&actions)
