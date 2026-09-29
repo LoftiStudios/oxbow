@@ -397,7 +397,25 @@ last commit:
    "Match the CLI's layout, not its defects" in §5.
 4. **`FileSink` and the hidden setting.** The render step writes the native
    renderer's output; a composite made with it shows the native chat column in
-   a real file.
+   a real file. **Done 2026-09-29** as `NativeChatRenderProcess`, behind the
+   engine's existing `HelperProcessing` and the `NativeChatRenderer` default.
+
+**Phase 1 finished 2026-09-29, day 1 of its 14.** Both stopping conditions
+passed: timing and wrapping match the CLI on both reference inputs, and Core Text
+handled every fixture without workarounds (§5). First speed numbers, heavy
+3-minute window, 5,400 frames, text only:
+
+| | |
+|---|---|
+| CLI `chatrender`, same settings, `--offline` | 21.6 s |
+| native, end to end into the MP4 | **5.5 s**, nearly all of it FFmpeg encoding |
+| native drawing alone, every frame | 2.0 s — about 2,700 frames/s |
+| native drawing, each distinct picture once | 0.24 s — 527 pictures for 5,400 frames |
+
+Not yet a fair comparison — the CLI also draws badges and animated emotes — but
+Phase 4's gate asks for ~360 frames/s, and text alone clears it sevenfold. Phase
+2 (badges, emotes, cheermotes, sub-message layouts) gets its own budget before it
+starts, per §10.
 
 The two-week budget (§10) starts at slice 1's first commit.
 
