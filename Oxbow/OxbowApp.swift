@@ -137,6 +137,11 @@ struct OxbowApp: App {
       }
       DownloadsCommands()
       WatchingCommands()
+      #if DEBUG
+      CommandMenu("Debug") {
+        ChatRenderComparisonCommand()
+      }
+      #endif
     }
 
     // A single intake Window sizes independently and refocuses existing work instead of
@@ -190,6 +195,15 @@ struct OxbowApp: App {
     .defaultPosition(.center)
     .restorationBehavior(.disabled)
 
+    #if DEBUG
+    // docs/design/native-chat-render.md §6: the CLI's chat render beside the native one.
+    Window("Chat Render Comparison", id: Self.chatRenderComparisonWindowID) {
+      ChatRenderComparisonWindow()
+    }
+    .defaultSize(width: 900, height: 820)
+    .restorationBehavior(.disabled)
+    #endif
+
     // Settings supplies the system menu item and ⌘, shortcut. Unverified: whether macOS 26 adds
     // its menu icon automatically; see docs/design/settings.md §7.1.
     Settings {
@@ -206,6 +220,8 @@ struct OxbowApp: App {
   static let intakeWindowID = "intake"
 
   static let addChannelWindowID = "addChannel"
+
+  static let chatRenderComparisonWindowID = "chatRenderComparison"
 
   private var controller: QueueController? {
     if case .ready(let controller) = content { return controller }
@@ -234,6 +250,18 @@ private struct AddDownloadCommand: View {
     .disabled(!isEnabled)
   }
 }
+
+#if DEBUG
+private struct ChatRenderComparisonCommand: View {
+  @Environment(\.openWindow) private var openWindow
+
+  var body: some View {
+    Button("Chat Render Comparison") {
+      openWindow(id: OxbowApp.chatRenderComparisonWindowID)
+    }
+  }
+}
+#endif
 
 /// Open the queue before checking so the result is visible even when all windows were closed.
 private struct CheckForUpdatesCommand: View {

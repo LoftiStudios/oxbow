@@ -10,6 +10,8 @@ let package = Package(
   targets: [
     .target(
       name: "OxbowKit",
+      // Inter, as the CLI embeds it: matching its line breaks needs the same advances.
+      resources: [.copy("Resources/Fonts")],
       swiftSettings: [.swiftLanguageMode(.v6)]),
     .testTarget(
       name: "OxbowKitTests",
