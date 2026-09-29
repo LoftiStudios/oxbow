@@ -330,7 +330,7 @@ has changed.**
    with a pointer here, so the experiment is not argued against as a mistake.~~
    **Done 2026-09-17.** Both now say this document is deliberate and
    unapproved, and that `cli-dependency.md`'s decision is unchanged by it.
-4. Set the time budget (§10).
+4. ~~Set the time budget (§10).~~ **Done 2026-09-29:** two weeks for Phase 1.
 
 ### Phase 1 — timeline and text
 
@@ -518,8 +518,11 @@ already tracks, and both are independent of whether this experiment proceeds.
 
 ## 10. Open questions
 
-1. **What is the time budget, and what happens when it runs out?** The whole
-   design depends on actually stopping.
+1. ~~**What is the time budget, and what happens when it runs out?**~~
+   **Decided 2026-09-29: two weeks for Phase 1**, measured from its first
+   commit. At two weeks, stop and reassess against Phase 1's stopping
+   conditions (§6) whatever state it is in — the budget is the check, not the
+   remaining list. Phase 2 gets its own budget only if Phase 1 passes.
 2. **Bundle Inter, or switch the default to the system font?**
 3. **Is Phase 0's `-E` change worth shipping on its own**, regardless of
    whether the renderer is built? §3.1 says it trades 130 MB of intermediate
