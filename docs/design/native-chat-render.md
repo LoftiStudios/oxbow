@@ -415,7 +415,8 @@ handled every fixture without workarounds (§5). First speed numbers, heavy
 Not yet a fair comparison — the CLI also draws badges and animated emotes — but
 Phase 4's gate asks for ~360 frames/s, and text alone clears it sevenfold. Phase
 2 (badges, emotes, cheermotes, sub-message layouts) gets its own budget before it
-starts, per §10.
+starts, per §10. **Set 2026-09-29: one week**, from Phase 2's first commit. Phase 1
+shipped as [LoftiStudios/oxbow#78](https://github.com/LoftiStudios/oxbow/pull/78).
 
 The two-week budget (§10) starts at slice 1's first commit.
 
