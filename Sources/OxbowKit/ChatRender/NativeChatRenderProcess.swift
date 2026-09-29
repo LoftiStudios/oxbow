@@ -129,7 +129,7 @@ public actor NativeChatRenderProcess: HelperProcessing {
     let clock = ContinuousClock()
     let started = clock.now
     let total = renderer.frameCount
-    var lastKey: Int?
+    var lastKey: NativeChatRenderer.FrameKey?
     var bytes = Data()
     for index in 0..<total {
       if stop.isSet { return }

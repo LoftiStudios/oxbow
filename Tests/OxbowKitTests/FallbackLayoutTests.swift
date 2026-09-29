@@ -39,6 +39,13 @@ struct FallbackLayoutTests {
     #expect(MessageLayout.isEmoji(try #require(text.first)) == isEmoji)
   }
 
+  /// A combining mark after a space starts a word of its own, as the CLI's code-unit split has
+  /// it; Swift's characters would glue it to the space and the word before it.
+  @Test func splitsWordsOnScalarsNotCharacters() {
+    #expect(MessageLayout.words(in: "Aware \u{034F}") == ["Aware", "\u{034F}"])
+    #expect(MessageLayout.words(in: "  a \t b  ") == ["a", "b"])
+  }
+
   /// `A B ר1 ר2 ר3 C ר4` becomes `A B ר3 ר2 ר1 C ר4`: runs reverse, LTR words are barriers.
   @Test func reversesEachRunOfRightToLeftWords() {
     let tokens = ["A", "B", "ר1", "ר2", "ר3", "C", "ר4"]

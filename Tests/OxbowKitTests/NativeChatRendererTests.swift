@@ -131,4 +131,41 @@ struct NativeChatRendererTests {
     // The older comment's line is one line and one gap above the newer one's: rows 946 to 970.
     #expect(rows.contains { (946...970).contains($0) })
   }
+
+  /// A sub's bar fills columns 3–7, full height, in Twitch's purple; a legacy channel-points
+  /// highlight puts a purple band behind its words but not its name.
+  @Test func drawsAccentBarsAndBands() throws {
+    func renderer(_ body: String, notice: String? = nil) throws -> NativeChatRenderer {
+      let noticeJSON = notice.map { #", "user_notice_params": {"msg_id": "\#($0)"}"# } ?? ""
+      let json = """
+        {"video": {"start": 0, "end": 10}, "comments": [{"_id": "0", "created_at": "2026-01-01T00:00:00.000Z",
+         "content_offset_seconds": 0, "commenter": {"display_name": "Foobar", "name": "x", "_id": "1"},
+         "message": {"body": "\(body)", "fragments": [{"text": "\(body)", "emoticon": null}],
+                     "user_color": "#FFFFFF"\(noticeJSON)}}]}
+        """
+      return NativeChatRenderer(document: try ChatDocument.decode(from: Data(json.utf8)), request: request)
+    }
+    func pixel(_ image: CGImage, _ x: Int, _ y: Int) -> (UInt8, UInt8, UInt8) {
+      var pixels = [UInt8](repeating: 0, count: image.width * image.height * 4)
+      let context = CGContext(
+        data: &pixels, width: image.width, height: image.height, bitsPerComponent: 8,
+        bytesPerRow: image.width * 4, space: CGColorSpace(name: CGColorSpace.sRGB)!,
+        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+      context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+      let i = (y * image.width + x) * 4
+      return (pixels[i], pixels[i + 1], pixels[i + 2])
+    }
+
+    let sub = try #require(try renderer("Foobar subscribed at Tier 1. ").frame(index: 0))
+    // Two 25 px lines: rows 961 to 1010. Mid-height of the bar, and either side of it.
+    #expect(pixel(sub, 3, 990) == (0x7B, 0x2C, 0xF2))
+    #expect(pixel(sub, 7, 990) == (0x7B, 0x2C, 0xF2))
+    #expect(pixel(sub, 2, 990) == (0x11, 0x11, 0x11))
+    #expect(pixel(sub, 8, 990) == (0x11, 0x11, 0x11))
+
+    let highlighted = try #require(try renderer("look at me", notice: "highlighted-message").frame(index: 0))
+    // One line, rows 986 to 1010: a band behind the words, none behind the name at 23.
+    #expect(pixel(highlighted, 100, 987) == (0x7B, 0x2C, 0xF2))
+    #expect(pixel(highlighted, 30, 987) != (0x7B, 0x2C, 0xF2))
+  }
 }

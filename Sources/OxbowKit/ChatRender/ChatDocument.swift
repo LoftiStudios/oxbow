@@ -6,6 +6,18 @@ import Foundation
 public struct ChatDocument: Decodable, Sendable, Equatable {
   public var video: Video
   public var comments: [Comment]
+  /// The images `chatdownload -E` embeds. Empty for a file downloaded without it.
+  public var embeddedData: EmbeddedImages = EmbeddedImages()
+
+  enum CodingKeys: String, CodingKey { case video, comments, embeddedData }
+
+  public init(from decoder: any Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    video = try container.decode(Video.self, forKey: .video)
+    comments = try container.decode([Comment].self, forKey: .comments)
+    embeddedData = try container.decodeIfPresent(EmbeddedImages.self, forKey: .embeddedData)
+      ?? EmbeddedImages()
+  }
 
   public struct Video: Decodable, Sendable, Equatable {
     /// Seconds into the VOD where this chat file begins and ends — the trim, when there is one.
@@ -50,10 +62,20 @@ public struct ChatDocument: Decodable, Sendable, Equatable {
   public struct Commenter: Decodable, Sendable, Equatable {
     public var displayName: String
     public var name: String
+    /// Twitch's user id. The CLI recognises some system messages by who sent them.
+    public var id: String
 
     enum CodingKeys: String, CodingKey {
       case displayName = "display_name"
       case name
+      case id = "_id"
+    }
+
+    public init(from decoder: any Decoder) throws {
+      let container = try decoder.container(keyedBy: CodingKeys.self)
+      displayName = try container.decode(String.self, forKey: .displayName)
+      name = try container.decodeIfPresent(String.self, forKey: .name) ?? displayName
+      id = try container.decodeIfPresent(String.self, forKey: .id) ?? ""
     }
   }
 
@@ -65,11 +87,27 @@ public struct ChatDocument: Decodable, Sendable, Equatable {
     public var userColor: String?
     /// Set on system messages; the CLI skips most of them. See `ChatTimeline.isDrawable`.
     public var noticeID: String?
+    /// In the order Twitch lists them, which is the order they are drawn.
+    public var badges: [Badge]
+    /// Non-zero only on a cheer; only then are words looked up as cheermotes.
+    public var bitsSpent: Int
+
+    public struct Badge: Decodable, Sendable, Equatable {
+      public var name: String
+      public var version: String
+
+      enum CodingKeys: String, CodingKey {
+        case name = "_id"
+        case version
+      }
+    }
 
     enum CodingKeys: String, CodingKey {
       case body, fragments
       case userColor = "user_color"
       case userNoticeParams = "user_notice_params"
+      case badges = "user_badges"
+      case bitsSpent = "bits_spent"
     }
 
     private enum NoticeKeys: String, CodingKey { case msgID = "msg_id" }
@@ -79,6 +117,8 @@ public struct ChatDocument: Decodable, Sendable, Equatable {
       body = try container.decodeIfPresent(String.self, forKey: .body) ?? ""
       fragments = try container.decodeIfPresent([Fragment].self, forKey: .fragments)
       userColor = try container.decodeIfPresent(String.self, forKey: .userColor)
+      badges = try container.decodeIfPresent([Badge].self, forKey: .badges) ?? []
+      bitsSpent = try container.decodeIfPresent(Int.self, forKey: .bitsSpent) ?? 0
       if container.contains(.userNoticeParams), try !container.decodeNil(forKey: .userNoticeParams) {
         let notice = try container.nestedContainer(keyedBy: NoticeKeys.self, forKey: .userNoticeParams)
         noticeID = try notice.decodeIfPresent(String.self, forKey: .msgID)
@@ -110,6 +150,91 @@ public struct ChatDocument: Decodable, Sendable, Equatable {
       } else {
         emoticonID = nil
       }
+    }
+  }
+
+  /// An image as `chatdownload -E` embeds it: encoded bytes (PNG, GIF or WebP, possibly
+  /// animated), and the size it is meant to be shown at before `scale` — 2 for the 2× images
+  /// Twitch and the emote providers serve.
+  public struct EmbeddedImage: Decodable, Sendable, Equatable {
+    public var id: String?
+    public var name: String?
+    public var data: Data
+    public var scale: Int
+    public var width: Int
+    public var height: Int
+    /// A 7TV emote drawn over the one before it rather than beside it.
+    public var isZeroWidth: Bool
+
+    enum CodingKeys: String, CodingKey {
+      case id, name, data, width, height, isZeroWidth
+      case scale = "imageScale"
+    }
+
+    public init(from decoder: any Decoder) throws {
+      let container = try decoder.container(keyedBy: CodingKeys.self)
+      id = try container.decodeIfPresent(String.self, forKey: .id)
+      name = try container.decodeIfPresent(String.self, forKey: .name)
+      data = try container.decode(Data.self, forKey: .data)
+      scale = try container.decodeIfPresent(Int.self, forKey: .scale) ?? 1
+      width = try container.decodeIfPresent(Int.self, forKey: .width) ?? 0
+      height = try container.decodeIfPresent(Int.self, forKey: .height) ?? 0
+      isZeroWidth = try container.decodeIfPresent(Bool.self, forKey: .isZeroWidth) ?? false
+    }
+  }
+
+  public struct EmbeddedImages: Decodable, Sendable, Equatable {
+    /// By emote id, as a fragment's `emoticon_id` names it.
+    public var firstParty: [String: EmbeddedImage] = [:]
+    /// By name, as a word in the message spells it.
+    public var thirdParty: [String: EmbeddedImage] = [:]
+    /// By badge name, then version.
+    public var badges: [String: [String: Data]] = [:]
+    /// By prefix, then the lowest bit amount each tier starts at.
+    public var cheermotes: [String: [Int: EmbeddedImage]] = [:]
+
+    init() {}
+
+    enum CodingKeys: String, CodingKey { case firstParty, thirdParty, twitchBadges, twitchBits }
+
+    private struct Badge: Decodable {
+      var name: String
+      var versions: [String: Data]
+
+      private struct Version: Decodable { var bytes: Data }
+      enum CodingKeys: String, CodingKey { case name, versions }
+
+      init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        name = try container.decode(String.self, forKey: .name)
+        // Current files nest the image under `bytes`; older ones store it bare, and the CLI
+        // still reads both.
+        if let current = try? container.decode([String: Version].self, forKey: .versions) {
+          versions = current.mapValues(\.bytes)
+        } else {
+          versions = try container.decode([String: Data].self, forKey: .versions)
+        }
+      }
+    }
+
+    private struct Cheermote: Decodable {
+      var prefix: String
+      var tierList: [String: EmbeddedImage]
+    }
+
+    public init(from decoder: any Decoder) throws {
+      let container = try decoder.container(keyedBy: CodingKeys.self)
+      let first = try container.decodeIfPresent([EmbeddedImage].self, forKey: .firstParty) ?? []
+      let third = try container.decodeIfPresent([EmbeddedImage].self, forKey: .thirdParty) ?? []
+      let badges = try container.decodeIfPresent([Badge].self, forKey: .twitchBadges) ?? []
+      let bits = try container.decodeIfPresent([Cheermote].self, forKey: .twitchBits) ?? []
+      // First wins on a duplicate, as a dictionary built in list order would not guarantee.
+      firstParty = Dictionary(first.compactMap { image in image.id.map { ($0, image) } }) { a, _ in a }
+      thirdParty = Dictionary(third.compactMap { image in image.name.map { ($0, image) } }) { a, _ in a }
+      self.badges = Dictionary(badges.map { ($0.name, $0.versions) }) { a, _ in a }
+      cheermotes = Dictionary(bits.map { cheer in
+        (cheer.prefix, Dictionary(cheer.tierList.compactMap { key, image in Int(key).map { ($0, image) } }) { a, _ in a })
+      }) { a, _ in a }
     }
   }
 
