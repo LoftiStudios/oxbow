@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 import Testing
 
@@ -142,5 +143,48 @@ struct HighlightTests {
     let layout = try layout(try comment("look at me", notice: "highlighted-message"))
     #expect(layout.words.map(\.isBanded) == [false, true, true, true])
     #expect(layout.words[0].x == 23)
+  }
+
+  /// Each icon's ink at 25×25 against the CLI's own Skia render of the same path, to within the
+  /// pixel antialiasing thresholds can move it: (minX, maxX, minY, maxY).
+  @Test(arguments: [
+    (HighlightIcon.star, (3, 21, 3, 21)), (.crown, (3, 21, 6, 18)), (.gift, (3, 21, 3, 21)),
+    (.ghost, (3, 21, 2, 22)), (.gem, (5, 19, 3, 21)), (.flame, (5, 19, 5, 20)), (.charity, (3, 21, 3, 21)),
+  ])
+  func drawsIconsWhereTheCLIDoes(icon: HighlightIcon, ink: (Int, Int, Int, Int)) throws {
+    let size = 25
+    var pixels = [UInt8](repeating: 0, count: size * size * 4)
+    let context = try #require(CGContext(
+      data: &pixels, width: size, height: size, bitsPerComponent: 8, bytesPerRow: size * 4,
+      space: CGColorSpace(name: CGColorSpace.sRGB)!,
+      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+    context.translateBy(x: 0, y: CGFloat(size))
+    context.scaleBy(x: Double(size) / HighlightIcon.unitSize, y: -Double(size) / HighlightIcon.unitSize)
+    context.addPath(icon.path)
+    context.setFillColor(CGColor(gray: 1, alpha: 1))
+    context.fillPath(using: .evenOdd)
+
+    var xs: [Int] = []
+    var ys: [Int] = []
+    for y in 0..<size {
+      for x in 0..<size where pixels[(y * size + x) * 4 + 3] > 16 {
+        xs.append(x)
+        ys.append(y)
+      }
+    }
+    let found = (try #require(xs.min()), try #require(xs.max()), try #require(ys.min()), try #require(ys.max()))
+    #expect(abs(found.0 - ink.0) <= 1 && abs(found.1 - ink.1) <= 1)
+    #expect(abs(found.2 - ink.2) <= 1 && abs(found.3 - ink.3) <= 1)
+  }
+
+  /// Arcs, relative commands and implicit repeats, against hand-worked bounds.
+  @Test func parsesTheSVGCommandsTheIconsUse() {
+    let square = SVGPath.parse("M 10,10 h 20 v 20 H 10 Z").boundingBoxOfPath
+    #expect(square == CGRect(x: 10, y: 10, width: 20, height: 20))
+    let lines = SVGPath.parse("m 0,0 10,0 0,10 z").boundingBoxOfPath
+    #expect(lines == CGRect(x: 0, y: 0, width: 10, height: 10))
+    let circle = SVGPath.parse("M 0,10 A 10,10 0 1 1 20,10 A 10,10 0 1 1 0,10 Z").boundingBoxOfPath
+    #expect(abs(circle.minX) < 0.01 && abs(circle.maxX - 20) < 0.01)
+    #expect(abs(circle.minY) < 0.01 && abs(circle.maxY - 20) < 0.01)
   }
 }
