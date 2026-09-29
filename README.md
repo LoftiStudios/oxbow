@@ -171,12 +171,15 @@ Security issues should be reported privately—see [`SECURITY.md`](SECURITY.md).
 
 ## Licensing
 
-Oxbow is [MIT](LICENSE). It bundles two other things:
+Oxbow is [MIT](LICENSE). It bundles three other things:
 
 - **TwitchDownloaderCLI** (MIT)—see `vendor/TwitchDownloader/LICENSE.txt`
 - **FFmpeg** (LGPL 2.1+)—unmodified, built by `scripts/build-ffmpeg.sh`,
   which emits `COPYING.LGPLv2.1` and `FFMPEG-SOURCE.txt` recording the exact
   source and configure line so the binary can be reproduced.
+- **Inter** (SIL Open Font License 1.1), the typeface Twitch's chat uses, for
+  the native chat renderer—see `Sources/OxbowKit/Resources/Fonts/LICENSE.txt`,
+  which ships beside the fonts.
 
 See [`docs/ffmpeg.md`](docs/ffmpeg.md) for why we build FFmpeg ourselves.
 

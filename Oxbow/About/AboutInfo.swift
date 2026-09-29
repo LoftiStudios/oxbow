@@ -83,6 +83,10 @@ nonisolated struct Credit: Identifiable {
       detail: "© Microsoft Corporation. Draw chat renders, by way of TwitchDownloaderCLI.",
       urlString: "https://github.com/mono/SkiaSharp"),
     Credit(
+      name: "Inter",
+      detail: "© The Inter Project Authors, SIL Open Font License 1.1. The typeface of chat drawn natively; its licence ships beside it.",
+      urlString: "https://github.com/rsms/inter"),
+    Credit(
       name: "Noto Color Emoji",
       detail: "© Google and contributors. May supply emoji in chat renders.",
       urlString: "https://github.com/googlefonts/noto-emoji"),

@@ -67,6 +67,9 @@ struct ChatTextStyle: Sendable {
     return Int((Double(sectionHeight) - ink) / 2 + ink)
   }
 
+  /// OxbowKit's own resources, where Inter and its licence ship.
+  static var resources: Bundle { .module }
+
   /// Loads one of the Inter faces bundled from the CLI's own resources. A missing font is a
   /// build error in the package, not a state a user can reach, so it falls back to the system
   /// font rather than failing the render.
