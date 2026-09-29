@@ -21,6 +21,8 @@ public actor QueueEngine {
     public var makeProcess: @Sendable () -> HelperProcessing
     /// Keep the Mac awake while steps run; injectable for tests.
     public var sleepAssertion: any SleepAsserting
+    /// Emote images shared across jobs. Nil gives every step its own, as before.
+    public var cliCache: CLICache?
 
     public init(
       helperExecutable: URL,
@@ -28,7 +30,8 @@ public actor QueueEngine {
       workspace: Workspace,
       store: QueueStore,
       makeProcess: @escaping @Sendable () -> HelperProcessing,
-      sleepAssertion: any SleepAsserting = SystemSleepAssertion())
+      sleepAssertion: any SleepAsserting = SystemSleepAssertion(),
+      cliCache: CLICache? = nil)
     {
       self.helperExecutable = helperExecutable
       self.ffmpegPath = ffmpegPath
@@ -36,6 +39,7 @@ public actor QueueEngine {
       self.store = store
       self.makeProcess = makeProcess
       self.sleepAssertion = sleepAssertion
+      self.cliCache = cliCache
     }
   }
 
@@ -51,6 +55,9 @@ public actor QueueEngine {
   }
 
   private let configuration: Configuration
+
+  /// About 35 heavy channels' emotes at the 27 MB measured for one, plus 21 MB of emoji.
+  static let cliCacheLimit: Int64 = 1_000_000_000
 
   /// The only route to `Workspace`'s removal methods — see `TeardownJournal`.
   private let journal: TeardownJournal
@@ -90,7 +97,8 @@ public actor QueueEngine {
     self.contexts = StepContextBuilder(
       workspace: configuration.workspace,
       ffmpegPath: configuration.ffmpegPath,
-      ledger: ledger)
+      ledger: ledger,
+      cliCache: configuration.cliCache)
   }
 
   // MARK: - Public surface
@@ -134,6 +142,8 @@ public actor QueueEngine {
     jobs = Reconciler.reconcile(loaded) { Self.isUsableArtifact($0) }
 
     removeOrphanedResumeDirectories()
+    // Before tick(): trimming is only safe while no step can be using the cache.
+    configuration.cliCache?.trim(toAtMost: Self.cliCacheLimit)
 
     tick()
   }

@@ -47,7 +47,17 @@ nonisolated enum AppComposition {
       ffmpegPath: ffmpeg,
       workspace: Workspace(root: supportDirectory.appending(path: "workspace")),
       store: QueueStore(fileURL: supportDirectory.appending(path: "queue.json")),
-      makeProcess: { HelperProcess() }))
+      makeProcess: { HelperProcess() },
+      cliCache: (try? cliCacheURL()).map(CLICache.init(root:))))
+  }
+
+  /// Caches rather than Application Support: every file in it can be fetched again, Time Machine
+  /// skips it, and macOS may purge it under disk pressure, which the cache tolerates.
+  static func cliCacheURL() throws -> URL {
+    try FileManager.default.url(
+      for: .cachesDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
+      .appending(path: Bundle.main.bundleIdentifier ?? "studio.lofti.Oxbow")
+      .appending(path: "cli-cache")
   }
 
   /// Keep persistent state outside disposable job workspaces swept at startup.
