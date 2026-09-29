@@ -14,9 +14,11 @@ import Foundation
 /// (docs/design/native-chat-render.md §5). What is kept from the CLI is everything that decides
 /// where words land: right-to-left word order and the emoji box.
 ///
-/// Badges, emotes and the accented layouts of sub and raid messages are not drawn yet: an emote
-/// fragment is drawn as its name, which is also what the CLI does when an emote is missing from
-/// its cache.
+/// Subs, gifts, raids and the other system messages take the CLI's accented layout: a coloured
+/// bar, an indent, an icon, and a layout per kind (CR:969-1159). See `Highlight`.
+///
+/// Badges and emotes are not drawn yet: an emote fragment is drawn as its name, which is also what
+/// the CLI does when an emote is missing from its cache.
 struct MessageLayout: Sendable {
   struct Word: Sendable {
     enum Face: Sendable { case regular, bold, emoji }
@@ -28,10 +30,20 @@ struct MessageLayout: Sendable {
     let line: Int
     /// The CLI keeps word origins on whole pixels; glyphs inside a word stay fractional.
     let x: Int
+    /// Drawn on a purple band, as a channel-points highlighted message's words are (CR:1619-1623).
+    var isBanded = false
+  }
+
+  /// The bar and icon of an accented message.
+  struct Accent: Sendable {
+    let color: ChatColor
+    let icon: HighlightIcon?
+    let iconColor: ChatColor
   }
 
   let words: [Word]
   let lineCount: Int
+  let accent: Accent?
 
   /// Height of the comment's section, excluding the gap between comments.
   func height(in style: ChatTextStyle) -> Int { lineCount * style.sectionHeight }
@@ -43,35 +55,190 @@ struct MessageLayout: Sendable {
     comment: ChatDocument.Comment, index: Int, offset: Double, style: ChatTextStyle,
     appearance: ChatAppearance)
   {
-    guard let commenter = comment.commenter, let fragments = Self.fragments(of: comment) else {
+    guard comment.commenter != nil, let fragments = Self.fragments(of: comment) else {
       return nil
     }
-
     var builder = Builder(style: style)
-    if appearance.hasTimestamps {
-      builder.placeTimestamp(Timestamp(seconds: Int(offset)), color: appearance.message)
-    }
-    let username = appearance.username(UsernameColor.color(for: comment), forComment: index)
-    builder.place(commenter.displayName + ":", face: .bold, color: username)
-    for fragment in fragments {
-      if fragment.emoticonID != nil {
-        // CR:1553-1585: a cache miss draws the fragment's text whole, unsplit.
-        builder.place(fragment.text, face: .regular, color: appearance.message)
-        continue
-      }
-      let tokens = fragment.text.split(whereSeparator: Self.isWhitespace)
-      for token in Self.rightToLeftReordered(tokens) {
-        builder.placeToken(token, color: appearance.message)
-      }
+    let highlight = Highlight.of(comment)
+
+    if let highlight {
+      builder.x = style.sidePadding + style.accentIndent
+      builder.lineStart = builder.x
+      Self.layoutAccented(
+        highlight, comment: comment, fragments: fragments, index: index, offset: offset,
+        appearance: appearance, into: &builder)
+      accent = Accent(
+        color: highlight.accentColor, icon: highlight.icon,
+        iconColor: highlight.iconIsPurple ? Highlight.purple : appearance.message)
+    } else {
+      Self.layoutChat(
+        comment: comment, fragments: fragments, index: index, offset: offset,
+        appearance: appearance, into: &builder)
+      accent = nil
     }
 
     words = builder.words
     lineCount = builder.line + 1
   }
 
+  /// An ordinary chat line: timestamp, `name:` in its readable colour, then the message
+  /// (CR:946-967). Also the viewer's own message under a sub or watch streak.
+  private static func layoutChat(
+    comment: ChatDocument.Comment, fragments: [ChatDocument.Fragment], index: Int, offset: Double,
+    appearance: ChatAppearance, banded: Bool = false, into builder: inout Builder)
+  {
+    if appearance.hasTimestamps {
+      builder.placeTimestamp(Timestamp(seconds: Int(offset)), color: appearance.message)
+    }
+    let name = comment.commenter?.displayName ?? ""
+    let color = appearance.username(UsernameColor.color(for: comment), forComment: index)
+    builder.place(name + ":", face: .bold, color: color)
+    builder.placeFragments(fragments, color: appearance.message, banded: banded)
+  }
+
+  /// CR:982-1159, per kind. Positions at font size 15: the icon at 23; a name or text beside
+  /// it at 51 (gifts: 63); the viewer's own message back at 23.
+  private static func layoutAccented(
+    _ highlight: Highlight, comment: ChatDocument.Comment, fragments: [ChatDocument.Fragment],
+    index: Int, offset: Double, appearance: ChatAppearance, into builder: inout Builder)
+  {
+    let style = builder.style
+    let name = comment.commenter?.displayName ?? ""
+    let indent = builder.x
+    let besideIcon = indent + style.iconSize + style.wordSpacing
+
+    switch highlight {
+    case .subscribedTier, .subscribedPrime, .watchStreak, .charityDonation:
+      // The name, purple and bold with no colon, beside the icon; the system text always on
+      // the next line, hanging under the name (CR:1021-1058, 1095-1150).
+      builder.x = besideIcon
+      builder.lineStart = besideIcon
+      builder.place(name, face: .bold, color: Highlight.purple)
+      builder.newLine()
+      let split = highlight == .charityDonation
+        ? SystemMessage(system: stripName(fragments, count: name.utf16.count + 2), own: nil)
+        : SystemMessage.split(
+          fragments: stripName(fragments, name: name), body: stripBody(comment.message.body, count: name.utf16.count + 1),
+          pattern: highlight == .watchStreak ? .watchStreak : .subscription)
+      builder.placeFragments(split.system, color: appearance.message)
+      if let own = split.own {
+        builder.lineStart = indent
+        builder.newLine()
+        layoutChat(
+          comment: comment, fragments: own, index: index, offset: offset, appearance: appearance,
+          into: &builder)
+      }
+
+    case .bitsBadgeTier:
+      // CR:1060-1093: the name in the message colour, then the CLI's own sentence about the
+      // badge, on the same line.
+      builder.x = besideIcon
+      builder.lineStart = besideIcon
+      if fragments.count == 1 {
+        builder.place(name, face: .bold, color: appearance.message)
+        let version = comment.message.badges.first { $0.name == "bits" }?.version
+        builder.placeFragments(
+          [ChatDocument.Fragment(text: bitsBadgeSentence(version), emoticonID: nil)],
+          color: appearance.message)
+      } else {
+        builder.place(name + ":", face: .bold, color: appearance.message)
+        builder.placeFragments(fragments, color: appearance.message)
+      }
+
+    case .giftedSingle, .giftedMany, .giftedAnonymous, .continuingAnonymousGift:
+      // CR:1152-1159: the whole body as plain text beside the icon. The CLI indents it by the
+      // accent indent less the bar, not by the word gap, so it starts 12 px right of where a
+      // sub's name does; kept.
+      let giftX = indent + style.iconSize + style.accentIndent - style.accentStroke
+      builder.x = giftX
+      builder.lineStart = giftX
+      builder.placeFragments(fragments, color: appearance.message)
+
+    case .raid, .continuingGift, .payingForward, .combo:
+      builder.placeFragments(fragments, color: appearance.message)
+
+    case .channelPoints:
+      layoutChat(
+        comment: comment, fragments: fragments, index: index, offset: offset,
+        appearance: appearance, banded: true, into: &builder)
+    }
+  }
+
+  /// CR:1075-1084, except that a million bits reads "1M" where the CLI writes "1000K".
+  static func bitsBadgeSentence(_ version: String?) -> String {
+    guard let version, let amount = Int(version) else { return "just earned a new Bits badge!" }
+    let shown = switch amount {
+    case 1_000_000...: "\(amount / 1_000_000)M"
+    case 1000...: "\(amount / 1000)K"
+    default: "\(amount)"
+    }
+    return "just earned a new \(shown) Bits badge!"
+  }
+
+  /// A system message's own text, and the viewer's message that followed it, if any.
+  struct SystemMessage {
+    let system: [ChatDocument.Fragment]
+    let own: [ChatDocument.Fragment]?
+
+    enum Pattern {
+      case subscription, watchStreak
+
+      /// HI:49, HI:58.
+      var regex: Regex<(Substring, Substring, Substring)> {
+        switch self {
+        case .subscription:
+          /^((?:\w+ )?subscribed (?:with Prime|at Tier \d)\. They've subscribed for \d{1,3} months(?:, currently on a \d{1,3} month streak)?! )(.+)$/
+        case .watchStreak:
+          /^((?:\w+ )?watched \d+ consecutive streams (?:this month )?and sparked a watch streak! )(.+)$/
+        }
+      }
+    }
+
+    /// HI:291-378, without mutating anything and without the CLI's crash when the message's
+    /// fragments do not line up with the text: that case keeps everything as system text.
+    static func split(fragments: [ChatDocument.Fragment], body: String, pattern: Pattern) -> SystemMessage {
+      guard let match = body.wholeMatch(of: pattern.regex) else {
+        return SystemMessage(system: fragments, own: nil)
+      }
+      let system = [ChatDocument.Fragment(text: String(match.output.1), emoticonID: nil)]
+      let own = String(match.output.2)
+      guard fragments.count > 1 else {
+        return SystemMessage(system: system, own: [ChatDocument.Fragment(text: own, emoticonID: nil)])
+      }
+      let next = fragments[1].text
+      if own.hasOrdinalPrefix(next) {
+        return SystemMessage(system: system, own: Array(fragments.dropFirst()))
+      }
+      guard let range = own.range(of: next), range.lowerBound > own.startIndex else {
+        return SystemMessage(system: fragments, own: nil)
+      }
+      let lead = String(own[..<own.index(before: range.lowerBound)])
+      return SystemMessage(
+        system: system, own: [ChatDocument.Fragment(text: lead, emoticonID: nil)] + fragments.dropFirst())
+    }
+  }
+
+  /// CR:1034-1043: the name comes off the front of the first fragment, or the whole first
+  /// fragment goes if it is the name.
+  private static func stripName(_ fragments: [ChatDocument.Fragment], name: String) -> [ChatDocument.Fragment] {
+    guard let first = fragments.first else { return fragments }
+    if first.text.caseInsensitiveCompare(name) == .orderedSame { return Array(fragments.dropFirst()) }
+    return stripName(fragments, count: name.utf16.count + 1)
+  }
+
+  private static func stripName(_ fragments: [ChatDocument.Fragment], count: Int) -> [ChatDocument.Fragment] {
+    guard var first = fragments.first else { return fragments }
+    first.text = stripBody(first.text, count: count)
+    return [first] + fragments.dropFirst()
+  }
+
+  private static func stripBody(_ text: String, count: Int) -> String {
+    String(text.utf16.dropFirst(count)) ?? ""
+  }
+
   /// The CLI's delimiter set (CR:1162). Runs collapse and ends trim, because empty tokens are
   /// dropped (CR:2209).
-  private static func isWhitespace(_ character: Character) -> Bool {
+  static func isWhitespace(_ character: Character) -> Bool {
     character.unicodeScalars.allSatisfy { scalar in
       switch scalar.value {
       case 0x09...0x0D, 0x20, 0x85, 0xA0, 0x1680, 0x2000...0x200A, 0x2028, 0x2029, 0x202F, 0x205F,
@@ -127,7 +294,7 @@ struct MessageLayout: Sendable {
   }
 
   /// CR:1589-1644: the placement pass, one word at a time.
-  private struct Builder {
+  struct Builder {
     let style: ChatTextStyle
     var words: [Word] = []
     var line = 0
@@ -140,6 +307,31 @@ struct MessageLayout: Sendable {
       self.style = style
       x = style.sidePadding
       lineStart = style.sidePadding
+    }
+
+    mutating func newLine() {
+      line += 1
+      x = lineStart
+    }
+
+    /// CR:1164-1194: emote fragments whole, everything else split on whitespace, right-to-left
+    /// runs reversed, each word placed.
+    mutating func placeFragments(_ fragments: [ChatDocument.Fragment], color: ChatColor, banded: Bool = false) {
+      let first = words.count
+      for fragment in fragments {
+        if fragment.emoticonID != nil {
+          // CR:1553-1585: a cache miss draws the fragment's text whole, unsplit.
+          place(fragment.text, face: .regular, color: color)
+          continue
+        }
+        let tokens = fragment.text.split(whereSeparator: MessageLayout.isWhitespace)
+        for token in MessageLayout.rightToLeftReordered(tokens) {
+          placeToken(token, color: color)
+        }
+      }
+      if banded {
+        for index in first..<words.count { words[index].isBanded = true }
+      }
     }
 
     /// CR:1921-1957. Advanced by a fixed width per length, not its own, so every timestamp of a

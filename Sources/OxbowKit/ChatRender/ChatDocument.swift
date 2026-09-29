@@ -62,10 +62,20 @@ public struct ChatDocument: Decodable, Sendable, Equatable {
   public struct Commenter: Decodable, Sendable, Equatable {
     public var displayName: String
     public var name: String
+    /// Twitch's user id. The CLI recognises some system messages by who sent them.
+    public var id: String
 
     enum CodingKeys: String, CodingKey {
       case displayName = "display_name"
       case name
+      case id = "_id"
+    }
+
+    public init(from decoder: any Decoder) throws {
+      let container = try decoder.container(keyedBy: CodingKeys.self)
+      displayName = try container.decode(String.self, forKey: .displayName)
+      name = try container.decodeIfPresent(String.self, forKey: .name) ?? displayName
+      id = try container.decodeIfPresent(String.self, forKey: .id) ?? ""
     }
   }
 

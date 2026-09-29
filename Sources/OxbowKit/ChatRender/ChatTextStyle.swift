@@ -35,6 +35,12 @@ struct ChatTextStyle: Sendable {
   /// A word moves to the next line when it would end past this (CR:1637).
   var wrapLimit: Double { Double(width - sidePadding * 2) }
 
+  /// An accented message's bar, and how far its content is indented past it (CRO:78-79).
+  var accentStroke: Int { Int(8 * scale) }
+  var accentIndent: Int { Int(32 * scale) }
+  /// A highlight icon's square, filling the line: 25 at font size 15 (HI:34).
+  var iconSize: Int { Int(fontSize / 0.6) }
+
   /// Between an emoji and whatever follows it (CRO:77).
   var emoteSpacing: Int { Int(6 * scale) }
   /// The square an emoji is drawn into: 22 at font size 15. The CLI rounds half to even

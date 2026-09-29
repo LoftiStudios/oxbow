@@ -127,7 +127,13 @@ public final class NativeChatRenderer: ChatFrameSource {
   /// `top` is from the top of the frame, as the CLI measures; Core Graphics counts from the
   /// bottom.
   private func draw(_ layout: MessageLayout, top: Int, in context: CGContext) {
+    if let accent = layout.accent {
+      drawAccent(accent, top: top, height: layout.height(in: style), in: context)
+    }
     for word in layout.words {
+      if word.isBanded {
+        drawBand(behind: word, lineTop: top + word.line * style.sectionHeight, in: context)
+      }
       if word.face == .emoji {
         drawEmoji(word, lineTop: top + word.line * style.sectionHeight, in: context)
         continue
@@ -163,6 +169,48 @@ public final class NativeChatRenderer: ChatFrameSource {
         CTFontDrawGlyphs(run.font, run.glyphs, run.positions, run.glyphs.count, context)
       }
     }
+  }
+
+  /// CR:908-931 and CR:976-980: the bar down the left edge, full height and not antialiased, and
+  /// the icon filling the first line just past the indent.
+  private func drawAccent(_ accent: MessageLayout.Accent, top: Int, height: Int, in context: CGContext) {
+    context.saveGState()
+    context.setShouldAntialias(false)
+    context.setFillColor(accent.color.cgColor)
+    context.fill(CGRect(
+      x: style.sidePadding, y: style.height - top - height, width: style.accentStroke, height: height))
+    context.restoreGState()
+
+    guard let icon = accent.icon else { return }
+    let size = Double(style.iconSize)
+    let iconTop = top + (style.sectionHeight - style.iconSize) / 2
+    context.saveGState()
+    // The paths are authored y down in a 72-unit box.
+    context.translateBy(
+      x: Double(style.sidePadding + style.accentIndent), y: Double(style.height - iconTop))
+    context.scaleBy(x: size / HighlightIcon.unitSize, y: -size / HighlightIcon.unitSize)
+    context.addPath(icon.path)
+    context.setFillColor(accent.iconColor.cgColor)
+    context.fillPath(using: .evenOdd)
+    context.restoreGState()
+  }
+
+  /// CR:1619-1623: a purple box the height of the line behind each word, a word gap wide past
+  /// it, so the boxes run together into one band. Not antialiased: the CLI fills whole columns.
+  private func drawBand(behind word: MessageLayout.Word, lineTop: Int, in context: CGContext) {
+    let width: Double = switch word.face {
+    case .emoji: Double(style.emojiSize)
+    case .bold: GlyphRun.width(of: Substring(word.text), in: style.bold)
+    case .regular: GlyphRun.width(of: Substring(word.text), in: style.regular)
+    }
+    let right = Int((Double(word.x) + width + Double(style.wordSpacing)).rounded())
+    context.saveGState()
+    context.setShouldAntialias(false)
+    context.setFillColor(Highlight.purple.cgColor)
+    context.fill(CGRect(
+      x: word.x, y: style.height - lineTop - style.sectionHeight,
+      width: right - word.x, height: style.sectionHeight))
+    context.restoreGState()
   }
 
   /// Apple's artwork in the CLI's box: its ink scaled to fit the square and centred in it, the
