@@ -143,6 +143,54 @@ struct ChatImagesTests {
     #expect(layout.words.map(\.face).last == .emote)
   }
 
+  /// Tiers 1, 100, 1000, 5000, 10000, 100000, each a different width so the drawn size says
+  /// which tier was chosen: 35, 40, 45, 50, 55, 60 px.
+  private func cheerLayout(_ words: String, bits: Int = 100) throws -> MessageLayout {
+    let tiers = [(1, 56), (100, 64), (1000, 72), (5000, 80), (10000, 88), (100000, 96)].map { cost, width in
+      #""\#(cost)": {"id": "c", "imageScale": 2, "data": "\#(Self.image(width, 56).base64EncodedString())", "name": null, "width": 28, "height": 28}"#
+    }
+    let embeddedBits = #"{"firstParty": [], "thirdParty": [], "twitchBadges": [], "twitchBits": [{"prefix": "Cheer", "tierList": {\#(tiers.joined(separator: ","))}}]}"#
+    let json = """
+      {"video": {"start": 0, "end": 1}, "embeddedData": \(embeddedBits), "comments": [{
+        "_id": "x", "created_at": "2026-01-01T00:00:00Z", "content_offset_seconds": 0,
+        "commenter": {"display_name": "Foobar", "name": "n"},
+        "message": {"body": "b", "bits_spent": \(bits), "fragments": \(text(words)), "user_color": "#FFFFFF"}}]}
+      """
+    let document = try ChatDocument.decode(from: Data(json.utf8))
+    return try #require(MessageLayout(
+      comment: document.comments[0], index: 0, offset: 0, style: style, appearance: appearance,
+      images: ChatImages(document.embeddedData, fontSize: 15)))
+  }
+
+  /// `Foobar: Cheer1 nice`: the 35 px tier image at 62, 5 px above the line, and `nice` 38
+  /// further on — the CLI's measured positions for a real 56 px tier. The amount is not drawn.
+  @Test func drawsACheermoteAsItsTierImage() throws {
+    let layout = try cheerLayout("Cheer1 nice")
+    let cheer = try #require(layout.words.first { $0.face == .emote })
+    #expect(cheer.x == 62 && cheer.imageTop == -5)
+    #expect(layout.words.last?.text == "nice" && layout.words.last?.x == 100)
+  }
+
+  @Test(arguments: [
+    ("Cheer1", 35), ("Cheer99", 35), ("Cheer100", 40), ("Cheer999", 40), ("Cheer1000", 45),
+    ("Cheer4999", 45), ("Cheer5000", 50), ("Cheer10000", 55), ("Cheer250000", 60),
+    // Below every tier, the first: the renderer does not require a leading 1-9.
+    ("Cheer0", 35), ("Cheer007", 35),
+  ])
+  func choosesTheTierAsTheCLIDoes(word: String, width: Int) throws {
+    let layout = try cheerLayout(word)
+    #expect(layout.words.first { $0.face == .emote }?.image?.width == width)
+  }
+
+  @Test(arguments: ["cheer100", "CHEER100", "Cheer100!", "Cheer1a", "xCheer100", "Cheer99999999999"])
+  func leavesAnythingElseAsText(word: String) throws {
+    #expect(!(try cheerLayout(word)).words.contains { $0.face == .emote })
+  }
+
+  @Test func triesCheermotesOnlyWhenBitsWereSpent() throws {
+    #expect(!(try cheerLayout("Cheer100", bits: 0)).words.contains { $0.face == .emote })
+  }
+
   @Test func snapsHeightsAsTheCLIDoes() {
     // 22 is nowhere near a multiple of 36, so nothing moves.
     #expect(ChatImages.snap(22, within: 1, of: 36) == 22)

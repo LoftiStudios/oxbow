@@ -64,6 +64,7 @@ struct MessageLayout: Sendable {
       return nil
     }
     var builder = Builder(style: style, images: images)
+    builder.hasBits = comment.message.bitsSpent > 0
     let highlight = Highlight.of(comment)
 
     if let highlight {
@@ -309,6 +310,8 @@ struct MessageLayout: Sendable {
   struct Builder {
     let style: ChatTextStyle
     let images: ChatImages
+    /// Only a comment that spent bits has its words tried as cheermotes (CR:1203).
+    var hasBits = false
     var words: [Word] = []
     var line = 0
     var x: Int
@@ -399,6 +402,11 @@ struct MessageLayout: Sendable {
       // A third-party emote name wins over everything, emoji included (CR:1198-1202).
       if let emote = images.thirdParty(String(token)) {
         placeEmote(emote.image, isZeroWidth: emote.isZeroWidth, name: String(token))
+        return
+      }
+      // Then a cheermote: its tier's image, placed as an emote. The amount is not drawn.
+      if hasBits, let cheer = images.cheermote(String(token)) {
+        placeEmote(cheer, name: String(token))
         return
       }
       guard token.contains(where: MessageLayout.isEmoji) else {

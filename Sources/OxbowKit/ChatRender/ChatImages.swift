@@ -47,6 +47,7 @@ final class ChatImages: Sendable {
     case badge(String, String)
     case firstParty(String)
     case thirdParty(String)
+    case cheermote(String, Int)
   }
 
   init(_ embedded: ChatDocument.EmbeddedImages, fontSize: Double) {
@@ -76,6 +77,28 @@ final class ChatImages: Sendable {
   func thirdParty(_ name: String) -> (image: ChatImage, isZeroWidth: Bool)? {
     guard let entry = embedded.thirdParty[name] else { return nil }
     return cached(.thirdParty(name)) { emote(entry) }.map { ($0, entry.isZeroWidth) }
+  }
+
+  /// CR:1520-1551 and CE:12-23. `Cheer100` is a cheermote when everything before its first digit
+  /// is exactly an embedded prefix and everything after parses as a 32-bit integer; the image is
+  /// the highest tier at or below the amount, or the lowest tier for anything under it — so
+  /// `Cheer0` and `Cheer007` show tier 1, as in the CLI. Tiers are sorted here, where the CLI
+  /// trusts the file's order; the downloader writes them ascending, so nothing changes for real
+  /// files. Every tier is scaled by the first tier's image scale, as the CLI does.
+  func cheermote(_ word: String) -> ChatImage? {
+    guard let digit = word.firstIndex(where: { $0.isASCII && $0.isNumber }), digit > word.startIndex,
+          let amount = Int32(word[digit...]), word[digit...].allSatisfy({ $0.isASCII && $0.isNumber }),
+          let tiers = embedded.cheermotes[String(word[..<digit])], !tiers.isEmpty
+    else { return nil }
+    let prefix = String(word[..<digit])
+    let ordered = tiers.keys.sorted()
+    let cost = ordered.last { $0 <= Int(amount) } ?? ordered[0]
+    let firstScale = tiers[ordered[0]]?.scale ?? 2
+    return cached(.cheermote(prefix, cost)) {
+      guard var entry = tiers[cost] else { return nil }
+      entry.scale = firstScale
+      return emote(entry)
+    }
   }
 
   private func cached(_ key: Key, make: () -> ChatImage?) -> ChatImage? {
