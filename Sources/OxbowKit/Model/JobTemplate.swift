@@ -75,7 +75,7 @@ public struct JobTemplate: Sendable {
     if let chatStep, render != nil || composite != nil {
       renderStep = Step(
         id: nextStepID(),
-        kind: .renderChat(render ?? RenderRequest()),
+        kind: .renderChat(Self.offline(render ?? RenderRequest())),
         dependsOn: [chatStep.id])
       steps.append(renderStep!)
     }
@@ -137,14 +137,25 @@ public struct JobTemplate: Sendable {
   /// The renderer accepts only JSON. Coerce the request and destination extension together so
   /// public callers cannot deliver JSON under an HTML/text filename. `makeJob` has no error
   /// channel; intake already requests JSON without a separate destination.
+  ///
+  /// Also embeds images, which `offline(_:)` depends on: the two are set together or not at all.
   private static func renderInput(_ request: ChatRequest) -> ChatRequest {
     var request = request
     request.format = .json
+    request.isEmbeddingImages = true
     if let destination = request.destination,
        destination.pathExtension.lowercased() != "json"
     {
       request.destination = destination.deletingPathExtension().appendingPathExtension("json")
     }
+    return request
+  }
+
+  /// Renders from the images `renderInput(_:)` embedded, so the render step never touches the
+  /// network. docs/design/native-chat-render.md §3.1.
+  private static func offline(_ request: RenderRequest) -> RenderRequest {
+    var request = request
+    request.isOffline = true
     return request
   }
 }

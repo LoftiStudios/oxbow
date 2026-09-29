@@ -96,6 +96,10 @@ public struct RenderRequest: Codable, Sendable, Equatable {
   /// See docs/ffmpeg.md, section 3.
   public var bitrateMbps: Int
   public var isSharpened: Bool
+  /// Render from the images embedded in the chat file, never the network. Only valid when the
+  /// chat download feeding this render embedded them: offline against a plain file renders
+  /// with every emote and badge missing, and exits 0. `JobTemplate` sets both together.
+  public var isOffline: Bool
   /// Nil keeps the file in the workspace as an intermediate, discarded with the job.
   public var destination: URL?
 
@@ -114,6 +118,7 @@ public struct RenderRequest: Codable, Sendable, Equatable {
     outlineSize: Int = 4,
     bitrateMbps: Int = 3,
     isSharpened: Bool = false,
+    isOffline: Bool = false,
     destination: URL? = nil)
   {
     self.width = width
@@ -130,6 +135,38 @@ public struct RenderRequest: Codable, Sendable, Equatable {
     self.outlineSize = outlineSize
     self.bitrateMbps = bitrateMbps
     self.isSharpened = isSharpened
+    self.isOffline = isOffline
     self.destination = destination
+  }
+}
+
+extension RenderRequest {
+  private enum CodingKeys: String, CodingKey {
+    case width, height, framerate, fontSize, font, backgroundColor, alternateBackgroundColor
+    case hasAlternateBackgrounds, messageColor, hasTimestamps, hasOutline, outlineSize
+    case bitrateMbps, isSharpened, isOffline, destination
+  }
+
+  /// Renders queued before `isOffline` existed read chat downloaded without embedded images,
+  /// so they decode as online and keep fetching them.
+  public init(from decoder: any Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    self.init(
+      width: try container.decode(Int.self, forKey: .width),
+      height: try container.decode(Int.self, forKey: .height),
+      framerate: try container.decode(Int.self, forKey: .framerate),
+      fontSize: try container.decode(Double.self, forKey: .fontSize),
+      font: try container.decode(String.self, forKey: .font),
+      backgroundColor: try container.decode(String.self, forKey: .backgroundColor),
+      alternateBackgroundColor: try container.decode(String.self, forKey: .alternateBackgroundColor),
+      hasAlternateBackgrounds: try container.decode(Bool.self, forKey: .hasAlternateBackgrounds),
+      messageColor: try container.decode(String.self, forKey: .messageColor),
+      hasTimestamps: try container.decode(Bool.self, forKey: .hasTimestamps),
+      hasOutline: try container.decode(Bool.self, forKey: .hasOutline),
+      outlineSize: try container.decode(Int.self, forKey: .outlineSize),
+      bitrateMbps: try container.decode(Int.self, forKey: .bitrateMbps),
+      isSharpened: try container.decode(Bool.self, forKey: .isSharpened),
+      isOffline: try container.decodeIfPresent(Bool.self, forKey: .isOffline) ?? false,
+      destination: try container.decodeIfPresent(URL.self, forKey: .destination))
   }
 }

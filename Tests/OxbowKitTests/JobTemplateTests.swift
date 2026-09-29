@@ -307,6 +307,49 @@ struct JobTemplateTests {
     #expect(request.destination == chat.destination)
   }
 
+  /// A render renders offline from images the chat download embedded, and the two are only
+  /// ever set together: `--offline` against a file with no embedded images drops every emote
+  /// and badge silently. docs/design/native-chat-render.md §3.1.
+  @Test func aRenderPairingEmbedsImagesAndRendersFromThemOffline() {
+    let jobs = [
+      makeJob(JobTemplate(chat: chat, render: render)),
+      makeJob(JobTemplate(render: render)),
+      makeJob(JobTemplate(media: .video(video), render: render)),
+      makeJob(JobTemplate(media: .clip(clip), render: render)),
+      makeJob(compositeTemplate()),
+    ]
+
+    for job in jobs {
+      let embedding = job.steps.compactMap { step -> Bool? in
+        guard case .downloadChat(let request) = step.kind else { return nil }
+        return request.isEmbeddingImages
+      }
+      let offline = job.steps.compactMap { step -> Bool? in
+        guard case .renderChat(let request) = step.kind else { return nil }
+        return request.isOffline
+      }
+      #expect(embedding == [true])
+      #expect(offline == [true])
+    }
+  }
+
+  /// Embedding doubles a long VOD's chat file (126 MB to 256 MB measured), which is only worth
+  /// paying when a render consumes the images.
+  @Test func aChatDownloadWithNoRenderDoesNotEmbedImages() {
+    let jobs = [
+      makeJob(JobTemplate(chat: chat)),
+      makeJob(JobTemplate(media: .video(video), chat: chat)),
+    ]
+
+    for job in jobs {
+      let embedding = job.steps.compactMap { step -> Bool? in
+        guard case .downloadChat(let request) = step.kind else { return nil }
+        return request.isEmbeddingImages
+      }
+      #expect(embedding == [false])
+    }
+  }
+
   /// The renderer accepts JSON only.
   @Test func aRenderPairingAlwaysDownloadsItsChatAsJson() {
     let html = ChatRequest(videoID: "2844548319", format: .html)

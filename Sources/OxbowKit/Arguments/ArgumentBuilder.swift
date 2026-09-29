@@ -73,6 +73,9 @@ public enum ArgumentBuilder {
       // update-rate below 1.0, satisfied by upstream's 0.2 default.
       args += ["--dispersion"]
 
+      // Default-false switch: bare when on, omitted when off.
+      if request.isOffline { args += ["--offline"] }
+
       if request.hasAlternateBackgrounds { args += ["--alternate-backgrounds"] }
       if request.hasTimestamps { args += ["--timestamp"] }
       if request.hasOutline { args += ["--outline"] }
