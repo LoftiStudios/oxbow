@@ -1,8 +1,12 @@
 # Native chat render — design
 
-**Status:** draft 2026-09-17, for reading. **Not approved, not scheduled.**
-Phase 0's first two items were measured the same day — §3.1 (what embedding
-costs) and §8.1 (whether the CLI can be trusted as a reference). It
+**Status:** draft 2026-09-17. **Phase 0 is complete; Phase 1 has a two-week
+budget (§10) and begins with a debug window (§6).** Phase 0 shipped its one
+user-facing change in
+[LoftiStudios/oxbow#76](https://github.com/LoftiStudios/oxbow/pull/76) —
+embedded images, offline renders and the shared emote cache — and its
+measurements are §3.1, §3.2 and §8.1. The renderer itself is still an
+experiment. It
 does not reverse [`cli-dependency.md`](cli-dependency.md) §9 on its own; it
 describes what the work would be if that decision is reopened, and how to stop
 partway without leaving anything behind.
@@ -126,7 +130,7 @@ animated emote into `SKBitmap`s (`TwitchObjects/TwitchEmote.cs:34`,
 `ExtractFrames`) — work the embedding path never uses, since it only base64s
 `ImageData`. Upstream candidate, §9.1.
 
-### 3.2 A shared emote cache — decided 2026-09-17: share it
+### 3.2 A shared emote cache — shipped in #76
 
 Each step of each job gets a fresh `--temp-path`, and the CLI's cache lives
 inside it, so every job re-downloads every emote whether or not `-E` is on. One
@@ -320,7 +324,8 @@ has changed.**
 1. Pass `-E` for rendering jobs, and `--offline` to the render. **Measured
    2026-09-17, §3.1** — the cost is a bigger intermediate file, not extra
    fetching, and the render gets 4.5x faster and stops needing the network.
-   Still a decision, not a conclusion: §10.
+   **Shipped in #76**, together with the shared cache of §3.2 — measured
+   there at 58s to 24s for a second job's chat step on the same window.
 2. Build the comparison harness (§8) against the CLI alone, so it is known to
    work before there is anything to compare. **Done 2026-09-17 in outline** —
    the CLI-against-itself runs in §8.1 are exactly this, and they found the two
@@ -336,6 +341,27 @@ has changed.**
 
 `ChatDocument`, `ChatTimeline`, `MessageLayout` for plain text, a rasterizer,
 and `FileSink`. Behind a hidden setting, off by default.
+
+**In slices that can each be seen**, per `AGENTS.md` "Planning work" — a
+renderer is exactly the kind of work that is otherwise invisible until its
+last commit:
+
+1. **A debug window, first.** DEBUG builds only. Open a chat JSON and the
+   CLI's render of it; a scrubber drives both, the CLI's frame on the left and
+   `frame(at:)` on the right. Plain text only — username, colon, message,
+   wrapped, on the CLI's timeline. This is the comparison tool of §8 inside the
+   app, and the seed of the in-app preview §1 names as the reason to do any
+   of this. Nothing else in the app changes.
+2. **Appearance.** Username colours and their contrast adjustment,
+   timestamps, outline, alternate backgrounds — every `RenderRequest` field.
+   Seen in the same window.
+3. **The Core Text check.** The RTL, ZWJ and CJK-fallback fixtures of §5,
+   seen side by side. This is the stopping condition below, made visible.
+4. **`FileSink` and the hidden setting.** The render step writes the native
+   renderer's output; a composite made with it shows the native chat column in
+   a real file.
+
+The two-week budget (§10) starts at slice 1's first commit.
 
 **Stop if:** message appearance times or line wrapping do not match the CLI
 within tolerance (§8) on both reference VODs, or Core Text does not handle the
@@ -524,10 +550,8 @@ already tracks, and both are independent of whether this experiment proceeds.
    conditions (§6) whatever state it is in — the budget is the check, not the
    remaining list. Phase 2 gets its own budget only if Phase 1 passes.
 2. **Bundle Inter, or switch the default to the system font?**
-3. **Is Phase 0's `-E` change worth shipping on its own**, regardless of
-   whether the renderer is built? §3.1 says it trades 130 MB of intermediate
-   file on a 7.5-hour VOD for a render that is 4.5x faster and offline. The
-   answer probably depends on 4.
+3. ~~**Is Phase 0's `-E` change worth shipping on its own?**~~ **Yes —
+   shipped in #76**, independent of the renderer.
 4. ~~**Should the CLI's emote cache be shared across jobs?**~~ **Decided
    2026-09-17: yes, share it** — §3.2, which also establishes that
    channel-specific emotes and badges cannot collide because none of it is
