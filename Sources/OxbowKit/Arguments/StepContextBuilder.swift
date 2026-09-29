@@ -7,15 +7,23 @@ struct StepContextBuilder: Sendable {
   private let workspace: Workspace
   private let ffmpegPath: URL
   private let ledger: ResumeLedger
+  private let cliCache: CLICache?
 
-  init(workspace: Workspace, ffmpegPath: URL, ledger: ResumeLedger) {
+  init(workspace: Workspace, ffmpegPath: URL, ledger: ResumeLedger, cliCache: CLICache? = nil) {
     self.workspace = workspace
     self.ffmpegPath = ffmpegPath
     self.ledger = ledger
+    self.cliCache = cliCache
   }
 
   func make(job: Job, step: Step) throws -> StepContext {
     let stepDirectory = try workspace.prepareStep(job: job.id, step: step.id)
+    switch step.kind {
+    case .downloadChat, .renderChat:
+      cliCache?.link(into: stepDirectory)
+    case .downloadVideo, .downloadClip, .composite, .assemble:
+      break
+    }
     let artifacts = try workspace.prepareArtifacts(job: job.id)
 
     // The CLI infers download type from the output file extension.

@@ -263,6 +263,18 @@ struct ArgumentBuilderTests {
     #expect(!a.contains { $0.hasPrefix("--update-rate=") })
   }
 
+  /// `--offline` is a default-false switch, so bare is the only correct form.
+  @Test func offlineFlagIsBareAndOnlyPresentWhenOffline() {
+    let online = args(.renderChat(RenderRequest(destination: URL(filePath: "/tmp/c.mp4"))))
+    #expect(!online.contains("--offline"))
+    #expect(!online.contains { $0.hasPrefix("--offline=") })
+
+    let offline = args(.renderChat(RenderRequest(
+      isOffline: true, destination: URL(filePath: "/tmp/c.mp4"))))
+    #expect(offline.contains("--offline"))
+    #expect(!offline.contains { $0.hasPrefix("--offline=") })
+  }
+
   @Test func alternateBackgroundsFlagIsBareAndOnlyPresentWhenTrue() {
     let off = args(.renderChat(RenderRequest(destination: URL(filePath: "/tmp/c.mp4"))))
     #expect(!off.contains("--alternate-backgrounds"))
@@ -324,6 +336,9 @@ struct ArgumentBuilderTests {
       },
       BooleanFieldCase(field: "hasOutline", flagToken: "--outline") {
         $0.hasOutline = true
+      },
+      BooleanFieldCase(field: "isOffline", flagToken: "--offline") {
+        $0.isOffline = true
       },
     ]
   }

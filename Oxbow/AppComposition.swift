@@ -48,6 +48,7 @@ nonisolated enum AppComposition {
       workspace: Workspace(root: supportDirectory.appending(path: "workspace")),
       store: QueueStore(fileURL: supportDirectory.appending(path: "queue.json")),
       makeProcess: { HelperProcess() },
+      cliCache: (try? cliCacheURL()).map(CLICache.init(root:)),
       makeChatRenderProcess: nativeChatRenderProcess))
   }
 
@@ -63,6 +64,15 @@ nonisolated enum AppComposition {
     else { return nil }
     return NativeChatRenderProcess(
       request: request, input: input, output: context.outputFile, ffmpeg: context.ffmpegPath)
+  }
+
+  /// Caches rather than Application Support: every file in it can be fetched again, Time Machine
+  /// skips it, and macOS may purge it under disk pressure, which the cache tolerates.
+  static func cliCacheURL() throws -> URL {
+    try FileManager.default.url(
+      for: .cachesDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
+      .appending(path: Bundle.main.bundleIdentifier ?? "studio.lofti.Oxbow")
+      .appending(path: "cli-cache")
   }
 
   /// Keep persistent state outside disposable job workspaces swept at startup.
