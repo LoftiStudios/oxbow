@@ -228,4 +228,41 @@ struct HelperProcessTests {
     #expect(!lines.isEmpty)
     #expect(lines.allSatisfy { if case .log = $0 { true } else { false } })
   }
+
+  /// A feed's bytes reach the child's stdin, and closing it afterwards gives the child EOF.
+  @Test func feedsStandardInputAndThenClosesIt() async throws {
+    var launch = try script("cat > received.bin")
+    defer { remove(launch) }
+    launch.standardInput = StandardInputFeed { stdin, _ in
+      for chunk in 0..<3 { try? stdin.write(contentsOf: Data(repeating: UInt8(chunk), count: 70_000)) }
+    }
+    let result = try await HelperProcess().run(launch) { _ in }
+
+    #expect(result.status == .exited(0))
+    let received = try Data(contentsOf: launch.workingDirectory.appending(path: "received.bin"))
+    #expect(received.count == 210_000)
+    #expect(received.last == 2)
+  }
+
+  /// Cancelling stops the feed as well as the process, so a feed that would write forever ends.
+  @Test func cancellingStopsTheFeed() async throws {
+    var launch = try script("cat > /dev/null")
+    defer { remove(launch) }
+    let stopped = StopFlag()
+    launch.standardInput = StandardInputFeed { stdin, stop in
+      while !stop.isSet {
+        guard (try? stdin.write(contentsOf: Data(count: 4096))) != nil else { break }
+      }
+      stopped.set()
+    }
+    let process = HelperProcess()
+    let fed = launch
+    let running = Task { try await process.run(fed) { _ in } }
+    try await Task.sleep(for: .milliseconds(200))
+    await process.cancel()
+    _ = try await running.value
+    // The feed's thread notices the flag, or the broken pipe, shortly after.
+    for _ in 0..<50 where !stopped.isSet { try await Task.sleep(for: .milliseconds(20)) }
+    #expect(stopped.isSet)
+  }
 }

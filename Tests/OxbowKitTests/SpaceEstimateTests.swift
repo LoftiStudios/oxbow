@@ -99,4 +99,18 @@ struct SpaceEstimateTests {
     #expect(estimate.composite == 0)
     #expect(estimate.total == 0)
   }
+
+  /// Drawing the chat during the composite writes no render file, so there is none to hold.
+  @Test func aCompositeThatDrawsItsChatNeedsNoRenderSpace() throws {
+    let source = quality("1920x1080", "1080p60", mbps: 8.5)
+    let geometry = try #require(CompositeGeometry(quality: source))
+    let rendered = SpaceEstimate(quality: source, duration: .seconds(3600), composite: geometry)
+    let drawn = SpaceEstimate(
+      quality: source, duration: .seconds(3600), composite: geometry, drawsChat: true)
+
+    #expect(drawn.chatRender == 0)
+    #expect(drawn.composite == rendered.composite)
+    #expect(drawn.total == rendered.total - rendered.chatRender)
+    #expect(drawn.delivered == rendered.delivered)
+  }
 }

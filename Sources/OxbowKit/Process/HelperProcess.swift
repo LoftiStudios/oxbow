@@ -9,6 +9,8 @@ import Foundation
 public actor HelperProcess {
   private var spawned: Spawn?
   private var isCancelled = false
+  /// Tells a stdin feed to stop writing when the process is cancelled.
+  private let feedStop = StopFlag()
 
   public init() {}
 
@@ -26,8 +28,20 @@ public actor HelperProcess {
     let spawned = try ProcessSpawner.spawn(
       executable: launch.executable,
       arguments: launch.arguments,
-      workingDirectory: launch.workingDirectory)
+      workingDirectory: launch.workingDirectory,
+      standardInput: launch.standardInput != nil)
     self.spawned = spawned
+
+    // The feed writes until it is done or stopped, then closes stdin so the process sees EOF.
+    if let feed = launch.standardInput, let stdin = spawned.stdin {
+      let stop = feedStop
+      let thread = Thread {
+        feed.write(stdin, stop)
+        try? stdin.close()
+      }
+      thread.name = "oxbow.helper-stdin"
+      thread.start()
+    }
 
     if isCancelled {
       ProcessSpawner.signal(SIGKILL, toGroupOf: spawned.pid)
@@ -84,6 +98,7 @@ public actor HelperProcess {
   /// Signals the whole process group so the helper's FFmpeg goes with it.
   public func cancel() async {
     isCancelled = true
+    feedStop.set()
     guard let spawned else { return }
     let pid = spawned.pid
 

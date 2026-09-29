@@ -30,8 +30,10 @@ nonisolated struct JobInfo {
     job.steps.lazy.compactMap { if case .downloadChat(let r) = $0.kind { r } else { nil } }.first
   }
 
+  /// The render step's settings, or — for a composite that draws its chat — the composite's.
   var render: RenderRequest? {
     job.steps.lazy.compactMap { if case .renderChat(let r) = $0.kind { r } else { nil } }.first
+      ?? composite?.chat
   }
 
   var composite: CompositeRequest? {

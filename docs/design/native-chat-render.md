@@ -501,6 +501,38 @@ release that ships this one to have been used.**
 
 A separate decision, with its own gate. §7.
 
+**Done 2026-09-29.** The gate passed by a wide margin: 5,759 frames/s on the
+heavy chat and 12,069 on the quiet one, in release, against the ~360 the encoder
+can take. With Oxbow's renderer on at enqueue, a video-with-chat job is chat →
+video → composite → assemble. The composite reads the chat JSON, and
+`CompositeRequest.chat` carries the settings to draw it with. FFmpeg's second
+input is raw RGBA on `pipe:0`, written by a thread in `HelperProcess` from
+`NativeChatRenderer.compositeFeed`. Turned off, or for a job queued before this
+existed, the graph and the arguments are exactly as they were.
+
+- **Measured on the same machine**: a 3-minute composite of the heavy chat
+  beside a 1824×1026 60 fps source, twice each. From the CLI's render file it
+  took 58.3 s; fed from the renderer it took 58.7 s. Both produced 10,800
+  frames, and the chat column is the same layout at the same instant. The render
+  step it replaces took 6.7 s natively and 21.6 s through the CLI, for the same
+  chat. So the whole render step goes, and nothing moves onto the composite.
+- **Resume** needs no clamp of its own. The feed starts at the first frame at or
+  after the resume point, which is where a seek of the rendered file lands.
+  Past the chat's end, it sends the last frame once for `hstack` to hold, which
+  is `resume.md` §12's case answered by the renderer, not by probing a file.
+- **Disk**: the intake's estimate drops the chat render term. On the six-hour
+  worked example in `disk-preflight.md` §5 that is ~10 GB.
+  `BackfillEstimate` still counts the term, and overestimating there is the
+  safe direction.
+- **Found on the way: spawned helpers inherited each other's pipes.**
+  `posix_spawn` gives a child every descriptor open in Oxbow at that instant,
+  including the pipe ends of a helper another thread is spawning at the same
+  moment. For stdout this only delayed an EOF until the other child exited. For
+  stdin it deadlocks: under the coverage run's scheduling, three FFmpegs each
+  held another's stdin write end and waited on it indefinitely. The spawner now
+  sets `POSIX_SPAWN_CLOEXEC_DEFAULT`, so a child gets only the descriptors it is
+  given. A test proves it fails without the flag.
+
 ## 7. Rendering during the composite
 
 ### Why the old answer changes

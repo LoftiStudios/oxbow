@@ -467,6 +467,25 @@ struct IntakeModelTests {
     #expect(store.chatSize == .large)
   }
 
+  // MARK: - Chat drawing
+
+  /// With Oxbow's renderer on, the composite draws the chat itself and the job has no render
+  /// step (native-chat-render.md, Phase 4); turned off, the CLI renders it first, as before.
+  @Test(arguments: [true, false])
+  func theCompositeDrawsItsChatOnlyWithOxbowsRenderer(_ isNative: Bool) async throws {
+    let store = Self.store { $0.usesNativeChatRenderer = isNative }
+    let model = await loadedModel(preferences: store)
+    model.output = .videoWithChat
+
+    let template = try #require(model.composedTemplate())
+    #expect((template.composite?.chat != nil) == isNative)
+    if isNative { #expect(template.composite?.chat == template.render) }
+    let job = template.makeJob(
+      id: JobID(rawValue: UUID()), title: "t", created: .now, nextStepID: { StepID(rawValue: UUID()) })
+    let renders = job.steps.contains { if case .renderChat = $0.kind { true } else { false } }
+    #expect(renders == !isNative)
+  }
+
   // MARK: - Options panel
 
   @Test func isOptionsExpandedWritesThroughToTheStore() async {

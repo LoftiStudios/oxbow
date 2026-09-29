@@ -199,3 +199,42 @@ struct NativeChatRenderChoiceTests {
     #expect(NativeChatRenderProcess.forRender(RenderRequest(isOffline: true), context: bare, isEnabled: true) == nil)
   }
 }
+
+@Suite("Process spawner descriptor isolation")
+struct ProcessSpawnerIsolationTests {
+
+  /// A descriptor open in Oxbow at spawn time must not reach the child. Inherited, the other
+  /// ends of concurrently spawned helpers' pipes kept their stdin from reaching EOF, and two
+  /// native renders could wait on each other for ever.
+  @Test func aChildInheritsNoDescriptorItWasNotGiven() throws {
+    var pair: [Int32] = [0, 0]
+    #expect(pipe(&pair) == 0)
+    // Well clear of the low numbers `ls` itself opens to read /dev/fd.
+    let stray = pair.map { fcntl($0, F_DUPFD, 300) }
+    for fd in pair { close(fd) }
+    defer { for fd in stray { close(fd) } }
+
+    let spawned = try ProcessSpawner.spawn(
+      executable: URL(filePath: "/bin/sh"),
+      arguments: ["-c", "ls /dev/fd"],
+      workingDirectory: URL(filePath: NSTemporaryDirectory()), standardInput: true)
+    try spawned.stdin?.close()
+    let listed = String(decoding: spawned.stdout.readDataToEndOfFile(), as: UTF8.self)
+    #expect(ProcessSpawner.wait(spawned.pid) == .exited(0))
+
+    let open = Set(listed.split(separator: "\n").compactMap { Int32($0) })
+    #expect(!open.contains(stray[0]))
+    #expect(!open.contains(stray[1]))
+    #expect(open.isSuperset(of: [0, 1, 2]))
+  }
+
+  /// Without a pipe of its own the child still reads Oxbow's stdin, as the CLI always has.
+  @Test func aChildWithoutAFeedStillHasStandardInput() throws {
+    let spawned = try ProcessSpawner.spawn(
+      executable: URL(filePath: "/bin/sh"), arguments: ["-c", "ls /dev/fd"],
+      workingDirectory: URL(filePath: NSTemporaryDirectory()))
+    let listed = String(decoding: spawned.stdout.readDataToEndOfFile(), as: UTF8.self)
+    #expect(ProcessSpawner.wait(spawned.pid) == .exited(0))
+    #expect(listed.split(separator: "\n").contains("0"))
+  }
+}
