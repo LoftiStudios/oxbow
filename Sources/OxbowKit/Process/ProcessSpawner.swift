@@ -4,19 +4,27 @@ import Foundation
 public enum ProcessSpawner {
 
   /// Spawns a separate process group so cancellation can signal the helper and its children
-  /// without signalling Oxbow.
+  /// without signalling Oxbow. `standardInput` gives the child a pipe to read from; without it
+  /// the child inherits Oxbow's, as the CLI always has.
   public static func spawn(
     executable: URL,
     arguments: [String],
-    workingDirectory: URL)
+    workingDirectory: URL,
+    standardInput: Bool = false)
     throws -> Spawn
   {
     var outPipe: [Int32] = [0, 0]
     var errPipe: [Int32] = [0, 0]
+    var inPipe: [Int32] = [-1, -1]
     guard pipe(&outPipe) == 0 else { throw SpawnError.pipeFailed(errno) }
     guard pipe(&errPipe) == 0 else {
       close(outPipe[0]); close(outPipe[1])
       throw SpawnError.pipeFailed(errno)
+    }
+    if standardInput, pipe(&inPipe) != 0 {
+      let error = errno
+      close(outPipe[0]); close(outPipe[1]); close(errPipe[0]); close(errPipe[1])
+      throw SpawnError.pipeFailed(error)
     }
 
     var actions: posix_spawn_file_actions_t?
@@ -31,6 +39,11 @@ public enum ProcessSpawner {
     posix_spawn_file_actions_addclose(&actions, outPipe[1])
     posix_spawn_file_actions_addclose(&actions, errPipe[0])
     posix_spawn_file_actions_addclose(&actions, errPipe[1])
+    if standardInput {
+      posix_spawn_file_actions_adddup2(&actions, inPipe[0], STDIN_FILENO)
+      posix_spawn_file_actions_addclose(&actions, inPipe[0])
+      posix_spawn_file_actions_addclose(&actions, inPipe[1])
+    }
     posix_spawn_file_actions_addchdir_np(&actions, workingDirectory.path)
 
     var attributes: posix_spawnattr_t?
@@ -60,20 +73,24 @@ public enum ProcessSpawner {
     var pid: pid_t = 0
     let result = posix_spawn(&pid, executable.path, &actions, &attributes, argv, environ)
 
-    // Close our copies of the write ends, or we never observe EOF.
+    // Close our copies of the write ends, or we never observe EOF — and the child's read end of
+    // stdin, or it never sees EOF when we close ours.
     close(outPipe[1])
     close(errPipe[1])
+    if standardInput { close(inPipe[0]) }
 
     guard result == 0 else {
       close(outPipe[0])
       close(errPipe[0])
+      if standardInput { close(inPipe[1]) }
       throw SpawnError.spawnFailed(code: result, message: String(cString: strerror(result)))
     }
 
     return Spawn(
       pid: pid,
       stdout: FileHandle(fileDescriptor: outPipe[0], closeOnDealloc: true),
-      stderr: FileHandle(fileDescriptor: errPipe[0], closeOnDealloc: true))
+      stderr: FileHandle(fileDescriptor: errPipe[0], closeOnDealloc: true),
+      stdin: standardInput ? FileHandle(fileDescriptor: inPipe[1], closeOnDealloc: true) : nil)
   }
 
   /// Signals the child's process group (`pgid == pid`). Refuse PIDs ≤1: zero signals our group

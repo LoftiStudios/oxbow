@@ -43,12 +43,37 @@ public final class NativeChatRenderer: ChatFrameSource {
 
   /// Output frame `index`, counted from the render's first frame as the CLI's file counts them.
   public func frame(index: Int) -> CGImage? {
-    guard let context = CGContext(
-      data: nil, width: style.width, height: style.height, bitsPerComponent: 8, bytesPerRow: 0,
-      space: CGColorSpace(name: CGColorSpace.sRGB)!,
-      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
-    else { return nil }
+    guard let context = makeContext(data: nil) else { return nil }
+    draw(frame: index, in: context)
+    return context.makeImage()
+  }
 
+  /// Frame `index` as tightly packed RGBA, top row first — what FFmpeg reads as `-pix_fmt rgba`.
+  /// Premultiplied, which is the same thing while the background is opaque.
+  public func rgba(frame index: Int) -> Data {
+    var data = Data(count: style.width * style.height * 4)
+    data.withUnsafeMutableBytes { buffer in
+      guard let context = makeContext(data: buffer.baseAddress) else { return }
+      draw(frame: index, in: context)
+    }
+    return data
+  }
+
+  /// Frames with the same key are the same picture: what is drawn depends only on the newest
+  /// visible comment. A writer can render once per key rather than once per frame — the CLI
+  /// redraws every sixth frame, and most of those change nothing either.
+  public func contentKey(forFrame index: Int) -> Int {
+    timeline.newestIndex(at: timeline.updateTime(forFrame: index))
+  }
+
+  private func makeContext(data: UnsafeMutableRawPointer?) -> CGContext? {
+    CGContext(
+      data: data, width: style.width, height: style.height, bitsPerComponent: 8,
+      bytesPerRow: style.width * 4, space: CGColorSpace(name: CGColorSpace.sRGB)!,
+      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+  }
+
+  private func draw(frame index: Int, in context: CGContext) {
     context.setFillColor(appearance.background.cgColor)
     context.fill(CGRect(origin: .zero, size: size))
     // Grayscale antialiasing with fractional glyph positions: what Skia produces here, where
@@ -70,7 +95,6 @@ public final class NativeChatRenderer: ChatFrameSource {
       drawBackground(forComment: comment, top: top, height: height, in: context)
       draw(layout, top: top, in: context)
     }
-    return context.makeImage()
   }
 
   private func layout(of index: Int) -> MessageLayout? {

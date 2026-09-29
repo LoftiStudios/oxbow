@@ -47,7 +47,22 @@ nonisolated enum AppComposition {
       ffmpegPath: ffmpeg,
       workspace: Workspace(root: supportDirectory.appending(path: "workspace")),
       store: QueueStore(fileURL: supportDirectory.appending(path: "queue.json")),
-      makeProcess: { HelperProcess() }))
+      makeProcess: { HelperProcess() },
+      makeChatRenderProcess: nativeChatRenderProcess))
+  }
+
+  /// docs/design/native-chat-render.md §6: off unless
+  /// `defaults write studio.lofti.Oxbow NativeChatRenderer -bool YES`, and read at each render's
+  /// launch, so flipping it needs no relaunch. Badges and emotes are not drawn natively yet.
+  static let nativeChatRendererKey = "NativeChatRenderer"
+
+  @Sendable
+  static func nativeChatRenderProcess(request: RenderRequest, context: StepContext) -> HelperProcessing? {
+    guard UserDefaults.standard.bool(forKey: nativeChatRendererKey),
+          let input = context.inputArtifacts.first
+    else { return nil }
+    return NativeChatRenderProcess(
+      request: request, input: input, output: context.outputFile, ffmpeg: context.ffmpegPath)
   }
 
   /// Keep persistent state outside disposable job workspaces swept at startup.

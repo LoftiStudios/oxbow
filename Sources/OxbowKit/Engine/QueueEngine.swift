@@ -21,6 +21,9 @@ public actor QueueEngine {
     public var makeProcess: @Sendable () -> HelperProcessing
     /// Keep the Mac awake while steps run; injectable for tests.
     public var sleepAssertion: any SleepAsserting
+    /// A chat render run by something other than the CLI — the native renderer, behind a hidden
+    /// setting. Asked at each render's launch; nil runs the CLI, as always.
+    public var makeChatRenderProcess: @Sendable (RenderRequest, StepContext) -> HelperProcessing?
 
     public init(
       helperExecutable: URL,
@@ -28,7 +31,8 @@ public actor QueueEngine {
       workspace: Workspace,
       store: QueueStore,
       makeProcess: @escaping @Sendable () -> HelperProcessing,
-      sleepAssertion: any SleepAsserting = SystemSleepAssertion())
+      sleepAssertion: any SleepAsserting = SystemSleepAssertion(),
+      makeChatRenderProcess: @escaping @Sendable (RenderRequest, StepContext) -> HelperProcessing? = { _, _ in nil })
     {
       self.helperExecutable = helperExecutable
       self.ffmpegPath = ffmpegPath
@@ -36,6 +40,7 @@ public actor QueueEngine {
       self.store = store
       self.makeProcess = makeProcess
       self.sleepAssertion = sleepAssertion
+      self.makeChatRenderProcess = makeChatRenderProcess
     }
   }
 
@@ -342,7 +347,10 @@ public actor QueueEngine {
     jobs[location.job].steps[location.step].status = .running
 
     // HelperProcess is single-use; its cancellation flag never resets.
-    let process = configuration.makeProcess()
+    let process: HelperProcessing =
+      if case .renderChat(let request) = step.kind,
+         let native = configuration.makeChatRenderProcess(request, context)
+      { native } else { configuration.makeProcess() }
 
     // Choose executable and output dialect for direct FFmpeg steps.
     let executable: URL
