@@ -17,11 +17,11 @@ import Foundation
 /// Subs, gifts, raids and the other system messages take the CLI's accented layout: a coloured
 /// bar, an indent, an icon, and a layout per kind (CR:969-1159). See `Highlight`.
 ///
-/// Badges and emotes are not drawn yet: an emote fragment is drawn as its name, which is also what
-/// the CLI does when an emote is missing from its cache.
+/// Badges and emotes come from the images the chat file embeds; one that is not there is
+/// skipped (badges) or drawn as its name (emotes), as the CLI does.
 struct MessageLayout: Sendable {
   struct Word: Sendable {
-    enum Face: Sendable { case regular, bold, emoji }
+    enum Face: Sendable { case regular, bold, emoji, badge, emote }
 
     let text: String
     let face: Face
@@ -32,6 +32,11 @@ struct MessageLayout: Sendable {
     let x: Int
     /// Drawn on a purple band, as a channel-points highlighted message's words are (CR:1619-1623).
     var isBanded = false
+    /// A badge's or emote's picture, already at its drawn size.
+    var image: ChatImage? = nil
+    /// Its top, from the top of the comment rather than of its line: an emote taller than the
+    /// line overhangs it, above and below, and the line does not grow (CR:1567).
+    var imageTop = 0
   }
 
   /// The bar and icon of an accented message.
@@ -53,12 +58,12 @@ struct MessageLayout: Sendable {
   /// which its timestamp shows.
   init?(
     comment: ChatDocument.Comment, index: Int, offset: Double, style: ChatTextStyle,
-    appearance: ChatAppearance)
+    appearance: ChatAppearance, images: ChatImages = .none)
   {
     guard comment.commenter != nil, let fragments = Self.fragments(of: comment) else {
       return nil
     }
-    var builder = Builder(style: style)
+    var builder = Builder(style: style, images: images)
     let highlight = Highlight.of(comment)
 
     if let highlight {
@@ -90,6 +95,7 @@ struct MessageLayout: Sendable {
     if appearance.hasTimestamps {
       builder.placeTimestamp(Timestamp(seconds: Int(offset)), color: appearance.message)
     }
+    builder.placeBadges(comment.message.badges)
     let name = comment.commenter?.displayName ?? ""
     let color = appearance.username(UsernameColor.color(for: comment), forComment: index)
     builder.place(name + ":", face: .bold, color: color)
@@ -238,16 +244,22 @@ struct MessageLayout: Sendable {
 
   /// The CLI's delimiter set (CR:1162). Runs collapse and ends trim, because empty tokens are
   /// dropped (CR:2209).
-  static func isWhitespace(_ character: Character) -> Bool {
-    character.unicodeScalars.allSatisfy { scalar in
-      switch scalar.value {
-      case 0x09...0x0D, 0x20, 0x85, 0xA0, 0x1680, 0x2000...0x200A, 0x2028, 0x2029, 0x202F, 0x205F,
-        0x3000:
-        true
-      default:
-        false
-      }
+  static func isWhitespace(_ scalar: Unicode.Scalar) -> Bool {
+    switch scalar.value {
+    case 0x09...0x0D, 0x20, 0x85, 0xA0, 0x1680, 0x2000...0x200A, 0x2028, 0x2029, 0x202F, 0x205F,
+      0x3000:
+      true
+    default:
+      false
     }
+  }
+
+  /// Split on scalars, not characters. Swift folds a combining mark into the space before it —
+  /// `Aware` + space + U+034F is one character `" \u{034F}"`, which is not whitespace — so a
+  /// character split would glue the mark and the word together and miss the emote. The CLI
+  /// splits on code units, and a mark after a space starts a word of its own.
+  static func words(in text: String) -> [String] {
+    text.unicodeScalars.split(whereSeparator: isWhitespace).map { String(String.UnicodeScalarView($0)) }
   }
 
   /// CR:2198-2254. Each run of consecutive right-to-left words is reversed, so that drawing
@@ -296,6 +308,7 @@ struct MessageLayout: Sendable {
   /// CR:1589-1644: the placement pass, one word at a time.
   struct Builder {
     let style: ChatTextStyle
+    let images: ChatImages
     var words: [Word] = []
     var line = 0
     var x: Int
@@ -303,10 +316,43 @@ struct MessageLayout: Sendable {
     /// timestamped comments a hanging indent (CR:1956).
     var lineStart: Int
 
-    init(style: ChatTextStyle) {
+    init(style: ChatTextStyle, images: ChatImages = .none) {
       self.style = style
+      self.images = images
       x = style.sidePadding
       lineStart = style.sidePadding
+    }
+
+    /// CR:1881-1895: in the order Twitch lists them, each advancing its width and half a word gap,
+    /// never wrapped — a long enough row pushes the name onto the next line instead. Centred on
+    /// the line, which at font size 15 puts a 22 px badge on its third row, not its second.
+    mutating func placeBadges(_ badges: [ChatDocument.Message.Badge]) {
+      for badge in badges {
+        guard let image = images.badge(badge.name, version: badge.version) else { continue }
+        let top = line * style.sectionHeight
+          + Int((Double(style.sectionHeight - image.height) / 2).rounded(.toNearestOrAwayFromZero))
+        words.append(Word(
+          text: badge.name, face: .badge, color: .black, line: line, x: x, image: image, imageTop: top))
+        x += image.width + style.wordSpacing / 2
+      }
+    }
+
+    /// CR:1559-1578 and CR:1221-1248. An emote wraps on its own width and advances by it and the
+    /// emote gap. A zero-width one advances nothing: it is right-aligned to whatever came before
+    /// it, which puts it over the previous emote, or over the previous word, or the name.
+    mutating func placeEmote(_ image: ChatImage, isZeroWidth: Bool = false, name: String) {
+      if !isZeroWidth, x + image.width > Int(style.wrapLimit) {
+        newLine()
+      }
+      // Truncated toward zero, as C#'s cast is: an odd overhang sits a pixel lower on the first
+      // line than on the rest.
+      let top = Int(Double(style.sectionHeight * line) + Double(style.sectionHeight - image.height) / 2)
+      let left = isZeroWidth ? x - style.emoteSpacing - image.width : x
+      words.append(Word(
+        text: name, face: .emote, color: .black, line: line, x: left, image: image, imageTop: top))
+      if !isZeroWidth {
+        x += image.width + style.emoteSpacing
+      }
     }
 
     mutating func newLine() {
@@ -319,12 +365,16 @@ struct MessageLayout: Sendable {
     mutating func placeFragments(_ fragments: [ChatDocument.Fragment], color: ChatColor, banded: Bool = false) {
       let first = words.count
       for fragment in fragments {
-        if fragment.emoticonID != nil {
-          // CR:1553-1585: a cache miss draws the fragment's text whole, unsplit.
-          place(fragment.text, face: .regular, color: color)
+        if let id = fragment.emoticonID {
+          if let image = images.firstParty(id) {
+            placeEmote(image, name: fragment.text)
+          } else {
+            // CR:1553-1585: a cache miss draws the fragment's text whole, unsplit.
+            place(fragment.text, face: .regular, color: color)
+          }
           continue
         }
-        let tokens = fragment.text.split(whereSeparator: MessageLayout.isWhitespace)
+        let tokens = MessageLayout.words(in: fragment.text)
         for token in MessageLayout.rightToLeftReordered(tokens) {
           placeToken(token, color: color)
         }
@@ -346,6 +396,11 @@ struct MessageLayout: Sendable {
     /// and advance, and each stretch of text between them is placed as a word of its own, with
     /// its own gap — so `a😀b` spaces out as "a 😀 b", as the CLI draws it.
     mutating func placeToken<Token: StringProtocol>(_ token: Token, color: ChatColor) {
+      // A third-party emote name wins over everything, emoji included (CR:1198-1202).
+      if let emote = images.thirdParty(String(token)) {
+        placeEmote(emote.image, isZeroWidth: emote.isZeroWidth, name: String(token))
+        return
+      }
       guard token.contains(where: MessageLayout.isEmoji) else {
         place(String(token), face: .regular, color: color)
         return

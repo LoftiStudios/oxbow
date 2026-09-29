@@ -18,6 +18,7 @@ public final class NativeChatRenderer: ChatFrameSource {
   private let timeline: ChatTimeline
   private let style: ChatTextStyle
   private let appearance: ChatAppearance
+  private let images: ChatImages
   /// Laid-out comments by index; nil where the CLI skips the comment. Layout is the expensive
   /// part of a frame and a comment appears in hundreds of them.
   private let layouts = Mutex<[Int: MessageLayout?]>([:])
@@ -28,6 +29,7 @@ public final class NativeChatRenderer: ChatFrameSource {
     timeline = ChatTimeline(document: document, framerate: request.framerate)
     style = ChatTextStyle(width: request.width, height: request.height, fontSize: request.fontSize)
     appearance = ChatAppearance(request: request)
+    images = ChatImages(document.embeddedData, fontSize: request.fontSize)
   }
 
   public var duration: Duration { timeline.duration }
@@ -101,7 +103,7 @@ public final class NativeChatRenderer: ChatFrameSource {
     if let cached = layouts.withLock({ $0[index] }) { return cached }
     let layout = MessageLayout(
       comment: document.comments[index], index: index, offset: timeline.offsets[index],
-      style: style, appearance: appearance)
+      style: style, appearance: appearance, images: images)
     layouts.withLock { $0[index] = .some(layout) }
     return layout
   }
@@ -133,6 +135,15 @@ public final class NativeChatRenderer: ChatFrameSource {
     for word in layout.words {
       if word.isBanded {
         drawBand(behind: word, lineTop: top + word.line * style.sectionHeight, in: context)
+      }
+      switch word.face {
+      case .badge:
+        drawImage(of: word, sectionTop: top, in: context)
+        continue
+      case .emote:
+        continue
+      case .regular, .bold, .emoji:
+        break
       }
       if word.face == .emoji {
         drawEmoji(word, lineTop: top + word.line * style.sectionHeight, in: context)
@@ -169,6 +180,25 @@ public final class NativeChatRenderer: ChatFrameSource {
         CTFontDrawGlyphs(run.font, run.glyphs, run.positions, run.glyphs.count, context)
       }
     }
+
+    // Emotes after everything else in the comment, in the order they were laid out, so a
+    // zero-width overlay lands on its base. The CLI bakes still emotes into the frame first and
+    // paints animated ones afterwards, which hides a still overlay under an animated base
+    // (docs/design/native-chat-render.md, phase 2); list order does not.
+    for word in layout.words where word.face == .emote {
+      drawImage(of: word, sectionTop: top, in: context)
+    }
+  }
+
+  /// Pixel for pixel: the image is already its drawn size, and the CLI's paint does not filter.
+  private func drawImage(of word: MessageLayout.Word, sectionTop: Int, in context: CGContext) {
+    guard let image = word.image, let frame = image.frames.first else { return }
+    context.saveGState()
+    context.interpolationQuality = .none
+    context.draw(frame, in: CGRect(
+      x: word.x, y: style.height - sectionTop - word.imageTop - image.height,
+      width: image.width, height: image.height))
+    context.restoreGState()
   }
 
   /// CR:908-931 and CR:976-980: the bar down the left edge, full height and not antialiased, and
@@ -200,6 +230,7 @@ public final class NativeChatRenderer: ChatFrameSource {
   private func drawBand(behind word: MessageLayout.Word, lineTop: Int, in context: CGContext) {
     let width: Double = switch word.face {
     case .emoji: Double(style.emojiSize)
+    case .badge, .emote: Double(word.image?.width ?? 0)
     case .bold: GlyphRun.width(of: Substring(word.text), in: style.bold)
     case .regular: GlyphRun.width(of: Substring(word.text), in: style.regular)
     }
