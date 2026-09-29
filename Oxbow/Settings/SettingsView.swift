@@ -17,6 +17,7 @@ struct SettingsView: View {
   @State private var output: DownloadOutput
   @State private var chatSize: ChatSize
   @State private var freeSpaceFloor: Int64
+  @State private var usesNativeChatRenderer: Bool
 
   init(preferences: Preferences = Preferences()) {
     _preferences = State(initialValue: preferences)
@@ -25,6 +26,7 @@ struct SettingsView: View {
     _output = State(initialValue: preferences.output)
     _chatSize = State(initialValue: preferences.chatSize)
     _freeSpaceFloor = State(initialValue: preferences.freeSpaceFloor)
+    _usesNativeChatRenderer = State(initialValue: preferences.usesNativeChatRenderer)
   }
 
   var body: some View {
@@ -46,6 +48,15 @@ struct SettingsView: View {
         Text("Medium").tag(ChatSize.medium)
         Text("Large").tag(ChatSize.large)
       }
+
+      // docs/design/native-chat-render.md, Phase 3: a way back for one release, then removed.
+      Toggle("Draw chat with Oxbow's renderer", isOn: nativeChatRendererBinding)
+      Text("""
+        Faster, in the same layout. Turn it off to use TwitchDownloader's \
+        renderer instead, if a chat looks wrong — and please say so.
+        """)
+        .font(.caption)
+        .foregroundStyle(.secondary)
 
       LabeledContent("Save to") {
         HStack(spacing: 8) {
@@ -85,6 +96,7 @@ struct SettingsView: View {
           output = preferences.output
           chatSize = preferences.chatSize
           freeSpaceFloor = preferences.freeSpaceFloor
+          usesNativeChatRenderer = preferences.usesNativeChatRenderer
         }
       }
     }
@@ -107,6 +119,12 @@ struct SettingsView: View {
 
   private var chatSizeBinding: Binding<ChatSize> {
     Binding(get: { chatSize }, set: { chatSize = $0; preferences.chatSize = $0 })
+  }
+
+  private var nativeChatRendererBinding: Binding<Bool> {
+    Binding(
+      get: { usesNativeChatRenderer },
+      set: { usesNativeChatRenderer = $0; preferences.usesNativeChatRenderer = $0 })
   }
 
   private var freeSpaceFloorBinding: Binding<Int64> {
