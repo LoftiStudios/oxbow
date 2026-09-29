@@ -432,6 +432,57 @@ Badges, emotes, cheermotes, highlight types, appearance options.
 **Stop if:** the budget is spent. This is the phase most at risk of sitting at
 90% for weeks. Check the budget, not the remaining list.
 
+**Finished 2026-09-29, day 1 of its 7.** Everything in scope is drawn natively
+and checked against the CLI frame for frame on the heavy window and the quiet
+VOD:
+
+- **Accented layouts:** subs, resubs with the viewer's own message, gifts, raids,
+  combos, watch streaks, charity and bits badges. They are detected with the
+  CLI's fourteen rules, in its order, and use its seven icons drawn as vectors
+  from its own SVG paths.
+- **Badges.**
+- **First- and third-party emotes,** including zero-width overlays.
+- **Animation,** on the CLI's own clock and duration rules.
+- **Cheermotes.**
+
+As in slice 3, the CLI's layout is kept and its accidents are not:
+
+- A million-bit badge reads "1M", not "1000K".
+- A sub whose fragments do not line up with its text stays system text. The CLI
+  throws there and aborts the render.
+- A gift bomb gets the gift icon. An offline CLI render leaves that square blank,
+  because the icon is a PNG it only reads from its download cache.
+- Every emote is drawn in list order. The CLI paints still emotes before animated
+  ones, which hides a still zero-width overlay under an animated base.
+- Cheermote tiers are sorted, where the CLI trusts the file's key order.
+- Legacy channel-points highlights are ported, but current downloads never
+  produce them.
+
+**Scaling** has to match exactly, or every emote drifts by a pixel. The CLI's
+"high quality" `ScalePixels` measures as plain bilinear on premultiplied pixels,
+without mipmaps. A hand-written resampler reproduces it to within 2 in a channel;
+every Core Graphics interpolation quality is several times further off.
+
+Heavy window, 5,400 frames, now with badges and animated emotes on both sides:
+
+| | |
+|---|---|
+| CLI `chatrender` | 21.6 s |
+| native, release build, end to end | **6.7 s** |
+
+Two costs were found and fixed on the way:
+
+- **Animation defeated frame reuse.** 5,240 of the 5,400 frames differ once
+  emotes move. Each frame now pastes emotes onto a cached text base, and the
+  render process keys its byte reuse on every visible animated emote's frame.
+- **Resampling dominated.** The heavy window's 98 emotes are 5,752 animation
+  frames. A per-pixel loop took 18.6 s to scale them; precomputed taps over raw
+  buffers, frames in parallel, take 1.3 s.
+
+Also found on the way, and fixed separately in
+[LoftiStudios/oxbow#79](https://github.com/LoftiStudios/oxbow/pull/79): a write to
+a native render's FFmpeg after it had exited raised SIGPIPE, which ends Oxbow.
+
 ### Phase 3 — make it the default
 
 Setting defaults on; the CLI render path stays in the codebase for one
