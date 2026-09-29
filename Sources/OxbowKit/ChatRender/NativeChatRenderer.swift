@@ -104,6 +104,10 @@ public final class NativeChatRenderer: ChatFrameSource {
   /// bottom.
   private func draw(_ layout: MessageLayout, top: Int, in context: CGContext) {
     for word in layout.words {
+      if word.face == .emoji {
+        drawEmoji(word, lineTop: top + word.line * style.sectionHeight, in: context)
+        continue
+      }
       let font = word.face == .bold ? style.bold : style.regular
       let baseline = top + word.line * style.sectionHeight + style.baseline
       let origin = CGPoint(x: Double(word.x), y: Double(style.height - baseline))
@@ -128,10 +132,37 @@ public final class NativeChatRenderer: ChatFrameSource {
       }
 
       context.setFillColor(word.color.cgColor)
+      // Glyph positions are offset by the text position, which CTLineDraw moves and saving the
+      // graphics state does not restore: without this, everything drawn after an emoji shifts.
+      context.textPosition = .zero
       for run in glyphs {
         CTFontDrawGlyphs(run.font, run.glyphs, run.positions, run.glyphs.count, context)
       }
     }
+  }
+
+  /// Apple's artwork in the CLI's box: its ink scaled to fit the square and centred in it, the
+  /// square placed where the CLI places its Noto image. Not outlined, as the CLI's images are
+  /// not.
+  private func drawEmoji(_ word: MessageLayout.Word, lineTop: Int, in context: CGContext) {
+    let font = CTFontCreateWithName("AppleColorEmoji" as CFString, style.fontSize, nil)
+    let line = GlyphRun.shapedLine(Substring(word.text), font: font, color: nil)
+    context.textPosition = .zero
+    let ink = CTLineGetImageBounds(line, context)
+    guard ink.width > 0, ink.height > 0 else { return }
+
+    let box = Double(style.emojiSize)
+    let scale = box / max(ink.width, ink.height)
+    let left = Double(word.x + style.emojiInset) + (box - ink.width * scale) / 2
+    let bottom = Double(style.height - lineTop - style.emojiTop - style.emojiSize)
+      + (box - ink.height * scale) / 2
+    context.saveGState()
+    context.translateBy(x: left - ink.minX * scale, y: bottom - ink.minY * scale)
+    context.scaleBy(x: scale, y: scale)
+    context.textPosition = .zero
+    CTLineDraw(line, context)
+    context.restoreGState()
+    context.textPosition = .zero
   }
 
   private struct PositionedGlyphs {

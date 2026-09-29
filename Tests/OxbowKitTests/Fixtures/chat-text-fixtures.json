@@ -1,0 +1,696 @@
+{
+ "FileInfo": {
+  "Version": {
+   "Major": 1,
+   "Minor": 4,
+   "Patch": 0
+  },
+  "CreatedAt": "2026-01-01T00:00:00Z",
+  "UpdatedAt": "2026-01-01T00:00:00Z"
+ },
+ "streamer": {
+  "name": "fixture",
+  "login": "fixture",
+  "id": 1
+ },
+ "video": {
+  "title": "Text fixtures",
+  "description": null,
+  "id": "0",
+  "created_at": "2026-01-01T00:00:00Z",
+  "start": 0,
+  "end": 73,
+  "length": 120,
+  "viewCount": 0,
+  "game": "Fixtures",
+  "chapters": []
+ },
+ "comments": [
+  {
+   "_id": "fixture-hebrew",
+   "created_at": "2026-01-01T00:00:02.000Z",
+   "channel_id": "1",
+   "content_type": "video",
+   "content_id": "0",
+   "content_offset_seconds": 2,
+   "commenter": {
+    "display_name": "Noa",
+    "_id": "100",
+    "name": "viewer0",
+    "bio": null,
+    "created_at": "2020-01-01T00:00:00Z",
+    "updated_at": "2020-01-01T00:00:00Z",
+    "logo": ""
+   },
+   "message": {
+    "body": "שלום עולם",
+    "bits_spent": 0,
+    "fragments": [
+     {
+      "text": "שלום עולם",
+      "emoticon": null
+     }
+    ],
+    "user_badges": [],
+    "user_color": "#1E90FF",
+    "emoticons": []
+   }
+  },
+  {
+   "_id": "fixture-arabic",
+   "created_at": "2026-01-01T00:00:05.000Z",
+   "channel_id": "1",
+   "content_type": "video",
+   "content_id": "0",
+   "content_offset_seconds": 5,
+   "commenter": {
+    "display_name": "Karim",
+    "_id": "101",
+    "name": "viewer1",
+    "bio": null,
+    "created_at": "2020-01-01T00:00:00Z",
+    "updated_at": "2020-01-01T00:00:00Z",
+    "logo": ""
+   },
+   "message": {
+    "body": "مرحبا بالعالم",
+    "bits_spent": 0,
+    "fragments": [
+     {
+      "text": "مرحبا بالعالم",
+      "emoticon": null
+     }
+    ],
+    "user_badges": [],
+    "user_color": "#FF7F50",
+    "emoticons": []
+   }
+  },
+  {
+   "_id": "fixture-mixed-rtl",
+   "created_at": "2026-01-01T00:00:08.000Z",
+   "channel_id": "1",
+   "content_type": "video",
+   "content_id": "0",
+   "content_offset_seconds": 8,
+   "commenter": {
+    "display_name": "Ava",
+    "_id": "102",
+    "name": "viewer2",
+    "bio": null,
+    "created_at": "2020-01-01T00:00:00Z",
+    "updated_at": "2020-01-01T00:00:00Z",
+    "logo": ""
+   },
+   "message": {
+    "body": "I said שלום עולם to him",
+    "bits_spent": 0,
+    "fragments": [
+     {
+      "text": "I said שלום עולם to him",
+      "emoticon": null
+     }
+    ],
+    "user_badges": [],
+    "user_color": "#9ACD32",
+    "emoticons": []
+   }
+  },
+  {
+   "_id": "fixture-rtl-numbers",
+   "created_at": "2026-01-01T00:00:11.000Z",
+   "channel_id": "1",
+   "content_type": "video",
+   "content_id": "0",
+   "content_offset_seconds": 11,
+   "commenter": {
+    "display_name": "Eli",
+    "_id": "103",
+    "name": "viewer3",
+    "bio": null,
+    "created_at": "2020-01-01T00:00:00Z",
+    "updated_at": "2020-01-01T00:00:00Z",
+    "logo": ""
+   },
+   "message": {
+    "body": "שלום 123 עולם",
+    "bits_spent": 0,
+    "fragments": [
+     {
+      "text": "שלום 123 עולם",
+      "emoticon": null
+     }
+    ],
+    "user_badges": [],
+    "user_color": "#DAA520",
+    "emoticons": []
+   }
+  },
+  {
+   "_id": "fixture-rtl-username",
+   "created_at": "2026-01-01T00:00:14.000Z",
+   "channel_id": "1",
+   "content_type": "video",
+   "content_id": "0",
+   "content_offset_seconds": 14,
+   "commenter": {
+    "display_name": "משתמש",
+    "_id": "104",
+    "name": "viewer4",
+    "bio": null,
+    "created_at": "2020-01-01T00:00:00Z",
+    "updated_at": "2020-01-01T00:00:00Z",
+    "logo": ""
+   },
+   "message": {
+    "body": "hello from an RTL name",
+    "bits_spent": 0,
+    "fragments": [
+     {
+      "text": "hello from an RTL name",
+      "emoticon": null
+     }
+    ],
+    "user_badges": [],
+    "user_color": "#FF69B4",
+    "emoticons": []
+   }
+  },
+  {
+   "_id": "fixture-zwj-family",
+   "created_at": "2026-01-01T00:00:17.000Z",
+   "channel_id": "1",
+   "content_type": "video",
+   "content_id": "0",
+   "content_offset_seconds": 17,
+   "commenter": {
+    "display_name": "Mia",
+    "_id": "105",
+    "name": "viewer5",
+    "bio": null,
+    "created_at": "2020-01-01T00:00:00Z",
+    "updated_at": "2020-01-01T00:00:00Z",
+    "logo": ""
+   },
+   "message": {
+    "body": "family 👨‍👩‍👧‍👦 here",
+    "bits_spent": 0,
+    "fragments": [
+     {
+      "text": "family 👨‍👩‍👧‍👦 here",
+      "emoticon": null
+     }
+    ],
+    "user_badges": [],
+    "user_color": "#00FF7F",
+    "emoticons": []
+   }
+  },
+  {
+   "_id": "fixture-skin-tone",
+   "created_at": "2026-01-01T00:00:20.000Z",
+   "channel_id": "1",
+   "content_type": "video",
+   "content_id": "0",
+   "content_offset_seconds": 20,
+   "commenter": {
+    "display_name": "Leo",
+    "_id": "106",
+    "name": "viewer6",
+    "bio": null,
+    "created_at": "2020-01-01T00:00:00Z",
+    "updated_at": "2020-01-01T00:00:00Z",
+    "logo": ""
+   },
+   "message": {
+    "body": "👍🏽 nice",
+    "bits_spent": 0,
+    "fragments": [
+     {
+      "text": "👍🏽 nice",
+      "emoticon": null
+     }
+    ],
+    "user_badges": [],
+    "user_color": "#FF4500",
+    "emoticons": []
+   }
+  },
+  {
+   "_id": "fixture-flags",
+   "created_at": "2026-01-01T00:00:23.000Z",
+   "channel_id": "1",
+   "content_type": "video",
+   "content_id": "0",
+   "content_offset_seconds": 23,
+   "commenter": {
+    "display_name": "Yuki",
+    "_id": "107",
+    "name": "viewer7",
+    "bio": null,
+    "created_at": "2020-01-01T00:00:00Z",
+    "updated_at": "2020-01-01T00:00:00Z",
+    "logo": ""
+   },
+   "message": {
+    "body": "🇯🇵🇺🇸 flags",
+    "bits_spent": 0,
+    "fragments": [
+     {
+      "text": "🇯🇵🇺🇸 flags",
+      "emoticon": null
+     }
+    ],
+    "user_badges": [],
+    "user_color": "#5F9EA0",
+    "emoticons": []
+   }
+  },
+  {
+   "_id": "fixture-keycaps",
+   "created_at": "2026-01-01T00:00:26.000Z",
+   "channel_id": "1",
+   "content_type": "video",
+   "content_id": "0",
+   "content_offset_seconds": 26,
+   "commenter": {
+    "display_name": "Sam",
+    "_id": "108",
+    "name": "viewer8",
+    "bio": null,
+    "created_at": "2020-01-01T00:00:00Z",
+    "updated_at": "2020-01-01T00:00:00Z",
+    "logo": ""
+   },
+   "message": {
+    "body": "1️⃣ 2️⃣ keycaps",
+    "bits_spent": 0,
+    "fragments": [
+     {
+      "text": "1️⃣ 2️⃣ keycaps",
+      "emoticon": null
+     }
+    ],
+    "user_badges": [],
+    "user_color": "#D2691E",
+    "emoticons": []
+   }
+  },
+  {
+   "_id": "fixture-variation-selector",
+   "created_at": "2026-01-01T00:00:29.000Z",
+   "channel_id": "1",
+   "content_type": "video",
+   "content_id": "0",
+   "content_offset_seconds": 29,
+   "commenter": {
+    "display_name": "Zoe",
+    "_id": "109",
+    "name": "viewer9",
+    "bio": null,
+    "created_at": "2020-01-01T00:00:00Z",
+    "updated_at": "2020-01-01T00:00:00Z",
+    "logo": ""
+   },
+   "message": {
+    "body": "❤️ vs ❤",
+    "bits_spent": 0,
+    "fragments": [
+     {
+      "text": "❤️ vs ❤",
+      "emoticon": null
+     }
+    ],
+    "user_badges": [],
+    "user_color": "#8A2BE2",
+    "emoticons": []
+   }
+  },
+  {
+   "_id": "fixture-emoji-glued",
+   "created_at": "2026-01-01T00:00:32.000Z",
+   "channel_id": "1",
+   "content_type": "video",
+   "content_id": "0",
+   "content_offset_seconds": 32,
+   "commenter": {
+    "display_name": "Max",
+    "_id": "110",
+    "name": "viewer10",
+    "bio": null,
+    "created_at": "2020-01-01T00:00:00Z",
+    "updated_at": "2020-01-01T00:00:00Z",
+    "logo": ""
+   },
+   "message": {
+    "body": "lol😂😂 glued",
+    "bits_spent": 0,
+    "fragments": [
+     {
+      "text": "lol😂😂 glued",
+      "emoticon": null
+     }
+    ],
+    "user_badges": [],
+    "user_color": "#B22222",
+    "emoticons": []
+   }
+  },
+  {
+   "_id": "fixture-emoji-run",
+   "created_at": "2026-01-01T00:00:35.000Z",
+   "channel_id": "1",
+   "content_type": "video",
+   "content_id": "0",
+   "content_offset_seconds": 35,
+   "commenter": {
+    "display_name": "Ivy",
+    "_id": "111",
+    "name": "viewer11",
+    "bio": null,
+    "created_at": "2020-01-01T00:00:00Z",
+    "updated_at": "2020-01-01T00:00:00Z",
+    "logo": ""
+   },
+   "message": {
+    "body": "😀😃😄😁😆😅🤣😂🙂🙃😉😊😇🥰😍🤩😘😗😚😙",
+    "bits_spent": 0,
+    "fragments": [
+     {
+      "text": "😀😃😄😁😆😅🤣😂🙂🙃😉😊😇🥰😍🤩😘😗😚😙",
+      "emoticon": null
+     }
+    ],
+    "user_badges": [],
+    "user_color": "#2E8B57",
+    "emoticons": []
+   }
+  },
+  {
+   "_id": "fixture-japanese",
+   "created_at": "2026-01-01T00:00:38.000Z",
+   "channel_id": "1",
+   "content_type": "video",
+   "content_id": "0",
+   "content_offset_seconds": 38,
+   "commenter": {
+    "display_name": "Ren",
+    "_id": "112",
+    "name": "viewer12",
+    "bio": null,
+    "created_at": "2020-01-01T00:00:00Z",
+    "updated_at": "2020-01-01T00:00:00Z",
+    "logo": ""
+   },
+   "message": {
+    "body": "これは長い日本語のメッセージです。折り返しを確認します。これは長い日本語のメッセージです。",
+    "bits_spent": 0,
+    "fragments": [
+     {
+      "text": "これは長い日本語のメッセージです。折り返しを確認します。これは長い日本語のメッセージです。",
+      "emoticon": null
+     }
+    ],
+    "user_badges": [],
+    "user_color": "#1E90FF",
+    "emoticons": []
+   }
+  },
+  {
+   "_id": "fixture-korean",
+   "created_at": "2026-01-01T00:00:41.000Z",
+   "channel_id": "1",
+   "content_type": "video",
+   "content_id": "0",
+   "content_offset_seconds": 41,
+   "commenter": {
+    "display_name": "Jin",
+    "_id": "113",
+    "name": "viewer13",
+    "bio": null,
+    "created_at": "2020-01-01T00:00:00Z",
+    "updated_at": "2020-01-01T00:00:00Z",
+    "logo": ""
+   },
+   "message": {
+    "body": "안녕하세요 여러분",
+    "bits_spent": 0,
+    "fragments": [
+     {
+      "text": "안녕하세요 여러분",
+      "emoticon": null
+     }
+    ],
+    "user_badges": [],
+    "user_color": "#FF7F50",
+    "emoticons": []
+   }
+  },
+  {
+   "_id": "fixture-cjk-username",
+   "created_at": "2026-01-01T00:00:44.000Z",
+   "channel_id": "1",
+   "content_type": "video",
+   "content_id": "0",
+   "content_offset_seconds": 44,
+   "commenter": {
+    "display_name": "小明",
+    "_id": "114",
+    "name": "viewer14",
+    "bio": null,
+    "created_at": "2020-01-01T00:00:00Z",
+    "updated_at": "2020-01-01T00:00:00Z",
+    "logo": ""
+   },
+   "message": {
+    "body": "username in CJK",
+    "bits_spent": 0,
+    "fragments": [
+     {
+      "text": "username in CJK",
+      "emoticon": null
+     }
+    ],
+    "user_badges": [],
+    "user_color": "#9ACD32",
+    "emoticons": []
+   }
+  },
+  {
+   "_id": "fixture-thai",
+   "created_at": "2026-01-01T00:00:47.000Z",
+   "channel_id": "1",
+   "content_type": "video",
+   "content_id": "0",
+   "content_offset_seconds": 47,
+   "commenter": {
+    "display_name": "Anong",
+    "_id": "115",
+    "name": "viewer15",
+    "bio": null,
+    "created_at": "2020-01-01T00:00:00Z",
+    "updated_at": "2020-01-01T00:00:00Z",
+    "logo": ""
+   },
+   "message": {
+    "body": "สวัสดีครับ ทุกคน",
+    "bits_spent": 0,
+    "fragments": [
+     {
+      "text": "สวัสดีครับ ทุกคน",
+      "emoticon": null
+     }
+    ],
+    "user_badges": [],
+    "user_color": "#DAA520",
+    "emoticons": []
+   }
+  },
+  {
+   "_id": "fixture-combining",
+   "created_at": "2026-01-01T00:00:50.000Z",
+   "channel_id": "1",
+   "content_type": "video",
+   "content_id": "0",
+   "content_offset_seconds": 50,
+   "commenter": {
+    "display_name": "Chloe",
+    "_id": "116",
+    "name": "viewer16",
+    "bio": null,
+    "created_at": "2020-01-01T00:00:00Z",
+    "updated_at": "2020-01-01T00:00:00Z",
+    "logo": ""
+   },
+   "message": {
+    "body": "café and café",
+    "bits_spent": 0,
+    "fragments": [
+     {
+      "text": "café and café",
+      "emoticon": null
+     }
+    ],
+    "user_badges": [],
+    "user_color": "#FF69B4",
+    "emoticons": []
+   }
+  },
+  {
+   "_id": "fixture-cyrillic",
+   "created_at": "2026-01-01T00:00:53.000Z",
+   "channel_id": "1",
+   "content_type": "video",
+   "content_id": "0",
+   "content_offset_seconds": 53,
+   "commenter": {
+    "display_name": "Ivan",
+    "_id": "117",
+    "name": "viewer17",
+    "bio": null,
+    "created_at": "2020-01-01T00:00:00Z",
+    "updated_at": "2020-01-01T00:00:00Z",
+    "logo": ""
+   },
+   "message": {
+    "body": "Привет мир",
+    "bits_spent": 0,
+    "fragments": [
+     {
+      "text": "Привет мир",
+      "emoticon": null
+     }
+    ],
+    "user_badges": [],
+    "user_color": "#00FF7F",
+    "emoticons": []
+   }
+  },
+  {
+   "_id": "fixture-greek",
+   "created_at": "2026-01-01T00:00:56.000Z",
+   "channel_id": "1",
+   "content_type": "video",
+   "content_id": "0",
+   "content_offset_seconds": 56,
+   "commenter": {
+    "display_name": "Eleni",
+    "_id": "118",
+    "name": "viewer18",
+    "bio": null,
+    "created_at": "2020-01-01T00:00:00Z",
+    "updated_at": "2020-01-01T00:00:00Z",
+    "logo": ""
+   },
+   "message": {
+    "body": "Καλημέρα κόσμε",
+    "bits_spent": 0,
+    "fragments": [
+     {
+      "text": "Καλημέρα κόσμε",
+      "emoticon": null
+     }
+    ],
+    "user_badges": [],
+    "user_color": "#FF4500",
+    "emoticons": []
+   }
+  },
+  {
+   "_id": "fixture-symbols",
+   "created_at": "2026-01-01T00:00:59.000Z",
+   "channel_id": "1",
+   "content_type": "video",
+   "content_id": "0",
+   "content_offset_seconds": 59,
+   "commenter": {
+    "display_name": "Kai",
+    "_id": "119",
+    "name": "viewer19",
+    "bio": null,
+    "created_at": "2020-01-01T00:00:00Z",
+    "updated_at": "2020-01-01T00:00:00Z",
+    "logo": ""
+   },
+   "message": {
+    "body": "→ ← ✓ ★ ∞",
+    "bits_spent": 0,
+    "fragments": [
+     {
+      "text": "→ ← ✓ ★ ∞",
+      "emoticon": null
+     }
+    ],
+    "user_badges": [],
+    "user_color": "#5F9EA0",
+    "emoticons": []
+   }
+  },
+  {
+   "_id": "fixture-zalgo",
+   "created_at": "2026-01-01T00:01:02.000Z",
+   "channel_id": "1",
+   "content_type": "video",
+   "content_id": "0",
+   "content_offset_seconds": 62,
+   "commenter": {
+    "display_name": "Rex",
+    "_id": "120",
+    "name": "viewer20",
+    "bio": null,
+    "created_at": "2020-01-01T00:00:00Z",
+    "updated_at": "2020-01-01T00:00:00Z",
+    "logo": ""
+   },
+   "message": {
+    "body": "h̷e̷l̷l̷o̷",
+    "bits_spent": 0,
+    "fragments": [
+     {
+      "text": "h̷e̷l̷l̷o̷",
+      "emoticon": null
+     }
+    ],
+    "user_badges": [],
+    "user_color": "#D2691E",
+    "emoticons": []
+   }
+  },
+  {
+   "_id": "fixture-new-emoji",
+   "created_at": "2026-01-01T00:01:05.000Z",
+   "channel_id": "1",
+   "content_type": "video",
+   "content_id": "0",
+   "content_offset_seconds": 65,
+   "commenter": {
+    "display_name": "Uma",
+    "_id": "121",
+    "name": "viewer21",
+    "bio": null,
+    "created_at": "2020-01-01T00:00:00Z",
+    "updated_at": "2020-01-01T00:00:00Z",
+    "logo": ""
+   },
+   "message": {
+    "body": "tired 🫩 face",
+    "bits_spent": 0,
+    "fragments": [
+     {
+      "text": "tired 🫩 face",
+      "emoticon": null
+     }
+    ],
+    "user_badges": [],
+    "user_color": "#8A2BE2",
+    "emoticons": []
+   }
+  }
+ ],
+ "embeddedData": {
+  "thirdParty": [],
+  "firstParty": [],
+  "twitchBadges": [],
+  "twitchBits": []
+ }
+}

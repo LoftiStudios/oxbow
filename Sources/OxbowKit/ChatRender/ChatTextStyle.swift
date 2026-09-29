@@ -35,6 +35,16 @@ struct ChatTextStyle: Sendable {
   /// A word moves to the next line when it would end past this (CR:1637).
   var wrapLimit: Double { Double(width - sidePadding * 2) }
 
+  /// Between an emoji and whatever follows it (CRO:77).
+  var emoteSpacing: Int { Int(6 * scale) }
+  /// The square an emoji is drawn into: 22 at font size 15. The CLI rounds half to even
+  /// (`Math.Round(22.5)`), which is not Swift's default rounding (CR:2068-2098).
+  var emojiSize: Int { Int((36 * scale).rounded(.toNearestOrEven)) }
+  /// The box sits this far right of the word's x, and is centred in the line rather than on
+  /// the baseline (CR:1355-1356).
+  var emojiInset: Int { Int((Double(emoteSpacing) / 2).rounded(.up)) }
+  var emojiTop: Int { (sectionHeight - emojiSize) / 2 }
+
   /// The fixed advance of a timestamp of each length class, measured once from placeholder
   /// digits and truncated, as the CLI caches them (CR:152-158).
   func timestampWidth(_ lengthClass: Int) -> Int {

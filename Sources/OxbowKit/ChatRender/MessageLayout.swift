@@ -8,12 +8,18 @@ import Foundation
 /// new line whenever a word would end past the wrap limit. Line references are to
 /// `ChatRenderer.cs`.
 ///
-/// Badges, emotes, emoji and the accented layouts of sub and raid messages are not drawn yet:
-/// an emote fragment is drawn as its name, which is also what the CLI does when an emote is
-/// missing from its cache.
+/// Text Inter cannot draw — right-to-left scripts, CJK, combining marks — goes to Core Text,
+/// with its own shaping, bidi and font fallback. That is deliberately not the CLI's fallback
+/// path, which leaves glyphs invisible, detaches combining marks and can abort a render
+/// (docs/design/native-chat-render.md §5). What is kept from the CLI is everything that decides
+/// where words land: right-to-left word order and the emoji box.
+///
+/// Badges, emotes and the accented layouts of sub and raid messages are not drawn yet: an emote
+/// fragment is drawn as its name, which is also what the CLI does when an emote is missing from
+/// its cache.
 struct MessageLayout: Sendable {
   struct Word: Sendable {
-    enum Face: Sendable { case regular, bold }
+    enum Face: Sendable { case regular, bold, emoji }
 
     let text: String
     let face: Face
@@ -53,8 +59,9 @@ struct MessageLayout: Sendable {
         builder.place(fragment.text, face: .regular, color: appearance.message)
         continue
       }
-      for word in fragment.text.split(whereSeparator: Self.isWhitespace) {
-        builder.place(String(word), face: .regular, color: appearance.message)
+      let tokens = fragment.text.split(whereSeparator: Self.isWhitespace)
+      for token in Self.rightToLeftReordered(tokens) {
+        builder.placeToken(token, color: appearance.message)
       }
     }
 
@@ -74,6 +81,36 @@ struct MessageLayout: Sendable {
         false
       }
     }
+  }
+
+  /// CR:2198-2254. Each run of consecutive right-to-left words is reversed, so that drawing
+  /// words left to right reads right to left. A word counts by its first UTF-16 unit alone, and
+  /// runs never cross a fragment, both as the CLI does it.
+  static func rightToLeftReordered<Token: StringProtocol>(_ tokens: [Token]) -> [Token] {
+    var result: [Token] = []
+    var run: [Token] = []
+    for token in tokens {
+      if let first = token.utf16.first, (0x0591...0x07FF).contains(first) {
+        run.append(token)
+      } else {
+        result += run.reversed()
+        run = []
+        result.append(token)
+      }
+    }
+    return result + run.reversed()
+  }
+
+  /// Whether the CLI would draw this character as an emoji image rather than text. The CLI asks
+  /// its Noto image set; this asks Unicode's emoji properties, which agree on emoji and differ
+  /// on 171 symbols such as `©` and `♥`, which Noto has and Unicode presents as text.
+  static func isEmoji(_ character: Character) -> Bool {
+    let scalars = character.unicodeScalars
+    guard let first = scalars.first, first.properties.isEmoji else { return false }
+    if scalars.count == 1 { return first.properties.isEmojiPresentation }
+    // Sequences: presentation selector, keycap, ZWJ, modifiers, flags and tags.
+    return scalars.contains { [0xFE0F, 0x20E3, 0x200D].contains($0.value) }
+      || first.properties.isEmojiPresentation
   }
 
   /// CR:846-869. System notices other than these are skipped; a highlighted message with no
@@ -111,6 +148,42 @@ struct MessageLayout: Sendable {
       words.append(Word(text: timestamp.text, face: .regular, color: color, line: line, x: x))
       x += style.timestampWidth(timestamp.lengthClass) + style.wordSpacing * 2
       lineStart = x
+    }
+
+    /// CR:1294-1376. A word with emoji in it is split: each emoji takes the CLI's fixed box
+    /// and advance, and each stretch of text between them is placed as a word of its own, with
+    /// its own gap — so `a😀b` spaces out as "a 😀 b", as the CLI draws it.
+    mutating func placeToken<Token: StringProtocol>(_ token: Token, color: ChatColor) {
+      guard token.contains(where: MessageLayout.isEmoji) else {
+        place(String(token), face: .regular, color: color)
+        return
+      }
+      var text = ""
+      for character in token {
+        guard MessageLayout.isEmoji(character) else {
+          text.append(character)
+          continue
+        }
+        if !text.isEmpty {
+          place(text, face: .regular, color: color)
+          text = ""
+        }
+        placeEmoji(character)
+      }
+      if !text.isEmpty {
+        place(text, face: .regular, color: color)
+      }
+    }
+
+    /// CR:1348-1369: wrap when the box would end past the limit, then advance by the box and
+    /// the emote spacing — no word gap.
+    private mutating func placeEmoji(_ emoji: Character) {
+      if x + style.emojiSize > Int(style.wrapLimit) {
+        line += 1
+        x = lineStart
+      }
+      words.append(Word(text: String(emoji), face: .emoji, color: .black, line: line, x: x))
+      x += style.emojiSize + style.emoteSpacing
     }
 
     mutating func place(_ text: String, face: Word.Face, color: ChatColor) {
