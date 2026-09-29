@@ -172,6 +172,45 @@ struct ChatImagesTests {
     #expect(ChatImages.durations(source, count: 3) == [4, 3, 10])
   }
 
+  /// CR:650-662 on a 25 × 100 ms GIF: the instant a frame ends still shows it. Time is taken
+  /// modulo the cycle first, so the end of the cycle is its start again.
+  @Test(arguments: [(0, 0), (1, 0), (99, 0), (100, 0), (101, 1), (200, 1), (2499, 24), (2500, 0), (2601, 1)])
+  func picksAnimationFramesAsTheCLIDoes(milliseconds: Int, frame: Int) throws {
+    let gif = Self.image(10, 10, type: .gif, frames: Array(repeating: 0.1, count: 25))
+    let source = try #require(CGImageSourceCreateWithData(gif as CFData, nil))
+    let frames = (0..<25).compactMap { CGImageSourceCreateImageAtIndex(source, $0, nil) }
+    let image = ChatImage(frames: frames, durations: ChatImages.durations(source, count: 25))
+    #expect(image.frameIndex(atMilliseconds: Int64(milliseconds)) == frame)
+  }
+
+  /// The CLI's `(long)(tick / 30.0 * 1000)`, not `tick * 100 / 3`: tick 969 is 32,299 ms.
+  @Test func runsAnimationOnTheCLIsClock() throws {
+    let json = #"{"video": {"start": 0, "end": 60}, "comments": []}"#
+    let renderer = NativeChatRenderer(
+      document: try ChatDocument.decode(from: Data(json.utf8)),
+      request: RenderRequest(width: 342, height: 1026, framerate: 30, fontSize: 15))
+    #expect(renderer.animationMilliseconds(forFrame: 969) == 32299)
+    #expect(renderer.animationMilliseconds(forFrame: 30) == 1000)
+  }
+
+  /// Frames that share a key share their bytes when written. An animated emote on screen must
+  /// change the key as it animates, or the file would hold one frame of it.
+  @Test func keysFramesByAnimationAsWellAsByComment() throws {
+    let gif = Self.image(56, 56, type: .gif, frames: [0.1, 0.1])
+    let json = """
+      {"video": {"start": 0, "end": 10}, "embeddedData": \(embedded(thirdParty: [("Spin", gif, false)])),
+       "comments": [{"_id": "x", "created_at": "2026-01-01T00:00:00Z", "content_offset_seconds": 0,
+         "commenter": {"display_name": "u", "name": "n"},
+         "message": {"body": "b", "fragments": [{"text": "Spin", "emoticon": null}], "user_color": "#FFFFFF"}}]}
+      """
+    let renderer = NativeChatRenderer(
+      document: try ChatDocument.decode(from: Data(json.utf8)),
+      request: RenderRequest(width: 342, height: 1026, framerate: 30, fontSize: 15))
+    // 0 ms and 100 ms are frame 0; 133 ms is frame 1.
+    #expect(renderer.contentKey(forFrame: 0) == renderer.contentKey(forFrame: 3))
+    #expect(renderer.contentKey(forFrame: 0) != renderer.contentKey(forFrame: 4))
+  }
+
   /// A still is copied through unchanged; a downscale is bilinear over premultiplied pixels.
   @Test func resamplesToTheExactSize() throws {
     let source = try #require(CGImageSourceCreateWithData(Self.image(56, 56) as CFData, nil))

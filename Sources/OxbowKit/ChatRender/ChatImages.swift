@@ -20,6 +20,20 @@ final class ChatImage: Sendable {
   }
 
   var isAnimated: Bool { frames.count > 1 }
+
+  /// CR:650-662. The instant a frame ends still shows that frame, not the next: the CLI's test is
+  /// `<= 0`, and at 30 fps a boundary lands on a tick every third frame.
+  func frameIndex(atMilliseconds milliseconds: Int64) -> Int {
+    guard isAnimated, !durations.isEmpty else { return 0 }
+    let cycle = Int64(durations.reduce(0, +) * 10)
+    guard cycle > 0 else { return 0 }
+    var remaining = milliseconds % cycle
+    for (index, duration) in durations.enumerated() {
+      remaining -= Int64(duration * 10)
+      if remaining <= 0 { return index }
+    }
+    return durations.count - 1
+  }
 }
 
 /// The badges and emotes a chat file embeds, looked up the way the CLI looks them up, decoded
@@ -101,7 +115,13 @@ final class ChatImages: Sendable {
       height = Self.snap(Int(Double(first.height) * factor), within: snap, of: first.height)
     }
     let width = Int(Double(height) / Double(first.height) * Double(first.width))
-    let scaled = frames.compactMap { Self.resample($0, width: width, height: height) }
+    // Frames are independent: a 7TV emote can have well over a hundred.
+    let results = Mutex([CGImage?](repeating: nil, count: frames.count))
+    DispatchQueue.concurrentPerform(iterations: frames.count) { index in
+      let image = Self.resample(frames[index], width: width, height: height)
+      results.withLock { $0[index] = image }
+    }
+    let scaled = results.withLock { $0.compactMap { $0 } }
     guard scaled.count == frames.count else { return nil }
     return ChatImage(
       frames: scaled, durations: scaled.count > 1 ? Self.durations(source, count: scaled.count) : [])
@@ -159,26 +179,38 @@ final class ChatImages: Sendable {
     guard width > 0, height > 0, let source = rgba(image) else { return nil }
     if width == image.width, height == image.height { return make(source, width: width, height: height) }
 
-    let sourceWidth = image.width
-    let sourceHeight = image.height
+    // Where each output column and row samples, worked out once rather than per pixel.
+    func taps(_ count: Int, from sourceCount: Int) -> [(near: Int, far: Int, weight: Double)] {
+      let step = Double(sourceCount) / Double(count)
+      return (0..<count).map { index in
+        let position = (Double(index) + 0.5) * step - 0.5
+        let near = min(max(Int(position.rounded(.down)), 0), sourceCount - 1)
+        return (near, min(near + 1, sourceCount - 1), min(max(position - Double(near), 0), 1))
+      }
+    }
+    let columns = taps(width, from: image.width)
+    let rows = taps(height, from: image.height)
+    let sourceRow = image.width * 4
+
     var output = [UInt8](repeating: 0, count: width * height * 4)
-    let xScale = Double(sourceWidth) / Double(width)
-    let yScale = Double(sourceHeight) / Double(height)
-    for y in 0..<height {
-      let v = (Double(y) + 0.5) * yScale - 0.5
-      let y0 = min(max(Int(v.rounded(.down)), 0), sourceHeight - 1)
-      let y1 = min(y0 + 1, sourceHeight - 1)
-      let fy = min(max(v - Double(y0), 0), 1)
-      for x in 0..<width {
-        let u = (Double(x) + 0.5) * xScale - 0.5
-        let x0 = min(max(Int(u.rounded(.down)), 0), sourceWidth - 1)
-        let x1 = min(x0 + 1, sourceWidth - 1)
-        let fx = min(max(u - Double(x0), 0), 1)
-        for channel in 0..<4 {
-          func at(_ px: Int, _ py: Int) -> Double { Double(source[(py * sourceWidth + px) * 4 + channel]) }
-          let top = at(x0, y0) * (1 - fx) + at(x1, y0) * fx
-          let bottom = at(x0, y1) * (1 - fx) + at(x1, y1) * fx
-          output[(y * width + x) * 4 + channel] = UInt8((top * (1 - fy) + bottom * fy).rounded())
+    source.withUnsafeBufferPointer { input in
+      output.withUnsafeMutableBufferPointer { out in
+        var o = 0
+        for row in rows {
+          let upper = row.near * sourceRow
+          let lower = row.far * sourceRow
+          let fy = row.weight
+          for column in columns {
+            let left = column.near * 4
+            let right = column.far * 4
+            let fx = column.weight
+            for channel in 0..<4 {
+              let top = Double(input[upper + left + channel]) * (1 - fx) + Double(input[upper + right + channel]) * fx
+              let bottom = Double(input[lower + left + channel]) * (1 - fx) + Double(input[lower + right + channel]) * fx
+              out[o + channel] = UInt8((top * (1 - fy) + bottom * fy).rounded())
+            }
+            o += 4
+          }
         }
       }
     }

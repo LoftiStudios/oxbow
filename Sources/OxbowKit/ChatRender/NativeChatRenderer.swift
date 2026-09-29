@@ -22,6 +22,10 @@ public final class NativeChatRenderer: ChatFrameSource {
   /// Laid-out comments by index; nil where the CLI skips the comment. Layout is the expensive
   /// part of a frame and a comment appears in hundreds of them.
   private let layouts = Mutex<[Int: MessageLayout?]>([:])
+  /// The last frame drawn without its emotes, by newest comment. Text is the expensive part of a
+  /// frame and changes only when a comment arrives; emotes animate every frame. One entry is
+  /// enough, since a file is written front to back.
+  private let base = Mutex<(newest: Int, pixels: [UInt8])?>(nil)
 
   public init(document: ChatDocument, request: RenderRequest) {
     self.document = document
@@ -45,27 +49,78 @@ public final class NativeChatRenderer: ChatFrameSource {
 
   /// Output frame `index`, counted from the render's first frame as the CLI's file counts them.
   public func frame(index: Int) -> CGImage? {
-    guard let context = makeContext(data: nil) else { return nil }
-    draw(frame: index, in: context)
-    return context.makeImage()
+    var pixels = rgba(frame: index)
+    return pixels.withUnsafeMutableBytes { makeContext(data: $0.baseAddress)?.makeImage() }
   }
 
   /// Frame `index` as tightly packed RGBA, top row first — what FFmpeg reads as `-pix_fmt rgba`.
   /// Premultiplied, which is the same thing while the background is opaque.
   public func rgba(frame index: Int) -> Data {
-    var data = Data(count: style.width * style.height * 4)
-    data.withUnsafeMutableBytes { buffer in
-      guard let context = makeContext(data: buffer.baseAddress) else { return }
-      draw(frame: index, in: context)
+    let placed = stack(forFrame: index)
+    let newest = timeline.newestIndex(at: timeline.updateTime(forFrame: index))
+    var pixels: [UInt8]
+    if let cached = base.withLock({ $0?.newest == newest ? $0?.pixels : nil }) {
+      pixels = cached
+    } else {
+      pixels = [UInt8](repeating: 0, count: style.width * style.height * 4)
+      pixels.withUnsafeMutableBytes { buffer in
+        guard let context = makeContext(data: buffer.baseAddress) else { return }
+        drawBase(placed, in: context)
+      }
+      base.withLock { $0 = (newest, pixels) }
     }
-    return data
+    let milliseconds = animationMilliseconds(forFrame: index)
+    pixels.withUnsafeMutableBytes { buffer in
+      guard let context = makeContext(data: buffer.baseAddress) else { return }
+      drawEmotes(placed, milliseconds: milliseconds, in: context)
+    }
+    return Data(pixels)
   }
 
   /// Frames with the same key are the same picture: what is drawn depends only on the newest
   /// visible comment. A writer can render once per key rather than once per frame — the CLI
   /// redraws every sixth frame, and most of those change nothing either.
-  public func contentKey(forFrame index: Int) -> Int {
-    timeline.newestIndex(at: timeline.updateTime(forFrame: index))
+  public func contentKey(forFrame index: Int) -> FrameKey {
+    let milliseconds = animationMilliseconds(forFrame: index)
+    var frames: [Int] = []
+    for (layout, _, _) in stack(forFrame: index) {
+      for word in layout.words where word.face == .emote {
+        if let image = word.image, image.isAnimated {
+          frames.append(image.frameIndex(atMilliseconds: milliseconds))
+        }
+      }
+    }
+    return FrameKey(newest: timeline.newestIndex(at: timeline.updateTime(forFrame: index)), animation: frames)
+  }
+
+  /// What a frame shows: the newest visible comment, which fixes every position, and which frame
+  /// each visible animated emote is on.
+  public struct FrameKey: Hashable, Sendable {
+    let newest: Int
+    let animation: [Int]
+  }
+
+  /// CR:576: animation runs on the VOD's own clock, not the render's, so every copy of an emote is
+  /// in step and a trimmed render starts mid-cycle. The CLI's exact expression, truncated: it is
+  /// not always `tick × 100 / 3`, and a millisecond decides which of two frames shows.
+  func animationMilliseconds(forFrame index: Int) -> Int64 {
+    let tick = timeline.startTick + index
+    return Int64(Double(tick) / Double(timeline.framerate) * 1000)
+  }
+
+  /// The comments a frame shows and where: newest at the bottom, each older one above it,
+  /// until one would start above the gap at the top (CR:760-800).
+  private func stack(forFrame index: Int) -> [(layout: MessageLayout, top: Int, comment: Int)] {
+    var placed: [(MessageLayout, Int, Int)] = []
+    var top = style.height
+    var comment = timeline.newestIndex(at: timeline.updateTime(forFrame: index))
+    while comment >= 0, top > -style.verticalPadding {
+      defer { comment -= 1 }
+      guard let layout = layout(of: comment) else { continue }
+      top -= layout.height(in: style) + style.verticalPadding
+      placed.append((layout, top, comment))
+    }
+    return placed
   }
 
   private func makeContext(data: UnsafeMutableRawPointer?) -> CGContext? {
@@ -75,7 +130,8 @@ public final class NativeChatRenderer: ChatFrameSource {
       bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
   }
 
-  private func draw(frame index: Int, in context: CGContext) {
+  /// Everything but the emotes: background, stripes, bars, badges, text and emoji.
+  private func drawBase(_ placed: [(layout: MessageLayout, top: Int, comment: Int)], in context: CGContext) {
     context.setFillColor(appearance.background.cgColor)
     context.fill(CGRect(origin: .zero, size: size))
     // Grayscale antialiasing with fractional glyph positions: what Skia produces here, where
@@ -84,18 +140,25 @@ public final class NativeChatRenderer: ChatFrameSource {
     context.setAllowsFontSubpixelPositioning(true)
     context.setShouldSubpixelPositionFonts(true)
 
-    let newest = timeline.newestIndex(at: timeline.updateTime(forFrame: index))
-    var top = style.height
-    var comment = newest
-    // CR:760-800: newest at the bottom, each older one above it, until one would start above
-    // the gap at the top; the last placed may be cut off by the frame.
-    while comment >= 0, top > -style.verticalPadding {
-      defer { comment -= 1 }
-      guard let layout = layout(of: comment) else { continue }
-      let height = layout.height(in: style)
-      top -= height + style.verticalPadding
-      drawBackground(forComment: comment, top: top, height: height, in: context)
+    // The last comment placed may be cut off by the top of the frame.
+    for (layout, top, comment) in placed {
+      drawBackground(forComment: comment, top: top, height: layout.height(in: style), in: context)
       draw(layout, top: top, in: context)
+    }
+  }
+
+  /// Every emote, on its frame for this instant, in the order each comment laid them out, so a
+  /// zero-width overlay lands on its base. The CLI bakes still emotes in before painting animated
+  /// ones, which hides a still overlay under an animated base (docs/design/native-chat-render.md,
+  /// phase 2); list order does not. An emote overhangs its line by at most 8 px, inside the 15 px
+  /// gap, so drawing them after all the text rather than after their own comment's changes nothing.
+  private func drawEmotes(
+    _ placed: [(layout: MessageLayout, top: Int, comment: Int)], milliseconds: Int64, in context: CGContext)
+  {
+    for (layout, top, _) in placed {
+      for word in layout.words where word.face == .emote {
+        drawImage(of: word, sectionTop: top, milliseconds: milliseconds, in: context)
+      }
     }
   }
 
@@ -180,19 +243,15 @@ public final class NativeChatRenderer: ChatFrameSource {
         CTFontDrawGlyphs(run.font, run.glyphs, run.positions, run.glyphs.count, context)
       }
     }
-
-    // Emotes after everything else in the comment, in the order they were laid out, so a
-    // zero-width overlay lands on its base. The CLI bakes still emotes into the frame first and
-    // paints animated ones afterwards, which hides a still overlay under an animated base
-    // (docs/design/native-chat-render.md, phase 2); list order does not.
-    for word in layout.words where word.face == .emote {
-      drawImage(of: word, sectionTop: top, in: context)
-    }
   }
 
   /// Pixel for pixel: the image is already its drawn size, and the CLI's paint does not filter.
-  private func drawImage(of word: MessageLayout.Word, sectionTop: Int, in context: CGContext) {
-    guard let image = word.image, let frame = image.frames.first else { return }
+  /// Badges are never animated, as in the CLI: they draw their first frame.
+  private func drawImage(
+    of word: MessageLayout.Word, sectionTop: Int, milliseconds: Int64 = 0, in context: CGContext)
+  {
+    guard let image = word.image else { return }
+    let frame = image.frames[image.frameIndex(atMilliseconds: milliseconds)]
     context.saveGState()
     context.interpolationQuality = .none
     context.draw(frame, in: CGRect(
