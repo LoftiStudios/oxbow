@@ -46,6 +46,21 @@ struct ProcessSpawnerStandardInputTests {
     #expect(ProcessSpawner.wait(spawned.pid) == .exited(0))
   }
 
+  /// Writing to a child that has exited must fail as an error. Before this was handled it
+  /// raised SIGPIPE, which ends the whole process: this test run, or Oxbow when a native render
+  /// was cancelled mid-frame.
+  @Test func writingToAChildThatHasGoneFailsRatherThanSignalling() throws {
+    let spawned = try ProcessSpawner.spawn(
+      executable: URL(filePath: "/usr/bin/true"), arguments: [],
+      workingDirectory: URL(filePath: NSTemporaryDirectory()), standardInput: true)
+    #expect(ProcessSpawner.wait(spawned.pid) == .exited(0))
+    let stdin = try #require(spawned.stdin)
+    #expect(throws: (any Error).self) {
+      // More than a pipe buffer, so the write cannot land in the buffer and succeed.
+      try stdin.write(contentsOf: Data(count: 1 << 20))
+    }
+  }
+
   @Test func leavesStandardInputAloneUnlessAsked() throws {
     let spawned = try ProcessSpawner.spawn(
       executable: URL(filePath: "/usr/bin/true"), arguments: [],
