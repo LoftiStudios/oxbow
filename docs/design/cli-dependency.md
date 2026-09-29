@@ -300,6 +300,18 @@ strength of this table alone.**
 
 **Keep the bundled CLI.**
 
+> **Reopened as an experiment, 2026-09-17 — this decision still stands.**
+> [`native-chat-render.md`](native-chat-render.md) designs a Swift renderer
+> behind a hidden setting, reading the CLI's own chat JSON and writing the file
+> the composite already reads, specifically so it can be abandoned by deleting
+> one module. It does **not** overturn anything below: the ledger in §6 is
+> unchanged, there is still no size relief until every verb is gone, and §5's
+> 1.06x still closes the "render during the composite" argument for speed.
+> What it adds is an ordering argument — the render is the cheapest verb to
+> *abandon* halfway, whatever it costs to replace — plus measurements that
+> §3's churn claim and §7's flags work did not cover. Read it before arguing
+> either for or against a rewrite.
+
 Not from inertia. Replacing it means taking on the highest-churn code in the
 project — 22 API breakages in 14 months, currently absorbed by someone else —
 and reimplementing 2,322 lines of accumulated correctness, to chase a speed win
@@ -328,7 +340,11 @@ depending on a published binary.
 
 ### Consequent changes
 
-1. `architecture.md` §8 — correct the "median ~1 day" PR claim (§2 above).
+1. ~~`architecture.md` §8 — correct the "median ~1 day" PR claim (§2 above).~~
+   **Done 2026-09-17.** It had outlived the decision by three weeks, and in the
+   meantime the sentence did exactly the damage §2 predicted: a month of
+   ordinary upstream quiet read as a crisis, against a yardstick that was never
+   true. §8 now states the burst pattern instead.
 2. `development.md` — stop conflating `PublishTrimmed` with `PublishSingleFile`
    (§8 above).
 3. Try `--dispersion` and `--avatars` before touching anything structural (§7).

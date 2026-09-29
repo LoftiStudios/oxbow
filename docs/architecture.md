@@ -331,8 +331,17 @@ keep the copyright notice. Everything below is etiquette and self-interest (we w
 CLI changes upstreamed so we're not maintaining a fork forever).
 
 - **Address ScrubN, not lay295.** ScrubN authored the large majority of merged PRs
-  and does most of the triage. Median PR close time is ~1 day, so short focused
-  PRs land well.
+  and does most of the triage.
+- **Expect bursts separated by months, and do not read silence as death.** An
+  earlier version of this section claimed a "median PR close time of ~1 day".
+  That was measured during a burst and written down as a constant; it is wrong,
+  and it made ordinary quiet look like a crisis. The submodule's own history
+  shows dormant stretches of 80, 84 and **122 days**, each ended by a burst —
+  the measurements are in `docs/design/cli-dependency.md` §2, along with the
+  eleven distinct contributors in 2026 and the substantial work those bursts
+  carried. Our own PRs #1644 and #1646 sat unanswered for weeks, which is
+  inside the noise floor of that pattern rather than a signal about the
+  project.
 - **Issue creation appeared to be restricted** on the repo — check Discussions or
   comment on something related instead. Verify current state before drafting.
 - **Reach out after a working POC, not before.** "Would you accept a macOS UI?" in

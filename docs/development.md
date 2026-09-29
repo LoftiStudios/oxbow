@@ -325,7 +325,13 @@ These were considered and rejected. Reasoning is in `docs/architecture.md`.
   on top.
 - **Sparkle** for v1. Update check is a GitHub releases API call plus a banner.
 - **Reimplementing chat render in Swift.** That's the one part genuinely worth
-  keeping in C#.
+  keeping in C# — `docs/design/cli-dependency.md` §4 and §6 are the evidence,
+  and they still stand. **Except as the contained experiment designed in
+  `docs/design/native-chat-render.md` (2026-09-17):** a renderer behind a
+  hidden setting, fed by the CLI's own chat JSON, writing the same file the
+  composite reads, abandonable by deleting one module. That is deliberate and
+  unapproved rather than a lapse — if it is on the table, argue with that
+  document's phases and its stopping conditions, not with this line.
 
 ---
 
