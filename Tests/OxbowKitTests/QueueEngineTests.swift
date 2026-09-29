@@ -403,6 +403,31 @@ struct QueueEngineTests {
     await engine.flush()
   }
 
+  /// With a native renderer configured, the chat render step runs it and only it; the chat
+  /// download still runs the CLI. docs/design/native-chat-render.md §6.
+  @Test func aConfiguredNativeRendererRunsTheChatRenderAndNothingElse() async throws {
+    let helper = FakeHelper(.succeeds)
+    let native = FakeHelper(.succeeds)
+    let root = makeRoot()
+    var configuration = makeConfiguration(root: root) { helper }
+    configuration.makeChatRenderProcess = { _, _ in native }
+    let engine = QueueEngine(configuration: configuration)
+    let (template, renderDestination) = makeChatAndRenderTemplate()
+    defer {
+      cleanUp(root)
+      try? FileManager.default.removeItem(at: renderDestination)
+    }
+
+    try await engine.start()
+    await engine.enqueue(template, title: "test")
+    try await settle(engine)
+
+    #expect(await native.launches.count == 1)
+    #expect(await helper.launches.count == 1)
+    #expect(await engine.currentJobs[0].status == .done)
+    await engine.flush()
+  }
+
   /// A composite step runs FFmpeg directly rather than the C# helper: both
   /// the executable and the stdout dialect follow the step kind.
   @Test func aCompositeStepRunsFFmpegRatherThanTheHelper() async throws {

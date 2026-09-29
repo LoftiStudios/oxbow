@@ -23,6 +23,9 @@ public actor QueueEngine {
     public var sleepAssertion: any SleepAsserting
     /// Emote images shared across jobs. Nil gives every step its own, as before.
     public var cliCache: CLICache?
+    /// A chat render run by something other than the CLI — the native renderer, behind a hidden
+    /// setting. Asked at each render's launch; nil runs the CLI, as always.
+    public var makeChatRenderProcess: @Sendable (RenderRequest, StepContext) -> HelperProcessing?
 
     public init(
       helperExecutable: URL,
@@ -31,7 +34,8 @@ public actor QueueEngine {
       store: QueueStore,
       makeProcess: @escaping @Sendable () -> HelperProcessing,
       sleepAssertion: any SleepAsserting = SystemSleepAssertion(),
-      cliCache: CLICache? = nil)
+      cliCache: CLICache? = nil,
+      makeChatRenderProcess: @escaping @Sendable (RenderRequest, StepContext) -> HelperProcessing? = { _, _ in nil })
     {
       self.helperExecutable = helperExecutable
       self.ffmpegPath = ffmpegPath
@@ -40,6 +44,7 @@ public actor QueueEngine {
       self.makeProcess = makeProcess
       self.sleepAssertion = sleepAssertion
       self.cliCache = cliCache
+      self.makeChatRenderProcess = makeChatRenderProcess
     }
   }
 
@@ -352,7 +357,10 @@ public actor QueueEngine {
     jobs[location.job].steps[location.step].status = .running
 
     // HelperProcess is single-use; its cancellation flag never resets.
-    let process = configuration.makeProcess()
+    let process: HelperProcessing =
+      if case .renderChat(let request) = step.kind,
+         let native = configuration.makeChatRenderProcess(request, context)
+      { native } else { configuration.makeProcess() }
 
     // Choose executable and output dialect for direct FFmpeg steps.
     let executable: URL

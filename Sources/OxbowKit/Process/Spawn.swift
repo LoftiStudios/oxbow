@@ -6,4 +6,6 @@ public struct Spawn: @unchecked Sendable {
   public let pid: pid_t
   public let stdout: FileHandle
   public let stderr: FileHandle
+  /// Present only when the spawn asked for one. Close it to give the child EOF.
+  public var stdin: FileHandle? = nil
 }
