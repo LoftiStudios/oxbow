@@ -308,6 +308,41 @@ ImageIO is expected to decode animated GIF and WebP. Also unverified.
   fifteen defaults with a *stable* hash, so a given user keeps one colour
   forever — which is what upstream intends and fails to do.
 
+### Match the CLI's layout, not its defects — decided in slice 3, 2026-09-29
+
+The CLI's handling of text Inter cannot draw was read from its code and
+measured by driving its own `ChatRenderer`. Much of it is broken, so "match the
+CLI" is refined: **match what it does deliberately, because that decides where
+words land; do not reproduce what it does by accident.**
+
+Kept, and measured to agree:
+
+- **Right-to-left word order.** Runs of right-to-left words are reversed within a
+  fragment, a word counting by its first UTF-16 unit, as `SwapRightToLeft` does.
+- **The emoji box.** 22 px square at x + 2, centred in the line rather than on
+  the baseline; a fixed 25 px advance with no word gap; wrapped on the box's own
+  edge; text beside an emoji given its own gap, so `a😀b` reads "a 😀 b".
+
+Not reproduced, because Core Text's own shaping, bidi and fallback get each right:
+
+- **A render-aborting crash** on any character over 16 UTF-16 units — sixteen
+  combining marks, or a skin-toned family emoji (`docs/upstream-candidates.md` §3).
+- **Invisible glyphs:** a mixed-script word takes the font of its first
+  character throughout, so `日本語한국어`'s Hangul takes space and draws nothing.
+- **Detached combining marks,** visible as broken Thai and a floating accent in a
+  decomposed `café`.
+- **ZWJ sequences Noto lacks,** taken apart and drawn before the text preceding
+  them.
+- **Right-to-left usernames** with their digits reversed; **any name with a
+  character above 127** switched whole to Helvetica Regular.
+
+Two further differences, accepted:
+
+- **What counts as an emoji** is Unicode's emoji properties, not Noto's image
+  set. They agree on emoji and differ on 171 symbols — `©`, `™`, `♥`, `☀` — which
+  the CLI draws as Noto images and Unicode presents as text.
+- **Emoji artwork** is Apple's, fitted into the CLI's box.
+
 ### Out of scope
 
 Avatars, mask output, `--scale-emote`, font style options, badge filtering,
@@ -357,6 +392,9 @@ last commit:
    Seen in the same window.
 3. **The Core Text check.** The RTL, ZWJ and CJK-fallback fixtures of §5,
    seen side by side. This is the stopping condition below, made visible.
+   **Passed 2026-09-29**, and more than passed: Core Text draws every case with
+   no workaround code, and draws several correctly that the CLI does not. See
+   "Match the CLI's layout, not its defects" in §5.
 4. **`FileSink` and the hidden setting.** The render step writes the native
    renderer's output; a composite made with it shows the native chat column in
    a real file.

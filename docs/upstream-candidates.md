@@ -15,6 +15,7 @@ separated by months. Candidates sit here until somebody takes them.
 | — | `chatdownload` on a clip whose parent VOD is gone dies on SIGABRT | submitted, [PR #1646](https://github.com/lay295/TwitchDownloader/pull/1646) |
 | 1 | **Default username colours change on every render** | written up below |
 | 2 | `chatdownload -E` decodes animated frames it discards | sketch, `docs/design/native-chat-render.md` §9.1 |
+| 3 | **One long character aborts the whole chat render** | written up below |
 
 ---
 
@@ -129,3 +130,50 @@ Anything that renders the same chat twice hits this: the WPF GUI shares
 `ChatRenderer`, so a user re-rendering at a different size sees the colours
 shuffle. It also makes upstream's own output untestable frame-for-frame, which
 is a precondition for any future render regression test.
+
+---
+
+## 3. One long character aborts the whole chat render
+
+**One line:** any character longer than 16 UTF-16 units — a skin-toned family
+emoji, or a letter carrying sixteen combining marks — throws out of the emoji
+lookup, nothing catches it, and `chatrender` fails outright.
+
+### Mechanism
+
+`ContainsEmoji` (`ChatRenderer.cs:1281`) and `DrawEmojiMessage` (`:1328`) copy each
+grapheme, minus U+FE0F, into a 16-character `stackalloc` buffer with
+`CopyToExcept` (`ReadOnlySpanExtensions.cs:305-336`). `CopyToExcept` always writes
+into that 16-char span, even where a larger `lookupKey` was allocated for the long
+case, so a longer grapheme throws `ArgumentException: Destination is too short`.
+`RenderVideoAsync` rethrows it (`:190-199`).
+
+Emoji rendering is on by default (`--emoji-vendor notocolor`), so every default
+render is exposed. Any message in the chat is enough.
+
+### Evidence
+
+Measured 2026-09-29 by calling the helper's own `ChatRenderer` against its
+bundled `TwitchDownloaderCore.dll`, not a reimplementation:
+
+- `👨🏻‍👩🏻‍👧🏻‍👦🏻` (19 UTF-16 units) throws.
+- `x` followed by 16 combining marks (17 units) throws; with 15 marks (16 units)
+  it does not.
+- `hi😀 <that zalgo>` and `😀<that zalgo>` both throw.
+
+For Oxbow this means a composite job whose chat contains one such character gets
+no chat render at all.
+
+### Suggested fix
+
+Copy into a buffer sized to the grapheme when it is longer than 16 units — which
+is evidently what the `lookupKey` allocation already intends — or skip the lookup
+for graphemes longer than the longest key (14 units: `👩🏻‍❤️‍💋‍👨🏻` without its
+FE0F), since nothing that long can match. The second is a one-line guard.
+
+### How a reviewer can check it
+
+Put `👨🏻‍👩🏻‍👧🏻‍👦🏻` in any chat JSON's message fragment and run `chatrender` with
+default options: it exits with the exception. After the fix it renders, with the
+family drawn however the emoji path draws an uncached sequence.
+
