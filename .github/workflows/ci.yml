@@ -47,6 +47,10 @@ jobs:
       # The per-file table lands in this job's summary in the Actions UI.
       - name: Run OxbowKit test suite and check coverage
         run: ./scripts/coverage.sh
+      # The crash symbolicator parses the issue body OxbowKit writes; both
+      # sides test against Tests/OxbowKitTests/Fixtures/crash-issue-body.md.
+      - name: Test the crash symbolicator
+        run: python3 -m unittest discover -s scripts -p 'test_*.py'
 
   app-build:
     name: App build and tests (unsigned)

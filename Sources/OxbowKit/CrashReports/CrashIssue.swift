@@ -32,7 +32,10 @@ public enum CrashIssue {
     let shown = report.frames.prefix(frameCount ?? report.frames.count)
     let nameWidth = shown.map(\.binaryName.count).max() ?? 0
     let trace = shown.enumerated().map { index, frame in
+      // At least one space after the number, so frame 100 does not run into
+      // the name. scripts/symbolicate-crash.py splits on it.
       let number = String(index).padding(toLength: 3, withPad: " ", startingAt: 0)
+        + (index >= 100 ? " " : "")
       let name = frame.binaryName.padding(toLength: nameWidth, withPad: " ", startingAt: 0)
       return "\(number)\(name)  + \(frame.offset)"
     }

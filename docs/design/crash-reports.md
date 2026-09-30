@@ -62,7 +62,30 @@ matter.
 Oxbow's frames arrive as offsets into a binary with no symbols. The dSYM
 attached to each GitHub release turns them back into functions. It has to be
 the dSYM from *that* release, because a rebuild of the same commit gets a
-different UUID. Check the UUID in the issue against it:
+different UUID.
+
+**This happens on its own.** `.github/workflows/symbolicate-crash.yml` runs
+when an issue is opened. If the body carries the footer `CrashIssue` writes,
+it runs `scripts/symbolicate-crash.py`, which downloads the release's dSYM,
+checks the UUID, and comments with Oxbow's frames named. When it cannot (no
+dSYM on that release, a UUID from another build, or a development build), it
+says which in the comment instead. Run it by hand on any issue:
+
+```bash
+./scripts/symbolicate-crash.py 123
+```
+
+It prints the comment without posting it; `--post` posts it. To re-run the
+workflow on an issue filed before it existed, use its "Run workflow" button
+with the issue number.
+
+The script parses the body `CrashIssue` writes, so the two are pinned to one
+file, `Tests/OxbowKitTests/Fixtures/crash-issue-body.md`. The Swift test
+checks `CrashIssue` still produces it and the Python test parses it. Change
+the format and both go red until the file is regenerated
+(`OXBOW_WRITE_GOLDEN=1 swift test --filter CrashIssue`) and the script agrees.
+
+By hand, check the UUID in the issue against the dSYM:
 
 ```bash
 dwarfdump --uuid Oxbow.app.dSYM
