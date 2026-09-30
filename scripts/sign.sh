@@ -70,14 +70,22 @@ if [[ -z "${IDENTITY:-}" ]]; then
        printf '  %s\n' "${found[@]}"
        die "Set IDENTITY explicitly." ;;
   esac
+else
+  # An explicit IDENTITY that is not in the keychain used to fail per file while
+  # the old signature survived, so verification passed on a bundle this run
+  # never signed. Refuse up front instead.
+  security find-identity -v -p codesigning | grep -qF "\"${IDENTITY}\"" \
+    || die "IDENTITY '${IDENTITY}' is not a valid codesigning identity in the keychain. Check: security find-identity -v -p codesigning"
 fi
 log "Identity: ${IDENTITY}"
 
 sign() {
-  local entitlements="$1" target="$2"
+  local entitlements="$1" target="$2" out
   local args=(--force --sign "${IDENTITY}" --options runtime --timestamp)
   [[ -n "${entitlements}" ]] && args+=(--entitlements "${entitlements}")
-  codesign "${args[@]}" "${target}" 2>&1 | grep -v "replacing existing signature" || true
+  out="$(codesign "${args[@]}" "${target}" 2>&1)" \
+    || die "codesign failed for ${target}:"$'\n'"${out}"
+  grep -v "replacing existing signature" <<<"${out}" || true
 }
 
 MAIN_EXECUTABLE="${BUNDLE}/Contents/MacOS/$(

@@ -26,9 +26,11 @@ launched as a real download:
 | Quarantined app spawns helper + FFmpeg | both executed |
 | GUI launch from quarantine | launched, no syspolicy denials |
 
-Signing identity: `Developer ID Application: Barclay loftus (M9WJGEJKBF)`.
-Notary credentials live in the keychain as the `oxbow-notary` profile; the
-`.p8` itself is never on disk in the repo and never needs to be.
+Signing identity at the time of the spike: `Developer ID Application: Barclay
+loftus (M9WJGEJKBF)`, a personal account. Releases move to the Lofti Studios LLC
+organization account; see §9. Notary credentials live in the keychain as the
+`oxbow-notary` profile; the `.p8` itself is never on disk in the repo and never
+needs to be.
 
 ## 2. The rule that costs an afternoon
 
@@ -185,3 +187,72 @@ signatures stored in extended attributes, and a plain `zip` drops xattrs.
   keychain profile, which CI cannot have. Two gates run before anything
   expensive: the tag must match `MARKETING_VERSION`, and the submodule must be
   pinned to an upstream release tag.
+
+---
+
+## 9. Moving from the personal account to Lofti Studios LLC
+
+Releases were signed by a personal Developer ID (team `M9WJGEJKBF`). They move
+to the organization account, team `Z4PBYBS53X`. Nothing in the repo hardcodes the identity:
+`release.yml` takes the certificate and notary key from secrets and the team
+from the `DEVELOPMENT_TEAM` repository variable, and `sign.sh` picks the sole
+`Developer ID Application` identity in the keychain. The migration is
+therefore credentials, not code.
+
+### What changes for installed users
+
+Updates are a manual DMG download (there is no Sparkle), so there is no
+update-signature continuity to break, and the bundle ID `studio.lofti.Oxbow` is
+unchanged. Gatekeeper accepts a notarized build from any team.
+
+The one visible effect: macOS keys privacy grants to the designated
+requirement, which includes the Team ID, so it treats the new build as a
+different app. Users may be asked again for folder access (Downloads,
+Documents, Desktop, removable volumes), and possibly for notification
+permission. It happens once. Say so in the release notes.
+
+### Runbook
+
+1. **Certificate.** As Account Holder, create a `Developer ID Application`
+   certificate under the Lofti Studios team (Certificates, Identifiers &
+   Profiles). Generate the CSR on the machine that will keep the key.
+2. **Export.** Export the certificate with its private key as a `.p12` from
+   Keychain Access, with a new password.
+3. **Notary key.** Create a new App Store Connect API key in the Lofti Studios
+   account (Users and Access, Integrations). The old key belongs to the
+   personal team and cannot notarize for the new one. Store the `.p8` once;
+   Apple will not show it again.
+4. **Local notary profile**, replacing the old one:
+
+   ```bash
+   xcrun notarytool store-credentials oxbow-notary \
+     --key AuthKey_XXXXXXXXXX.p8 --key-id XXXXXXXXXX --issuer <issuer-uuid>
+   ```
+
+5. **Repository secrets and variable** (Settings, Secrets and variables,
+   Actions): replace `DEVELOPER_ID_P12_BASE64` (`base64 -i cert.p12 | pbcopy`),
+   `DEVELOPER_ID_P12_PASSWORD`, `NOTARY_PRIVATE_KEY`, `NOTARY_KEY_ID`,
+   `NOTARY_ISSUER_ID`, and set the variable `DEVELOPMENT_TEAM` to the new
+   Team ID. Update the local, gitignored `Config/Local.xcconfig` too.
+6. **Verify before releasing.** Sign a build with the new identity and
+   confirm the Team ID and the notarized verdict. The identity is
+   `Developer ID Application: Lofti Studios, LLC (Z4PBYBS53X)`, with a comma;
+   `IDENTITY` must match it exactly. Done 2026-09-30: Accepted, and `spctl`
+   reports `source=Notarized Developer ID`.
+
+   ```bash
+   codesign -dv --verbose=2 build/Oxbow.app 2>&1 | grep -E 'Authority|TeamIdentifier'
+   spctl -a -t exec -vv build/Oxbow.app   # source=Notarized Developer ID
+   ```
+
+7. **Ship it in an ordinary release**, not a special one, with the permission
+   note in the changelog.
+8. **Afterwards**, revoke nothing yet. Keep the personal certificate until the
+   first release under the new team has been installed successfully, then
+   delete the old CI secrets' values by overwriting them.
+
+### Rollback
+
+Signing is per release. If the first Lofti-signed build misbehaves, re-run the
+release with the old secrets restored; users on the new build would then see
+one more permission re-prompt in the other direction.

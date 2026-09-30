@@ -259,6 +259,7 @@ jobs:
         env:
           CERTIFICATE_P12: ${{ secrets.DEVELOPER_ID_P12_BASE64 }}
           CERTIFICATE_PASSWORD: ${{ secrets.DEVELOPER_ID_P12_PASSWORD }}
+          TEAM: ${{ vars.DEVELOPMENT_TEAM }}
         run: |
           set -euo pipefail
           KEYCHAIN="${RUNNER_TEMP}/oxbow-signing.keychain-db"
@@ -295,6 +296,13 @@ jobs:
 
           identity="$(security find-identity -v -p codesigning "${KEYCHAIN}" | grep 'Developer ID Application' | head -1 | sed 's/.*"\(.*\)"/\1/')"
           [ -n "${identity}" ] || { echo "::error::no Developer ID Application identity in the imported certificate"; exit 1; }
+          # The certificate and the team are separate settings, so one can be
+          # rotated without the other and still produce a valid, notarized app
+          # signed by the wrong team. See docs/signing.md §9.
+          case "${identity}" in
+            *"(${TEAM})") ;;
+            *) echo "::error::imported certificate '${identity}' is not for team ${TEAM} (repository variable DEVELOPMENT_TEAM)"; exit 1 ;;
+          esac
           echo "IDENTITY=${identity}" >> "$GITHUB_ENV"
           echo "Imported: ${identity}"
 
