@@ -335,6 +335,20 @@ jobs:
           # drop them. Same reason docs/signing.md §7 requires ditto over zip.
           ditto build/DerivedData/Build/Products/Release/Oxbow.app build/Oxbow.app
 
+      - name: Keep the dSYM
+        run: |
+          set -euo pipefail
+          # The shipped binary carries no debug symbols, so a crash report from
+          # a user's Mac names Oxbow's frames only as offsets into it. The dSYM
+          # is what turns those back into functions and lines, and it can only
+          # come from the exact build that shipped: a rebuild of the same
+          # commit gets a different UUID and matches nothing. It holds
+          # OxbowKit's symbols too, since the package links statically.
+          VERSION="${{ steps.version.outputs.version }}"
+          ditto -c -k --keepParent \
+            build/DerivedData/Build/Products/Release/Oxbow.app.dSYM \
+            "build/Oxbow-${VERSION}-arm64.dSYM.zip"
+
       - name: Sign the bundle inside-out
         # Authoritative pass: every file under Contents/MacOS, per-process
         # entitlements, app bundle last. Re-running it over an
@@ -399,6 +413,21 @@ jobs:
           xcrun stapler validate "${DMG}"
           spctl -a -vvv -t open --context context:primary-signature "${DMG}"
 
+          echo "== dsym =="
+          # Signing, notarizing and stapling must not have changed the binary's
+          # UUIDs, or the dSYM beside the release symbolicates nothing and
+          # nobody finds out until the first crash report arrives.
+          DSYM="build/DerivedData/Build/Products/Release/Oxbow.app.dSYM"
+          [ -f "build/Oxbow-${VERSION}-arm64.dSYM.zip" ] || { echo "::error::no dSYM zip"; exit 1; }
+          app_uuids="$(dwarfdump --uuid build/Oxbow.app/Contents/MacOS/Oxbow | awk '{print $2, $3}' | sort)"
+          dsym_uuids="$(dwarfdump --uuid "${DSYM}" | awk '{print $2, $3}' | sort)"
+          echo "${app_uuids}"
+          [ "${app_uuids}" = "${dsym_uuids}" ] || {
+            echo "::error::the dSYM's UUIDs do not match the shipped binary's"
+            echo "${dsym_uuids}"
+            exit 1
+          }
+
           # Homebrew needs the checksum, and so does anyone verifying a
           # download by hand.
           ( cd build && shasum -a 256 "$(basename "${DMG}")" > "$(basename "${DMG}").sha256" )
@@ -414,6 +443,7 @@ jobs:
           path: |
             build/Oxbow-*.dmg
             build/Oxbow-*.dmg.sha256
+            build/Oxbow-*.dSYM.zip
           if-no-files-found: error
 
       # ---------------------------------------------------------- publishing
@@ -454,7 +484,8 @@ jobs:
             "${{ steps.verify.outputs.dmg }}" \
             "${{ steps.verify.outputs.dmg }}.sha256" \
             "${STABLE}" \
-            "${STABLE}.sha256"
+            "${STABLE}.sha256" \
+            "build/Oxbow-${VERSION}-arm64.dSYM.zip"
           echo "Draft release ${TAG} created. Review and publish it by hand."
 
       # ------------------------------------------------------------- cleanup
