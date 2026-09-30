@@ -300,7 +300,7 @@ jobs:
           if [ -z "${identity}" ]; then
             # Identity names only; no key material is printed.
             security find-identity -p codesigning "${KEYCHAIN}"
-            echo "::error::no usable Developer ID Application identity in DEVELOPER_ID_P12_BASE64. The .p12 most likely holds the certificate without its private key: export it from Keychain Access > My Certificates, with the key showing under the certificate."
+            echo "::error::no usable Developer ID Application identity in DEVELOPER_ID_P12_BASE64. The identities it does hold are listed above: either it is a different certificate, or the Developer ID one was exported without its private key. Export it from Keychain Access > My Certificates, with the key showing under the certificate."
             exit 1
           fi
           # The certificate and the team are separate settings, so one can be
