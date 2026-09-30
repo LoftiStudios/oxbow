@@ -19,13 +19,6 @@ public actor NativeChatRenderProcess: HelperProcessing {
   /// Read by the frame-writing thread between frames.
   private let stop = StopFlag()
 
-  /// Shared by reference with the writer thread, which a non-copyable `Atomic` cannot be.
-  private final class StopFlag: Sendable {
-    private let value = Atomic<Bool>(false)
-    var isSet: Bool { value.load(ordering: .relaxed) }
-    func set() { value.store(true, ordering: .relaxed) }
-  }
-
   /// The native renderer for this render, or nil to run the CLI. Native only when it is wanted
   /// and the render reads a chat file with its images embedded: it draws emotes and badges from
   /// those alone, so a render queued before downloads embedded them would lose every emote.
@@ -170,5 +163,43 @@ public actor NativeChatRenderProcess: HelperProcessing {
     try? await Task.detached { try await Task.sleep(for: .seconds(2)) }.value
     guard encoder == pid else { return }
     ProcessSpawner.signal(SIGKILL, toGroupOf: pid)
+  }
+}
+
+extension NativeChatRenderer {
+  /// The chat for a composite, as raw frames on the composite FFmpeg's stdin. Starts at the frame
+  /// a seek of the rendered file to `resumeFrom` would have landed on — the first at or after it
+  /// — and, past the chat's end, sends just the last frame, so `hstack` still has one to hold.
+  /// That is the whole of `resume.md` §12's clamp, for a renderer that can draw any frame.
+  public static func compositeFeed(
+    chat: URL, request: RenderRequest, resumeFrom: Duration?) -> StandardInputFeed
+  {
+    StandardInputFeed { stdin, stop in
+      guard let data = try? Data(contentsOf: chat),
+            let document = try? ChatDocument.decode(from: data)
+      else { return }
+      let renderer = NativeChatRenderer(document: document, request: request)
+      let total = renderer.frameCount
+      guard total > 0 else { return }
+
+      var start = 0
+      if let resumeFrom {
+        let (seconds, attoseconds) = resumeFrom.components
+        let time = Double(seconds) + Double(attoseconds) / 1e18
+        start = min(Int((time * Double(request.framerate) - 1e-9).rounded(.up)), total - 1)
+      }
+
+      var lastKey: FrameKey?
+      var bytes = Data()
+      for index in start..<total {
+        if stop.isSet { return }
+        let key = renderer.contentKey(forFrame: index)
+        if key != lastKey {
+          bytes = renderer.rgba(frame: index)
+          lastKey = key
+        }
+        guard (try? stdin.write(contentsOf: bytes)) != nil else { return }
+      }
+    }
   }
 }

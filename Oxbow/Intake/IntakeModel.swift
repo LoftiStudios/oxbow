@@ -525,7 +525,8 @@ final class IntakeModel {
       quality: quality,
       duration: duration,
       // Exclude render and composite space entirely for plain video.
-      composite: output == .videoWithChat ? CompositeGeometry(quality: quality) : nil)
+      composite: output == .videoWithChat ? CompositeGeometry(quality: quality) : nil,
+      drawsChat: preferences.usesNativeChatRenderer)
   }
 
   private func shortfall(
@@ -637,7 +638,10 @@ final class IntakeModel {
       composite = CompositeRequest(
         framerate: geometry.videoFramerate,
         duration: duration,
-        destination: destination(OutputSuffix.video))
+        destination: destination(OutputSuffix.video),
+        // Oxbow's renderer draws the chat into the composite directly, skipping the render step
+        // and its file (docs/design/native-chat-render.md, Phase 4).
+        chat: preferences.usesNativeChatRenderer ? render : nil)
     }
 
     return JobTemplate(

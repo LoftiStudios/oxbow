@@ -18,7 +18,8 @@ public struct SpaceEstimate: Sendable, Equatable {
   /// (`composite-quality.md` §4.1).
   public var source: Int64
 
-  /// The chat render intermediate. Zero when the job renders no chat.
+  /// The chat render intermediate. Zero when the job renders no chat, or when the composite
+  /// draws the chat itself and there is no intermediate to hold.
   public var chatRender: Int64
 
   /// The composited output. Zero when the job composites nothing.
@@ -35,7 +36,12 @@ public struct SpaceEstimate: Sendable, Equatable {
   /// - Parameter geometry: the composite's geometry, or `nil` for a job that
   ///   only downloads. `nil` zeroes both the render and the composite terms,
   ///   because a plain download produces neither.
-  public init(quality: StreamQuality, duration: Duration, composite geometry: CompositeGeometry?) {
+  /// - Parameter drawsChat: the composite draws the chat itself (`CompositeRequest.chat`), so no
+  ///   render file is ever written.
+  public init(
+    quality: StreamQuality, duration: Duration, composite geometry: CompositeGeometry?,
+    drawsChat: Bool = false)
+  {
     // Crossed trim fields can produce negative duration; clamp it rather than report negative
     // space needed.
     let seconds = max(0, duration.asSeconds)
@@ -47,7 +53,7 @@ public struct SpaceEstimate: Sendable, Equatable {
       self.composite = 0
       return
     }
-    self.chatRender = Int64(Self.chatRenderBitsPerSecond * seconds / 8)
+    self.chatRender = drawsChat ? 0 : Int64(Self.chatRenderBitsPerSecond * seconds / 8)
     self.composite = Int64(Self.compositeBitsPerPixel * geometry.pixelRate * seconds / 8)
   }
 }

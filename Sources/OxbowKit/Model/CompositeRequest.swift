@@ -9,11 +9,17 @@ public struct CompositeRequest: Codable, Sendable, Equatable {
   /// Effective video duration for progress fractions; FFmpeg does not report a total.
   public var duration: Duration
   public var destination: URL
+  /// Set when the chat is drawn during the composite rather than rendered to a file first:
+  /// input 1 is then the chat JSON, and these are the settings to draw it with
+  /// (docs/design/native-chat-render.md, Phase 4). Nil — as for every job queued before this
+  /// existed — composites a chat render file.
+  public var chat: RenderRequest?
 
-  public init(framerate: Int, duration: Duration, destination: URL) {
+  public init(framerate: Int, duration: Duration, destination: URL, chat: RenderRequest? = nil) {
     self.framerate = framerate
     self.duration = duration
     self.destination = destination
+    self.chat = chat
   }
 }
 

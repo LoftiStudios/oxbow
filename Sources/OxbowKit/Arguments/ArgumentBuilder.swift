@@ -133,9 +133,21 @@ public enum ArgumentBuilder {
              .appending(path: "audio.m4a").path]
         : []
 
+      // Chat drawn during the composite arrives as raw frames on stdin, already starting at the
+      // resume point: the feed does its own seek, so input 1 takes none.
+      let chatInput: [String] = if let render = request.chat {
+        [
+          "-f", "rawvideo", "-pix_fmt", "rgba",
+          "-video_size", "\(render.width)x\(render.height)",
+          "-framerate", "\(render.framerate)", "-i", "pipe:0",
+        ]
+      } else {
+        chatSeek + ["-i", chat]
+      }
+
       return [
         "-nostdin", "-y", "-hide_banner",
-      ] + seek + ["-i", video] + chatSeek + ["-i", chat] + thirdInput + sidecar + [
+      ] + seek + ["-i", video] + chatInput + thirdInput + sidecar + [
         "-filter_complex",
         // fps start_time=0 pads an initial video gap while preserving timing relative to
         // untouched sidecar audio. Do not replace it with setpts: stream-copy trims may start

@@ -15,7 +15,9 @@ public struct JobTemplate: Sendable {
   public var render: RenderRequest?
   /// Stacks media and rendered chat. Implies a render if absent, but callers must supply
   /// geometry matching the video: the default 350x600 render will fail `hstack` for other
-  /// heights. Intake supplies matching geometry.
+  /// heights. Intake supplies matching geometry. When `CompositeRequest.chat` is set the
+  /// composite draws the chat itself, from the chat JSON, and there is no render step at all —
+  /// `render` is then ignored.
   public var composite: CompositeRequest?
   /// Records the user's permission to replace an existing destination file. Delivery uses this
   /// decision rather than current file existence; without permission it chooses an unused name.
@@ -58,6 +60,9 @@ public struct JobTemplate: Sendable {
       }
     }
 
+    // The composite draws the chat itself: no render file, so no render step.
+    let drawsChat = composite?.chat != nil
+
     var chatStep: Step?
     if render != nil || composite != nil {
       // Render implies chat; composite implies render. Implied chat stays in the workspace.
@@ -72,7 +77,7 @@ public struct JobTemplate: Sendable {
     }
 
     var renderStep: Step?
-    if let chatStep, render != nil || composite != nil {
+    if let chatStep, !drawsChat, render != nil || composite != nil {
       renderStep = Step(
         id: nextStepID(),
         kind: .renderChat(Self.offline(render ?? RenderRequest())),
@@ -89,12 +94,13 @@ public struct JobTemplate: Sendable {
 
     // A composite requires media; there is no source to synthesize when it is absent.
     var compositeStep: Step?
-    if let composite, let mediaStep, let renderStep {
+    // Dependency order is `[media, chat]`: FFmpeg uses it for layout and audio mapping. The chat
+    // is the render file, or the chat JSON when the composite draws it.
+    if let composite, let mediaStep, let chatInput = drawsChat ? chatStep : renderStep {
       compositeStep = Step(
         id: nextStepID(),
         kind: .composite(composite),
-        // Dependency order is `[media, render]`: FFmpeg uses it for layout and audio mapping.
-        dependsOn: [mediaStep.id, renderStep.id])
+        dependsOn: [mediaStep.id, chatInput.id])
       steps.append(compositeStep!)
     }
 

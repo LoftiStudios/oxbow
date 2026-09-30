@@ -639,4 +639,31 @@ struct ArgumentBuilderTests {
     let kind = StepKind.assemble(AssembleRequest(destination: URL(filePath: "/x.mp4")))
     #expect(kind.resource == .compute)
   }
+
+  /// A composite that draws its chat reads it as raw RGBA frames on stdin, at the chat's own
+  /// size and rate — and never seeks that input, even resuming: the feed starts at the resume
+  /// point itself.
+  @Test func aCompositeThatDrawsItsChatReadsFramesFromStandardInput() {
+    var context = compositeContext
+    context.inputArtifacts[1] = URL(filePath: "/tmp/job/chat.json")
+    context.resumeFrom = .seconds(90)
+    let request = CompositeRequest(
+      framerate: 60, duration: .seconds(3600), destination: URL(filePath: "/out/stream.mp4"),
+      chat: RenderRequest(width: 342, height: 1026, framerate: 30))
+
+    let args = ArgumentBuilder.arguments(for: .composite(request), context: context)
+
+    let chatInput = [
+      "-f", "rawvideo", "-pix_fmt", "rgba", "-video_size", "342x1026", "-framerate", "30",
+      "-i", "pipe:0",
+    ]
+    let start = args.firstIndex(of: "rawvideo").map { $0 - 1 }
+    #expect(start.map { Array(args[$0..<$0 + chatInput.count]) } == chatInput)
+    #expect(!args.contains("/tmp/job/chat.json"))
+    // Only the video is sought.
+    #expect(args.filter { $0 == "-ss" }.count == 1)
+    #expect(args.firstIndex(of: "-ss")! < args.firstIndex(of: "/tmp/job/video.mp4")!)
+    // `-nostdin` stops FFmpeg reading the terminal, not a pipe:0 input.
+    #expect(args.first == "-nostdin")
+  }
 }
