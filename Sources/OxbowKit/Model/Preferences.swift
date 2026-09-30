@@ -55,6 +55,8 @@ public struct Preferences {
     static let hasSavedDefaults = "hasSavedDefaults"
     static let optionsExpanded = "intakeOptionsExpanded"
     static let freeSpaceFloor = "freeSpaceFloor"
+    /// The key the hidden setting used before Phase 3, kept so an explicit choice carries over.
+    static let nativeChatRenderer = "NativeChatRenderer"
   }
 
   private let store: PreferenceStore
@@ -154,6 +156,21 @@ public struct Preferences {
     set { store.set(newValue, forKey: Key.optionsExpanded) }
   }
 
+  // MARK: - Chat rendering
+
+  /// Draw chat with Oxbow's own renderer rather than TwitchDownloaderCLI's. On unless someone
+  /// turned it off: docs/design/native-chat-render.md, Phase 3. Not a download default, so it does
+  /// not count as a save.
+  public var usesNativeChatRenderer: Bool {
+    get { Self.usesNativeChatRenderer(in: store) }
+    set { store.set(newValue, forKey: Key.nativeChatRenderer) }
+  }
+
+  /// For readers off the main actor, such as the queue engine asking at each render's launch.
+  public static func usesNativeChatRenderer(in store: PreferenceStore) -> Bool {
+    store.object(forKey: Key.nativeChatRenderer) as? Bool ?? true
+  }
+
   // MARK: - Saved state
 
   /// Records an explicit save, even when values equal factory defaults. Set by
@@ -170,7 +187,8 @@ public struct Preferences {
 
   public mutating func restoreDefaults() {
     for key in [Key.destination, Key.qualityCap, Key.output, Key.chatSize,
-                Key.hasSavedDefaults, Key.optionsExpanded, Key.freeSpaceFloor] {
+                Key.hasSavedDefaults, Key.optionsExpanded, Key.freeSpaceFloor,
+                Key.nativeChatRenderer] {
       store.removeObject(forKey: key)
     }
   }

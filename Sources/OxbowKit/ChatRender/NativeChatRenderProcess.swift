@@ -26,6 +26,17 @@ public actor NativeChatRenderProcess: HelperProcessing {
     func set() { value.store(true, ordering: .relaxed) }
   }
 
+  /// The native renderer for this render, or nil to run the CLI. Native only when it is wanted
+  /// and the render reads a chat file with its images embedded: it draws emotes and badges from
+  /// those alone, so a render queued before downloads embedded them would lose every emote.
+  public static func forRender(
+    _ request: RenderRequest, context: StepContext, isEnabled: Bool) -> NativeChatRenderProcess?
+  {
+    guard isEnabled, request.isOffline, let input = context.inputArtifacts.first else { return nil }
+    return NativeChatRenderProcess(
+      request: request, input: input, output: context.outputFile, ffmpeg: context.ffmpegPath)
+  }
+
   public init(request: RenderRequest, input: URL, output: URL, ffmpeg: URL) {
     self.request = request
     self.input = input

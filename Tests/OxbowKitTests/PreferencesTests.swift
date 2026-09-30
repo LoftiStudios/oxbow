@@ -156,4 +156,29 @@ struct PreferencesTests {
   @Test func anUnconfiguredStoreReportsNothingMissing() throws {
     #expect(store(InMemoryPreferenceStore(), directoryExists: { _ in false }).storedDestinationIsMissing == false)
   }
+
+  // MARK: - Chat renderer
+
+  /// Native unless someone said otherwise — including through the hidden key this setting used
+  /// before it had a switch, which it still reads.
+  @Test func drawsChatNativelyUnlessTurnedOff() throws {
+    let defaults = InMemoryPreferenceStore()
+    #expect(store(defaults).usesNativeChatRenderer)
+    defaults.set(false, forKey: "NativeChatRenderer")
+    #expect(!store(defaults).usesNativeChatRenderer)
+    #expect(!Preferences.usesNativeChatRenderer(in: defaults))
+  }
+
+  @Test func choosingTheRendererIsNotASavedDownloadDefault() throws {
+    var preferences = store(InMemoryPreferenceStore())
+    preferences.usesNativeChatRenderer = false
+    #expect(!preferences.hasSavedDefaults)
+  }
+
+  @Test func restoringDefaultsReturnsToTheNativeRenderer() throws {
+    var preferences = store(InMemoryPreferenceStore())
+    preferences.usesNativeChatRenderer = false
+    preferences.restoreDefaults()
+    #expect(preferences.usesNativeChatRenderer)
+  }
 }

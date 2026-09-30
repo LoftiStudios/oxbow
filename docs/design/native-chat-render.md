@@ -489,6 +489,14 @@ Setting defaults on; the CLI render path stays in the codebase for one
 release, selectable, then is deleted along with the `chatrender` half of
 `ArgumentBuilder`, `StepPhases` and `StatusLineParser`.
 
+**Step one done 2026-09-29.** The native renderer is the default, with a switch in
+Settings, "Draw chat with Oxbow's renderer". It keeps the hidden setting's key,
+so an explicit "off" carries over, and Restore Defaults turns it back on. Native
+is used only for a render whose chat file has its images embedded. A render
+queued before #76 read a plain file and would lose every emote natively, so it
+falls back to the CLI. **Step two, deleting the CLI render path, waits for the
+release that ships this one to have been used.**
+
 ### Phase 4 — render during the composite
 
 A separate decision, with its own gate. §7.
@@ -666,8 +674,10 @@ already tracks, and both are independent of whether this experiment proceeds.
    keyed by name. What is still open is where it lives and what bounds its
    size, and whether `bits/` stays per-job as insurance against the one key
    that is not provably unique.
-5. **Does Phase 3 need a user-visible choice** during its one release, or is a
-   hidden default enough?
+5. ~~**Does Phase 3 need a user-visible choice** during its one release, or is a
+   hidden default enough?~~ **Visible, decided 2026-09-29:** it is the way back if a
+   chat renders wrong, and a hidden key is not a way back for anyone who has not
+   read this document.
 
 ## 11. Not in scope
 

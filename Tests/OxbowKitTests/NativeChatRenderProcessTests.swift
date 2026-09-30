@@ -171,3 +171,31 @@ struct NativeChatRenderEndToEndTests {
     }
   }
 }
+
+@Suite("Native chat render choice")
+struct NativeChatRenderChoiceTests {
+
+  private let context = StepContext(
+    stepTempDirectory: URL(filePath: "/tmp/step"), outputFile: URL(filePath: "/tmp/render.mp4"),
+    ffmpegPath: URL(filePath: "/tmp/ffmpeg"), inputArtifacts: [URL(filePath: "/tmp/chat.json")])
+
+  @Test func usesTheNativeRendererForAnEmbeddedChatWhenEnabled() {
+    #expect(NativeChatRenderProcess.forRender(RenderRequest(isOffline: true), context: context, isEnabled: true) != nil)
+  }
+
+  @Test func runsTheCLIWhenTurnedOff() {
+    #expect(NativeChatRenderProcess.forRender(RenderRequest(isOffline: true), context: context, isEnabled: false) == nil)
+  }
+
+  /// A render queued before downloads embedded images reads a plain chat file: natively, every
+  /// emote and badge would be missing.
+  @Test func runsTheCLIForAChatWithoutEmbeddedImages() {
+    #expect(NativeChatRenderProcess.forRender(RenderRequest(isOffline: false), context: context, isEnabled: true) == nil)
+  }
+
+  @Test func runsTheCLIWithNoInputToRead() {
+    var bare = context
+    bare.inputArtifacts = []
+    #expect(NativeChatRenderProcess.forRender(RenderRequest(isOffline: true), context: bare, isEnabled: true) == nil)
+  }
+}
