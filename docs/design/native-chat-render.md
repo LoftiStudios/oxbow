@@ -516,6 +516,14 @@ existed, the graph and the arguments are exactly as they were.
   frames, and the chat column is the same layout at the same instant. The render
   step it replaces took 6.7 s natively and 21.6 s through the CLI, for the same
   chat. So the whole render step goes, and nothing moves onto the composite.
+- **On a real source**, a 59 s 1080p60 HEVC clip with the machine idle, the
+  two tie again: 2.8x from a render file and 2.9x fed, over three rounds. The
+  encoder sets that ceiling. Encoding the video alone, with no chat, reaches
+  only 3.4x, and adding the chat costs exactly the extra width (1920/2280).
+  So speed relative to realtime tracks pixels per second: the same encoder
+  gives 5.6x on a 30 fps output and ~11.5x on 720p30. Compare composites in
+  output frames/s. "x realtime" moves with the source's frame rate and size, and
+  a "this is slower" between two different videos is usually just that.
 - **Resume** needs no clamp of its own. The feed starts at the first frame at or
   after the resume point, which is where a seek of the rendered file lands.
   Past the chat's end, it sends the last frame once for `hstack` to hold, which
