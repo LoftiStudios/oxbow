@@ -377,9 +377,8 @@ has changed.**
 `ChatDocument`, `ChatTimeline`, `MessageLayout` for plain text, a rasterizer,
 and `FileSink`. Behind a hidden setting, off by default.
 
-**In slices that can each be seen**, per `AGENTS.md` "Planning work" — a
-renderer is exactly the kind of work that is otherwise invisible until its
-last commit:
+**In slices that can each be seen**, because a renderer is exactly the kind of
+work that is otherwise invisible until its last commit:
 
 1. **A debug window, first.** DEBUG builds only. Open a chat JSON and the
    CLI's render of it; a scrubber drives both, the CLI's frame on the left and

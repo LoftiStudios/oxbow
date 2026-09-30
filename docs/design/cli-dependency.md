@@ -3,7 +3,7 @@
 **Status:** decided 2026-08-27 — **keep it**, with two cheap changes that were
 found while asking.
 
-`docs/development.md` "Do not suggest" has always ended with *"Reimplementing
+`docs/development.md` "Do not suggest" ended, until September 2026, with *"Reimplementing
 chat render in Swift. That's the one part genuinely worth keeping in C#."* That
 was an assertion. This document is the evidence, written when the decision was
 reopened deliberately rather than by accident.

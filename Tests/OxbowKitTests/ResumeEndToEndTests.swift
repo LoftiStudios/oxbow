@@ -49,7 +49,7 @@ struct ResumeEndToEndTests {
     let url = repoRoot().appending(path: relativePath)
     try #require(
       FileManager.default.fileExists(atPath: url.path),
-      "Missing \(relativePath) — build it first (see CLAUDE.md).")
+      "Missing \(relativePath) — build it first (see docs/development.md).")
     return url
   }
 
