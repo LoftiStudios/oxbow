@@ -33,7 +33,9 @@ COMMENT_MARKER = "<!-- oxbow-symbolicated -->"
 VERSION = re.compile(r"^Oxbow (\d+\.\d+\.\d+) \(\d+\) · ", re.M)
 UUID = re.compile(
     r"^Oxbow binary: `([0-9A-Fa-f]{8}-(?:[0-9A-Fa-f]{4}-){3}[0-9A-Fa-f]{12})`$", re.M)
-FRAME = re.compile(r"^(\d+) +(\S.*?) +\+ (\d+)$")
+# The space after the number is optional: 0.6.0 wrote frame 100 onwards as
+# "100Oxbow  + 12". No binary name starts with a digit, so the split is safe.
+FRAME = re.compile(r"^(\d+) *(\D.*?) +\+ (\d+)$")
 
 # Oxbow's __TEXT segment is linked at this address, and MetricKit's offsets are
 # relative to the start of it.
@@ -78,7 +80,7 @@ def render(report, names, note):
     for text, binary, offset in report["frames"]:
         name = names.get(offset) if binary == "Oxbow" else None
         if name:
-            number = text.split(" ", 1)[0]
+            number = FRAME.match(text).group(1)
             lines.append(f"{(number + ' ').ljust(3)}{'Oxbow'.ljust(width)}  {name}")
         else:
             lines.append(text)
