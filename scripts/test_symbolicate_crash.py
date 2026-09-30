@@ -44,6 +44,14 @@ class Parse(unittest.TestCase):
         self.assertIn(("Oxbow", 12), [f[1:] for f in sc.parse(body)["frames"]])
 
 
+    def test_reads_frame_numbers_run_into_the_name(self):
+        # How 0.6.0 writes frame 100 onwards.
+        body = BODY.replace("15 libsystem_pthread.dylib     + 7392", "100Oxbow  + 12")
+        self.assertIn(("Oxbow", 12), [f[1:] for f in sc.parse(body)["frames"]])
+        comment = sc.comment_for(body, lambda v: "/d", lambda d, u, o: {12: "f()", 50488: "g()"})
+        self.assertIn("100 Oxbow", comment)
+
+
 class Comment(unittest.TestCase):
 
     def test_names_oxbows_frames_and_leaves_the_rest(self):
