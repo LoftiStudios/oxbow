@@ -76,7 +76,7 @@ about what you asked for.
 **Nothing to install first.** The downloader, the renderer, and FFmpeg are all
 inside the bundle. No Homebrew, no Python, no terminal.
 
-Oxbow is young—0.5.0 is a handful of releases in, and there are rough
+Oxbow is young—0.6.0 is a handful of releases in, and there are rough
 edges—but every part of it runs end to end today.
 
 ## Getting started
@@ -185,9 +185,11 @@ See [`docs/ffmpeg.md`](docs/ffmpeg.md) for why we build FFmpeg ourselves.
 
 ## Third Party Credits
 
-Downloads and chat rendering are performed by
+Downloads are performed by
 [TwitchDownloaderCLI](https://github.com/lay295/TwitchDownloader) © lay295 and
-contributors, bundled as a helper executable. Oxbow exists because upstream
+contributors, bundled as a helper executable. Oxbow draws chat itself, matching
+TwitchDownloader's layout; the CLI's own chat renderer remains in the bundle as
+a fallback, behind a switch in Settings. Oxbow exists because upstream
 ships a Windows WPF app and a cross-platform CLI, leaving Mac users with the
 CLI only.
 
@@ -197,7 +199,7 @@ developers, built from unmodified source under LGPL 2.1+.
 The bundled helper is a self-contained
 [.NET](https://github.com/dotnet/runtime) application © Microsoft Corporation.
 
-Chat renders are drawn with [SkiaSharp and HarfBuzzSharp](https://github.com/mono/SkiaSharp)
+That fallback renderer draws with [SkiaSharp and HarfBuzzSharp](https://github.com/mono/SkiaSharp)
 © Microsoft Corporation, and may use
 [Noto Color Emoji](https://github.com/googlefonts/noto-emoji) © Google and
 contributors or [Twemoji](https://github.com/jdecked/twemoji) © Twitter and

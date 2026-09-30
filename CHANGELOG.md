@@ -14,9 +14,52 @@ there as part of the release commit. The build number is not tracked here — it
 is the repository's commit count, stamped into the bundle at build time by
 `scripts/stamp-version.sh`.
 
-## [Unreleased]
+## [0.6.0] - 2026-09-30
+
+Oxbow draws chat itself now. Until this release every chat column was drawn
+by TwitchDownloader's renderer, written to a video file, and then encoded a
+second time into the composite. Oxbow's own renderer draws straight into the
+composite instead, so that intermediate file and the second encode are both
+gone, and a video-with-chat job has one step fewer.
+
+### Added
+
+- **Oxbow draws the chat column.** It matches TwitchDownloader's layout
+  (where each line, badge, emote and wrap lands) and was checked against it
+  frame by frame. For a composite it draws each frame as the encoder asks for
+  it, so there is no render step and no render file. On a six-hour job that is
+  about 10 GB off the disk the job needs at its peak, and the intake's disk
+  estimate is smaller by the same amount. It costs no composite speed: the
+  renderer draws thousands of frames a second, and the encoder takes a few
+  hundred. The chat column is also compressed once instead of twice.
+
+  It does not reproduce TwitchDownloader's mistakes. Text in mixed scripts,
+  combining accents, Thai, and right-to-left names now draw correctly, and a
+  message with a long emoji sequence no longer aborts the whole render. Emoji
+  are Apple's. A chatter who never picked a name colour keeps the same one
+  every time; TwitchDownloader chose a different one on each run.
+
+  **The old renderer is still there for this release.** Settings has "Draw
+  chat with Oxbow's renderer", on by default. Turn it off and jobs queued
+  afterwards draw chat with TwitchDownloader's renderer, as a separate step,
+  as before. If something looks wrong with it on, please file an issue. The
+  switch and the old renderer will be removed in a later release.
+
+- **Oxbow offers to report its own crashes.** When Oxbow quits unexpectedly,
+  the next launch shows a banner offering to report it on GitHub. The button
+  opens a new issue with the crash filled in: Oxbow's and macOS's versions,
+  the kind of crash, and where in the code it happened. It contains no file
+  names, downloads or channel names. Nothing is sent unless you submit the
+  issue. Oxbow collects nothing on its own, and this doesn't change that.
 
 ### Changed
+
+- **Chat downloads bring their images with them.** A downloaded chat file
+  now embeds its emotes and badges, which is what lets chat be drawn without
+  going back to the network. The download takes longer and the file is
+  larger (roughly double for a long, emote-heavy VOD), but the time comes
+  back when the chat is drawn, and emote images are now cached across jobs,
+  so a channel's emotes are downloaded once rather than once per job.
 
 - **Signed by Lofti Studios LLC.** Releases move from a personal Developer ID
   to the organization's. The app is still notarized and opens on a
