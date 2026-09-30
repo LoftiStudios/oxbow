@@ -23,12 +23,12 @@ rather than a rendition name — renditions are named per video and some carry
 no resolution, so no name is stable across two videos — and why saving
 defaults is an explicit opt-in rather than last-used-wins.
 
-**Current state: shipping. 0.5.0 is prepared but not tagged** — the version and
-the changelog are in place; the DMG is built by
-`.github/workflows/release.yml` from a `v*` tag, so nothing exists until one is
-pushed. 0.4.0 is what is out.
+**Current state: shipping. 0.5.0 is out** (tagged 2026-09-12). The DMG is
+built by `.github/workflows/release.yml` from a `v*` tag. **`main` is ahead of
+it by the native chat renderer** (#76–#84), which no release carries yet, and
+`CHANGELOG.md` has no Unreleased section for it. Write one before the next tag.
 
-The app downloads a VOD or clip, its chat, and a rendered chat video, and can
+The app downloads a VOD or clip and its chat, draws the chat itself, and can
 composite the video and the chat column into a single file — all into names
 derived from the stream's own metadata, over a range trimmed on a timeline in
 the intake. It also watches channels, queues from Spotlight, and describes
@@ -76,6 +76,17 @@ whatever is selected in a permanently open inspector.
   a window appearing and anything that enqueues without one can await it.
   `docs/design/automation.md` carries all of it, including the two entry points
   rejected beside it.
+- **The native chat renderer: the default, on `main`, unreleased.** Oxbow
+  draws chat itself in Swift from the CLI's chat JSON, which is downloaded
+  with images embedded (`-E`) into a cache shared across jobs. For a composite
+  it draws straight into the composite's FFmpeg over stdin, so there is no
+  render step and no render file. That takes ~10 GB off a six-hour job's disk
+  peak and removes the chat column's second encode, at no cost in composite
+  speed. It matches the CLI's layout, not its defects, measured frame against
+  frame. The CLI render path stays for one release as the Settings switch
+  "Draw chat with Oxbow's renderer", and a DEBUG-only comparison window
+  checks the two side by side. `docs/design/native-chat-render.md` has the
+  phases, the measurements, and what is left.
 - **Release infrastructure: complete but for the Homebrew tap.**
   `scripts/package-dmg.sh` builds the disk image and can sign, notarize and
   staple it; the release workflow does the whole chain from a tag.
@@ -87,9 +98,10 @@ whatever is selected in a permanently open inspector.
 
 Verified against the real bundled binaries, not only in tests: chat, render and
 composite jobs run to completion, delivering valid chat JSON and playable h264
-output under metadata-derived names. Chat render matters most here — it is the
-reason `docs/architecture.md` §3.5 keeps that part in C#, and our LGPL FFmpeg
-renders it correctly with `h264_videotoolbox`.
+output under metadata-derived names, with the chat drawn natively or by the CLI.
+`docs/architecture.md` §3.5 kept chat render in C#. The native renderer
+reversed that by measurement, not by argument: it matches the CLI's layout and
+draws faster than the encoder can take frames.
 
 **The SwiftUI layer is verified by hand, not by tests.** `IntakeModel` carries
 the intake's logic and is unit-tested; the views are not, and the coverage gate
@@ -135,8 +147,20 @@ replaces a paste that does not happen; and nothing on a Mac emits `oxbow://`
 except a browser extension that does not exist, for which App Intents is a
 better transport anyway.
 
-Then the Homebrew tap, and the native-renderer spike, which wants its own
-design doc before any code.
+Then the Homebrew tap. For the renderer, in order:
+
+- **Delete the CLI render path** (Phase 3, step two) once a release carrying
+  the native renderer has been out and used. The `chatrender` half of
+  `ArgumentBuilder`, `StepPhases` and `StatusLineParser` goes with it, and so
+  does the comparison window.
+- **Then a few pixels of left padding on the chat column.** Barclay asked for
+  it, and it is held back deliberately, because any layout change breaks
+  parity with the CLI, which is the oracle until that path is gone.
+- **Benchmark fixtures**, whenever. A manifest in git and real chat and video
+  hosted off-machine, so "is this slower?" is answered on the same content
+  every time. **Compare composites in output frames/s, never "x realtime"**:
+  the encoder does a roughly fixed number of pixels per second, so 1080p60
+  reads 2.9x and 720p30 reads 11.5x on the same machine and the same code.
 
 Local prerequisites, all in place: .NET 10 SDK (`brew install --cask
 dotnet-sdk`), a `Developer ID Application` certificate for team `M9WJGEJKBF`, and
@@ -221,7 +245,8 @@ machines. They are not style preferences.
 - Build it with `./scripts/build-ffmpeg.sh`. Never vendor a prebuilt — every
   readily-available macOS FFmpeg is GPL (they all enable libx264). Never add
   `--enable-gpl`, `--enable-nonfree`, or `--enable-version3` to that script.
-- **Always pass `--output-args` on chat render.** The CLI's default is
+- **Always pass `--output-args` on the CLI's chat render**, for as long as that
+  path exists. The CLI's default is
   `-c:v libx264 …`, which is a GPL encoder and is simply absent from our binary —
   the render fails outright. Use `-c:v h264_videotoolbox -b:v {bitrate}`.
   VideoToolbox is bitrate-targeted; there is no `-crf` equivalent.
@@ -324,14 +349,11 @@ These were considered and rejected. Reasoning is in `docs/architecture.md`.
 - **Mac App Store.** Distribution is Developer ID + notarized DMG, Homebrew cask
   on top.
 - **Sparkle** for v1. Update check is a GitHub releases API call plus a banner.
-- **Reimplementing chat render in Swift.** That's the one part genuinely worth
-  keeping in C# — `docs/design/cli-dependency.md` §4 and §6 are the evidence,
-  and they still stand. **Except as the contained experiment designed in
-  `docs/design/native-chat-render.md` (2026-09-17):** a renderer behind a
-  hidden setting, fed by the CLI's own chat JSON, writing the same file the
-  composite reads, abandonable by deleting one module. That is deliberate and
-  unapproved rather than a lapse — if it is on the table, argue with that
-  document's phases and its stopping conditions, not with this line.
+- **Rendering chat on the GPU, or with Skia, to make it faster.** Neither is
+  the limit. The native renderer draws 5,700–12,000 frames/s on the CPU
+  against the ~170 the encoder takes at 1080p60. Chat render was on this list
+  as "keep it in C#" until September 2026. That was overturned by measurement,
+  and `docs/design/native-chat-render.md` has the numbers.
 
 ---
 
