@@ -1,0 +1,603 @@
+{
+ "version": "1.0.0",
+ "callStackTree": {
+  "callStacks": [
+   {
+    "threadAttributed": false,
+    "callStackRootFrames": [
+     {
+      "binaryUUID": "F63BF418-8F75-34A4-AAF1-8CAF2B9B6A05",
+      "offsetIntoBinaryTextSegment": 3104,
+      "sampleCount": 1,
+      "subFrames": [
+       {
+        "binaryUUID": "F63BF418-8F75-34A4-AAF1-8CAF2B9B6A05",
+        "offsetIntoBinaryTextSegment": 80096,
+        "sampleCount": 1,
+        "subFrames": [
+         {
+          "binaryUUID": "F63BF418-8F75-34A4-AAF1-8CAF2B9B6A05",
+          "offsetIntoBinaryTextSegment": 39464,
+          "sampleCount": 1,
+          "subFrames": [
+           {
+            "binaryUUID": "F63BF418-8F75-34A4-AAF1-8CAF2B9B6A05",
+            "offsetIntoBinaryTextSegment": 4012,
+            "sampleCount": 1,
+            "subFrames": [
+             {
+              "binaryUUID": "727E905E-F344-3823-8E13-E7A096388321",
+              "offsetIntoBinaryTextSegment": 531180,
+              "sampleCount": 1,
+              "subFrames": [
+               {
+                "binaryUUID": "727E905E-F344-3823-8E13-E7A096388321",
+                "offsetIntoBinaryTextSegment": 525108,
+                "sampleCount": 1,
+                "subFrames": [
+                 {
+                  "binaryUUID": "727E905E-F344-3823-8E13-E7A096388321",
+                  "offsetIntoBinaryTextSegment": 1419308,
+                  "sampleCount": 1,
+                  "subFrames": [
+                   {
+                    "binaryUUID": "5D739A34-36B7-39B9-BA3B-7608B59C07A8",
+                    "offsetIntoBinaryTextSegment": 767376,
+                    "sampleCount": 1,
+                    "subFrames": [
+                     {
+                      "binaryUUID": "5D739A34-36B7-39B9-BA3B-7608B59C07A8",
+                      "offsetIntoBinaryTextSegment": 780572,
+                      "sampleCount": 1,
+                      "subFrames": [
+                       {
+                        "binaryUUID": "5D739A34-36B7-39B9-BA3B-7608B59C07A8",
+                        "offsetIntoBinaryTextSegment": 2364288,
+                        "sampleCount": 1,
+                        "subFrames": [
+                         {
+                          "binaryUUID": "2688AFBC-5C39-3132-BCF5-8D00D32D7615",
+                          "offsetIntoBinaryTextSegment": 3654300,
+                          "sampleCount": 1,
+                          "subFrames": [
+                           {
+                            "binaryUUID": "2688AFBC-5C39-3132-BCF5-8D00D32D7615",
+                            "offsetIntoBinaryTextSegment": 234748,
+                            "sampleCount": 1,
+                            "subFrames": [
+                             {
+                              "binaryUUID": "2688AFBC-5C39-3132-BCF5-8D00D32D7615",
+                              "offsetIntoBinaryTextSegment": 9115464,
+                              "sampleCount": 1,
+                              "subFrames": [
+                               {
+                                "binaryUUID": "2688AFBC-5C39-3132-BCF5-8D00D32D7615",
+                                "offsetIntoBinaryTextSegment": 9114220,
+                                "sampleCount": 1,
+                                "subFrames": [
+                                 {
+                                  "binaryUUID": "2688AFBC-5C39-3132-BCF5-8D00D32D7615",
+                                  "offsetIntoBinaryTextSegment": 182540,
+                                  "sampleCount": 1,
+                                  "subFrames": [
+                                   {
+                                    "binaryUUID": "2688AFBC-5C39-3132-BCF5-8D00D32D7615",
+                                    "offsetIntoBinaryTextSegment": 19532,
+                                    "sampleCount": 1,
+                                    "subFrames": [
+                                     {
+                                      "binaryUUID": "D3349306-583A-30D3-AFC7-A64E41430375",
+                                      "offsetIntoBinaryTextSegment": 1055876,
+                                      "sampleCount": 1,
+                                      "subFrames": [
+                                       {
+                                        "binaryUUID": "D3349306-583A-30D3-AFC7-A64E41430375",
+                                        "offsetIntoBinaryTextSegment": 5327976,
+                                        "sampleCount": 1,
+                                        "subFrames": [
+                                         {
+                                          "binaryUUID": "D3349306-583A-30D3-AFC7-A64E41430375",
+                                          "offsetIntoBinaryTextSegment": 8321208,
+                                          "sampleCount": 1,
+                                          "subFrames": [
+                                           {
+                                            "binaryUUID": "8C3A5A96-07E1-33FD-96E8-5DE188DD38B8",
+                                            "offsetIntoBinaryTextSegment": 1148988,
+                                            "sampleCount": 1,
+                                            "subFrames": [
+                                             {
+                                              "binaryUUID": "8C3A5A96-07E1-33FD-96E8-5DE188DD38B8",
+                                              "offsetIntoBinaryTextSegment": 1148988,
+                                              "sampleCount": 1,
+                                              "subFrames": [
+                                               {
+                                                "binaryUUID": "D341DDCB-7969-3A9C-8E03-0CF4751398A9",
+                                                "offsetIntoBinaryTextSegment": 204416,
+                                                "sampleCount": 1,
+                                                "binaryName": "dyld",
+                                                "address": 6639926912
+                                               }
+                                              ],
+                                              "binaryName": "Oxbow",
+                                              "address": 4306159676
+                                             }
+                                            ],
+                                            "binaryName": "Oxbow",
+                                            "address": 4306159676
+                                           }
+                                          ],
+                                          "binaryName": "SwiftUI",
+                                          "address": 7597533368
+                                         }
+                                        ],
+                                        "binaryName": "SwiftUI",
+                                        "address": 7594540136
+                                       }
+                                      ],
+                                      "binaryName": "SwiftUI",
+                                      "address": 7590268036
+                                     }
+                                    ],
+                                    "binaryName": "AppKit",
+                                    "address": 6717619276
+                                   }
+                                  ],
+                                  "binaryName": "AppKit",
+                                  "address": 6717782284
+                                 }
+                                ],
+                                "binaryName": "AppKit",
+                                "address": 6726713964
+                               }
+                              ],
+                              "binaryName": "AppKit",
+                              "address": 6726715208
+                             }
+                            ],
+                            "binaryName": "AppKit",
+                            "address": 6717834492
+                           }
+                          ],
+                          "binaryName": "AppKit",
+                          "address": 6721254044
+                         }
+                        ],
+                        "binaryName": "HIToolbox",
+                        "address": 6868837248
+                       }
+                      ],
+                      "binaryName": "HIToolbox",
+                      "address": 6867253532
+                     }
+                    ],
+                    "binaryName": "HIToolbox",
+                    "address": 6867240336
+                   }
+                  ],
+                  "binaryName": "CoreFoundation",
+                  "address": 6645626924
+                 }
+                ],
+                "binaryName": "CoreFoundation",
+                "address": 6644732724
+               }
+              ],
+              "binaryName": "CoreFoundation",
+              "address": 6644738796
+             }
+            ],
+            "binaryName": "libsystem_kernel.dylib",
+            "address": 6643666860
+           }
+          ],
+          "binaryName": "libsystem_kernel.dylib",
+          "address": 6643702312
+         }
+        ],
+        "binaryName": "libsystem_kernel.dylib",
+        "address": 6643742944
+       }
+      ],
+      "binaryName": "libsystem_kernel.dylib",
+      "address": 6643665952
+     }
+    ]
+   },
+   {
+    "threadAttributed": false,
+    "callStackRootFrames": []
+   },
+   {
+    "threadAttributed": false,
+    "callStackRootFrames": []
+   },
+   {
+    "threadAttributed": false,
+    "callStackRootFrames": []
+   },
+   {
+    "threadAttributed": false,
+    "callStackRootFrames": []
+   },
+   {
+    "threadAttributed": false,
+    "callStackRootFrames": [
+     {
+      "binaryUUID": "F63BF418-8F75-34A4-AAF1-8CAF2B9B6A05",
+      "offsetIntoBinaryTextSegment": 3104,
+      "sampleCount": 1,
+      "subFrames": [
+       {
+        "binaryUUID": "F63BF418-8F75-34A4-AAF1-8CAF2B9B6A05",
+        "offsetIntoBinaryTextSegment": 80096,
+        "sampleCount": 1,
+        "subFrames": [
+         {
+          "binaryUUID": "F63BF418-8F75-34A4-AAF1-8CAF2B9B6A05",
+          "offsetIntoBinaryTextSegment": 39464,
+          "sampleCount": 1,
+          "subFrames": [
+           {
+            "binaryUUID": "F63BF418-8F75-34A4-AAF1-8CAF2B9B6A05",
+            "offsetIntoBinaryTextSegment": 4012,
+            "sampleCount": 1,
+            "subFrames": [
+             {
+              "binaryUUID": "727E905E-F344-3823-8E13-E7A096388321",
+              "offsetIntoBinaryTextSegment": 531180,
+              "sampleCount": 1,
+              "subFrames": [
+               {
+                "binaryUUID": "727E905E-F344-3823-8E13-E7A096388321",
+                "offsetIntoBinaryTextSegment": 525108,
+                "sampleCount": 1,
+                "subFrames": [
+                 {
+                  "binaryUUID": "727E905E-F344-3823-8E13-E7A096388321",
+                  "offsetIntoBinaryTextSegment": 1419308,
+                  "sampleCount": 1,
+                  "subFrames": [
+                   {
+                    "binaryUUID": "2688AFBC-5C39-3132-BCF5-8D00D32D7615",
+                    "offsetIntoBinaryTextSegment": 1431620,
+                    "sampleCount": 1,
+                    "subFrames": [
+                     {
+                      "binaryUUID": "5A1828C3-CBC2-3B85-BD07-C8ED10021A41",
+                      "offsetIntoBinaryTextSegment": 27904,
+                      "sampleCount": 1,
+                      "subFrames": [
+                       {
+                        "binaryUUID": "5A1828C3-CBC2-3B85-BD07-C8ED10021A41",
+                        "offsetIntoBinaryTextSegment": 7404,
+                        "sampleCount": 1,
+                        "binaryName": "libsystem_pthread.dylib",
+                        "address": 6643928300
+                       }
+                      ],
+                      "binaryName": "libsystem_pthread.dylib",
+                      "address": 6643948800
+                     }
+                    ],
+                    "binaryName": "AppKit",
+                    "address": 6719031364
+                   }
+                  ],
+                  "binaryName": "CoreFoundation",
+                  "address": 6645626924
+                 }
+                ],
+                "binaryName": "CoreFoundation",
+                "address": 6644732724
+               }
+              ],
+              "binaryName": "CoreFoundation",
+              "address": 6644738796
+             }
+            ],
+            "binaryName": "libsystem_kernel.dylib",
+            "address": 6643666860
+           }
+          ],
+          "binaryName": "libsystem_kernel.dylib",
+          "address": 6643702312
+         }
+        ],
+        "binaryName": "libsystem_kernel.dylib",
+        "address": 6643742944
+       }
+      ],
+      "binaryName": "libsystem_kernel.dylib",
+      "address": 6643665952
+     }
+    ]
+   },
+   {
+    "threadAttributed": false,
+    "callStackRootFrames": []
+   },
+   {
+    "threadAttributed": true,
+    "callStackRootFrames": [
+     {
+      "binaryUUID": "022BF08F-0B3A-3225-9E65-16D1553CE90D",
+      "offsetIntoBinaryTextSegment": 227972,
+      "sampleCount": 1,
+      "subFrames": [
+       {
+        "binaryUUID": "022BF08F-0B3A-3225-9E65-16D1553CE90D",
+        "offsetIntoBinaryTextSegment": 230672,
+        "sampleCount": 1,
+        "subFrames": [
+         {
+          "binaryUUID": "022BF08F-0B3A-3225-9E65-16D1553CE90D",
+          "offsetIntoBinaryTextSegment": 20744,
+          "sampleCount": 1,
+          "subFrames": [
+           {
+            "binaryUUID": "F2F652DD-14B0-35E2-BC9D-47FE153D579E",
+            "offsetIntoBinaryTextSegment": 351688,
+            "sampleCount": 1,
+            "subFrames": [
+             {
+              "binaryUUID": "F2F652DD-14B0-35E2-BC9D-47FE153D579E",
+              "offsetIntoBinaryTextSegment": 21504,
+              "sampleCount": 1,
+              "subFrames": [
+               {
+                "binaryUUID": "8C3A5A96-07E1-33FD-96E8-5DE188DD38B8",
+                "offsetIntoBinaryTextSegment": 50488,
+                "sampleCount": 1,
+                "subFrames": [
+                 {
+                  "binaryUUID": "8C3A5A96-07E1-33FD-96E8-5DE188DD38B8",
+                  "offsetIntoBinaryTextSegment": 50488,
+                  "sampleCount": 1,
+                  "subFrames": [
+                   {
+                    "binaryUUID": "F510AF58-AF2C-3FDA-8C1E-3ACA1F638CB4",
+                    "offsetIntoBinaryTextSegment": 120232,
+                    "sampleCount": 1,
+                    "subFrames": [
+                     {
+                      "binaryUUID": "022BF08F-0B3A-3225-9E65-16D1553CE90D",
+                      "offsetIntoBinaryTextSegment": 6708,
+                      "sampleCount": 1,
+                      "subFrames": [
+                       {
+                        "binaryUUID": "022BF08F-0B3A-3225-9E65-16D1553CE90D",
+                        "offsetIntoBinaryTextSegment": 112032,
+                        "sampleCount": 1,
+                        "subFrames": [
+                         {
+                          "binaryUUID": "022BF08F-0B3A-3225-9E65-16D1553CE90D",
+                          "offsetIntoBinaryTextSegment": 40896,
+                          "sampleCount": 1,
+                          "subFrames": [
+                           {
+                            "binaryUUID": "022BF08F-0B3A-3225-9E65-16D1553CE90D",
+                            "offsetIntoBinaryTextSegment": 43708,
+                            "sampleCount": 1,
+                            "subFrames": [
+                             {
+                              "binaryUUID": "022BF08F-0B3A-3225-9E65-16D1553CE90D",
+                              "offsetIntoBinaryTextSegment": 85848,
+                              "sampleCount": 1,
+                              "subFrames": [
+                               {
+                                "binaryUUID": "022BF08F-0B3A-3225-9E65-16D1553CE90D",
+                                "offsetIntoBinaryTextSegment": 84060,
+                                "sampleCount": 1,
+                                "subFrames": [
+                                 {
+                                  "binaryUUID": "5A1828C3-CBC2-3B85-BD07-C8ED10021A41",
+                                  "offsetIntoBinaryTextSegment": 12188,
+                                  "sampleCount": 1,
+                                  "subFrames": [
+                                   {
+                                    "binaryUUID": "5A1828C3-CBC2-3B85-BD07-C8ED10021A41",
+                                    "offsetIntoBinaryTextSegment": 7392,
+                                    "sampleCount": 1,
+                                    "binaryName": "libsystem_pthread.dylib",
+                                    "address": 6643928288
+                                   }
+                                  ],
+                                  "binaryName": "libsystem_pthread.dylib",
+                                  "address": 6643933084
+                                 }
+                                ],
+                                "binaryName": "libdispatch.dylib",
+                                "address": 6642186332
+                               }
+                              ],
+                              "binaryName": "libdispatch.dylib",
+                              "address": 6642188120
+                             }
+                            ],
+                            "binaryName": "libdispatch.dylib",
+                            "address": 6642145980
+                           }
+                          ],
+                          "binaryName": "libdispatch.dylib",
+                          "address": 6642143168
+                         }
+                        ],
+                        "binaryName": "libdispatch.dylib",
+                        "address": 6642214304
+                       }
+                      ],
+                      "binaryName": "libdispatch.dylib",
+                      "address": 6642108980
+                     }
+                    ],
+                    "binaryName": "MetricKit",
+                    "address": 9311065512
+                   }
+                  ],
+                  "binaryName": "Oxbow",
+                  "address": 4305061176
+                 }
+                ],
+                "binaryName": "Oxbow",
+                "address": 4305061176
+               }
+              ],
+              "binaryName": "libswift_Concurrency.dylib",
+              "address": 11686503424
+             }
+            ],
+            "binaryName": "libswift_Concurrency.dylib",
+            "address": 11686833608
+           }
+          ],
+          "binaryName": "libdispatch.dylib",
+          "address": 6642123016
+         }
+        ],
+        "binaryName": "libdispatch.dylib",
+        "address": 6642332944
+       }
+      ],
+      "binaryName": "libdispatch.dylib",
+      "address": 6642330244
+     }
+    ]
+   },
+   {
+    "threadAttributed": false,
+    "callStackRootFrames": []
+   },
+   {
+    "threadAttributed": false,
+    "callStackRootFrames": [
+     {
+      "binaryUUID": "F63BF418-8F75-34A4-AAF1-8CAF2B9B6A05",
+      "offsetIntoBinaryTextSegment": 3104,
+      "sampleCount": 1,
+      "subFrames": [
+       {
+        "binaryUUID": "F63BF418-8F75-34A4-AAF1-8CAF2B9B6A05",
+        "offsetIntoBinaryTextSegment": 80096,
+        "sampleCount": 1,
+        "subFrames": [
+         {
+          "binaryUUID": "F63BF418-8F75-34A4-AAF1-8CAF2B9B6A05",
+          "offsetIntoBinaryTextSegment": 39464,
+          "sampleCount": 1,
+          "subFrames": [
+           {
+            "binaryUUID": "F63BF418-8F75-34A4-AAF1-8CAF2B9B6A05",
+            "offsetIntoBinaryTextSegment": 4012,
+            "sampleCount": 1,
+            "subFrames": [
+             {
+              "binaryUUID": "727E905E-F344-3823-8E13-E7A096388321",
+              "offsetIntoBinaryTextSegment": 531180,
+              "sampleCount": 1,
+              "subFrames": [
+               {
+                "binaryUUID": "727E905E-F344-3823-8E13-E7A096388321",
+                "offsetIntoBinaryTextSegment": 525108,
+                "sampleCount": 1,
+                "subFrames": [
+                 {
+                  "binaryUUID": "727E905E-F344-3823-8E13-E7A096388321",
+                  "offsetIntoBinaryTextSegment": 1419308,
+                  "sampleCount": 1,
+                  "subFrames": [
+                   {
+                    "binaryUUID": "F78B7942-C45B-3520-92C8-DD66E11C46FE",
+                    "offsetIntoBinaryTextSegment": 2356108,
+                    "sampleCount": 1,
+                    "subFrames": [
+                     {
+                      "binaryUUID": "4317F7C6-73D2-3BE9-B010-F318F1198A1B",
+                      "offsetIntoBinaryTextSegment": 343208,
+                      "sampleCount": 1,
+                      "subFrames": [
+                       {
+                        "binaryUUID": "5A1828C3-CBC2-3B85-BD07-C8ED10021A41",
+                        "offsetIntoBinaryTextSegment": 27904,
+                        "sampleCount": 1,
+                        "subFrames": [
+                         {
+                          "binaryUUID": "5A1828C3-CBC2-3B85-BD07-C8ED10021A41",
+                          "offsetIntoBinaryTextSegment": 7404,
+                          "sampleCount": 1,
+                          "binaryName": "libsystem_pthread.dylib",
+                          "address": 6643928300
+                         }
+                        ],
+                        "binaryName": "libsystem_pthread.dylib",
+                        "address": 6643948800
+                       }
+                      ],
+                      "binaryName": "Foundation",
+                      "address": 6668840104
+                     }
+                    ],
+                    "binaryName": "CFNetwork",
+                    "address": 6750782348
+                   }
+                  ],
+                  "binaryName": "CoreFoundation",
+                  "address": 6645626924
+                 }
+                ],
+                "binaryName": "CoreFoundation",
+                "address": 6644732724
+               }
+              ],
+              "binaryName": "CoreFoundation",
+              "address": 6644738796
+             }
+            ],
+            "binaryName": "libsystem_kernel.dylib",
+            "address": 6643666860
+           }
+          ],
+          "binaryName": "libsystem_kernel.dylib",
+          "address": 6643702312
+         }
+        ],
+        "binaryName": "libsystem_kernel.dylib",
+        "address": 6643742944
+       }
+      ],
+      "binaryName": "libsystem_kernel.dylib",
+      "address": 6643665952
+     }
+    ]
+   },
+   {
+    "threadAttributed": false,
+    "callStackRootFrames": []
+   },
+   {
+    "threadAttributed": false,
+    "callStackRootFrames": []
+   },
+   {
+    "threadAttributed": false,
+    "callStackRootFrames": []
+   }
+  ],
+  "callStackPerThread": true
+ },
+ "diagnosticMetaData": {
+  "platformArchitecture": "arm64e",
+  "terminationReason": "Namespace SIGNAL, Code 0x5",
+  "exceptionType": 6,
+  "appBuildVersion": "147",
+  "isTestFlightApp": false,
+  "osVersion": "macOS 27.0 (26A428)",
+  "bundleIdentifier": "studio.lofti.Oxbow",
+  "deviceType": "MacBookPro18,4",
+  "exceptionCode": 1,
+  "signal": 5,
+  "regionFormat": "US",
+  "appVersion": "0.5.0",
+  "pid": 91364,
+  "lowPowerModeEnabled": false
+ }
+}

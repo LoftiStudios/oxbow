@@ -18,6 +18,9 @@ struct QueueView: View {
   /// Recorded metadata fallback for the inspector.
   var videoRecordStore: VideoRecordStore? = nil
 
+  /// The previous launch's crash, if MetricKit reported one.
+  var crashes: CrashReportModel? = nil
+
   /// Observe the app-owned hand-off and open intake through this view's openWindow environment.
   @Binding var pendingIntake: PendingIntake?
 
@@ -190,6 +193,16 @@ WatchingView(
     VStack(spacing: 0) {
       if let banner {
         QueueBanner(title: banner.title, message: banner.message)
+        Divider()
+      }
+      if let crashes, let report = crashes.pending {
+        CrashBanner(
+          report: report,
+          onReport: { url in
+            openURL(url)
+            crashes.dismiss()
+          },
+          onDismiss: { crashes.dismiss() })
         Divider()
       }
       // Show download-blocking warnings above update notices.

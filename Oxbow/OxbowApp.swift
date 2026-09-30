@@ -47,6 +47,7 @@ struct OxbowApp: App {
             content: content, updates: updates, watching: watching, poller: poller,
             canAddChannel: watchStore != nil, imageStore: imageStore,
             videoRecordStore: videoRecordStore,
+            crashes: CrashReportModel.shared,
             pendingIntake: $pendingIntake,
             pendingChannelEdit: $pendingChannelEdit)
         } else {
@@ -140,6 +141,11 @@ struct OxbowApp: App {
       #if DEBUG
       CommandMenu("Debug") {
         ChatRenderComparisonCommand()
+        // docs/design/crash-reports.md: relaunch afterwards and the crash banner
+        // should offer this crash, EXC_BAD_ACCESS (SIGSEGV).
+        Button("Crash Oxbow") {
+          UnsafeMutablePointer<Int>(bitPattern: 8)!.pointee = 1
+        }
       }
       #endif
     }
@@ -303,6 +309,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   /// resolution without waiting.
   func applicationDidFinishLaunching(_ notification: Notification) {
     QueueHost.shared.registerNotificationDelegate()
+    // Hosted tests would otherwise receive the developer's own crashes.
+    if AppComposition.isUserSession { CrashReporter.shared.start() }
     Task { _ = await QueueHost.shared.ready() }
   }
 
