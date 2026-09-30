@@ -44,7 +44,9 @@ deliberately scopes to `Sources/OxbowKit` for that reason. A change to a view is
 a change nothing will catch for you — click it.
 
 Local prerequisites for a signed release build: .NET 10 SDK (`brew install --cask
-dotnet-sdk`), a `Developer ID Application` certificate for team `M9WJGEJKBF`, and
+dotnet-sdk`), a `Developer ID Application` certificate for the Lofti Studios, LLC
+team `Z4PBYBS53X` (the personal team `M9WJGEJKBF` before the move in
+`docs/signing.md` §9), and
 notary credentials in the keychain as profile `oxbow-notary`. The marketing
 version is `MARKETING_VERSION` in `Config/Shared.xcconfig`, bumped by hand as
 part of a release commit; `CFBundleVersion` is the repository's commit count,

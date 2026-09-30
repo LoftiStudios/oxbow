@@ -14,6 +14,16 @@ there as part of the release commit. The build number is not tracked here — it
 is the repository's commit count, stamped into the bundle at build time by
 `scripts/stamp-version.sh`.
 
+## [Unreleased]
+
+### Changed
+
+- **Signed by Lofti Studios LLC.** Releases move from a personal Developer ID
+  to the organization's. The app is still notarized and opens on a
+  double-click, but macOS sees a different signing team, so it may ask again for
+  folder access (Downloads, Documents, Desktop, external drives) and for
+  notification permission. This happens once.
+
 ## [0.5.0] - 2026-09-12
 
 Two releases ago Oxbow was a window you opened to fetch a video. This one is

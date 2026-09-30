@@ -74,8 +74,9 @@ The full command reference lives in [`docs/development.md`](docs/development.md)
 ### What you cannot do
 
 **You cannot produce a distributable build.** Signing and notarization require a
-Developer ID certificate tied to a specific paid Apple Developer account, and
-that credential is personal and non-transferable. Releases are cut by the
+Developer ID certificate tied to a specific paid Apple Developer account (the
+maintainer's organization, Lofti Studios LLC), and that credential is not
+transferable. Releases are cut by the
 maintainer only. This is a property of how Apple distributes software, not a
 policy choice, and it will not change.
 
