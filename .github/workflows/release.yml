@@ -294,8 +294,15 @@ jobs:
           # shellcheck disable=SC2046
           security list-keychains -d user -s "${KEYCHAIN}" $(security list-keychains -d user | tr -d '"')
 
-          identity="$(security find-identity -v -p codesigning "${KEYCHAIN}" | grep 'Developer ID Application' | head -1 | sed 's/.*"\(.*\)"/\1/')"
-          [ -n "${identity}" ] || { echo "::error::no Developer ID Application identity in the imported certificate"; exit 1; }
+          # `|| true`: under pipefail a grep that matches nothing would kill the
+          # step silently, before the error below could say why.
+          identity="$(security find-identity -v -p codesigning "${KEYCHAIN}" | grep 'Developer ID Application' | head -1 | sed 's/.*"\(.*\)"/\1/' || true)"
+          if [ -z "${identity}" ]; then
+            # Identity names only; no key material is printed.
+            security find-identity -p codesigning "${KEYCHAIN}"
+            echo "::error::no usable Developer ID Application identity in DEVELOPER_ID_P12_BASE64. The .p12 most likely holds the certificate without its private key: export it from Keychain Access > My Certificates, with the key showing under the certificate."
+            exit 1
+          fi
           # The certificate and the team are separate settings, so one can be
           # rotated without the other and still produce a valid, notarized app
           # signed by the wrong team. See docs/signing.md §9.
