@@ -377,11 +377,21 @@ public actor QueueEngine {
       dialect = .helper
     }
 
+    // A composite that draws its chat reads it as raw frames on stdin, from input 1's JSON.
+    var feed: StandardInputFeed?
+    if case .composite(let request) = step.kind, let render = request.chat,
+       context.inputArtifacts.count > 1
+    {
+      feed = NativeChatRenderer.compositeFeed(
+        chat: context.inputArtifacts[1], request: render, resumeFrom: context.resumeFrom)
+    }
+
     let launch = Launch(
       executable: executable,
       arguments: ArgumentBuilder.arguments(for: step.kind, context: context),
       workingDirectory: context.stepTempDirectory,
-      dialect: dialect)
+      dialect: dialect,
+      standardInput: feed)
 
     running[id] = process
     Task { [weak self] in

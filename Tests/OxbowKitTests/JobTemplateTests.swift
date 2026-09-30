@@ -554,4 +554,23 @@ struct JobTemplateTests {
 
     #expect(!job.steps.contains { if case .assemble = $0.kind { true } else { false } })
   }
+
+  /// A composite that draws its chat reads the chat JSON directly: no render step, and the
+  /// composite's second input is the chat download. native-chat-render.md, Phase 4.
+  @Test func aCompositeThatDrawsItsChatHasNoRenderStep() throws {
+    var template = compositeTemplate()
+    template.composite?.chat = RenderRequest(width: 342, height: 1026, framerate: 30)
+    let job = makeJob(template)
+
+    #expect(!job.steps.contains { if case .renderChat = $0.kind { true } else { false } })
+    let chat = try #require(job.steps.first { if case .downloadChat = $0.kind { true } else { false } })
+    let media = try #require(job.steps.first { if case .downloadVideo = $0.kind { true } else { false } })
+    let composite = try #require(job.steps.first { if case .composite = $0.kind { true } else { false } })
+    #expect(composite.dependsOn == [media.id, chat.id])
+    // Drawing reads the images from the chat file, exactly as an offline render does.
+    guard case .downloadChat(let request) = chat.kind else { return }
+    #expect(request.isEmbeddingImages)
+    #expect(request.format == .json)
+    #expect(job.steps.last.map { if case .assemble = $0.kind { true } else { false } } == true)
+  }
 }

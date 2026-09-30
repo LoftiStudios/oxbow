@@ -46,6 +46,8 @@ public enum ProcessSpawner {
       posix_spawn_file_actions_adddup2(&actions, inPipe[0], STDIN_FILENO)
       posix_spawn_file_actions_addclose(&actions, inPipe[0])
       posix_spawn_file_actions_addclose(&actions, inPipe[1])
+    } else {
+      posix_spawn_file_actions_addinherit_np(&actions, STDIN_FILENO)
     }
     posix_spawn_file_actions_addchdir_np(&actions, workingDirectory.path)
 
@@ -65,9 +67,14 @@ public enum ProcessSpawner {
     sigfillset(&allSignals)
     posix_spawnattr_setsigdefault(&attributes, &allSignals)
 
+    // The child gets only the descriptors named above. Without this it inherits every descriptor
+    // open in Oxbow at that instant — including the pipes of a helper another thread is spawning
+    // at the same moment. A child holding another's stdin write end keeps that one from ever
+    // seeing EOF; two doing it to each other wait on each other for ever.
     posix_spawnattr_setflags(
       &attributes,
-      Int16(POSIX_SPAWN_SETPGROUP | POSIX_SPAWN_SETSIGMASK | POSIX_SPAWN_SETSIGDEF))
+      Int16(POSIX_SPAWN_SETPGROUP | POSIX_SPAWN_SETSIGMASK | POSIX_SPAWN_SETSIGDEF
+        | POSIX_SPAWN_CLOEXEC_DEFAULT))
 
     let argv: [UnsafeMutablePointer<CChar>?] =
       ([executable.path] + arguments).map { strdup($0) } + [nil]
