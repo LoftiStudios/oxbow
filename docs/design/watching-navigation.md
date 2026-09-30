@@ -357,10 +357,9 @@ explicit.
 
 ## 8. Staging
 
-Each stage changes something visible. This is `docs/development.md`'s
-"Planning work" rule applied deliberately, against a feature whose predecessor
-(`video-record.md` stage 3a) shipped twenty-three commits whose entire output
-was a JSON file.
+Each stage changes something visible. That is deliberate, against a feature
+whose predecessor (`video-record.md` stage 3a) shipped twenty-three commits
+whose entire output was a JSON file.
 
 **Stage 1 — the channels appear, and clicking one works.** Sidebar rows with
 badges, `SidebarItem.channel`, both switches, the destination showing the full

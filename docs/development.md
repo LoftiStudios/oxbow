@@ -1,10 +1,10 @@
-# Oxbow
+# Developing Oxbow
 
 Native macOS GUI for [TwitchDownloader](https://github.com/lay295/TwitchDownloader).
 SwiftUI app that drives a bundled `TwitchDownloaderCLI` helper as a subprocess.
 
 **Read `docs/architecture.md` first.** It holds the architecture decisions and their
-rationale. This file holds the rules and commands.
+rationale. This file holds the rules and commands for building and changing it.
 `docs/ffmpeg.md`, `docs/signing.md`, and `docs/composite-performance.md` hold the
 resolved spikes. Read the last one before proposing anything that claims to make
 compositing faster — the step is bound by the hardware H.264 encoder, and six
@@ -23,122 +23,27 @@ rather than a rendition name — renditions are named per video and some carry
 no resolution, so no name is stable across two videos — and why saving
 defaults is an explicit opt-in rather than last-used-wins.
 
-**Current state: shipping. 0.5.0 is prepared but not tagged** — the version and
-the changelog are in place; the DMG is built by
-`.github/workflows/release.yml` from a `v*` tag, so nothing exists until one is
-pushed. 0.4.0 is what is out.
+## Things worth knowing first
 
-The app downloads a VOD or clip, its chat, and a rendered chat video, and can
-composite the video and the chat column into a single file — all into names
-derived from the stream's own metadata, over a range trimmed on a timeline in
-the intake. It also watches channels, queues from Spotlight, and describes
-whatever is selected in a permanently open inspector.
-
-- **FFmpeg sourcing: resolved.** `./scripts/build-ffmpeg.sh` produces a verified
-  LGPL 2.1+ arm64 binary. See `docs/ffmpeg.md`.
-- **Signing + notarization: resolved and verified end to end**, including Xcode
-  integration. The "Embed & Sign Helpers" Run Script phase
-  (`scripts/embed-helpers.sh`) embeds the helper tree and FFmpeg into
-  `Contents/MacOS` and signs them inside-out; there is deliberately no Copy
-  Files phase, so the "Code Sign On Copy" trap cannot occur. Building without
-  `build/helper` or `build/ffmpeg` succeeds with a warning, so UI work needs
-  neither the .NET nor the FFmpeg toolchain. See `docs/signing.md`.
-- **Deployment target: macOS 26.** `MIN_MACOS` in `scripts/build-ffmpeg.sh`
-  must stay in lockstep with it. Raised from macOS 15 to unlock Liquid Glass;
-  Oxbow is Apple Silicon only, and every Mac that can run it can run macOS 26,
-  so nobody is locked out. Exactly one call site uses it so far
-  (`Oxbow/Intake/TrimTimeline.swift`).
-- **OxbowKit: built and tested**, at 94%+ line coverage with a floor in CI.
-  Job/step model, scheduler, queue engine, argument builder, status-line parser,
-  atomic persistence with load-time reconciliation, per-step helper logs, the
-  async process wrapper, composite geometry and rate control, resume of an
-  interrupted composite, the update check, the sleep assertion, and the intake's
-  disk-space estimate.
-- **The app: built, shipped, and used.** Single window, queue list with
-  expandable multi-step jobs, an intake that takes a VOD or clip link, fetches
-  the video's metadata and offers a trim range, a Settings window, an About
-  box, and an update banner. Designs live in `docs/design/`.
-- **The intake's own layout is a design in its own right.** A large preview
-  that plays the VOD's four sampled frames, a test card in the slot until they
-  arrive, no Name field — naming happens in the Save panel — and two
-  collapsible sections whose headers are rows rather than `DisclosureGroup`s.
-  `docs/design/settings.md` §2.1 and §2.9 carry the reasoning, including two
-  control choices that look right and are not.
-- **A way in from outside the app: shipped.** `Download Twitch Video` is an
-  App Intent — one Shortcuts action, which macOS 26 also surfaces in Spotlight
-  on its own, so ⌘Space, paste, Return queues a job without Oxbow ever coming
-  forward. It takes a link and four optional overrides, and anything left blank
-  resolves from `Preferences` rather than from a factory value, so the action
-  and the Settings window cannot disagree about what was asked for. The work it
-  forced was not job composition — `IntakeModel` already ran headless, which is
-  why no `JobComposer` was extracted — but the launch sequence: `QueueHost` now
-  owns engine resolution, so building the engine is no longer a side effect of
-  a window appearing and anything that enqueues without one can await it.
-  `docs/design/automation.md` carries all of it, including the two entry points
-  rejected beside it.
-- **Release infrastructure: complete but for the Homebrew tap.**
-  `scripts/package-dmg.sh` builds the disk image and can sign, notarize and
-  staple it; the release workflow does the whole chain from a tag.
-  `scripts/build.sh` and `scripts/notarize.sh` were never written — the release
-  workflow absorbed both, and a second copy of that logic that only runs
-  locally would be a copy that silently drifts. The submodule pin is no longer
-  a blocker: it sits on the `oxbow-pin-1.56.5-12-gd4122d8` anchor tag in the
-  mirror (see **Upstream** below).
-
-Verified against the real bundled binaries, not only in tests: chat, render and
-composite jobs run to completion, delivering valid chat JSON and playable h264
-output under metadata-derived names. Chat render matters most here — it is the
-reason `docs/architecture.md` §3.5 keeps that part in C#, and our LGPL FFmpeg
-renders it correctly with `h264_videotoolbox`.
+- **Deployment target: macOS 26, Apple Silicon only.** `MIN_MACOS` in
+  `scripts/build-ffmpeg.sh` must stay in lockstep with it.
+- **UI work needs neither the .NET nor the FFmpeg toolchain.** Building without
+  `build/helper` or `build/ffmpeg` succeeds with a warning; the "Embed & Sign
+  Helpers" Run Script phase (`scripts/embed-helpers.sh`) skips what is absent.
+  See `docs/signing.md` for what it does when both are present.
+- **Chat is drawn by Oxbow's own renderer by default.** The CLI downloads the
+  chat JSON with images embedded; `Sources/OxbowKit/ChatRender` draws it, and
+  for a composite draws straight into the composite's FFmpeg with no
+  intermediate file. The CLI's `chatrender` remains as a fallback behind the
+  Settings switch "Draw chat with Oxbow's renderer", for one release.
+  `docs/design/native-chat-render.md` has the design and the measurements.
 
 **The SwiftUI layer is verified by hand, not by tests.** `IntakeModel` carries
 the intake's logic and is unit-tested; the views are not, and the coverage gate
 deliberately scopes to `Sources/OxbowKit` for that reason. A change to a view is
 a change nothing will catch for you — click it.
 
-### Next
-
-**The "make it good" phase.** The app does its job. Status in the Dock and
-Notification Center shipped in 0.4.0, and defaults now stick: `Preferences`
-in `Sources/OxbowKit` stores destination, a quality cap, chat on/off and chat
-text size over an **injected** `UserDefaults` — deliberately not `@AppStorage`,
-which reaches `.standard` and would have every `xcodebuild test` writing the
-real domain.
-
-Clipboard hand-off already ships: `IntakeWindow` focuses the link field on
-open and, if the clipboard holds a Twitch address, prefills it —
-`TwitchLink` is what decides a string is worth offering. Between that and the
-defaults, everything *after* switching to the app is nearly free, which left
-the switch as the whole remaining cost — and the App Intent above is what
-removes it, for anyone who reaches for ⌘Space instead of the Dock.
-
-**Channel watching shipped**, and with it the video record underneath it, the
-sidebar destinations that give a channel's history somewhere to live, and the
-inspector beside Get Info. That was the one item on this list that changed what
-the app *is* rather than how fast you reach it, so what remains is smaller by
-nature. `docs/design/channel-watching.md`, `channel-history.md`,
-`video-record.md` and `inspector.md` carry the reasoning.
-
-In rough order of delight per hour:
-
-1. **The live disk projection.** `docs/design/composite-rate-control.md` §6.1
-   argues for it and `docs/design/disk-preflight.md` §9 records the two gaps it
-   closes. The projection is already computed for the progress UI.
-2. **Whether the inbox goes flat.** Deferred by the sidebar work rather than
-   decided: with channel identity in the sidebar, Watching may want to be
-   reverse-chronological across channels instead of grouped by them.
-
-**Drag-and-drop and the `oxbow://` scheme are not being built**, having sat at
-number 2 on this list for two releases. `automation.md` §10.1 and §10.2 carry
-the reasoning: the window already fills itself from the clipboard, so a drop
-replaces a paste that does not happen; and nothing on a Mac emits `oxbow://`
-except a browser extension that does not exist, for which App Intents is a
-better transport anyway.
-
-Then the Homebrew tap, and the native-renderer spike, which wants its own
-design doc before any code.
-
-Local prerequisites, all in place: .NET 10 SDK (`brew install --cask
+Local prerequisites for a signed release build: .NET 10 SDK (`brew install --cask
 dotnet-sdk`), a `Developer ID Application` certificate for team `M9WJGEJKBF`, and
 notary credentials in the keychain as profile `oxbow-notary`. The marketing
 version is `MARKETING_VERSION` in `Config/Shared.xcconfig`, bumped by hand as
@@ -152,14 +57,6 @@ is where the About box reads them from.
 unsigned app build) must be green before merging. The repo is public; history
 on main should be presentable.
 
-**No AI attribution in commit messages, PR titles, PR descriptions or branch
-names.** No `Co-Authored-By:` naming an assistant, no "Generated with" footer,
-no tool name in a branch. `main` has none and is not going to start. This is
-worth stating because assistants are often configured to add such a trailer by
-default and will do it unprompted — if you are one, this file overrides that
-default. Catching it late is expensive: it cost a 48-commit `filter-branch`
-and a force-push on an open PR to undo, and the repo is public, so anything
-pushed is visible before it is fixed.
 
 ---
 
@@ -180,6 +77,7 @@ oxbow/
   docs/design/               # per-subsystem design docs (task-queue.md)
   .github/workflows/
 ```
+
 
 ---
 
@@ -221,7 +119,8 @@ machines. They are not style preferences.
 - Build it with `./scripts/build-ffmpeg.sh`. Never vendor a prebuilt — every
   readily-available macOS FFmpeg is GPL (they all enable libx264). Never add
   `--enable-gpl`, `--enable-nonfree`, or `--enable-version3` to that script.
-- **Always pass `--output-args` on chat render.** The CLI's default is
+- **Always pass `--output-args` on the CLI's chat render**, for as long as that
+  path exists. The CLI's default is
   `-c:v libx264 …`, which is a GPL encoder and is simply absent from our binary —
   the render fails outright. Use `-c:v h264_videotoolbox -b:v {bitrate}`.
   VideoToolbox is bitrate-targeted; there is no `-crf` equivalent.
@@ -313,6 +212,7 @@ machines. They are not style preferences.
   signing editor will happily write the team back into the project file —
   check the diff before committing pbxproj changes.
 
+
 ---
 
 ## Do not suggest
@@ -324,14 +224,12 @@ These were considered and rejected. Reasoning is in `docs/architecture.md`.
 - **Mac App Store.** Distribution is Developer ID + notarized DMG, Homebrew cask
   on top.
 - **Sparkle** for v1. Update check is a GitHub releases API call plus a banner.
-- **Reimplementing chat render in Swift.** That's the one part genuinely worth
-  keeping in C# — `docs/design/cli-dependency.md` §4 and §6 are the evidence,
-  and they still stand. **Except as the contained experiment designed in
-  `docs/design/native-chat-render.md` (2026-09-17):** a renderer behind a
-  hidden setting, fed by the CLI's own chat JSON, writing the same file the
-  composite reads, abandonable by deleting one module. That is deliberate and
-  unapproved rather than a lapse — if it is on the table, argue with that
-  document's phases and its stopping conditions, not with this line.
+- **Rendering chat on the GPU, or with Skia, to make it faster.** Neither is
+  the limit. The native renderer draws 5,700–12,000 frames/s on the CPU
+  against the ~170 the encoder takes at 1080p60. Chat render sat on this list
+  as "keep it in C#" until September 2026; measurement overturned that, and
+  `docs/design/native-chat-render.md` has the numbers.
+
 
 ---
 
@@ -531,42 +429,6 @@ xcrun stapler validate build/Oxbow.dmg
 
 ---
 
-## Planning work
-
-**Break a plan into the smallest slices that each change something a person can
-see.** A slice should be testable by opening the app and looking, not by
-reading a diff or inspecting a file in Application Support. Stop after each one
-and let me look before starting the next.
-
-**This is a correction to a real failure, not a preference.** Stage 3a of the
-video record shipped as thirteen tasks and twenty-three commits whose entire
-output was a JSON file. Every task was reviewed and every test passed, and none
-of it changed anything on screen — so there was no point in the whole build
-where I could tell it was going the right way. The first thing I did when I
-went to test it was look for a feature that stage deliberately did not build.
-The work was correct and the sequencing cost me the ability to steer.
-
-**I will sometimes ask for something too big.** When a request spans more than
-one visible outcome, break it up and say so rather than taking it as scoped. A
-plan I approved is not evidence it was the right size.
-
-**Some work genuinely has no visible slice** — a schema, a migration, a
-concurrency fix, scaffolding a later feature needs. When that is the case, say
-so plainly and say what the first visible thing after it will be. What is not
-acceptable is discovering at the end that nothing is observable.
-
-**Prefer an order that front-loads visibility**, even at some cost in rework. A
-store built before the view that reads it is defensible on paper and leaves
-nobody able to judge it. If the view can be built against a stub first, do
-that.
-
-**Verify on screen before handing work over.** Build it, run it, look at it.
-Killing and relaunching Oxbow during development is always authorized,
-including an instance I am running. A screenshot of the thing working is worth
-more than a green suite.
-
----
-
 ## Conventions
 
 - SwiftUI first; AppKit only where SwiftUI can't express something.
@@ -589,11 +451,12 @@ more than a green suite.
   space-separated form makes CommandLineParser read the value as more options:
   `--output-args '-c:v …'` fails with `Option 'c' is unknown`.
 
+
 ---
 
 ## Open questions
 
-Flag these rather than deciding unilaterally:
+Undecided. Raise either in an issue before building on it:
 
 - **Process wrapper vs. NativeAOT dylib.** Currently (A), the process wrapper.
   (B) is better long-term but is a separate project with its own C ABI design.
