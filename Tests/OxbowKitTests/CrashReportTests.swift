@@ -125,6 +125,40 @@ struct CrashIssueTests {
     #expect(body.contains("+ 227972"))
   }
 
+  /// scripts/symbolicate-crash.py parses this body, and its own test reads the
+  /// same file, so a change to the format has to change both deliberately.
+  /// Regenerate with OXBOW_WRITE_GOLDEN=1.
+  @Test func matchesTheBodyTheSymbolicatorParses() throws {
+    let body = CrashIssue.body(for: try fixture())
+    let url = try #require(Bundle.module.url(
+      forResource: "crash-issue-body", withExtension: "md", subdirectory: "Fixtures"))
+    if ProcessInfo.processInfo.environment["OXBOW_WRITE_GOLDEN"] == "1" {
+      let source = URL(filePath: #filePath).deletingLastPathComponent()
+        .appending(path: "Fixtures/crash-issue-body.md")
+      try body.write(to: source, atomically: true, encoding: .utf8)
+    }
+    #expect(body == (try String(contentsOf: url, encoding: .utf8)))
+  }
+
+  @Test func keepsASpaceAfterThreeDigitFrameNumbers() throws {
+    let frame = """
+      {"binaryName": "Oxbow", "binaryUUID": "U", "offsetIntoBinaryTextSegment": 1}
+      """
+    var chain = frame
+    for _ in 0..<100 {
+      chain = """
+        {"binaryName": "Oxbow", "binaryUUID": "U", "offsetIntoBinaryTextSegment": 1,
+         "subFrames": [\(chain)]}
+        """
+    }
+    let json = """
+      {"callStackTree": {"callStacks": [{"threadAttributed": true,
+        "callStackRootFrames": [\(chain)]}]}, "diagnosticMetaData": {}}
+      """
+    let report = try #require(CrashReport(json: Data(json.utf8)))
+    #expect(CrashIssue.body(for: report).contains("\n100 Oxbow  + 1"))
+  }
+
   @Test func stillProducesALinkWhenNothingFits() throws {
     let url = CrashIssue.url(for: try fixture(), maximumLength: 10)
     #expect(query(url)["title"] != nil)

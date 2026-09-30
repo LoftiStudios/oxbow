@@ -1,0 +1,56 @@
+# Symbolicate crash reports as they are filed.
+#
+# Oxbow's crash banner opens an issue whose trace names Oxbow's own frames only
+# as offsets. This downloads the dSYM from that version's release and comments
+# with the frames named. See docs/design/crash-reports.md.
+#
+# The issue body is written by whoever opened the issue, so it is untrusted
+# input to a job holding a token that can write issues. It never reaches a
+# shell here: the `if` below only tests it, and the script reads it through
+# `gh`, taking nothing from it but a version and a UUID, each checked against a
+# strict pattern. The script itself is always main's, since `issues` events
+# check out the default branch.
+#
+# macOS, because atos and dwarfdump come with Xcode. Free on a public repo.
+#
+# workflow_dispatch re-runs it for one issue, e.g. one filed before this
+# existed. A second run on an issue already commented on does nothing.
+name: Symbolicate crash
+
+on:
+  issues:
+    types: [opened]
+  workflow_dispatch:
+    inputs:
+      issue:
+        description: 'Issue number'
+        type: number
+        required: true
+
+permissions:
+  contents: read   # release assets
+  issues: write    # the comment
+
+concurrency:
+  group: symbolicate-${{ github.event.issue.number || inputs.issue }}
+
+jobs:
+  symbolicate:
+    name: Symbolicate
+    # Skip ordinary issues without starting a runner. The phrase is the footer
+    # CrashIssue writes; the script checks it again.
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      contains(github.event.issue.body, 'Filled in by Oxbow from the crash report')
+    runs-on: macos-26
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          sparse-checkout: scripts
+
+      - name: Symbolicate and comment
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE: ${{ github.event.issue.number || inputs.issue }}
+        run: python3 scripts/symbolicate-crash.py "${ISSUE}" --repo "${GITHUB_REPOSITORY}" --post
