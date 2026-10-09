@@ -302,6 +302,55 @@ No per-month grouping, no sort control, no filter. A library that wants them
 will say so once it exists, and inventing them now would be three controls
 designed against a guess.
 
+### 5.5 The empty state lives inside the `List`
+
+An empty or failed channel was first built as a plain `VStack`: the card,
+a divider, then the `ContentUnavailableView` filling the rest. That crashes
+on macOS 27.0.1 the first time the pane appears — SIGABRT from
+`-[NSWindow _postWindowNeedsUpdateConstraints]`, "more Update Constraints in
+Window passes than there are views in the window". The same layout ships in
+0.5.0 and 0.6.0. It is not specific to the fixture: a newly watched channel
+with no archives yet, or a failed sweep, is the same pane.
+
+**The trigger is the detail column's minimum width, beside the inspector.**
+Bisected with a timer driving the sidebar selection against the screenshot
+fixture, whose channels are all empty:
+
+| Detail content | Inspector | Result |
+|---|---|---|
+| `Color` with `minWidth: 100` | presented | survives |
+| `Color` with `minWidth: 125` (or 150, 201, 400) | presented | **aborts** |
+| `Color` with `minWidth: 400` | absent | survives |
+| the card, stack-laid-out (min width 201pt) | presented | **aborts** |
+| the card as a `List` row | presented | survives |
+
+Any non-`List` detail wider than roughly 110pt at minimum does it, Queue
+included; the content does not matter. Watching the column's reported
+minimum under a debugger, SwiftUI alternately computes the split view's
+minimum with the inspector at its 420pt ideal width and without it — 861pt,
+then 441pt, then 861pt again — and invalidates constraints inside the pass
+that is resolving them, until AppKit gives up.
+
+A `List` reports a minimum near zero whatever its rows contain, which is
+why the populated channel, the inbox and the queue never hit this. So the
+empty and failed states are a row of the same `List` as the archives, under
+the card, rather than a second layout. Two things that look like fixes and
+are not:
+
+- `.navigationSplitViewColumnWidth(min:ideal:)` on the detail — still aborts.
+- `.frame(minWidth: 0, maxWidth: .infinity)` around the detail — a flexible
+  frame reports its child's minimum, so the column still sees 201pt.
+
+**Rule for any new destination:** its root is a `List`, or something else
+with no intrinsic minimum width. The window's `minWidth` in `QueueView`
+already reserves the room the queue needs; a destination must not ask for
+it again through its content.
+
+The disconnected-volume notice made the stacked card worse, not different:
+its `fixedSize(horizontal: false, vertical: true)` text, proposed zero
+width, reports a 1,728pt minimum height. Inside a `List` row that is
+harmless.
+
 ---
 
 ## 6. What is deleted

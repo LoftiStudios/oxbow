@@ -20,23 +20,13 @@ struct ChannelView: View {
   @Binding var selection: WatchingModel.Row.ID?
 
   var body: some View {
-    Group {
-      if section.failure != nil || section.allRows.isEmpty {
-        // Keep the channel card visible when empty or failed so frozen settings and Edit remain
-        // accessible.
-        VStack(spacing: 0) {
-          card
-            // Match List row insets in the empty state.
-            .padding(.horizontal, 20)
-          Divider()
-          emptyState
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-        }
-      } else {
-        list
-      }
-    }
-    .navigationTitle(section.displayName)
+    list
+      .navigationTitle(section.displayName)
+  }
+
+  /// Show the pane-level empty state in place of rows when the sweep failed or found nothing.
+  private var showsEmptyState: Bool {
+    section.failure != nil || section.allRows.isEmpty
   }
 
   private var card: some View {
@@ -75,7 +65,17 @@ struct ChannelView: View {
         .listRowSeparator(.hidden)
         .selectionDisabled(true)
 
-      ForEach(section.allRows) { row in
+      // Keep the empty state inside the List. Laid out in a plain stack, the card gives the detail
+      // column a minimum width, and beside the permanent inspector that aborts in AppKit's
+      // update-constraints pass. See docs/design/watching-navigation.md §5.5.
+      if showsEmptyState {
+        emptyState
+          .frame(maxWidth: .infinity)
+          .listRowSeparator(.hidden)
+          .selectionDisabled(true)
+      }
+
+      ForEach(showsEmptyState ? [] : section.allRows) { row in
         ArchiveRow(
           row: row,
           store: imageStore,
