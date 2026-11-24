@@ -12,5 +12,5 @@ dmgbuild==1.6.7
 # allowlist), so frames come out as raw RGB and something has to read them.
 # Pinned for the same reason dmgbuild is: a silent minor bump should not change
 # what a measurement says.
-pillow==12.3.0
+pillow==13.0.0
 numpy==2.5.2
